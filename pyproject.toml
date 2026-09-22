@@ -1,0 +1,269 @@
+[build-system]
+# >=1.0, not >=0.9: `sdist.resolve-symlinks` and `wheel.reproducible` below
+# were both added in 1.0, and `strict_config` (on by default) makes an
+# unrecognised option a hard error rather than a warning -- so 0.9 does not
+# build this project at all. The PEP 639 `license` string needs >=0.11 too.
+requires = ["scikit-build-core>=1.0", "pybind11>=2.12"]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "pymcpu"
+# Single-sourced from pymcpu/__init__.py by the regex provider configured in
+# [tool.scikit-build.metadata.version] below. Regex rather than an
+# importlib-based provider on purpose: importing pymcpu loads the C++
+# extension at import time (pymcpu/__init__.py calls _load_mcpu_core()), which
+# a metadata read must not require.
+dynamic = ["version"]
+description = "Monte Carlo protein folding engine with knowledge-based potentials and an OpenMM-style Python API"
+readme = "README.md"
+requires-python = ">=3.9"
+
+# PEP 639. Deliberately NO "License :: OSI Approved :: MIT License" classifier:
+# combined with an SPDX `license` string that is a hard error in
+# pyproject_metadata. Note this forces Metadata-Version 2.4, so building needs
+# a reasonably current pip.
+license = "MIT"
+license-files = ["LICENSE"]
+
+authors = [
+    { name = "Kibum Park", email = "kibum_park@fas.harvard.edu" },
+]
+maintainers = [
+    { name = "Kibum Park", email = "kibum_park@fas.harvard.edu" },
+]
+
+keywords = [
+    "monte-carlo",
+    "protein-folding",
+    "molecular-simulation",
+    "computational-biophysics",
+    "knowledge-based-potentials",
+    "replica-exchange",
+    "structural-biology",
+]
+
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Bio-Informatics",
+    "Topic :: Scientific/Engineering :: Chemistry",
+    "Topic :: Scientific/Engineering :: Physics",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: C++",
+    # Linux x86-64 only for 0.1.0: the wheel carries a compiled C++20
+    # extension and no macOS or arm64 builds are published.
+    "Operating System :: POSIX :: Linux",
+]
+# NOT claimed: "Typing :: Typed". 85% of public functions are fully annotated,
+# but PEP 561 requires a py.typed marker for a checker to use any of them, and
+# the compiled mcpu_core ships no stubs at all -- so the most-used half of the
+# API is untyped. Shipping py.typed without those stubs would make type
+# checkers confidently wrong about it. Add stubs first, then the marker, then
+# the classifier.
+
+dependencies = [
+    "numpy>=1.21",
+    "mdtraj>=1.9",
+    "pandas>=1.3",
+    "pooch>=1.7",
+    "pyyaml>=6.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/kibumpark-chem/pyMCPU"
+Documentation = "https://pymcpu.readthedocs.io"
+Repository = "https://github.com/kibumpark-chem/pyMCPU"
+Issues = "https://github.com/kibumpark-chem/pyMCPU/issues"
+Changelog = "https://github.com/kibumpark-chem/pyMCPU/blob/main/CHANGELOG.md"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7",
+    "ruff>=0.4",
+]
+test = [
+    "pytest>=7",
+]
+training = [
+    "scipy>=1.7",
+    "torch",
+    "sidechainnet",
+]
+analysis = [
+    "h5py>=3.6",
+]
+cli = [
+    "pydantic>=2",
+]
+mpi = [
+    "mpi4py>=3.1",
+]
+docs = [
+    # Keep in sync with docs/requirements.txt (which Read the Docs installs).
+    # NOTE: this extra deliberately does NOT pull in the package itself --
+    # building the docs must not require compiling the C++ extension, which
+    # Read the Docs cannot do. docs/conf.py mocks mcpu_core and the heavy
+    # runtime deps instead, and puts the repo root on sys.path.
+    "sphinx>=7.0",
+    "pydata-sphinx-theme>=0.14",
+    "sphinx-autodoc-typehints>=1.23",
+    "myst-parser>=2.0",
+    "nbsphinx>=0.9",
+    "sphinx-copybutton>=0.5",
+    "numpy>=1.21",
+]
+
+[project.scripts]
+mcpu = "pymcpu.cli:main"
+
+[tool.scikit-build.metadata.version]
+provider = "scikit_build_core.metadata.regex"
+input = "pymcpu/__init__.py"
+
+[tool.scikit-build]
+# Pin the settings baseline to the floor declared in build-system.requires,
+# so a future scikit-build-core 2.x building this sdist keeps today's
+# defaults instead of silently applying new ones -- `sdist.resolve-symlinks`
+# already has a default that varies with this setting.
+minimum-version = "build-system.requires"
+wheel.packages = ["pymcpu"]
+ninja.make-fallback = false
+cmake.build-type = "Release"
+
+# `pymcpu/parameters` is a tracked symlink to ../src/pymcpu/parameters. With
+# resolve-symlinks left at its default of "all", the sdist DEREFERENCES it and
+# pulls in the entire 685 MB raw table tree. "external" resolves only symlinks
+# that would dangle once the sdist is extracted (i.e. that point outside the
+# project) and stores internal ones as symlinks.
+sdist.resolve-symlinks = "external"
+
+# Belt and braces for the shipped compact parameter set. sdist.include takes
+# precedence over sdist.exclude, and scikit-build-core also filters WHEEL
+# contents through .gitignore -- an over-broad ignore rule there silently
+# produces a parameter-less wheel that cannot run. The .gitignore MUST SHIP
+# block and tests/config/test_shipped_params_are_trackable.py guard the other
+# half of this.
+sdist.include = ["pymcpu/data/params/**"]
+
+# The sdist must carry everything needed to BUILD (so include/, src/ and
+# CMakeLists.txt stay). The exploratory training notebooks, the HPC job
+# scripts and the dated engineering notes that used to need excluding here
+# are no longer in the repository at all, so only build detritus remains.
+sdist.exclude = [
+    # Scratch and build detritus that must never reach a distribution.
+    "build/**",
+    "_skbuild/**",
+    ".cursor/**",
+    ".claude/**",
+]
+
+# Defaults to false, unlike sdist.reproducible.
+wheel.reproducible = true
+
+# Keep the wheel to code + the ~2 MB compact parameters. Without these it was
+# 1.4 GB uncompressed:
+#   * include/** -- FetchContent makes Eigen's own install() rules part of the
+#     build, so `cmake --install` dropped 8 MB of Eigen headers into the wheel.
+#     A Python package has no use for C++ headers.
+#   * pymcpu/parameters/** -- belt and braces. That path was a symlink to
+#     ../src/pymcpu/parameters, and scikit-build-core DEREFERENCED it, pulling
+#     in both raw parameter sets (the 633 MB sidechain table twice, 1.36 GB).
+#     The symlink is now gone, but an over-broad copy must never resurrect it.
+#   * the offline fitting scripts, notebooks and HPC job files, which were
+#     moved out of pymcpu/ in Phase 3 and are no longer in the repository.
+wheel.exclude = [
+    "include/**",
+    # Eigen's install() rules also emit a CMake package config and a
+    # pkg-config file. Those were landing in site-packages as
+    # share/eigen3/cmake/Eigen3Config.cmake and share/pkgconfig/eigen3.pc --
+    # five files a Python wheel has no business installing, and actively
+    # harmful: once `include/**` above stopped shipping Eigen's headers, the
+    # leftover CMake package was a HALF-INSTALLED Eigen3 that
+    # find_package(Eigen3) then selected in preference to a real one, failing
+    # the configure with "Imported target Eigen3::Eigen includes non-existent
+    # path". Excluding share/ removes the whole class.
+    "share/**",
+    "pymcpu/parameters/**",
+    # NOTE: `wheel.packages = ["pymcpu"]` above means only that package is
+    # installed, so anything outside pymcpu/ is excluded from the wheel by
+    # construction rather than by a list that has to be maintained.
+]
+# NOTE: there is deliberately no `cmake.args` here any more. It is a LIST, and
+# `-Ccmake.args=...` on the command line REPLACES the list wholesale -- which
+# silently dropped the baseline pin. `cmake.define` is a MAPPING and merges, so
+# a user overriding one key cannot lose the others.
+#
+# The six entries that used to live in cmake.args are gone for these reasons:
+#   -DBUILD_TESTING=OFF          the option no longer exists (dead block removed)
+#   -DMCPU_FAST_MU_DELTA=ON      kept below: it selects a PHYSICS path
+#   -DMCPU_ARCH=skylake-avx512   replaced by the env-backed define below
+#   -DCMAKE_CXX_STANDARD=20      INERT, not merely redundant: CMakeLists.txt:4
+#   -DCMAKE_CXX_STANDARD_REQUIRED  uses plain set(), which SHADOWS the cache
+#   -DCMAKE_CXX_EXTENSIONS=OFF     entry these -D flags create. Never had effect.
+
+[tool.scikit-build.cmake.define]
+# The CPU baseline, and the fix for a bug that made every documented override a
+# no-op. `MCPU_ARCH=... pip install .` is documented in the README, in
+# docs/installation.rst, in docs/known_issues.md and in conda-recipe/meta.yaml,
+# but a CMake `CACHE STRING` is NOT populated from the environment -- so every
+# one of those commands silently built AVX-512 anyway, including the conda
+# recipe whose whole purpose was to avoid AVX-512 for AMD users.
+#
+# The { env = ... } form resolves os.environ at parse time and is what makes
+# those commands real. Omitting `force` lets an explicit
+# -Ccmake.define.MCPU_ARCH=... win over the environment, which is the
+# precedence users expect.
+#
+# Accepted values: v2 | v3 (default) | v4 | native | none | a raw -march
+# string. See the tier table in CMakeLists.txt.
+MCPU_ARCH = { env = "MCPU_ARCH", default = "v3" }
+
+# Explicit because it selects which Mu delta-energy implementation compiles,
+# i.e. a physics path, not a convenience. A published artifact should pin that
+# rather than inherit a default that could later flip.
+MCPU_FAST_MU_DELTA = "ON"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q -m 'not slow and not network and not mpi and not examples'"
+markers = [
+    "slow: actin / full-physics tests (not in default suite)",
+    "network: requires network download",
+    "mpi: requires working MPI / libmpi",
+    "examples: example-script smokes",
+    "integration: multi-module integration",
+    "mpi_integration: requires mpirun (cluster)",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+# Notebooks are scratch/exploration artifacts, not lint-worthy deliverable
+# code; scripts/archive holds frozen historical scripts.
+extend-exclude = ["*.ipynb", "scripts/archive"]
+
+[tool.ruff.lint]
+# FA keeps `requires-python = ">=3.9"` honest. `target-version = "py39"` above
+# already rejects 3.10+ *syntax*, but a PEP 604 union in an annotation
+# (`x: int | None`) is legal syntax on 3.9 that raises at runtime unless the
+# module has `from __future__ import annotations`. FA102 is what catches that,
+# and it currently passes with zero violations -- enabling it means it stays
+# that way rather than being re-audited by hand.
+extend-select = ["FA"]
+
+# Single-letter atom names (N, O, C, CA...) are domain-idiomatic in this
+# physics codebase, not a readability problem.
+ignore = ["E741"]
+
+[tool.ruff.lint.per-file-ignores]
+# Standalone scripts need `sys.path.insert(...)` (or a path constant) ahead
+# of importing `pymcpu` when run directly, not via the installed package.
+"scripts/*.py" = ["E402"]
+# `pytestmark = pytest.mark.slow` before imports, or path-setup-before-import,
+# is an established convention across this test suite.
+"tests/**/*.py" = ["E402"]

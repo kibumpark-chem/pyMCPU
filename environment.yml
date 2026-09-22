@@ -1,0 +1,33 @@
+name: mcpu
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python>=3.11
+  # Toolchain + C++ RUNTIME. libstdcxx-ng is not optional: the extension is
+  # built against the compiler's libstdc++ and needs those symbol versions at
+  # import time. conda's python has RPATH $ORIGIN/../lib, so the libstdc++ in
+  # THIS env is the one that gets loaded -- which is exactly why declaring it
+  # here fixes the "CXXABI_1.3.x not found" import failure, and why
+  # LD_LIBRARY_PATH cannot (DT_RPATH wins over it).
+  # Do NOT "solve" this with -static-libstdc++: that duplicates the C++ runtime
+  # alongside numpy/mdtraj's dynamic one and silently breaks iostream-based
+  # RNG-state serialisation and the CSV reporter. See
+  - gxx_linux-64
+  - libstdcxx-ng
+  - cmake>=3.15
+  - ninja
+  - pybind11>=2.12
+  - eigen
+  - numpy>=1.21
+  - mdtraj>=1.9
+  - pandas>=1.3
+  - pyyaml>=6.0
+  - mpi4py>=3.1
+  - openmpi
+  - pip
+  - pip:
+    - scikit-build-core>=1.0
+    - pytest>=7
+    - pooch>=1.7
+    - ruff>=0.4

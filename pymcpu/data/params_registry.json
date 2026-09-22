@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "sets": {
+    "mcpu_v1": {
+      "version": "1.0.0",
+      "description": "MCPU08 pretrained core + sidechain triplet (logical set).",
+      "layout": {
+        "required": {
+          "amino acids template": "constants/standard_amino_acids.json",
+          "atom types": "constants/atom_types.csv",
+          "mu potentials": "mcpu_params/mu_potentials.bin",
+          "bb triplet": "mcpu_params/triplet_potentials.bin",
+          "sc triplet": "mcpu_params/sidechain_triplet_potentials.bin",
+          "hbond": "mcpu_params/hydrogen_bond_potentials.bin",
+          "hbond seq_dep": "mcpu_params/hbond_seq_dep.bin",
+          "aromatic": "mcpu_params/aromatic_potentials.bin",
+          "rotamer library": "constants/bbind02.May.lib"
+        },
+        "optional": {
+          "rama mixture": "constants/rama_mixture.json"
+        },
+        "tables": {
+          "mu_potentials": "mcpu_params/mu_potentials.bin",
+          "triplet_potentials": "mcpu_params/triplet_potentials.bin",
+          "sidechain_triplet_potentials": "mcpu_params/sidechain_triplet_potentials.bin",
+          "hydrogen_bond_potentials": "mcpu_params/hydrogen_bond_potentials.bin",
+          "hbond_seq_dep": "mcpu_params/hbond_seq_dep.bin",
+          "aromatic_potentials": "mcpu_params/aromatic_potentials.bin"
+        },
+        "constants": [
+          "constants/atom_types.csv",
+          "constants/standard_amino_acids.json",
+          "constants/bbind02.May.lib",
+          "constants/rama_mixture.json"
+        ]
+      },
+      "archive": "mcpu_v1-1.0.0.tar.gz",
+      "url": null,
+      "sha256": null,
+      "unpack_root": "mcpu_v1",
+      "local_source": "../src/pymcpu/parameters/pretrained/mcpu08"
+    }
+  }
+}

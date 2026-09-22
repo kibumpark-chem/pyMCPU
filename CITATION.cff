@@ -1,0 +1,24 @@
+cff-version: 1.2.0
+title: "pyMCPU: Monte Carlo protein folding with knowledge-based potentials"
+message: "If you use pyMCPU in published work, please cite it."
+type: software
+authors:
+  - family-names: Park
+    given-names: Kibum
+    email: kibum_park@fas.harvard.edu
+    affiliation: "Shakhnovich Laboratory, Harvard University"
+version: 0.1.0
+date-released: "2026-09-16"
+license: MIT
+repository-code: "https://github.com/kibumpark-chem/pyMCPU"
+url: "https://pymcpu.readthedocs.io"
+keywords:
+  - monte-carlo
+  - protein-folding
+  - molecular-simulation
+  - knowledge-based-potentials
+  - computational-biophysics
+# NOTE: no `doi:` yet. The Zenodo deposition has to exist before the first
+# tag, otherwise the first archived DOI belongs to 0.1.1 rather than to the
+# release people will actually cite. Add the concept DOI here as part of the
+# tagging step, not after it.

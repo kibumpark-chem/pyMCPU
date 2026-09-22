@@ -1,0 +1,233 @@
+#pragma once
+#include <Eigen/Dense>
+#include <vector>
+#include <array>
+#include <cmath>
+#include <algorithm>
+
+namespace TripeptideLoopClosure {
+
+class SturmSolver {
+private:
+    static constexpr int MAX_ORDER = 16;
+    static constexpr int MAXPOW = 32;
+    static constexpr double SMALL_ENOUGH = 1.0e-18;
+
+    struct Poly {
+        int ord = 0;
+        std::array<double, MAX_ORDER + 1> coef = {0.0};
+    };
+
+    double rel_error = 1.0e-15;
+    int max_it = 100;
+    int max_iter_secant = 20;
+
+    int modp(const Poly& u, const Poly& v, Poly& r) const {
+        r.coef = u.coef;
+        
+        if (v.coef[v.ord] < 0.0) {
+            for (int k = u.ord - v.ord - 1; k >= 0; k -= 2) 
+                r.coef[k] = -r.coef[k];
+            for (int k = u.ord - v.ord; k >= 0; k--)
+                for (int j = v.ord + k - 1; j >= k; j--)
+                    r.coef[j] = -r.coef[j] - r.coef[v.ord + k] * v.coef[j - k];
+        } else {
+            for (int k = u.ord - v.ord; k >= 0; k--)
+                for (int j = v.ord + k - 1; j >= k; j--)
+                    r.coef[j] -= r.coef[v.ord + k] * v.coef[j - k];
+        }
+
+        int k = v.ord - 1;
+        while (k >= 0 && std::abs(r.coef[k]) < SMALL_ENOUGH) {
+            r.coef[k] = 0.0;
+            k--;
+        }
+        r.ord = (k < 0) ? 0 : k;
+        return r.ord;
+    }
+
+    int buildsturm(int ord, std::array<Poly, MAX_ORDER * 2>& sseq) const {
+        sseq[0].ord = ord;
+        sseq[1].ord = ord - 1;
+
+        double f = std::abs(sseq[0].coef[ord] * ord);
+        for (int i = 1; i <= ord; ++i) {
+            sseq[1].coef[i - 1] = sseq[0].coef[i] * i / f;
+        }
+
+        int np = 1;
+        for (int i = 2; i <= ord + 1; ++i) {
+            int r_ord = modp(sseq[i - 2], sseq[i - 1], sseq[i]);
+            if (r_ord == 0) {
+                np = i;
+                break;
+            }
+            f = -std::abs(sseq[i].coef[sseq[i].ord]);
+            for (int j = 0; j <= sseq[i].ord; ++j) {
+                sseq[i].coef[j] /= f;
+            }
+            np = i;
+        }
+        sseq[np].coef[0] = -sseq[np].coef[0];
+        return np;
+    }
+
+    double evalpoly(int ord, const std::array<double, MAX_ORDER + 1>& coef, double x) const {
+        double f = coef[ord];
+        for (int i = ord - 1; i >= 0; i--) {
+            f = x * f + coef[i];
+        }
+        return f;
+    }
+
+    int numchanges(int np, const std::array<Poly, MAX_ORDER * 2>& sseq, double a) const {
+        int changes = 0;
+        double lf = evalpoly(sseq[0].ord, sseq[0].coef, a);
+        for (int i = 1; i <= np; i++) {
+            double f = evalpoly(sseq[i].ord, sseq[i].coef, a);
+            if (lf == 0.0 || lf * f < 0.0) changes++;
+            lf = f;
+        }
+        return changes;
+    }
+
+    int numroots(int np, const std::array<Poly, MAX_ORDER * 2>& sseq, int& atneg, int& atpos) const {
+        int atposinf = 0, atneginf = 0;
+        double lf = sseq[0].coef[sseq[0].ord];
+        
+        for (int i = 1; i <= np; i++) {
+            double f = sseq[i].coef[sseq[i].ord];
+            if (lf == 0.0 || lf * f < 0.0) atposinf++;
+            lf = f;
+        }
+
+        lf = (sseq[0].ord & 1) ? -sseq[0].coef[sseq[0].ord] : sseq[0].coef[sseq[0].ord];
+        
+        for (int i = 1; i <= np; i++) {
+            double f = (sseq[i].ord & 1) ? -sseq[i].coef[sseq[i].ord] : sseq[i].coef[sseq[i].ord];
+            if (lf == 0.0 || lf * f < 0.0) atneginf++;
+            lf = f;
+        }
+
+        atneg = atneginf;
+        atpos = atposinf;
+        return atneginf - atposinf;
+    }
+
+    bool modrf(int ord, const std::array<double, MAX_ORDER + 1>& coef, double a, double b, double& val) const {
+        double fa = coef[ord], fb = coef[ord];
+        for (int i = ord - 1; i >= 0; i--) {
+            fa = a * fa + coef[i];
+            fb = b * fb + coef[i];
+        }
+
+        if (fa * fb > 0.0) return false;
+
+        double lfx = fa;
+        for (int its = 0; its < max_iter_secant; its++) {
+            double x = (fb * a - fa * b) / (fb - fa);
+            if (x < a || x > b) x = 0.5 * (a + b);
+
+            double fx = coef[ord];
+            for (int i = ord - 1; i >= 0; i--) fx = x * fx + coef[i];
+
+            if (std::abs(x) > rel_error) {
+                if (std::abs(fx / x) < rel_error) { val = x; return true; }
+            } else if (std::abs(fx) < rel_error) {
+                val = x; return true;
+            }
+
+            if ((fa * fx) < 0.0) {
+                b = x; fb = fx;
+                if ((lfx * fx) > 0.0) fa /= 2.0;
+            } else {
+                a = x; fa = fx;
+                if ((lfx * fx) > 0.0) fb /= 2.0;
+            }
+            lfx = fx;
+        }
+        return false;
+    }
+
+    void sbisect(int np, const std::array<Poly, MAX_ORDER * 2>& sseq, double min, double max, int atmin, int atmax, std::vector<double>& roots) const {
+        double mid = 0.0;
+        int nroot = atmin - atmax;
+        
+        if (nroot == 1) {
+            double val = 0.0;
+            if (modrf(sseq[0].ord, sseq[0].coef, min, max, val)) {
+                roots.push_back(val);
+                return;
+            }
+            for (int its = 0; its < max_it; its++) {
+                mid = (min + max) / 2.0;
+                int atmid = numchanges(np, sseq, mid);
+                
+                if (std::abs(mid) > rel_error) {
+                    if (std::abs((max - min) / mid) < rel_error) { roots.push_back(mid); return; }
+                } else if (std::abs(max - min) < rel_error) {
+                    roots.push_back(mid); return;
+                }
+
+                if ((atmin - atmid) == 0) min = mid;
+                else max = mid;
+            }
+            roots.push_back(mid);
+            return;
+        }
+
+        for (int its = 0; its < max_it; its++) {
+            mid = (min + max) / 2.0;
+            int atmid = numchanges(np, sseq, mid);
+            int n1 = atmin - atmid;
+            int n2 = atmid - atmax;
+
+            if (n1 != 0 && n2 != 0) {
+                sbisect(np, sseq, min, mid, atmin, atmid, roots);
+                sbisect(np, sseq, mid, max, atmid, atmax, roots);
+                return;
+            }
+            if (n1 == 0) min = mid;
+            else max = mid;
+        }
+
+        for (int n1 = atmax; n1 < atmin; n1++) roots.push_back(mid);
+    }
+
+public:
+    void solve(const Eigen::Matrix<double, 17, 1>& poly_coeffs, std::vector<double>& roots) const {
+        roots.clear();
+        std::array<Poly, MAX_ORDER * 2> sseq;
+        sseq[0].ord = MAX_ORDER;
+        
+        for (int i = MAX_ORDER; i >= 0; i--) {
+            sseq[0].coef[i] = poly_coeffs[i];
+        }
+
+        int np = buildsturm(MAX_ORDER, sseq);
+        int atmin, atmax;
+        int nroots = numroots(np, sseq, atmin, atmax);
+
+        if (nroots == 0) return;
+
+        double min = -1.0;
+        int nchanges = numchanges(np, sseq, min);
+        for (int i = 0; nchanges != atmin && i != MAXPOW; i++) {
+            min *= 10.0;
+            nchanges = numchanges(np, sseq, min);
+        }
+        atmin = nchanges;
+
+        double max = 1.0;
+        nchanges = numchanges(np, sseq, max);
+        for (int i = 0; nchanges != atmax && i != MAXPOW; i++) {
+            max *= 10.0;
+            nchanges = numchanges(np, sseq, max);
+        }
+        atmax = nchanges;
+
+        sbisect(np, sseq, min, max, atmin, atmax, roots);
+    }
+};
+
+} // namespace TripeptideLoopClosure

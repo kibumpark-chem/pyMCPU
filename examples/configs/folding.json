@@ -1,0 +1,16 @@
+{
+  "mode": "folding",
+  "pdb": "examples/data/1uao.pdb",
+  "param_set": "mcpu_v1",
+  "param_dir": null,
+  "integrator": {
+    "temperature": 0.6,
+    "steps": 1000,
+    "seed": 42,
+    "report_interval": 100
+  },
+  "outputs": {
+    "output_dir": "./out_folding",
+    "prefix": "folding"
+  }
+}

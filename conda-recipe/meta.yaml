@@ -1,0 +1,114 @@
+{% set name = "pymcpu" %}
+{% set version = "0.1.0" %}
+
+package:
+  name: {{ name|lower }}
+  version: {{ version }}
+
+source:
+  # Local path, for `conda build .` smoke tests. conda-forge staged-recipes
+  # accepts only the published-sdist form, so swap these before submitting.
+  path: ..
+  # url: https://pypi.io/packages/source/{{ name[0] }}/{{ name }}/{{ name }}-{{ version }}.tar.gz
+  # sha256: REPLACE_WITH_PUBLISHED_SDIST_SHA256
+
+build:
+  number: 0
+  skip: true  # [not linux]
+  script: {{ PYTHON }} -m pip install . -vv --no-deps --no-build-isolation
+  script_env:
+    # The ISA baseline. A conda-forge package must run on any x86-64 machine
+    # in its platform family, so do NOT inherit the repo default of
+    # skylake-avx512 -- that SIGILLs on AMD Zen 1-3 and on Intel consumer
+    # parts from the 12th generation onward. x86-64-v3 is AVX2 + FMA.
+    - MCPU_ARCH=x86-64-v3
+    # Refuse to reach for the network, which this build cannot do anyway.
+    # Turns a missing dependency into a clear configure error instead of a
+    # failed clone.
+    - MCPU_FETCH_DEPS=OFF
+  entry_points:
+    - mcpu = pymcpu.cli:main
+
+requirements:
+  build:
+    - {{ compiler('c') }}
+    - {{ compiler('cxx') }}
+    - {{ stdlib('c') }}
+    - cmake >=3.15
+    - ninja
+  host:
+    - python
+    - pip
+    - scikit-build-core >=1.0
+    - pybind11 >=2.12
+    # Required. CMakeLists.txt does find_package(Eigen3 3.4), and because a
+    # conda-forge build is network-isolated the FetchContent fallback cannot
+    # rescue a missing Eigen -- this recipe previously omitted it and so could
+    # not configure at all.
+    - eigen >=3.4
+    # numpy is deliberately absent here. The extension includes
+    # pybind11/numpy.h, which needs no numpy headers, and reaches numpy purely
+    # through the Python API (py::module_::import("numpy")). Verified: no
+    # numpy/arrayobject.h anywhere, no import_array(), and the built .so needs
+    # only libstdc++, libm, libgcc_s and libc. So numpy is an ordinary runtime
+    # dependency with no ABI coupling, and pin_compatible('numpy') would be
+    # wrong.
+  run:
+    - python >=3.9
+    # All five hard runtime dependencies from pyproject.toml. pandas and
+    # mdtraj are both imported at `import pymcpu` time, so omitting either
+    # yields a package that installs and then cannot be imported.
+    - numpy >=1.21
+    - mdtraj >=1.9
+    - pandas >=1.3
+    - pooch >=1.7
+    - pyyaml >=6.0
+
+test:
+  imports:
+    - pymcpu
+    - pymcpu.mcpu_core
+    - pymcpu.forcefields.mcpu
+    - pymcpu.sampling
+  requires:
+    - pip
+  commands:
+    # Catches a dependency declared in the wrong requirements section.
+    - pip check
+    # The compiled core loaded, and it is the post-rename surface: the
+    # energy-term base class is Potential, and System exposes add_potential.
+    - python -c "from pymcpu import mcpu_core as m; assert m.Potential and m.System.add_potential"
+    # The fitted potentials ship inside the package, so this must succeed
+    # offline with no MCPU_PARAMS_DIR set. It is the single most likely thing
+    # to silently break, because wheel contents are filtered through
+    # .gitignore at build time.
+    - python -c "import pymcpu.params as p; print(p.ensure_params('mcpu_v1'))"
+    - mcpu version
+    - mcpu --help
+
+about:
+  home: https://github.com/kibumpark-chem/pyMCPU
+  license: MIT
+  license_file: LICENSE
+  summary: Monte Carlo protein folding engine with a fast C++ core and Python API
+  description: |
+    pyMCPU runs Monte Carlo protein folding and unfolding with knowledge-based
+    statistical potentials, exposing a C++20 compute core through an
+    OpenMM-style Python API.
+
+    Five fitted energy terms -- contact/solvation, backbone and sidechain
+    torsion, directional hydrogen bonding, and aromatic stacking -- drive
+    Metropolis sampling with pivot, continuous sidechain, rotamer-library and
+    kinematic-closure loop moves, plus temperature and umbrella replica
+    exchange and WESTPA weighted-ensemble support via the separate pymcpu-westpa package.
+
+    Energies are unitless sums of table entries and temperature is a
+    dimensionless reduced parameter; there is no Boltzmann constant in the
+    engine. The fitted potentials ship inside the package, so no download and
+    no environment variable are needed.
+  doc_url: https://pymcpu.readthedocs.io
+  dev_url: https://github.com/kibumpark-chem/pyMCPU
+
+extra:
+  recipe-maintainers:
+    - kibumpark-chem

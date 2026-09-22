@@ -1,0 +1,171 @@
+name: Wheels
+
+# PyPI REJECTS a wheel tagged `linux_x86_64`; only `manylinux_*` tags are
+# accepted. Building locally produces exactly the rejected tag, so this
+# workflow is the only thing that can produce a publishable artifact.
+#
+# It also builds inside a container with a different compiler and a different
+# Eigen provenance than any developer machine. That difference has already
+# mattered once: FetchContent'd Eigen calls enable_language(Fortran), which
+# silently disabled LTO in every containerised build while local `cmake`
+# builds kept it, because a system Eigen never triggers it. The test command
+# below asserts the shipped wheel really has the properties it claims.
+
+on:
+  pull_request:
+    paths:
+      - "pyproject.toml"
+      - "CMakeLists.txt"
+      - ".github/workflows/wheels.yml"
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      publish_target:
+        description: "Where to upload the built artifacts"
+        required: true
+        default: none
+        type: choice
+        options: [none, testpypi]
+
+concurrency:
+  group: wheels-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build_wheels:
+    name: ${{ matrix.python }} manylinux x86_64
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["cp39", "cp310", "cp311", "cp312", "cp313"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build wheels
+        uses: pypa/cibuildwheel@v2.21.3
+        env:
+          CIBW_BUILD: "${{ matrix.python }}-manylinux_x86_64"
+          CIBW_ARCHS_LINUX: x86_64
+
+          # manylinux_2_28 ships GCC 12. The project is C++20 and uses
+          # <numbers>/concepts-era features; the older manylinux2014 image
+          # (GCC 10) is not a safe target for it.
+          CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_28
+
+          # The published baseline. x86-64-v3 is AVX2+FMA+BMI2 (Haswell /
+          # Excavator, 2013+). Set EXPLICITLY rather than relying on the
+          # CMake default: this value decides which CPUs can run the wheel
+          # at all, and it must be a visible, reviewable line -- the previous
+          # pin to skylake-avx512 would have SIGILL'd on every AMD Zen 1-3
+          # and every 12th-gen-or-later Intel consumer part.
+          # NOTE: a bare `MCPU_ARCH: v3` here does NOT reach the build. On Linux
+          # cibuildwheel builds inside the manylinux container and forwards only
+          # its own CIBW_* configuration; a host env var is dropped, leaving
+          # pyproject.toml's `default = "v3"` to supply the value by coincidence.
+          CIBW_ENVIRONMENT: MCPU_ARCH=v3
+
+          CIBW_BUILD_VERBOSITY: "1"
+
+          # Run against the INSTALLED wheel, from a directory that is not the
+          # source tree, with no network. This is the only place the
+          # in-wheel parameter archive (step 5 of ensure_params) is exercised
+          # the way a real user hits it.
+          CIBW_TEST_REQUIRES: pytest
+          CIBW_TEST_COMMAND: >
+            MCPU_NO_DOWNLOAD=1 python {project}/scripts/ci_check_wheel.py
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheels-${{ matrix.python }}
+          path: ./wheelhouse/*.whl
+
+  build_sdist:
+    name: sdist
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: python -m pip install --upgrade pip build
+      - run: python -m build --sdist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sdist
+          path: dist/*.tar.gz
+
+  check_tags:
+    name: every wheel is manylinux-tagged
+    needs: [build_wheels, build_sdist]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Reject any linux_x86_64 wheel
+        run: |
+          ls -la dist
+          python - <<'PY'
+          import pathlib, sys
+          bad, good = [], []
+          for w in pathlib.Path("dist").rglob("*.whl"):
+              (good if "manylinux" in w.name else bad).append(w.name)
+          for w in sorted(good):
+              print("  ok  ", w)
+          for w in sorted(bad):
+              print("  BAD ", w)
+          if bad:
+              print("\nPyPI rejects these: a plain `linux_x86_64` tag means "
+                    "auditwheel did not repair the wheel.")
+              sys.exit(1)
+          if not good:
+              print("\nNo wheels at all -- this job must not pass vacuously.")
+              sys.exit(1)
+          print(f"\n{len(good)} manylinux wheel(s)")
+          PY
+
+  # A manual dry run against a REAL index. PyPI filenames are immutable -- a
+  # bad upload can be yanked but never replaced -- so the release checklist
+  # asks for a TestPyPI rehearsal first. This job never runs on a tag; it is
+  # opt-in from the Actions tab, so it adds no mandatory setup. To use it,
+  # register a second pending publisher on test.pypi.org with the same
+  # owner/repo/workflow and environment name `testpypi`.
+  publish_testpypi:
+    name: publish to TestPyPI (manual dry run)
+    needs: [check_tags]
+    if: github.event_name == 'workflow_dispatch' && inputs.publish_target == 'testpypi'
+    runs-on: ubuntu-latest
+    environment: testpypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+
+  publish:
+    name: publish to PyPI
+    needs: [check_tags]
+    # `github.event_name == 'push'` is load-bearing: the Actions "Run workflow"
+    # dropdown lists tags as well as branches, so a workflow_dispatch selected
+    # against v0.1.0 -- the natural way to re-run a failed tag build -- would
+    # otherwise satisfy the ref test and upload to real PyPI, whatever
+    # publish_target says (that input gates only the TestPyPI job).
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write   # trusted publishing; no API token stored in the repo
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - uses: pypa/gh-action-pypi-publish@release/v1

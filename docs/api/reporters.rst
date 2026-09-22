@@ -1,0 +1,134 @@
+Reporters
+=========
+
+Reporters observe a running simulation at a fixed step interval and write to
+disk. The library writes files rather than printing: under replica exchange a
+single run has many ``step()`` calls across many MPI ranks, so anything going
+to stdout interleaves into noise.
+
+All three reporter classes live in the compiled extension, so they are
+documented here with explicit signatures rather than by ``autoclass`` — Read
+the Docs cannot compile the C++ extension, and a mocked pybind11 class renders
+as an empty stub.
+
+Attach a reporter either through the ``Simulation`` helpers, which construct
+and register it in one call, or by constructing it yourself and calling
+:meth:`~pymcpu.Simulation.add_reporter`.
+
+.. code-block:: python
+
+   sim.add_energy_reporter("energies.csv", interval=100)
+   sim.add_xtc_reporter("traj.xtc", interval=1000)
+
+   # equivalent, if you want to keep a handle on the object
+   reporter = mc.EnergyReporter("energies.csv", 100)
+   sim.add_reporter(reporter)
+
+EnergyReporter
+--------------
+
+.. py:class:: EnergyReporter(energy_filename, report_interval, append=False)
+
+   Writes a CSV row every ``report_interval`` steps holding the per-group
+   energies and the cumulative move accept/attempt counters.
+
+   :param str energy_filename: Output CSV path.
+   :param int report_interval: Steps between rows.
+   :param bool append: Append to an existing file instead of truncating it.
+      Used when resuming from a checkpoint, after the file has been truncated
+      back to the checkpointed row count.
+
+   The columns are ``Step``, ``Total``, ``Mu``, ``BackboneTorsion``,
+   ``SidechainTorsion``, ``HydrogenBond``, ``Aromatic``,
+   ``NativeContactsBias``, ``PivotAccepted``, ``PivotAttempted``,
+   ``SidechainAccepted``, ``SidechainAttempted``, ``KicAccepted``,
+   ``KicAttempted``, ``WalkerId``.
+
+   ``Total`` includes the native-contacts bias when one is enabled. That makes
+   it the right quantity for monitoring a biased run and the **wrong** one for
+   MBAR reweighting — use the replica-exchange HDF5 samples and
+   :doc:`analysis` for that.
+
+   .. py:attribute:: filename
+      :type: str
+
+      The path being written.
+
+   .. py:attribute:: n_frames_written
+      :type: int
+
+      Rows written so far. The resume path uses this to align the file with a
+      checkpoint.
+
+   .. py:attribute:: walker_id
+      :type: int
+
+      Value written in the ``WalkerId`` column; ``-1`` when unset.
+
+   .. py:method:: set_walker_id(walker_id)
+
+      Tag subsequent rows with a walker/replica identifier, so output from
+      several replicas can be told apart after the fact.
+
+.. note::
+
+   There is no accessor for reading energies back out of an
+   ``EnergyReporter`` — it is a writer, not a buffer. Read the CSV it
+   produced, for example with ``pandas.read_csv(reporter.filename)``. To query
+   current energies directly, use ``Context.energy_breakdown()``.
+
+XtcReporter
+-----------
+
+.. py:class:: XtcReporter(xtc_filename, report_interval, inverse_mapping=[], append=False)
+
+   Writes coordinates to a GROMACS XTC trajectory.
+
+   :param str xtc_filename: Output ``.xtc`` path.
+   :param int report_interval: Steps between frames.
+   :param inverse_mapping: Permutation mapping the engine's internal atom order
+      back to the input topology order, so the trajectory is readable against
+      the original PDB. Pass ``MCPUForceField.inverse_mapping``. An empty
+      sequence writes internal order.
+   :param bool append: Append to an existing trajectory, for resume.
+
+   .. py:attribute:: filename
+      :type: str
+
+   .. py:attribute:: n_frames_written
+      :type: int
+
+   .. py:method:: flush()
+
+      Force buffered frames to disk. The resume path calls this before
+      detaching reporters, so the on-disk frame count matches
+      ``n_frames_written``.
+
+XTC is the preferred trajectory format: it is compressed, and it is one of the
+four formats correctly truncated when a run resumes. See :doc:`../checkpointing`
+— DCD is **not** truncated on resume.
+
+SimulationReporter
+------------------
+
+.. py:class:: SimulationReporter(report_interval)
+
+   Prints a short human-readable progress line to stdout every
+   ``report_interval`` steps.
+
+   :param int report_interval: Steps between lines.
+
+   A convenience for interactive use only. It takes no filename and has no
+   verbosity control — there is deliberately nothing to configure. For anything
+   you intend to keep or parse, use :py:class:`EnergyReporter`, whose output is
+   structured and goes to a file.
+
+Reporter
+--------
+
+.. py:class:: Reporter
+
+   Base class of the three reporters above. It is exposed so that
+   :meth:`~pymcpu.Simulation.add_reporter` has a type to accept and so
+   ``isinstance`` checks work. It has no public members of its own and is not
+   intended to be subclassed from Python.

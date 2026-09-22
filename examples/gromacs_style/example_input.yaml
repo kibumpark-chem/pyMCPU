@@ -1,0 +1,23 @@
+# Minimal working YAML for GROMACS-style CLI
+# Run: python examples/gromacs_style/run.py --input examples/gromacs_style/example_input.yaml
+pdb: examples/data/1uao.pdb
+temp_min: 0.5
+temp_step: 0.1
+n_temps: 2
+num_cycles: 5
+mc_replica_steps: 100
+seed: 42
+q_targets: [0.0, 0.5]
+k_bias: 1.0
+output_prefix: ./out_gromacs_example/rex
+log_interval: 50
+
+checkpointing:
+  enabled: true
+  checkpoint_dir: "checkpoints"
+  checkpoint_interval: 50
+  keep_last_n: 3
+  resume: false
+  cloud_sync: false
+  cloud_bucket: ""
+  cloud_sync_cmd: "aws s3 cp"

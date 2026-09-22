@@ -1,0 +1,11 @@
+# Documentation build dependencies for Sphinx / Read the Docs.
+# Keep in sync with [project.optional-dependencies].docs in pyproject.toml.
+# autodoc mocks pymcpu._pymcpu_core / pymcpu.mcpu_core when READTHEDOCS=True.
+
+sphinx>=7.0
+pydata-sphinx-theme>=0.14
+sphinx-autodoc-typehints>=1.23
+myst-parser>=2.0
+nbsphinx>=0.9
+sphinx-copybutton>=0.5
+numpy>=1.21

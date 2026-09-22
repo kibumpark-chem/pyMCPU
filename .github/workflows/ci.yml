@@ -1,0 +1,197 @@
+name: CI
+
+# Until this file existed the only workflow was lint.yml, whose two steps are
+# `pip install ruff` and `ruff check .`. Nothing in CI ever installed the
+# package, built the extension, imported pymcpu, or ran a test. That is how
+# nine consecutive commits shipped a tree in which `import pymcpu` fails:
+# pymcpu/forcefields/mcpu.py imported RotamerLibraryBuilder from a file that
+# was left untracked for nine commits, and every developer's working tree had
+# it, so nobody could see the breakage. `ruff check` parses files; it does not
+# resolve imports against the committed tree.
+#
+# The `clean-checkout-imports` job below exists specifically so that class of
+# error cannot recur.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ---------------------------------------------------------------------
+  # The cheapest possible guard, kept separate so it fails fast and its
+  # failure is unambiguous: does a CLEAN CHECKOUT import?
+  # ---------------------------------------------------------------------
+  clean-checkout-imports:
+    name: clean checkout imports
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Fail if a tracked module imports an untracked file
+        run: |
+          # Pure static check, no build required, so it runs in seconds and
+          # catches the "referenced but never git add-ed" error directly.
+          python - <<'PY'
+          import ast, pathlib, re, subprocess, sys
+
+          tracked = set(
+              subprocess.check_output(["git", "ls-files"], text=True).split()
+          )
+
+          # Compiled extension modules have no .py to track. Derive their
+          # names from CMakeLists rather than hardcoding, so adding a second
+          # pybind11 module cannot silently turn this guard into a false
+          # positive that someone then "fixes" by deleting the check.
+          ext_modules = set(
+              re.findall(r"pybind11_add_module\(\s*([A-Za-z_][A-Za-z0-9_]*)",
+                         pathlib.Path("CMakeLists.txt").read_text())
+          )
+          print(f"compiled extension modules (exempt): {sorted(ext_modules)}")
+
+          missing = []
+          for path in sorted(pathlib.Path("pymcpu").rglob("*.py")):
+              if str(path) not in tracked:
+                  continue
+              tree = ast.parse(path.read_text(), filename=str(path))
+              pkg = path.parent
+              for node in ast.walk(tree):
+                  if not isinstance(node, ast.ImportFrom) or node.level == 0:
+                      continue
+                  base = pkg
+                  for _ in range(node.level - 1):
+                      base = base.parent
+                  target = base / (node.module.replace(".", "/") if node.module else "")
+                  cands = [f"{target}.py", f"{target}/__init__.py"]
+                  if target.exists() or any(c in tracked for c in cands):
+                      continue
+                  if (node.module or "").split(".")[0] in ext_modules:
+                      continue
+                  missing.append(f"{path}:{node.lineno}: imports {node.module!r} "
+                                 f"-> neither {cands[0]} nor {cands[1]} is tracked")
+          if missing:
+              print("Relative imports that do not resolve to a TRACKED file:")
+              print("\n".join("  " + m for m in missing))
+              sys.exit(1)
+          print("all relative imports resolve to tracked files")
+          PY
+
+  # ---------------------------------------------------------------------
+  # Build the extension and run the suite. This is what lint.yml never did.
+  # ---------------------------------------------------------------------
+  test:
+    name: build + test (py${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Floor and ceiling of `requires-python = ">=3.9"`, plus one in the
+        # middle. Building the C++20 extension for all five is slow and the
+        # marginal coverage is small; cibuildwheel covers every version at
+        # release time in wheels.yml.
+        python-version: ["3.9", "3.11", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Show toolchain
+        run: |
+          g++ --version | head -1
+          cmake --version | head -1 || echo "cmake comes from the build backend"
+
+      - name: Install
+        # scikit-build-core pulls cmake/ninja itself when they are absent.
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install ".[test]"
+
+      - name: The build must report what it actually did
+        # build_info() derives from the branch the build took, not from the
+        # options requested -- that is what caught LTO being silently dropped
+        # in every wheel: FetchContent'd Eigen calls enable_language(Fortran),
+        # and an unscoped check_ipo_supported() then returned false. Assert the
+        # things a release build must be true of.
+        run: |
+          python - <<'PY'
+          import json, pymcpu.mcpu_core as m
+          info = m.build_info()
+          print(json.dumps(info, indent=2, sort_keys=True))
+          assert info["build"]["type"] == "Release", info["build"]["type"]
+          assert info["build"]["lto"] is True, (
+              "Release build reports lto=False. If the configure log says "
+              "'LTO/IPO not supported' and names a language this project does "
+              "not use, a dependency enabled it and check_ipo_supported() "
+              "needs LANGUAGES CXX."
+          )
+          assert info["fp"]["fast_math"] is False
+          assert info["arch"]["tier"], "no CPU baseline recorded"
+          PY
+
+      - name: Test
+        env:
+          MCPU_NO_DOWNLOAD: "1"
+        run: python -m pytest -q
+
+  # ---------------------------------------------------------------------
+  # Docs must build clean. `-W` turns warnings into errors; the docs tests
+  # additionally check that every documented API name actually resolves.
+  # ---------------------------------------------------------------------
+  docs:
+    name: docs (sphinx -W)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install pandoc
+        # nbsphinx converts docs/tutorials/01_single_trajectory.ipynb by
+        # shelling out to pandoc. The ubuntu-latest image has shipped it, but
+        # an undeclared dependency on a runner-image tool is exactly the kind
+        # of silent assumption that breaks on an image refresh -- and RTD needs
+        # it declared anyway (.readthedocs.yaml build.apt_packages).
+        run: sudo apt-get update && sudo apt-get install -y pandoc
+
+      - name: Install docs deps
+        # Deliberately does NOT install the package: docs/conf.py mocks
+        # mcpu_core because Read the Docs cannot compile C++20, and the docs
+        # build must keep working under that constraint.
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install ".[docs]" --no-build-isolation --no-deps || true
+          python -m pip install -r docs/requirements.txt
+      - name: Build
+        run: python -m sphinx -b html -W docs _build/html
+
+  # ---------------------------------------------------------------------
+  # An sdist must be buildable and must itself build a wheel. PyPI rejects a
+  # project whose sdist cannot be built from.
+  # ---------------------------------------------------------------------
+  sdist:
+    name: sdist builds and installs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: python -m pip install --upgrade pip build
+      - run: python -m build --sdist
+      - name: Install from the sdist alone
+        run: |
+          python -m pip install dist/*.tar.gz
+          cd /tmp && MCPU_NO_DOWNLOAD=1 python -c "
+          import pymcpu
+          print('version', pymcpu.__version__)
+          print('arch', pymcpu.mcpu_core.build_info()['arch'])
+          "
