@@ -21,15 +21,15 @@ namespace mcpu {
     struct MuWorkspace;
 }
 
-struct ContactData {
-    bool check_contact=true;
-    bool check_clash=true;
-    float energy=0.0f;
-    float contact_dist_sq=0.0f;
-    float hard_core_sq=0.0f;
-};
+namespace mcpu::forces::mcpu08 {
 
-namespace mcpu::forces {
+    struct ContactData {
+        bool check_contact=true;
+        bool check_clash=true;
+        float energy=0.0f;
+        float contact_dist_sq=0.0f;
+        float hard_core_sq=0.0f;
+    };
 
     class MuPotential : public mcpu::Potential {
     private:
@@ -694,4 +694,4 @@ namespace mcpu::forces {
 
     };
 
-} // namespace mcpu::forces
+} // namespace mcpu::forces::mcpu08

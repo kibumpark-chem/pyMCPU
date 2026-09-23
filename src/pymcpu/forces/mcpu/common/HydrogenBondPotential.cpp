@@ -1,4 +1,4 @@
-#include "pymcpu/forces/knowledge_based/HydrogenBondPotential.h"
+#include "pymcpu/forces/mcpu/common/HydrogenBondPotential.h"
 #include "pymcpu/Context.h"
 #include "pymcpu/State.h"
 #include "pymcpu/System.h"

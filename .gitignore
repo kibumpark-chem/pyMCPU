@@ -252,7 +252,11 @@ compile_commands.json
 # -- Large generated parameter payloads ----------------------------------
 # The fitted .bin tables are large and regenerated offline;
 # the shipped, re-encoded parameter set under pymcpu/data/params is NOT.
-src/pymcpu/parameters/pretrained/*/mcpu_params/
+# GLOB the directory name, not the literal `mcpu_params`: each force field's
+# parameter set gets its OWN relpath (mcpu26_params/, ...), and a rule keyed on
+# one fit's spelling silently fails to ignore the next one's tables -- which
+# scikit-build-core would then ship in the sdist.
+src/pymcpu/parameters/pretrained/*/*_params/
 src/pymcpu/parameters/pretrained/*/protein_cache/
 resources/
 

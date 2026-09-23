@@ -1,4 +1,4 @@
-#include "pymcpu/forces/knowledge_based/TripletPotential.h"
+#include "pymcpu/forces/mcpu/common/TripletPotential.h"
 #include "pymcpu/Context.h"
 #include "pymcpu/State.h"
 #include "pymcpu/utils/numbers_compat.h"

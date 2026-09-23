@@ -20,7 +20,7 @@
 
 namespace mcpu {
 
-namespace forces {
+namespace forces::mcpu08 {
 class MuPotential;
 }
 
@@ -390,8 +390,8 @@ public:
     }
 
     /// First MuPotential (nullptr if none). For diagnostics / verify.
-    [[nodiscard]] forces::MuPotential* mu_potential();
-    [[nodiscard]] const forces::MuPotential* mu_potential() const;
+    [[nodiscard]] forces::mcpu08::MuPotential* mu_potential();
+    [[nodiscard]] const forces::mcpu08::MuPotential* mu_potential() const;
     /// ADDED: MM clash margin for rigid elision path
     void set_mm_clash_margin(float margin_r2);
     [[nodiscard]] float mm_clash_margin() const;

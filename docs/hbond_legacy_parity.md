@@ -10,7 +10,7 @@
 > `tests/legacy_parity/test_hbond_ablation_ladder.py` skip in their absence;
 > the assertions about pyMCPU's own H-bond energy do not depend on them.
 
-pyMCPU's `HBondPotential` (`src/pymcpu/forces/knowledge_based/HydrogenBondPotential.cpp`,
+pyMCPU's `HBondPotential` (`src/pymcpu/forces/mcpu/common/HydrogenBondPotential.cpp`,
 `include/pymcpu/utils/hydrogen_bond_utils.h`) is a from-scratch C++ rewrite of legacy
 MCPU's `HydrogenBonds()`/`FoldHydrogenBonds()`
 (`dbfold_actin/MCPU/src_mpi_umbrella/hbonds.h`). This document records the exact
@@ -175,7 +175,7 @@ and `we/propagator.py`, which all rely on the same RNG save/restore contract.
 ## Files
 
 - `include/pymcpu/utils/hydrogen_bond_utils.h` — gates, `ang_CACA`, table indices.
-- `src/pymcpu/forces/knowledge_based/HydrogenBondPotential.{h,cpp}` — `HBondPotential`,
+- `src/pymcpu/forces/mcpu/common/HydrogenBondPotential.{h,cpp}` — `HBondPotential`,
   `seq_dep_factor`, `BETA_FAVOR`, `evaluate_directional`.
 - `include/pymcpu/System.h` — `amino_index_`, `secondary_structure_` storage.
 - `pymcpu/forcefields/builders/hbond_builder.py` — `AMINO_ORDER`, seq-dep table loader.

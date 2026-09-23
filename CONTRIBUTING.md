@@ -64,6 +64,15 @@ Energy terms are C++ (`include/pymcpu/forces/`, `src/pymcpu/forces/`). There is
 no Python-authored term: `Potential` has no pybind11 trampoline, deliberately,
 because the hot loop cannot afford a Python call per pair.
 
+**Where the file goes is a rule, not a judgement call** — see
+[`include/pymcpu/forces/README.md`](include/pymcpu/forces/README.md). In short:
+a term shared by every fit of a force-field family goes in
+`forces/<family>/common/` (a family is a LINEAGE, e.g. `mcpu/`, not a method),
+a term specific to one fit goes in
+`forces/<family>/<fit>/` and opens `namespace mcpu::forces::<fit>`, and a
+restraint with no fitted tables goes in `forces/bias/`.
+`tests/config/test_forces_layout.py` enforces both halves.
+
 A new term must:
 
 1. Subclass `mcpu::Potential` and implement `calculateEnergy` and

@@ -1,4 +1,4 @@
-#include "pymcpu/forces/knowledge_based/AromaticPotential.h"
+#include "pymcpu/forces/mcpu/common/AromaticPotential.h"
 #include "pymcpu/Context.h"
 #include "pymcpu/State.h"
 #include <algorithm>

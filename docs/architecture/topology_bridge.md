@@ -162,7 +162,7 @@ flag table the hot path reads. So for the default configuration a rule
 change is a Python change.
 
 It is not a Python-only change in general: `MuPotential`
-(`include/pymcpu/forces/knowledge_based/MuPotential.h`) keeps a second,
+(`include/pymcpu/forces/mcpu/mcpu08/MuPotential.h`) keeps a second,
 hand-mirrored copy of the same rules in `topology_pair_flags()`, used
 when the precomputed table is disabled with `MCPU_TOPO_FLAGS=0`. The two
 copies have drifted apart before. Change both, or accept that the

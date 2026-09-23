@@ -11,7 +11,7 @@ check).
 from __future__ import annotations
 
 #: MuPotential's hard-core steric-clash sentinel energy
-#: (``kHardCorePenalty`` in ``src/pymcpu/forces/knowledge_based/MuPotential.cpp``).
+#: (``kHardCorePenalty`` in ``src/pymcpu/forces/mcpu/mcpu08/MuPotential.cpp``).
 #: A raw Mu energy at or above this value means a clash was detected.
 MU_CLASH_SENTINEL = 99999.0
 

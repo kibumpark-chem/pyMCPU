@@ -14,12 +14,12 @@
 #include "pymcpu/Integrator.h"
 
 // Potentials
-#include "pymcpu/forces/knowledge_based/MuPotential.h"
-#include "pymcpu/forces/knowledge_based/TripletPotential.h"
-#include "pymcpu/forces/knowledge_based/SideChainTripletPotential.h"
-#include "pymcpu/forces/knowledge_based/HydrogenBondPotential.h"
-#include "pymcpu/forces/knowledge_based/AromaticPotential.h"
-#include "pymcpu/forces/knowledge_based/QBiasPotential.h"
+#include "pymcpu/forces/mcpu/mcpu08/MuPotential.h"
+#include "pymcpu/forces/mcpu/common/TripletPotential.h"
+#include "pymcpu/forces/mcpu/common/SideChainTripletPotential.h"
+#include "pymcpu/forces/mcpu/common/HydrogenBondPotential.h"
+#include "pymcpu/forces/mcpu/common/AromaticPotential.h"
+#include "pymcpu/forces/bias/QBiasPotential.h"
 
 // Tripeptide Closure
 #include "pymcpu/moves/TripeptideClosure.h"
@@ -36,6 +36,8 @@
 
 namespace py = pybind11;
 using namespace mcpu;
+// mcpu08 is the fit tag; see include/pymcpu/forces/README.md.
+namespace m08 = mcpu::forces::mcpu08;
 
 // The module name MUST be mcpu_core
 PYBIND11_MODULE(mcpu_core, m) {
@@ -376,7 +378,7 @@ PYBIND11_MODULE(mcpu_core, m) {
         .def("clash_first_min_moved", &Context::clash_first_min_moved)
         .def_property_readonly(
             "mu_potential",
-            [](Context& c) -> forces::MuPotential* { return c.mu_potential(); },
+            [](Context& c) -> m08::MuPotential* { return c.mu_potential(); },
             py::return_value_policy::reference_internal,
             "First MuPotential, or None.")
         .def("set_mm_clash_margin", &Context::set_mm_clash_margin, py::arg("margin_r2"),
@@ -1327,7 +1329,7 @@ PYBIND11_MODULE(mcpu_core, m) {
     .def("is_enabled", &Potential::isEnabled);
     // @note: Matrices are copied from numpy arrays at construction.
     //        This is a one-time cost — simulation performance is unaffected.
-    py::class_<forces::MuPotential, Potential, std::shared_ptr<forces::MuPotential>>(m, "MuPotential",
+    py::class_<m08::MuPotential, Potential, std::shared_ptr<m08::MuPotential>>(m, "MuPotential",
         "Pairwise contact/solvation potential between MCPU atom types\n"
         "(energy group 1, default outer weight 0.4).\n\n"
         "Dominates run time. A hard-core overlap returns a sentinel energy\n"
@@ -1335,50 +1337,50 @@ PYBIND11_MODULE(mcpu_core, m) {
         .def(py::init<Eigen::MatrixXf, Eigen::MatrixXf, Eigen::MatrixXf, std::vector<int>, std::vector<int>>(),
              py::arg("energies"), py::arg("dist_sq"), py::arg("hard_core"),
              py::arg("types"), py::arg("to_residue"))
-        .def("cache_necessary_data", &forces::MuPotential::cache_necessary_data,
+        .def("cache_necessary_data", &m08::MuPotential::cache_necessary_data,
              py::arg("topo_contact_mask"), py::arg("topo_clash_mask"), py::arg("coords"))
         .def(
             "set_topology_atom_meta",
-            &forces::MuPotential::set_topology_atom_meta,
+            &m08::MuPotential::set_topology_atom_meta,
             py::arg("res_index"), py::arg("is_sidechain"), py::arg("atom_role"),
             py::arg("res_class"),
             "Layer 1 per-atom topology metadata for three-layer eval.")
         .def_property(
             "use_topo_flags",
-            &forces::MuPotential::use_topo_flags,
-            &forces::MuPotential::set_use_topo_flags,
+            &m08::MuPotential::use_topo_flags,
+            &m08::MuPotential::set_use_topo_flags,
             "Layered v2: precomputed topo_flag_ (default True). "
             "False = v1 on-the-fly Layer 1 decode. MCPU_TOPO_FLAGS=0.")
         .def("verify_layered_eval_consistency",
-             &forces::MuPotential::verify_layered_eval_consistency,
+             &m08::MuPotential::verify_layered_eval_consistency,
              "Compare layered v1 vs v2 for all pairs × test r².")
-        .def("bench_eval_pair_only", &forces::MuPotential::bench_eval_pair_only,
+        .def("bench_eval_pair_only", &m08::MuPotential::bench_eval_pair_only,
              py::arg("n_iter") = 1000000,
              "Microbench eval_pair ns/call (stderr).")
         .def_property_readonly(
             "clash_exception_count",
-            &forces::MuPotential::clash_exception_count)
+            &m08::MuPotential::clash_exception_count)
         .def_property_readonly(
-            "topo_flag_size_mb", &forces::MuPotential::topo_flag_size_mb)
-        .def_property_readonly("type_params_size_kb", &forces::MuPotential::type_params_size_kb)
+            "topo_flag_size_mb", &m08::MuPotential::topo_flag_size_mb)
+        .def_property_readonly("type_params_size_kb", &m08::MuPotential::type_params_size_kb)
         .def_property_readonly(
-            "mu_exact_cutoff", &forces::MuPotential::mu_exact_cutoff,
+            "mu_exact_cutoff", &m08::MuPotential::mu_exact_cutoff,
             "Denselist query cutoff (Å) from max(type_params_ contact/hard).")
         .def_property_readonly(
-            "mu_cutoff_sq", &forces::MuPotential::mu_cutoff_sq,
+            "mu_cutoff_sq", &m08::MuPotential::mu_cutoff_sq,
             "mu_exact_cutoff² used in denselist r² prefilter.")
         .def_property(
             "mm_clash_margin",
-            &forces::MuPotential::mm_clash_margin,
-            &forces::MuPotential::set_mm_clash_margin,
+            &m08::MuPotential::mm_clash_margin,
+            &m08::MuPotential::set_mm_clash_margin,
             "ADDED: MM clash margin Å² (MCPU_MM_CLASH_MARGIN).")
         .def_property(
             "mm_double_boundary",
-            &forces::MuPotential::mm_double_boundary,
-            &forces::MuPotential::set_mm_double_boundary,
+            &m08::MuPotential::mm_double_boundary,
+            &m08::MuPotential::set_mm_double_boundary,
             "ADDED: double MM boundary check (MCPU_MM_DOUBLE_BOUNDARY).")
         .def("calculate_energy_change",
-             [](const forces::MuPotential& mu, const Context& context,
+             [](const m08::MuPotential& mu, const Context& context,
                 const State& old_state, const State& new_state,
                 const ProposalPatch& patch) {
                  return mu.calculateEnergyChange(

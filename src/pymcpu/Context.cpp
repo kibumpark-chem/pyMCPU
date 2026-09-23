@@ -1,6 +1,6 @@
 #include "pymcpu/Context.h"
-#include "pymcpu/forces/knowledge_based/QBiasPotential.h"
-#include "pymcpu/forces/knowledge_based/MuPotential.h"
+#include "pymcpu/forces/bias/QBiasPotential.h"
+#include "pymcpu/forces/mcpu/mcpu08/MuPotential.h"
 #include "pymcpu/AtomReorder.h"
 #include "pymcpu/utils/geometry_utils.h"
 #include "pymcpu/utils/sidechain_torsion_utils.h"
@@ -197,7 +197,7 @@ void Context::computeTorsions() {
 
 void Context::sync_geometry() {
     // CHANGED: always propagate exact denselist cutoff from MuPotential.
-    if (forces::MuPotential* mu = mu_potential()) {
+    if (forces::mcpu08::MuPotential* mu = mu_potential()) {
         neighbors_.config().mu_denselist_cutoff_A = mu->mu_exact_cutoff();
     }
     neighbors_.rebuild_from_accepted_state(state.coords_soa);
@@ -412,18 +412,18 @@ EnergyBreakdown Context::energy_breakdown() const {
     return system->energyBreakdown(*this, state);
 }
 
-forces::MuPotential* Context::mu_potential() {
+forces::mcpu08::MuPotential* Context::mu_potential() {
     for (auto& f : system->getPotentials()) {
-        if (auto* mu = dynamic_cast<forces::MuPotential*>(f.get())) {
+        if (auto* mu = dynamic_cast<forces::mcpu08::MuPotential*>(f.get())) {
             return mu;
         }
     }
     return nullptr;
 }
 
-const forces::MuPotential* Context::mu_potential() const {
+const forces::mcpu08::MuPotential* Context::mu_potential() const {
     for (const auto& f : system->getPotentials()) {
-        if (const auto* mu = dynamic_cast<const forces::MuPotential*>(f.get())) {
+        if (const auto* mu = dynamic_cast<const forces::mcpu08::MuPotential*>(f.get())) {
             return mu;
         }
     }
@@ -433,7 +433,7 @@ const forces::MuPotential* Context::mu_potential() const {
 void Context::set_mm_clash_margin(float margin_r2) {
 #if MCPU_FAST_MU_DELTA
     for (auto& f : system->getPotentials()) {
-        if (auto* mu = dynamic_cast<forces::MuPotential*>(f.get())) {
+        if (auto* mu = dynamic_cast<forces::mcpu08::MuPotential*>(f.get())) {
             mu->set_mm_clash_margin(margin_r2);
         }
     }
@@ -445,7 +445,7 @@ void Context::set_mm_clash_margin(float margin_r2) {
 float Context::mm_clash_margin() const {
 #if MCPU_FAST_MU_DELTA
     for (const auto& f : system->getPotentials()) {
-        if (const auto* mu = dynamic_cast<const forces::MuPotential*>(f.get())) {
+        if (const auto* mu = dynamic_cast<const forces::mcpu08::MuPotential*>(f.get())) {
             return mu->mm_clash_margin();
         }
     }
@@ -456,7 +456,7 @@ float Context::mm_clash_margin() const {
 void Context::set_mm_double_boundary(bool on) {
 #if MCPU_FAST_MU_DELTA
     for (auto& f : system->getPotentials()) {
-        if (auto* mu = dynamic_cast<forces::MuPotential*>(f.get())) {
+        if (auto* mu = dynamic_cast<forces::mcpu08::MuPotential*>(f.get())) {
             mu->set_mm_double_boundary(on);
         }
     }
@@ -468,7 +468,7 @@ void Context::set_mm_double_boundary(bool on) {
 bool Context::mm_double_boundary() const {
 #if MCPU_FAST_MU_DELTA
     for (const auto& f : system->getPotentials()) {
-        if (const auto* mu = dynamic_cast<const forces::MuPotential*>(f.get())) {
+        if (const auto* mu = dynamic_cast<const forces::mcpu08::MuPotential*>(f.get())) {
             if (mu->mm_double_boundary()) return true;
         }
     }

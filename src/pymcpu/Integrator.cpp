@@ -2,7 +2,6 @@
 #include "pymcpu/moves/TripeptideClosure.h"
 #include "pymcpu/moves/RotamerLibrary.h"
 #include "pymcpu/moves/RamaMixtureLibrary.h"
-#include "pymcpu/forces/knowledge_based/MuPotential.h"
 #include "pymcpu/System.h"
 #include "pymcpu/Context.h"
 #include "pymcpu/utils/CoordsSoA.h"

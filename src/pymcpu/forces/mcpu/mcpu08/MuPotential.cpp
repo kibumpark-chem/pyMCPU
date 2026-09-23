@@ -1,4 +1,4 @@
-#include "pymcpu/forces/knowledge_based/MuPotential.h"
+#include "pymcpu/forces/mcpu/mcpu08/MuPotential.h"
 #include "pymcpu/State.h"
 #include "pymcpu/Context.h"
 #include "pymcpu/ProposalPatch.h"
@@ -27,7 +27,7 @@
 #include <x86intrin.h>
 #endif
 
-namespace mcpu::forces {
+namespace mcpu::forces::mcpu08 {
 
 #if defined(MCPU_CP_BREAKDOWN)
 // ---------------------------------------------------------------------------
@@ -2669,4 +2669,4 @@ struct CpTimer {
         return static_cast<const Potential*>(this)->calculateEnergy(context, state);
     }
 
-} // namespace mcpu::forces
+} // namespace mcpu::forces::mcpu08

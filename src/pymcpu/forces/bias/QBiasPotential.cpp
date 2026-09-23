@@ -1,4 +1,4 @@
-#include "pymcpu/forces/knowledge_based/QBiasPotential.h"
+#include "pymcpu/forces/bias/QBiasPotential.h"
 
 #include <algorithm>
 #include <stdexcept>

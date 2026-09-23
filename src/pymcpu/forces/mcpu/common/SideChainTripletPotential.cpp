@@ -1,4 +1,4 @@
-#include "pymcpu/forces/knowledge_based/SideChainTripletPotential.h"
+#include "pymcpu/forces/mcpu/common/SideChainTripletPotential.h"
 #include "pymcpu/Context.h"
 #include "pymcpu/State.h"
 #include <iostream>
