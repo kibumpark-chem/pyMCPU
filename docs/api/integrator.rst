@@ -72,8 +72,39 @@ Move set
 --------
 
 The move mix has three slots -- Pivot, Sidechain and KIC (concerted
-loop closure). These knobs select the algorithm used inside a slot;
-none of them adds a fourth move kind.
+loop closure). :py:meth:`Integrator.set_move_weights` sets how often
+each slot is chosen; the remaining knobs select the algorithm used
+*inside* a slot and none of them adds a fourth move kind.
+
+.. py:method:: Integrator.set_move_weights(pivot, kic, sidechain) -> None
+
+   Relative probabilities of the three slots, normalized internally --
+   ``(1, 1, 0)`` and ``(0.5, 0.5, 0)`` mean the same thing. All three
+   must be non-negative with a positive, finite sum; anything else
+   raises ``ValueError``.
+
+   The default is ``(0.25, 0.25, 0.50)``, the mix the engine has always
+   used. Passing it explicitly is byte-identical to never calling this
+   method: exactly one RNG draw is consumed per step whatever the
+   weights are, so the stream does not shift.
+
+   .. warning::
+      Pass ``sidechain=0.0`` for a force field whose residues have no
+      chi angles -- a backbone-only one, for instance. Otherwise every
+      sidechain proposal returns without proposing anything, and that
+      share of the run is spent producing nothing. Rather than let that
+      happen quietly, :py:meth:`Integrator.run` raises when the
+      sidechain weight is positive and no residue in the system has a
+      chi angle.
+
+   Note that KIC needs a residue index in ``[1, n_residues - 4]``, so on
+   a short chain a large KIC weight buys less than it looks like: the
+   fraction of KIC draws that can produce a move is roughly
+   ``(N - 4) / (N - 2)``, which is 0 for four residues or fewer.
+
+.. py:method:: Integrator.move_weights() -> tuple
+
+   ``(pivot, kic, sidechain)``, normalized to sum 1.
 
 .. py:method:: Integrator.set_sidechain_move_mode(mode) -> None
 

@@ -36,6 +36,7 @@ __all__ = [
     # so that every entry point rejects the same inputs identically.
     "apply_linker_energy_mask",
     "normalize_linker_energy_mode",
+    "normalize_move_weights",
     "normalize_pivot_rama_probability",
     "normalize_pivot_rama_schedule",
     "normalize_sidechain_move_mode",
@@ -96,6 +97,32 @@ def normalize_pivot_rama_probability(p: float | None) -> float:
     return p
 
 
+def normalize_move_weights(
+    weights: Sequence[float] | None,
+) -> tuple[float, float, float]:
+    """Validate and normalize the (pivot, kic, sidechain) move-slot weights.
+
+    ``None`` keeps the engine default (0.25, 0.25, 0.50). Normalizing here as
+    well as in C++ means a config file reports its own error, naming the key,
+    rather than surfacing it from the engine mid-run.
+    """
+    if weights is None:
+        return (0.25, 0.25, 0.50)
+    values = tuple(float(w) for w in weights)
+    if len(values) != 3:
+        raise ValueError(
+            f"move_weights must be [pivot, kic, sidechain], got {weights!r}"
+        )
+    if any(w < 0.0 or w != w for w in values):
+        raise ValueError(f"move_weights must be non-negative, got {weights!r}")
+    total = sum(values)
+    if not (total > 0.0) or total == float("inf"):
+        raise ValueError(
+            f"move_weights must have a positive, finite sum, got {weights!r}"
+        )
+    return (values[0] / total, values[1] / total, values[2] / total)
+
+
 def normalize_pivot_rama_schedule(
     schedule: Mapping[str, float] | None,
 ) -> dict[str, float] | None:
@@ -127,6 +154,13 @@ class IntegratorConfig:
     sidechain_move_mode: SidechainMoveMode = "rotamer_library"
     pivot_rama_probability: float = 0.0
     pivot_rama_schedule: dict[str, float] | None = None
+    #: (pivot, kic, sidechain) move-slot probabilities. Set the third to 0.0
+    #: for a force field whose residues have no chi angles, or half the run is
+    #: spent on sidechain proposals that cannot do anything.
+    move_weights: tuple[float, float, float] = (0.25, 0.25, 0.50)
+
+    def __post_init__(self) -> None:
+        self.move_weights = normalize_move_weights(self.move_weights)
 
 
 @dataclass
@@ -228,6 +262,15 @@ class SimulationConfig:
     pdb: str
     param_set: str = "mcpu_v1"
     param_dir: str | None = None
+    #: Which force field to build: "mcpu08" (all-atom, the default and what
+    #: every existing config means) or "korp" (backbone-only). See
+    #: pymcpu.forcefields.available_forcefields().
+    forcefield: str = "mcpu08"
+    #: Constructor arguments for that force field. The two take different
+    #: arguments -- MCPU a parameter set, KORP an energy map -- so they are
+    #: passed through rather than flattened into one schema that would be
+    #: half-irrelevant whichever you pick. Unknown keys raise at build time.
+    forcefield_options: dict[str, Any] = field(default_factory=dict)
     reference_pdb: str | None = None
     mpi: bool = False
     integrator: IntegratorConfig = field(default_factory=IntegratorConfig)
@@ -276,6 +319,16 @@ class EngineSpec:
     cv: tuple[dict, ...] = ()
     param_set: str = "mcpu_v1"
     param_dir: str | None = None
+    #: Which force field to build: "mcpu08" (all-atom, the default and what
+    #: every existing config means) or "korp" (backbone-only). See
+    #: pymcpu.forcefields.available_forcefields().
+    forcefield: str = "mcpu08"
+    #: Constructor arguments for that force field. The two take different
+    #: arguments -- MCPU a parameter set, KORP an energy map -- so they are
+    #: passed through rather than flattened into one schema that would be
+    #: half-irrelevant whichever you pick. Unknown keys raise at build time.
+    forcefield_options: dict[str, Any] = field(default_factory=dict)
+
     compute_dssp: bool = False
     dssp_coil_state: str = "C"
     temperature: float = 0.6
@@ -283,6 +336,7 @@ class EngineSpec:
     sidechain_move_mode: str = "rotamer_library"
     pivot_rama_probability: float = 0.0
     pivot_rama_schedule: dict[str, float] | None = None
+    move_weights: tuple[float, float, float] = (0.25, 0.25, 0.50)
     fixed_residues: tuple[int, ...] = ()
     linker_residues: tuple[int, ...] = ()
     linker_energy_mode: str = "ignore_all"
@@ -294,6 +348,13 @@ class EngineSpec:
             self.pivot_rama_probability
         )
         self.pivot_rama_schedule = normalize_pivot_rama_schedule(self.pivot_rama_schedule)
+        self.move_weights = normalize_move_weights(self.move_weights)
+        # Resolved here rather than at build time, so a typo'd name is
+        # reported against the config that carries it.
+        from pymcpu.forcefields import get_forcefield
+
+        get_forcefield(self.forcefield)
+        self.forcefield_options = dict(self.forcefield_options or {})
         validate_fixed_linker_disjoint(self.fixed_residues, self.linker_residues)
 
         self.fixed_residues = tuple(int(r) for r in self.fixed_residues)
@@ -334,6 +395,9 @@ class EngineSpec:
             sidechain_move_mode=cfg.integrator.sidechain_move_mode,
             pivot_rama_probability=cfg.integrator.pivot_rama_probability,
             pivot_rama_schedule=cfg.integrator.pivot_rama_schedule,
+            move_weights=cfg.integrator.move_weights,
+            forcefield=cfg.forcefield,
+            forcefield_options=dict(cfg.forcefield_options),
             fixed_residues=tuple(cfg.constraints.fixed_residues),
             linker_residues=tuple(cfg.constraints.linker_residues),
             linker_energy_mode=cfg.constraints.linker_energy_mode,
@@ -443,6 +507,8 @@ def config_from_dict(data: Mapping[str, Any]) -> SimulationConfig:
         pdb=str(data["pdb"]),
         param_set=str(data.get("param_set", "mcpu_v1")),
         param_dir=data.get("param_dir"),
+        forcefield=str(data.get("forcefield", "mcpu08")),
+        forcefield_options=dict(data.get("forcefield_options") or {}),
         reference_pdb=data.get("reference_pdb"),
         integrator=integrator,
         outputs=outputs,
@@ -635,6 +701,7 @@ def yaml_dict_to_config(data: Mapping[str, Any]) -> SimulationConfig:
             data.get("pivot_rama_probability")
         ),
         pivot_rama_schedule=normalize_pivot_rama_schedule(data.get("pivot_rama_schedule")),
+        move_weights=normalize_move_weights(data.get("move_weights")),
     )
 
     rex: ReplicaExchangeConfig | None = None
@@ -705,6 +772,8 @@ def yaml_dict_to_config(data: Mapping[str, Any]) -> SimulationConfig:
         pdb=str(data["pdb"]),
         param_set=str(data.get("param_set", "mcpu_v1")),
         param_dir=data.get("param_dir"),
+        forcefield=str(data.get("forcefield", "mcpu08")),
+        forcefield_options=dict(data.get("forcefield_options") or {}),
         reference_pdb=data.get("reference_pdb"),
         integrator=integrator,
         outputs=outputs,

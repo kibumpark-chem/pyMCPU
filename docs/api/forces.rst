@@ -246,18 +246,75 @@ reproduce the legacy MCPU configuration:
      - 1.0
      - 1.0
      - --
+   * - 7
+     - :py:class:`OrientationalPairPotential`
+     - 1.0
+     - 1.0
+     - --
+   * - 8
+     - :py:class:`CalphaExcludedVolumePotential`
+     - 1.0
+     - 1.0
+     - --
 
 Group 4 is the one asymmetric row: the configured outer weight is
 1.35, but the effective multiplier is ``1.35 * hbond_rdthree`` with
 ``hbond_rdthree = 2.0`` (legacy ``RDTHREE_CON``), i.e. **2.7**.
 :py:meth:`Context.get_energy_weights` reports the *effective* value.
-Groups 7-15 exist and default to 1.0.
+Groups 9-15 are unclaimed and default to 1.0. Note that group 7 is the
+last one the engine still times -- ``Context::energy_delta_ns_`` is
+``[8]`` -- which is why the expensive KORP term takes it and the cheap
+steric filter takes 8.
 
 The constants are exposed on ``pymcpu.mcpu_core.EnergyWeights`` as
 ``LEGACY_MU``, ``LEGACY_BB_TOR``, ``LEGACY_SC_TOR``, ``LEGACY_HBOND``,
 ``LEGACY_RDTHREE`` and ``LEGACY_ARO``. Setting
 ``Context.set_use_legacy_weights(False)`` drops every outer weight to
 1.0 and the ``hbond_rdthree`` factor with it.
+
+KORP lineage
+------------
+
+These two are a separate force field from the MCPU terms above and are
+not mixed with them: :py:class:`~pymcpu.KORPForceField` installs both
+and nothing else. See :doc:`/physics_notes/korp_6d`.
+
+.. py:class:: OrientationalPairPotential(map, n_atom, ca_atom, c_atom, korp_type, seq_number, chain_id)
+
+   KORP's 6D orientation-dependent residue-pair energy (energy group 7,
+   default outer weight 1.0).
+
+   One frame per residue built from its own N, CA and C; the pair
+   coordinate is CA-CA. No sidechain atom is read, which is what makes
+   this usable as a backbone-only force field.
+
+   ``korp_type`` indexes KORP's own residue ordering, alphabetical by
+   **one-letter** code -- *not* pyMCPU's ``AMINO_INDEX`` ordering.
+   ``seq_number`` must be PDB residue numbers: KORP derives sequence
+   separation from those rather than from array position, so renumbered
+   input genuinely scores differently.
+
+   The energy map is not distributed with pyMCPU. Build this through
+   :py:class:`~pymcpu.KORPForceField` rather than by hand.
+
+   .. py:method:: set_rigid_skip_enabled(on)
+
+      Testing hook: disable the moved-moved elision in the incremental
+      path, so it enumerates every changed pair instead. Both paths must
+      agree on which moves are accepted.
+
+.. py:class:: CalphaExcludedVolumePotential(ca_atom, seq_number, chain_id, min_separation=3, min_distance=3.2)
+
+   CA-CA excluded-volume filter (energy group 8).
+
+   KORP has no hard-core repulsion, so on its own it lets a chain pass
+   through itself during MC. This term contributes exactly zero to every
+   accepted state and returns the clash sentinel otherwise, so it deletes
+   impossible configurations without shifting the ensemble.
+
+   The 3.2 A floor is measured rather than assumed -- see
+   :doc:`/physics_notes/korp_6d`. Pairs on different chains are never
+   exempt, whatever their residue numbering.
 
 Steric clashes
 --------------

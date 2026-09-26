@@ -127,12 +127,27 @@ class MCPUForceField(BaseForceField):
         self.dssp_coil_state = dssp_coil_state
         self.allow_provisional_rama = bool(allow_provisional_rama)
         self._load_parameters()
+        #: The topology the engine actually simulates. Identical in shape to
+        #: the input here, unlike KORPForceField's -- but exposed by both so a
+        #: caller can write trajectories without knowing which it has.
+        self.output_topology = trajectory.topology
         self._canonicalize_residue_names(trajectory.topology)
         self._validate_topology(trajectory.topology)
         self.secondary_structure = self._compute_secondary_structure(trajectory)
         self._order_atoms(trajectory.topology)
         self.coords = self._infer_hydrogens(trajectory)
         self._initialize_attributes(trajectory.topology)
+
+    @classmethod
+    def prepare_trajectory(cls, trajectory: md.Trajectory) -> md.Trajectory:
+        """Drop hydrogens. MCPU is a heavy-atom force field.
+
+        Idempotent: selecting heavy atoms from an already-heavy trajectory
+        keeps all of them, so call sites that were already slicing are
+        unaffected.
+        """
+        return trajectory.atom_slice(
+            trajectory.topology.select("not element H"))
 
     def _infer_hydrogens(self, trajectory: md.Trajectory) -> np.ndarray:
         """

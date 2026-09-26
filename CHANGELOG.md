@@ -7,7 +7,99 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Nothing yet.
+### Added
+
+- `Integrator.set_move_weights(pivot, kic, sidechain)` and
+  `Integrator.move_weights()`, plus a `move_weights` key on `IntegratorConfig`
+  and `EngineSpec`. The Pivot/KIC/Sidechain mix was previously three
+  function-local floats in `MCIntegrator::run` with no way to reach them.
+  The default `(0.25, 0.25, 0.50)` is unchanged and bit-identical: exactly one
+  RNG draw is consumed per step whatever the weights are, so the stream does
+  not shift.
+- **`KORPForceField`**: a backbone-only force field built on the KORP 6D
+  orientational potential (Lopez-Blanco & Chacon, *Bioinformatics* 2019). KORP
+  reads only N, CA and C and its pair coordinate is CA-CA, so this force field
+  drops sidechains rather than carrying them unused — the engine sees N, CA, C
+  and O only. Two new C++ terms back it, in the new `forces/korp/` lineage:
+  `OrientationalPairPotential` (energy group 7) and
+  `CalphaExcludedVolumePotential` (group 8), the latter supplying the
+  excluded volume KORP lacks as a pure filter that contributes zero to every
+  accepted state.
+
+  The compiled term reproduces the reference `korpe` binary to 4e-8 relative
+  on four structures, and its incremental energy agrees with a full recompute
+  over real integrator moves.
+
+  Two things to know before using it: the trajectory it produces contains
+  backbone only and must be loaded against `KORPForceField.output_topology`,
+  and sidechain moves must be switched off with
+  `set_move_weights(pivot, kic, 0.0)`.
+- `pymcpu.forcefields.korp_map`: a reader for the KORP 6D energy map, with a
+  reference (non-hot-path) scorer. **The map is not distributed** — at 316 MiB
+  it is well over PyPI's per-file limit — so it is supplied via
+  `KORP_MAP_PATH`. Verified against the reference `korpe` binary on four
+  structures to within 5e-9 relative.
+
+- **A force-field registry.** `pymcpu.forcefields.get_forcefield` /
+  `build_forcefield` / `available_forcefields`, plus `forcefield` and
+  `forcefield_options` keys on `SimulationConfig` and `EngineSpec`, so a config
+  file can select KORP instead of every call site constructing
+  `MCPUForceField` directly. The default is `"mcpu08"`, so a config that does
+  not mention a force field means exactly what it did before. Each force field
+  now declares its own preprocessing through
+  `BaseForceField.prepare_trajectory` (MCPU drops hydrogens; KORP slices its
+  own backbone), and both expose `output_topology`.
+
+### Fixed
+
+- **`KORPForceField.output_topology` no longer carries an atom the engine does
+  not hold.** `_BACKBONE_SELECTION` admits `OXT`/`OCT` so a residue with no
+  plain `O` can still supply one, and `_collect_residues` takes the first of
+  `O`, `OXT`, `OCT`. A C-terminus with *both* `O` and `OXT` therefore left the
+  unused one in `output_topology` with no engine slot, so `inverse_mapping` was
+  sparse — the one thing its own docstring says would break the XTC reporter,
+  which sizes output from `max(mapping) + 1` and zero-fills the rest.
+
+  Two symptoms, by where the unused atom sorted. Mid-file (a PDB listing `OXT`
+  before `N`/`CA`, as CLN025 does): a trajectory with one extra atom pinned at
+  the origin that **loaded cleanly and was silently wrong**. Last: a trajectory
+  with fewer atoms than the topology, which `mdtraj` refused outright.
+
+  `output_topology` is now built after `_build_layout` and restricted to the
+  atoms the engine actually holds, which makes `inverse_mapping` a dense
+  permutation of `range(n_atoms)` by construction. The `O`/`OXT`/`OCT` fallback
+  is unaffected — a residue with `OXT` and no `O` still scores.
+
+  **No energy changes**: `create_system` discards the topology argument and
+  builds from the layout, so nothing here reaches the physics. Verified
+  bit-identical on twelve structures spanning 10–80 residues. Structures
+  without a terminal extra oxygen are untouched.
+
+  Neither shipped fixture has a terminal `OXT`, so nothing caught this;
+  `tests/physics/forcefield/test_korp_terminal_oxygen.py` builds its own and
+  covers both orderings plus the fallback. Against the unfixed code five of
+  its eight cases fail.
+
+### Changed
+
+- **`Integrator.run` now raises** when the sidechain move weight is positive
+  but no residue in the system has a chi angle. Previously that combination —
+  which is what any backbone-only force field produces — silently discarded
+  that share of the step budget, since every sidechain proposal returns
+  without proposing anything. Call `set_move_weights(pivot, kic, 0.0)`.
+  Systems with sidechains are unaffected.
+- **`Integrator.run` now raises** on systems with fewer than three residues.
+  The pivot residue distribution is `uniform_int_distribution(1, n_res - 2)`,
+  which is undefined below that and returned unspecified values rather than
+  failing.
+- KORP's polar angles are compared as cosines rather than as angles, which is
+  an exact reordering of the same comparison (`acos` is monotonic) and removes
+  two inverse-trig calls from the per-pair hot path. Worth ~20% of the step;
+  the reference energies are unchanged.
+- `PhysicsVerifier::verify_potential_delta` decides whether a clash sentinel is
+  expected by asking the potential (`canHardReject()`) instead of testing
+  `energy_group == 1`. The old test was correct only while `MuPotential` was
+  the only hard-rejecting term.
 
 ## [0.1.0] — 2026-09-16
 

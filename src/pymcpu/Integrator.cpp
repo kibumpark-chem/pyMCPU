@@ -364,6 +364,35 @@ void MCIntegrator::set_sidechain_move_mode(const std::string& mode) {
     }
 }
 
+void MCIntegrator::set_move_weights(float pivot, float kic, float sidechain) {
+    if (!(pivot >= 0.0f && kic >= 0.0f && sidechain >= 0.0f)) {
+        throw std::invalid_argument("move weights must be non-negative");
+    }
+    const float sum = pivot + kic + sidechain;
+    if (!(sum > 0.0f) || !std::isfinite(sum)) {
+        throw std::invalid_argument("move weights must have a positive, finite sum");
+    }
+    move_w_pivot_ = pivot / sum;
+    move_w_kic_   = kic / sum;
+    move_w_sc_    = sidechain / sum;
+}
+
+void MCIntegrator::check_move_weights_are_usable(const Context& context) const {
+    if (move_w_sc_ <= 0.0f) return;
+    const std::vector<int>& ntors = context.getSystem().getTorsionsPerResidue();
+    const bool any_chi = std::any_of(ntors.begin(), ntors.end(),
+                                     [](int n) { return n > 0; });
+    if (any_chi) return;
+    // Every sidechain proposal would return early with patch.is_valid false,
+    // so this share of the step budget is spent producing nothing. That is
+    // exactly what a backbone-only force field walks into, and it is silent:
+    // the run completes, just with (1 - pivot - kic) of its steps discarded.
+    throw std::invalid_argument(
+        "MCIntegrator: the sidechain move weight is positive but no residue in "
+        "this system has a chi angle, so every sidechain proposal would be a "
+        "silent no-op. Call set_move_weights(pivot, kic, 0.0).");
+}
+
 std::string MCIntegrator::sidechain_move_mode() const {
     return sidechain_move_mode_ == SidechainMoveMode::RotamerLibrary
         ? "rotamer_library" : "continuous";
@@ -1540,6 +1569,12 @@ void MCIntegrator::apply_concerted_rotation_move(Context& context, State& propos
 void MCIntegrator::verify_physics_consistency(Context& context, int num_steps, float atol)
 {
     const int N = context.getSystem().getNumResidues();
+    if (N < 3) {
+        throw std::invalid_argument(
+            "MCIntegrator::verify_physics_consistency: needs at least 3 "
+            "residues; the pivot residue range is [1, n_residues-2].");
+    }
+    check_move_weights_are_usable(context);
     pivot_residue_dist = std::uniform_int_distribution<int>(1, N - 2);
     sc_residue_dist    = std::uniform_int_distribution<int>(0, N - 1);
     ensure_proposal_buffers(context);
@@ -1553,10 +1588,11 @@ void MCIntegrator::verify_physics_consistency(Context& context, int num_steps, f
         move_patch.reset_for_step();
 
         const float move_roll = move_type_dist(rng);
-        if (move_roll < 0.25f) {
+        const int move_slot = select_move_slot(move_roll);
+        if (move_slot == 0) {
             bool used_rama_pivot = false;
             dispatch_pivot_move(context, proposal, move_patch, used_rama_pivot);
-        } else if (move_roll < 0.50f) {
+        } else if (move_slot == 1) {
             apply_concerted_rotation_move(context, proposal, move_patch);
         } else if (sidechain_move_mode_ == SidechainMoveMode::RotamerLibrary) {
             apply_rotamer_move(context, proposal, move_patch);
@@ -1573,8 +1609,8 @@ void MCIntegrator::verify_physics_consistency(Context& context, int num_steps, f
 
         auto& mu_ws = context.getWorkspace();
         mu_ws.use_trial_fallback = !context.trial_in_bounds(proposal, move_patch);
-        if (move_roll < 0.25f) mu_ws.move_kind = MoveKind::Pivot;
-        else if (move_roll < 0.50f) mu_ws.move_kind = MoveKind::KIC;
+        if (move_slot == 0) mu_ws.move_kind = MoveKind::Pivot;
+        else if (move_slot == 1) mu_ws.move_kind = MoveKind::KIC;
         else mu_ws.move_kind = MoveKind::Sidechain;
 
         mu_ws.neighbor_mode = resolve_neighbor_mode(
@@ -1616,6 +1652,14 @@ void MCIntegrator::verify_physics_consistency(Context& context, int num_steps, f
 void MCIntegrator::run(Context& context, int num_steps, int step_offset)
 {
     const int N = context.getSystem().getNumResidues();
+    // uniform_int_distribution(1, N-2) is undefined for N < 3 (a > b), and in
+    // a release build it returns garbage rather than complaining.
+    if (N < 3) {
+        throw std::invalid_argument(
+            "MCIntegrator::run: needs at least 3 residues; the pivot residue "
+            "range is [1, n_residues-2].");
+    }
+    check_move_weights_are_usable(context);
     pivot_residue_dist = std::uniform_int_distribution<int>(1, N - 2);
     sc_residue_dist    = std::uniform_int_distribution<int>(0, N - 1);
     ensure_proposal_buffers(context);
@@ -1694,13 +1738,10 @@ void MCIntegrator::run(Context& context, int num_steps, int step_offset)
         bool tried_sc    = false;
         bool tried_rama_pivot = false;
 
-        float p_pivot = 0.25f;
-        float p_kic = 0.25f;
-        float p_sc = 0.50f;
-        const float pivot_cut = p_pivot;
-        const float kic_cut = p_pivot + p_kic;
-
+        // One draw per step, unconditionally, whatever the weights are --
+        // that invariance is what keeps the default RNG stream byte-identical.
         float move_roll = move_type_dist(rng);
+        const int move_slot = select_move_slot(move_roll);
 
         {
             // FIXED: gen_pivot_ns / gen_kic_ns / gen_sc_ns were declared in
@@ -1710,19 +1751,18 @@ void MCIntegrator::run(Context& context, int num_steps, int step_offset)
             // chignolin and 16% at sce -- the single largest unmeasured
             // component, and the one that sets the small-system floor. Three
             // ScopedTimers on a path taken once per step cost ~2 clock reads.
-            if (move_roll < pivot_cut) {
+            if (move_slot == 0) {
                 tried_pivot = true;
                 bb_attempted_++;
                 ScopedTimer gen_timer(&step_stats_.gen_pivot_ns);
                 dispatch_pivot_move(context, proposal, move_patch, tried_rama_pivot);
                 if (tried_rama_pivot) rama_pivot_attempted_++;
-            } else if (move_roll < kic_cut) {
+            } else if (move_slot == 1) {
                 tried_kic = true;
                 kic_attempted_++;
                 ScopedTimer gen_timer(&step_stats_.gen_kic_ns);
                 apply_concerted_rotation_move(context, proposal, move_patch);
             } else {
-                (void)p_sc;
                 tried_sc = true;
                 sc_attempted_++;
                 ScopedTimer gen_timer(&step_stats_.gen_sc_ns);

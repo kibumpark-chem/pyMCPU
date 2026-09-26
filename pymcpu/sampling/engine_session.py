@@ -32,6 +32,9 @@ import numpy as np
 
 from pymcpu import mcpu_core
 from pymcpu.config import EngineSpec, apply_linker_energy_mask
+from pymcpu.forcefields import build_forcefield as _build_registered_forcefield
+from pymcpu.forcefields import get_forcefield
+from pymcpu.forcefields.base import BaseForceField
 from pymcpu.forcefields.mcpu import MCPUForceField
 from pymcpu.sampling.cv_factory import build_cv
 from pymcpu.simulation import Simulation
@@ -72,22 +75,36 @@ def _load_heavy_forcefield(pdb_path: str | Path, **ff_kwargs: Any) -> tuple[MCPU
     return forcefield, heavy.topology
 
 
-def build_forcefield(spec: EngineSpec) -> tuple[MCPUForceField, md.Topology]:
-    """Load ``spec.pdb``, slice to heavy atoms, and build the
-    :class:`MCPUForceField` it defines. Shared by :class:`EngineSession`
-    (which also needs a full ``Context``/``Integrator``) and
-    a consumer that needs only the forcefield -- to read off a CV's
-    dimensionality and labels, say -- and must not pay for a ``Context``.
-    Analysis tools typically fall in that category.
+def build_forcefield(spec: EngineSpec) -> tuple[BaseForceField, md.Topology]:
+    """Load ``spec.pdb`` and build the force field it names.
+
+    Shared by :class:`EngineSession` (which also needs a full
+    ``Context``/``Integrator``) and a consumer that needs only the force field
+    -- to read off a CV's dimensionality and labels, say -- and must not pay
+    for a ``Context``. Analysis tools typically fall in that category.
+
+    Returns the force field and the topology the engine actually simulates,
+    which is *not* necessarily the input's: ``KORPForceField`` drops
+    sidechains, so trajectories written from it must be read back against
+    the returned topology.
     """
-    ff_kwargs: dict[str, Any] = {
-        "param_set": spec.param_set,
-        "compute_dssp": spec.compute_dssp,
-        "dssp_coil_state": spec.dssp_coil_state,
-    }
-    if spec.param_dir is not None:
-        ff_kwargs["param_dir"] = spec.param_dir
-    return _load_heavy_forcefield(spec.pdb, **ff_kwargs)
+    options: dict[str, Any] = dict(spec.forcefield_options)
+    cls = get_forcefield(spec.forcefield)
+    if issubclass(cls, MCPUForceField):
+        # `param_set` and friends are top-level EngineSpec fields because they
+        # predate forcefield_options and existing configs set them there. They
+        # are MCPU's, though, so they are only forwarded to MCPU -- KORP has no
+        # parameter set and would reject them. An explicit entry in
+        # forcefield_options still wins.
+        options.setdefault("param_set", spec.param_set)
+        options.setdefault("compute_dssp", spec.compute_dssp)
+        options.setdefault("dssp_coil_state", spec.dssp_coil_state)
+        if spec.param_dir is not None:
+            options.setdefault("param_dir", spec.param_dir)
+
+    forcefield = _build_registered_forcefield(
+        spec.forcefield, md.load(str(spec.pdb)), options)
+    return forcefield, forcefield.output_topology
 
 
 class EngineSession:
@@ -127,6 +144,7 @@ class EngineSession:
                 fixed_residues=list(self.spec.fixed_residues),
             )
             integrator = mcpu_core.Integrator(self.spec.temperature, self.spec.step_size_rad)
+            integrator.set_move_weights(*self.spec.move_weights)
             integrator.set_sidechain_move_mode(self.spec.sidechain_move_mode)
             if self.spec.pivot_rama_schedule is not None:
                 integrator.set_pivot_rama_schedule(**self.spec.pivot_rama_schedule)

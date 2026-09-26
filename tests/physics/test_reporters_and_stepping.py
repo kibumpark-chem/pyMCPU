@@ -56,6 +56,11 @@ def _tiny_simulation() -> Simulation:
     system, _ctx = setup_minimal_bb_system(n_res, n_res * atoms_per)
     topology = object()  # Dummy: Simulation only stores the reference.
     integrator = Integrator(temperature=1.0, step_size_rad=0.05)
+    # This system has no sidechain atoms and no chi angles, so the default mix
+    # would spend half its steps on sidechain proposals that return without
+    # proposing anything. run() rejects that combination rather than quietly
+    # discarding the steps, so say backbone-only explicitly.
+    integrator.set_move_weights(0.5, 0.5, 0.0)
     sim = Simulation(topology, system, integrator)  # type: ignore[arg-type]
     n_atoms = system.get_num_atoms()
     coords = np.zeros((3, n_atoms), dtype=np.float32)

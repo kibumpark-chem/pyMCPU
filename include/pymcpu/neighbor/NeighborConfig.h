@@ -12,11 +12,6 @@ enum class BoxPolicy : int {
     AutoRecenter = 2
 };
 
-enum class NeighborFallbackMode : int {
-    MovedVsAll = 0,
-    SparseHash = 1
-};
-
 enum class NeighborMode : int {
     CellOnly = 0,         // Pivot: never Verlet
     VerletPreferred = 1   // KIC/SC: Verlet when valid
@@ -47,7 +42,6 @@ struct NeighborConfig {
     int max_ny = 0;
     int max_nz = 0;
 
-    NeighborFallbackMode fallback_mode = NeighborFallbackMode::SparseHash;
     bool pivot_uses_verlet = false;
     /// Legacy: force-dirty Mu Verlet on every pivot/rigid accept.
     /// Default false: pivot tracks displacement like other moves (Option A).

@@ -317,6 +317,18 @@ examples/actin/legacy/**
 !examples/actin/legacy/config_files/
 !examples/actin/legacy/config_files/amino_torsion.data
 
+# -------------------------------------------------------------------------
+# KORP energy maps -- NOT distributed
+# -------------------------------------------------------------------------
+# 316 MiB, well over PyPI's per-file limit, so pyMCPU requires it to be
+# supplied rather than shipping it. See docs/physics_notes/korp_6d.md.
+# Deliberately ABOVE the MUST SHIP block below: git honors the last matching
+# pattern, and a rule placed after it is silently ineffective.
+korp6Dv1.bin
+korp_loop_v*.bin
+Korp6Dv1*.txz
+*.korp.bin
+
 # =========================================================================
 # MUST SHIP -- keep this block LAST
 # =========================================================================

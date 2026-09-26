@@ -6,6 +6,7 @@
 #include <stdexcept>
 #include <cstdint>
 #include <string>
+#include <array>
 #include "ProposalPatch.h"
 #include "pymcpu/State.h"
 #include "pymcpu/reporters/Reporter.h"
@@ -278,6 +279,33 @@ public:
     }
     [[nodiscard]] float pivot_rama_probability() const noexcept { return pivot_rama_probability_; }
 
+    /// Relative probabilities of the three move slots (Pivot, KIC, Sidechain).
+    ///
+    /// Normalized internally, so (1,1,0) and (0.5,0.5,0) mean the same thing.
+    /// All three must be non-negative with a positive, finite sum. The default
+    /// (0.25, 0.25, 0.50) is the mix this integrator has always used, and a
+    /// caller who never touches this gets a bit-identical RNG stream.
+    ///
+    /// RNG contract: exactly ONE move_type_dist(rng) draw is consumed per step
+    /// regardless of the weights. The draw was already unconditional, and
+    /// keeping it that way is what preserves the default stream. Unlike
+    /// set_pivot_rama_probability, no extreme needs a special case here: a zero
+    /// weight makes its comparison unreachable by construction, because a roll
+    /// drawn from [0,1) is never < 0 and always < 1.
+    ///
+    /// Setting sidechain to 0 is REQUIRED for a force field whose residues have
+    /// no chi angles -- a backbone-only one, say. Otherwise every sidechain
+    /// proposal is a guaranteed no-op (apply_sidechain_at / apply_rotamer_at
+    /// return early on ntorsions <= 0, leaving patch.is_valid false), so that
+    /// share of the step budget is silently discarded. run() rejects that
+    /// combination rather than letting it cost half a run.
+    void set_move_weights(float pivot, float kic, float sidechain);
+
+    /// (pivot, kic, sidechain), normalized to sum 1. Default (0.25,0.25,0.50).
+    [[nodiscard]] std::array<float, 3> move_weights() const noexcept {
+        return {move_w_pivot_, move_w_kic_, move_w_sc_};
+    }
+
     /// Sets pivot_rama_probability() from a piecewise-linear schedule in
     /// this Integrator's own (fixed, construction-time) `temperature`
     /// (pyMCPU's reduced-temperature units): p=p_min for temperature <=
@@ -483,6 +511,28 @@ private:
     SidechainMoveMode sidechain_move_mode_ = SidechainMoveMode::RotamerLibrary;
     /// See set_pivot_rama_probability's docs. Default 0.0 (opt-in).
     float pivot_rama_probability_ = 0.0f;
+
+    /// Move-slot weights, always normalized to sum 1 by set_move_weights.
+    /// The defaults are the literals the mix was hard-coded to, so an
+    /// untouched integrator reproduces the previous stream exactly.
+    float move_w_pivot_ = 0.25f;
+    float move_w_kic_   = 0.25f;
+    float move_w_sc_    = 0.50f;
+
+    /// Slot for a [0,1) roll: 0 = Pivot, 1 = KIC, 2 = Sidechain.
+    ///
+    /// THE single definition of the mix. run() and verify_physics_consistency
+    /// both go through here; they previously carried the split as duplicated
+    /// literals and could drift apart without anything noticing.
+    [[nodiscard]] int select_move_slot(float roll) const noexcept {
+        if (roll < move_w_pivot_) return 0;
+        if (roll < move_w_pivot_ + move_w_kic_) return 1;
+        return 2;
+    }
+
+    /// Throws when the weights would spend steps on moves this system cannot
+    /// make. Called once per run() / verify_physics_consistency(), O(n_res).
+    void check_move_weights_are_usable(const Context& context) const;
 
     std::mt19937 rng{ std::random_device{}() };
     std::uniform_int_distribution<int> pivot_residue_dist;

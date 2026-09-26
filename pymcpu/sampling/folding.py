@@ -61,6 +61,7 @@ class FoldingRunner:
         step_size_rad: float = 0.1,
         sidechain_move_mode: str = "rotamer_library",
         pivot_rama_probability: float = 0.0,
+        move_weights: tuple[float, float, float] | None = None,
         pivot_rama_schedule: dict[str, float] | None = None,
         prefix: str = "folding",
         fixed_residues: list[int] | None = None,
@@ -120,6 +121,7 @@ class FoldingRunner:
         self.linker_residues = list(linker_residues) if linker_residues else []
         from pymcpu.config import (
             normalize_linker_energy_mode,
+            normalize_move_weights,
             normalize_pivot_rama_probability,
             normalize_pivot_rama_schedule,
             normalize_sidechain_move_mode,
@@ -129,6 +131,7 @@ class FoldingRunner:
         self.linker_energy_mode = normalize_linker_energy_mode(linker_energy_mode)
         self.sidechain_move_mode = normalize_sidechain_move_mode(sidechain_move_mode)
         self.pivot_rama_probability = normalize_pivot_rama_probability(pivot_rama_probability)
+        self.move_weights = normalize_move_weights(move_weights)
         self.pivot_rama_schedule = normalize_pivot_rama_schedule(pivot_rama_schedule)
         validate_fixed_linker_disjoint(self.fixed_residues, self.linker_residues)
         self.verbose = bool(verbose)
@@ -205,6 +208,7 @@ class FoldingRunner:
         )
 
         integrator = mcpu_core.Integrator(self.temperature, self.step_size_rad)
+        integrator.set_move_weights(*self.move_weights)
         integrator.set_sidechain_move_mode(self.sidechain_move_mode)
         if self.pivot_rama_schedule is not None:
             integrator.set_pivot_rama_schedule(**self.pivot_rama_schedule)

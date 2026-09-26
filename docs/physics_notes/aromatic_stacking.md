@@ -6,10 +6,6 @@ Temperature in the Metropolis criterion is a **dimensionless**
 reduced parameter (typical 0.3–0.6); aromatic energies are
 **unitless** (`aromatic_E[bin] / 1000` × `ARO_WEIGHT`).
 
-## Reference Structure Note
-
-`tests/reference/benchmark_aromatic.pdb` has HIS-tag sidechain atoms added to residues 1–3 relative to the source PDB. The repair was required for legacy initialization. Any future regeneration of `legacy_delta_energy_proteinG.txt` must use this repaired file.
-
 ## Aromatic residue types
 
 Only **PHE** and **TRP** participate in aromatic stacking. **TYR** and **HIS** are excluded at code level (never registered in `aromatic_residues`). The parameter file `aromatic_noTYR.energy` matches this behavior.

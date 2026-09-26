@@ -1,3 +1,14 @@
+Force fields
+============
+
+A force field turns an MDTraj topology into a simulatable
+``mcpu_core.System``. Two are available, and they are alternatives
+rather than layers: :class:`~pymcpu.MCPUForceField` (all-atom, the five
+MCPU knowledge-based terms) and :class:`~pymcpu.KORPForceField`
+(backbone-only, the KORP 6D orientational potential plus a steric
+filter). Both implement the one-method
+:class:`~pymcpu.forcefields.base.BaseForceField` contract.
+
 MCPUForceField
 ==============
 
@@ -211,6 +222,72 @@ Supporting types
 
 .. autoclass:: pymcpu.forcefields.mcpu.MCPUAtom
    :members:
+
+KORPForceField
+==============
+
+:class:`~pymcpu.KORPForceField` is a **backbone-only** force field built
+on KORP's 6D orientational potential. KORP reads only N, CA and C -- the
+pair coordinate is CA-CA -- so rather than carry sidechains along unused
+this force field drops them: the engine sees N, CA, C and O only, with O
+kept purely so the existing move machinery and segment bookkeeping work
+unchanged.
+
+.. warning::
+
+   **The trajectory you get back is not the trajectory you put in.**
+   Sidechain atoms are gone, so an XTC written from this force field
+   must be loaded against
+   :attr:`~pymcpu.KORPForceField.output_topology`, not against your
+   input PDB's topology. Save that topology next to the trajectory::
+
+       import mdtraj as md
+       md.Trajectory(ff.coords[:1], ff.output_topology).save_pdb("top.pdb")
+
+.. warning::
+
+   **Sidechain moves must be switched off.** These residues have no chi
+   angles, so every sidechain proposal would return without proposing
+   anything. Call ``integrator.set_move_weights(pivot, kic, 0.0)``;
+   :py:meth:`Integrator.run` raises rather than silently discarding that
+   share of the run.
+
+The energy map is **not distributed with pyMCPU**: at 316 MiB it is well
+over PyPI's per-file limit. Obtain it once and point ``KORP_MAP_PATH`` at
+it; the error raised when it is missing says exactly how. See the
+project README for the download and checksum.
+
+.. code-block:: python
+
+   import mdtraj as md, numpy as np, pymcpu as mc
+   from pymcpu import mcpu_core
+   from pymcpu.forcefields.korp import KORPForceField
+
+   traj = md.load("protein.pdb")
+   ff = KORPForceField(traj)                 # or map_path=...
+   system = ff.create_system(traj.topology)
+
+   integrator = mcpu_core.Integrator(temperature=0.6, step_size_rad=0.05)
+   integrator.set_move_weights(0.5, 0.5, 0.0)     # backbone moves only
+   sim = mc.Simulation(ff.output_topology, system, integrator)
+   sim.context.set_positions((ff.coords[0] * 10.0).T.astype(np.float32))
+   ff.apply_energy_weights(sim.context)
+   sim.step(10_000)
+
+.. autoclass:: pymcpu.forcefields.korp.KORPForceField
+   :members: create_system, apply_energy_weights, inverse_mapping
+
+.. py:attribute:: KORPForceField.output_topology
+
+   The backbone-only MDTraj topology the engine actually simulates.
+   Load any trajectory this force field produces against *this*, not
+   against the input.
+
+.. seealso::
+
+   :doc:`/physics_notes/korp_6d`
+       The potential itself: frame, coordinates, binning, and the
+       paper-versus-code discrepancy in the frame definition.
 
 .. autoclass:: pymcpu.forcefields.base.BaseForceField
    :members:

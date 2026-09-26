@@ -97,14 +97,17 @@ def _load_mcpu_core():
 
 mcpu_core = _load_mcpu_core()
 
+from .forcefields.korp import KORPForceField  # noqa: E402
 from .forcefields.mcpu import MCPUForceField  # noqa: E402
 from .mcpu_core import (  # noqa: E402
     AromaticPotential,
+    CalphaExcludedVolumePotential,
     Context,
     EnergyReporter,
     HBondPotential,
     Integrator,
     MuPotential,
+    OrientationalPairPotential,
     NativeContactsBiasPotential,
     Reporter,
     SidechainTripletPotential,
@@ -118,13 +121,16 @@ from .simulation import Simulation  # noqa: E402
 __all__ = [
     "PACKAGE_ROOT",
     "AromaticPotential",
+    "CalphaExcludedVolumePotential",
     "Context",
     "EnergyReporter",
     "HBondPotential",
     "Integrator",
+    "KORPForceField",
     "MCPUForceField",
     "MuPotential",
     "NativeContactsBiasPotential",
+    "OrientationalPairPotential",
     "Reporter",
     "SidechainTripletPotential",
     "Simulation",

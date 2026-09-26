@@ -42,6 +42,9 @@ EXPECTED_TOP_LEVEL_EXPORTS = (
     "TripletPotential",
     "SidechainTripletPotential",
     "AromaticPotential",
+    "KORPForceField",
+    "OrientationalPairPotential",
+    "CalphaExcludedVolumePotential",
 )
 
 # Simulation methods grouped by the sub-API they belong to, mirroring the

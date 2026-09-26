@@ -59,7 +59,7 @@ delta_backbone = TOR_WEIGHT * sum(new_E - old_E)
 
 ## Bin index safety
 
-The legacy code does not clamp bin indices. An angle outside the expected range `[0, num_bins × bin_width)` accesses memory beyond the table bounds (undefined behavior). The new implementation clamps to `[0, num_bins-1]` which is safer and produces the nearest-boundary table value instead of a crash or corrupted energy. Reference values in `legacy_delta_energy.txt` were generated from a well-folded protein where all angles are in range, so this does not affect regression test results.
+The legacy code does not clamp bin indices. An angle outside the expected range `[0, num_bins × bin_width)` accesses memory beyond the table bounds (undefined behavior). The new implementation clamps to `[0, num_bins-1]` which is safer and produces the nearest-boundary table value instead of a crash or corrupted energy. The clamp only changes behaviour for out-of-range angles, which a well-folded structure does not produce, so it does not perturb parity against the legacy energies.
 
 ## Triplet deduplication
 

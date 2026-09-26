@@ -82,10 +82,17 @@ PotentialDeltaCheck PhysicsVerifier::verify_potential_delta(
     const float e_new = target->calculateEnergy(ctx, proposed_copy);
     result.delta_direct = e_new - e_old;
 
-    // Clash sentinels are Mu-specific (energy group 1). Other groups (e.g. QBias
-    // group 6) can have large but finite harmonic energies that must not be
-    // mistaken for hard-core clash penalties.
-    if (energy_group == 1) {
+    // Only a term that actually hard-rejects can emit a clash sentinel. Other
+    // groups (QBias group 6, say) can carry large but finite harmonic energies
+    // that must not be mistaken for hard-core penalties.
+    //
+    // This asks the potential rather than testing `energy_group == 1`, which is
+    // what it used to do. That was correct only while MuPotential was the sole
+    // hard-rejecting term, and it silently failed any other one: a clash-guard
+    // term in a second force field returns its sentinel from the incremental
+    // path, the direct path returns the same sentinel, and the group test sent
+    // both down the plain numeric-comparison branch that a sentinel cannot pass.
+    if (target->canHardReject()) {
         const bool incremental_clash = is_clash_energy(result.delta_incremental);
         const bool proposed_clash = is_clash_energy(e_new);
 
