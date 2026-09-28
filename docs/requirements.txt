@@ -1,11 +1,18 @@
 # Documentation build dependencies for Sphinx / Read the Docs.
 # Keep in sync with [project.optional-dependencies].docs in pyproject.toml.
-# autodoc mocks pymcpu._pymcpu_core / pymcpu.mcpu_core when READTHEDOCS=True.
+# docs/conf.py mocks pymcpu.mcpu_core (unconditionally), so none of this
+# needs the compiled extension.
 
 sphinx>=7.0
 furo>=2024.8.6
 sphinx-autodoc-typehints>=1.23
 myst-parser>=2.0
 nbsphinx>=0.9
+# nbsphinx highlights notebook code cells with the lexer the notebook names in
+# metadata.language_info.pygments_lexer -- "ipython3" for anything saved by
+# Jupyter. Pygments does not ship that lexer; this package registers it (it is
+# where IPython itself gets it). Without it every code cell in
+# docs/tutorials/*.ipynb warns, and -W turns that into a failed build.
+ipython-pygments-lexers>=1.0
 sphinx-copybutton>=0.5
 numpy>=1.21

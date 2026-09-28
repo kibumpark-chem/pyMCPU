@@ -140,7 +140,7 @@ The Sturm sequence sign-count algorithm and the Jacobian
 cofactor expansion require strict IEEE 754 arithmetic.
 `-ffast-math` can reorder floating-point operations in ways
 that produce incorrect sign changes in the Sturm sequence.
-The `_pymcpu_core` extension intentionally omits `-ffast-math`
+The `mcpu_core` extension intentionally omits `-ffast-math`
 for the same reason; the per-file pragma additionally protects
 these headers if they are included from a TU compiled with
 aggressive FP flags (e.g. MSVC `/fp:fast` on legacy targets).
