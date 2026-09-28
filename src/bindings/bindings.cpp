@@ -1452,7 +1452,9 @@ PYBIND11_MODULE(mcpu_core, m) {
             "pymcpu.forcefields.korp_map has already parsed and validated. The\n"
             "energy table is referenced in place, not copied -- pass the numpy\n"
             "memmap and it stays shared through the OS page cache across every\n"
-            "rank on a node. This object keeps that array alive.")
+            "rank on a node. The array is kept alive for as long as the C++ map\n"
+            "exists -- including after this Python object is gone, since every\n"
+            "potential built from it holds the map by shared_ptr.")
         .def(py::init([](float cutoff, float min_r, int nslices,
                          std::vector<float> br,
                          std::vector<int> shell_ncells,
@@ -1473,7 +1475,7 @@ PYBIND11_MODULE(mcpu_core, m) {
                  std::vector<std::int8_t> smap;
                  smap.reserve(smapping.size());
                  for (int v : smapping) smap.push_back(static_cast<std::int8_t>(v));
-                 return std::make_shared<forces::OrientationalPairMap>(
+                 auto* raw = new forces::OrientationalPairMap(
                      cutoff, min_r, nslices, std::move(br),
                      std::move(shell_ncells), std::move(shell_nchi),
                      std::move(shell_dchi), std::move(shell_offset),
@@ -1482,14 +1484,31 @@ PYBIND11_MODULE(mcpu_core, m) {
                      std::move(ring_first_cell), std::move(smap),
                      std::move(fmapping),
                      table.data(), static_cast<std::size_t>(table.size()));
+                 // The map holds a raw pointer into `table`. Its lifetime must
+                 // follow the C++ object, not this Python wrapper: potentials
+                 // own the map through a shared_ptr and outlive the wrapper
+                 // (KORPForceField keeps only its latest map, so rebuilding a
+                 // system drops the previous wrapper). py::keep_alive tied the
+                 // array to the wrapper and left a use-after-free whenever the
+                 // array had no other owner -- e.g. a table swapped in for one
+                 // system. The deleter now owns one reference instead.
+                 PyObject* keep = table.ptr();
+                 Py_INCREF(keep);
+                 return std::shared_ptr<forces::OrientationalPairMap>(
+                     raw, [keep](forces::OrientationalPairMap* p) {
+                         delete p;
+                         if (Py_IsInitialized()) {
+                             py::gil_scoped_acquire gil;
+                             Py_DECREF(keep);
+                         }
+                     });
              }),
              py::arg("cutoff"), py::arg("min_r"), py::arg("nslices"),
              py::arg("br"), py::arg("shell_ncells"), py::arg("shell_nchi"),
              py::arg("shell_dchi"), py::arg("shell_offset"),
              py::arg("ring_offset"), py::arg("ring_theta"), py::arg("ring_dpsi"),
              py::arg("ring_ncells"), py::arg("ring_first_cell"),
-             py::arg("smapping"), py::arg("fmapping"), py::arg("table"),
-             py::keep_alive<1, 17>())
+             py::arg("smapping"), py::arg("fmapping"), py::arg("table"))
         .def_property_readonly("cutoff", &forces::OrientationalPairMap::cutoff)
         .def_property_readonly("min_r", &forces::OrientationalPairMap::min_r)
         .def_property_readonly("num_shells", &forces::OrientationalPairMap::num_shells)

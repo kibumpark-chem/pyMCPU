@@ -53,14 +53,25 @@ public:
     /// rather than only through a summed energy where errors can cancel.
     [[nodiscard]] ResidueFrame frame_of(const State& state, int residue) const;
 
-    /// Turn off the moved-moved elision described in calculateEnergyChange.
+    /// Enable the moved-moved elision described in calculateEnergyChange.
     ///
-    /// Only useful for testing: with it off the delta enumerates every changed
-    /// pair, which is slower but makes no assumption about rigid motion. The
-    /// two paths must agree, and a test that compares them is the direct guard
-    /// against misclassifying a residue as rigidly moved when its frame was
-    /// actually reshaped -- a bug that would otherwise show up only as a slow
-    /// drift in the running energy.
+    /// OFF BY DEFAULT, because for this potential it is not exact. The
+    /// argument for it -- two residues carried by one rigid motion keep all six
+    /// pair coordinates -- holds in real arithmetic only. The pivot is applied
+    /// in float32, and the table is nearest-bin with no interpolation, so a
+    /// co-moving pair sitting within rounding of a bin edge can change bin with
+    /// nothing entering delta_E. Metropolis then accepts on a wrong delta_E.
+    ///
+    /// Measured on CLN025, T = 8, pivot-heavy MC: single accepted moves scored
+    /// dE 0.052 / 1.221 / 0.000 against a true 3.801 / 2.186 / 5.764; the
+    /// running total drifted 17.4 from a full recompute within 1e5 steps with
+    /// the elision on, and 2.4e-4 with it off. Events are rare (~1e-4 per
+    /// accepted move) but individually large, and Metropolis preferentially
+    /// accepts the ones whose hidden cost is positive, so the error has a sign.
+    /// A few hundred steps of MCPU_VERIFY_PHYSICS cannot see it.
+    ///
+    /// Kept only to measure what the elision would buy; the cost of leaving it
+    /// off was < 6 % of wall time on NuG2.
     void set_rigid_skip_enabled(bool on) noexcept { rigid_skip_enabled_ = on; }
     [[nodiscard]] bool rigid_skip_enabled() const noexcept { return rigid_skip_enabled_; }
 
@@ -107,7 +118,7 @@ private:
     std::vector<int> frame_residue_of_atom_;
     std::vector<std::uint8_t> frame_bit_of_atom_;
 
-    bool rigid_skip_enabled_ = true;
+    bool rigid_skip_enabled_ = false;   // see set_rigid_skip_enabled: not exact here
 
     /// Per-call scratch. Single-threaded within one calculate* call and fully
     /// rewritten at the top of it, which is the same arrangement MuPotential

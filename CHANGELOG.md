@@ -52,6 +52,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **KORP's rigid-pivot moved-moved elision is now off by default** — it gave
+  Metropolis a wrong delta-E. `OrientationalPairPotential` skipped every pair of
+  residues carried by the same rigid pivot, on the grounds that their six pair
+  coordinates are unchanged. That holds in real arithmetic only: the pivot is
+  applied in float32 and the table is nearest-bin, so a co-moving pair within
+  rounding of a bin edge could change bin with nothing entering delta-E.
+  Measured on CLN025 at T = 8: accepted moves scored delta-E 0.052 / 1.221 /
+  0.000 against a true 3.801 / 2.186 / 5.764, and the running total drifted
+  17.4 from a full recompute within 1e5 steps (2.4e-4 with the elision off).
+  Events are rare (~1e-4 per accepted move) but individually large, and
+  Metropolis preferentially accepts the ones with a hidden positive cost, so the
+  error carried a sign. `set_rigid_skip_enabled(True)` still exists, for
+  measuring what the elision would buy; leaving it off costs < 6 % of wall time.
+  **This changes KORP trajectories**; mcpu08 is untouched.
+
+  The shipped test for it ran 400 cold steps and checked that accept bits
+  matched, which they do over that window; its docstring claimed they match in
+  general, which they do not, and is corrected.
+  `tests/physics/forces/test_korp_exact_delta.py` adds a 40k-step, T = 8,
+  pivot-only guard (the pre-fix build drifts 1.73; the bound is 1e-2).
+
+- **The KORP energy table can no longer be freed under a live potential.**
+  `OrientationalPairMap` references the table in place by raw pointer. Its
+  lifetime was tied, by `py::keep_alive`, to the map's *Python wrapper* — but
+  potentials own the map through a `shared_ptr` and outlive that wrapper, and
+  `KORPForceField` keeps only its latest map. So a table with no other owner
+  (for example one swapped in for a single system) was freed once the next
+  system was built, and the older potential then read freed memory: the new
+  test's pre-fix run returns **23,780,400 for a structure that scores
+  -3693.59**, silently, rather than crashing. The map's `shared_ptr` deleter now
+  owns a reference to the array, so the table lives exactly as long as any
+  potential using it. Ordinary use — every system built from one memmap — was
+  unaffected, which is why it went unnoticed.
+
 - **`KORPForceField.output_topology` no longer carries an atom the engine does
   not hold.** `_BACKBONE_SELECTION` admits `OXT`/`OCT` so a residue with no
   plain `O` can still supply one, and `_collect_residues` takes the first of

@@ -175,11 +175,11 @@ def test_rigid_skip_does_not_change_the_trajectory(engine_map):
     showed up on one seed in five over 500 steps -- and when it happens it
     moves the bookkeeping total by ~0.3 out of ~3700.
 
-    What must hold regardless is that it does not change which moves are
-    accepted, because that is what the ensemble is made of. So this asserts
-    the trajectory, not the running energy; the running energy is covered by
-    `test_incremental_delta_matches_a_full_recompute` per step, and by the
-    engine's own periodic resync in a real run.
+    Over THIS short, cold run it does not change which moves are accepted, and
+    that is all this test establishes. It does not hold in general: at T = 8
+    over 1e5 steps a hidden bin flip mis-scores accepted moves by several
+    units and the trajectories diverge, which is why the elision is now off
+    by default -- see test_korp_exact_delta.py for the long, hot guard.
     """
     coords, names, res_seq, chain_ids = parse_backbone(
         _structure("CASP12DCsel20/T0860D1.pdb"))

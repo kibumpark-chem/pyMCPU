@@ -227,12 +227,13 @@ EnergyChangeResult OrientationalPairPotential::calculateEnergyChange(
         // changed x changed, each unordered pair once
         for (std::size_t ib = ia + 1; ib < n_changed; ++ib) {
             const int b = changed_[ib];
-            // Both partners carried by the SAME rigid motion: every one of the
-            // six coordinates is invariant, not just the distance, because both
-            // frames transform together and a proper rotation commutes with the
-            // cross products the frame is built from. So the pair's energy is
-            // unchanged and the bin it lands in is unchanged with it. Skipping
-            // these is the main saving on a pivot, and it is exact.
+            // Both partners carried by the SAME rigid motion: in real
+            // arithmetic every one of the six coordinates is invariant, because
+            // both frames transform together and a proper rotation commutes with
+            // the cross products the frame is built from. In float32 it is NOT
+            // exact -- a pair within rounding of a bin edge can change bin -- so
+            // this branch is reachable only when rigid_skip_enabled_ is set
+            // explicitly (default off; see the header).
             if (cls_[static_cast<std::size_t>(a)] == FrameClass::RigidMoved &&
                 cls_[static_cast<std::size_t>(b)] == FrameClass::RigidMoved) {
                 continue;

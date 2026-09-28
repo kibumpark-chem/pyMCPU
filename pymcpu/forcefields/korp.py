@@ -401,8 +401,9 @@ class KORPForceField(BaseForceField):
         # the moves that would read them return before they get that far.
 
         engine_map = KorpPotentialBuilder.build_map(self.korp_map)
-        # Held so the map -- and through it the memory-mapped energy table --
-        # outlives every potential built from it.
+        # Kept for callers that inspect it. Lifetime no longer depends on this:
+        # the engine map owns a reference to its table (see the binding), which
+        # matters because this attribute holds only the LATEST map.
         self._engine_map = engine_map
 
         if self.steric_guard:
