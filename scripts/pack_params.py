@@ -6,7 +6,7 @@ Developer / Release helper (not required at runtime)::
     python scripts/pack_params.py --out dist/params
 
 Produces:
-  mcpu_v1-1.0.0-core.tar.gz
+  mcpu08-1.0.0-core.tar.gz
 
 Paste printed sha256 values into pymcpu/data/params_registry.json and
 attach archives to a GitHub Release (e.g. params-v1.0.0).
@@ -41,7 +41,7 @@ def _default_src() -> Path:
     registry = json.loads(
         (Path(PACKAGE_ROOT) / "data" / "params_registry.json").read_text()
     )
-    rel = registry["sets"]["mcpu_v1"]["local_source"]
+    rel = registry["sets"]["mcpu08"]["local_source"]
     return (Path(PACKAGE_ROOT) / rel).resolve()
 
 
@@ -60,7 +60,7 @@ def _pack(src_root: Path, files: list[str], out_path: Path) -> None:
             full = src_root / rel
             if not full.is_file():
                 raise FileNotFoundError(full)
-            tf.add(full, arcname=f"mcpu_v1/{rel}")
+            tf.add(full, arcname=f"mcpu08/{rel}")
 
 
 def main() -> int:
@@ -80,7 +80,7 @@ def main() -> int:
     # because the SC-triplet table was 633 MB; it is ~1 MB in the compact
     # format, and MCPUForceField requires it unconditionally anyway, so a
     # "core-only" archive was never actually usable.
-    out = args.out / f"mcpu_v1-{args.version}.tar.gz"
+    out = args.out / f"mcpu08-{args.version}.tar.gz"
     _pack(src, list(required_files().values()), out)
     print(f"wrote {out}")
     print(f"  sha256: {_sha256(out)}")

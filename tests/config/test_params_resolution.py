@@ -22,7 +22,7 @@ from pymcpu.params import ParamsError, ensure_params, get_cache_dir, required_fi
 
 _SC_TRIPLET = "mcpu_params/sidechain_triplet_potentials.bin"
 # Registry-derived, so this can never disagree with what the loader demands.
-_REQUIRED_PARAM_FILES = tuple(required_files("mcpu_v1").values())
+_REQUIRED_PARAM_FILES = tuple(required_files("mcpu08").values())
 
 # A couple of files need content that parses; the rest only need to exist.
 _STUB_CONTENT = {
@@ -49,7 +49,7 @@ def test_mcpu_params_dir_override(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
     _stub_params_download_tree(tmp_path)
     monkeypatch.setenv("MCPU_PARAMS_DIR", str(tmp_path))
     monkeypatch.delenv("MCPU_PARAMS_BUNDLE", raising=False)
-    root = ensure_params("mcpu_v1")
+    root = ensure_params("mcpu08")
     assert root == tmp_path.resolve()  # MCPU_PARAMS_DIR is used as-is (resolution step 1)
     assert (root / "constants" / "atom_types.csv").is_file()
 
@@ -74,7 +74,7 @@ def test_no_download_succeeds_via_the_in_wheel_archive(
     """
     import pymcpu.params as params_mod
 
-    if params_mod.bundled_tables_path("mcpu_v1") is None:
+    if params_mod.bundled_tables_path("mcpu08") is None:
         pytest.skip("no in-wheel archive (run scripts/encode_params.py)")
 
     monkeypatch.delenv("MCPU_PARAMS_DIR", raising=False)
@@ -84,7 +84,7 @@ def test_no_download_succeeds_via_the_in_wheel_archive(
     # Force a miss on the dev-tree step so step 5 is what answers.
     monkeypatch.setattr(params_mod, "_resolve_local_source", lambda entry: None)
 
-    root = ensure_params("mcpu_v1")
+    root = ensure_params("mcpu08")
     for rel in _REQUIRED_PARAM_FILES:
         assert (root / rel).is_file(), f"materialized root missing {rel}"
 
@@ -104,7 +104,7 @@ def test_no_download_fails_clearly_when_nothing_is_available(
     # ...and no shipped archive either, which is the only remaining source.
     monkeypatch.setattr(params_mod, "bundled_tables_path", lambda set_name=None: None)
     with pytest.raises(ParamsError) as excinfo:
-        ensure_params("mcpu_v1")
+        ensure_params("mcpu08")
     msg = str(excinfo.value)
     assert "MCPU_PARAMS_DIR" in msg  # _complete_error's boilerplate lists this as an option
     assert "MCPU_NO_DOWNLOAD" in msg or "forbids download" in msg
@@ -114,6 +114,6 @@ def test_incomplete_params_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
     (tmp_path / "constants").mkdir()  # present but empty -- missing all required files
     monkeypatch.setenv("MCPU_PARAMS_DIR", str(tmp_path))
     with pytest.raises(ParamsError) as excinfo:
-        ensure_params("mcpu_v1")
+        ensure_params("mcpu08")
     msg = str(excinfo.value)
     assert "Missing" in msg or "incomplete" in msg.lower()

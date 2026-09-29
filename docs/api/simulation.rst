@@ -21,7 +21,7 @@ Composing a run
    traj = md.load("examples/data/1uao.pdb")
    heavy = traj.atom_slice(traj.topology.select("not element H"))
 
-   ff = mc.MCPUForceField(heavy, param_set="mcpu_v1")
+   ff = mc.MCPUForceField(heavy, param_set="mcpu08")
    system = ff.create_system(heavy.topology)
 
    integrator = mc.Integrator(temperature=0.6, step_size_rad=0.1)

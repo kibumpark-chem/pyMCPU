@@ -32,7 +32,7 @@ variables.
    # 2. Build the force field, then the system. The force field assigns atom
    #    types, reorders atoms into the engine's contiguous layout, and loads
    #    the fitted potentials.
-   forcefield = MCPUForceField(heavy, param_set="mcpu_v1")
+   forcefield = MCPUForceField(heavy, param_set="mcpu08")
    system = forcefield.create_system(heavy.topology)
 
    # 3. Set up sampling. Always pass a temperature: the default is 300.0,

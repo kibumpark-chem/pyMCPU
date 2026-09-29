@@ -53,7 +53,7 @@ def _standard_amino_acids_json() -> Path:
     """
     from pymcpu.params import params_path, required_files
 
-    return params_path("mcpu_v1", required_files("mcpu_v1")["amino acids template"])
+    return params_path("mcpu08", required_files("mcpu08")["amino acids template"])
 
 
 def _parse_amino_torsion_chi_atoms(path: Path) -> dict[str, list[list[str]]]:

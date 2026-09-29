@@ -47,14 +47,14 @@ def _load_pack_params():
 
 
 def test_layout_is_present_and_ordered() -> None:
-    required = required_files("mcpu_v1")
+    required = required_files("mcpu08")
     assert required, "layout.required is empty"
     # Insertion order is load-bearing: it is the order _load_parameters
     # reports a missing file in.
     assert list(required)[0] == "amino acids template"
-    assert set(optional_files("mcpu_v1")) == {"rama mixture"}
-    assert len(table_layout("mcpu_v1")) == 6
-    assert len(constants_files("mcpu_v1")) == 4
+    assert set(optional_files("mcpu08")) == {"rama mixture"}
+    assert len(table_layout("mcpu08")) == 6
+    assert len(constants_files("mcpu08")) == 4
 
 
 @pytest.mark.parametrize(
@@ -68,23 +68,23 @@ def test_layout_is_present_and_ordered() -> None:
     ],
 )
 def test_previously_dropped_files_are_required(relpath: str) -> None:
-    assert relpath in required_files("mcpu_v1").values()
+    assert relpath in required_files("mcpu08").values()
 
 
 def test_packer_list_matches_the_registry() -> None:
     """The release archive must contain exactly a complete set."""
     pack = _load_pack_params()
     packed = set(pack.required_files().values())
-    assert packed == set(required_files("mcpu_v1").values())
+    assert packed == set(required_files("mcpu08").values())
 
 
 def test_rama_mixture_is_optional_not_required() -> None:
     """The rama-mixture library must stay optional: the move it serves defaults
     to pivot_rama_probability = 0.0, so sets without it are valid."""
-    rel = optional_files("mcpu_v1")["rama mixture"]
-    assert rel not in required_files("mcpu_v1").values()
+    rel = optional_files("mcpu08")["rama mixture"]
+    assert rel not in required_files("mcpu08").values()
     # ...but it must still be declared as a constant so packers ship it.
-    assert rel in constants_files("mcpu_v1")
+    assert rel in constants_files("mcpu08")
 
 
 def test_tree_built_from_the_layout_satisfies_ensure_params(
@@ -96,13 +96,13 @@ def test_tree_built_from_the_layout_satisfies_ensure_params(
     force field raises" hole: both sides now derive from the same dict, so a
     tree that satisfies one satisfies the other by construction.
     """
-    for rel in required_files("mcpu_v1").values():
+    for rel in required_files("mcpu08").values():
         dst = tmp_path / rel
         dst.parent.mkdir(parents=True, exist_ok=True)
         dst.write_bytes(b"x")
     monkeypatch.setenv("MCPU_PARAMS_DIR", str(tmp_path))
     monkeypatch.delenv("MCPU_PARAMS_BUNDLE", raising=False)
-    assert ensure_params("mcpu_v1") == tmp_path.resolve()
+    assert ensure_params("mcpu08") == tmp_path.resolve()
 
 
 def test_dropping_any_required_file_is_rejected(
@@ -110,7 +110,7 @@ def test_dropping_any_required_file_is_rejected(
 ) -> None:
     """Removing any single required file must fail the completeness check --
     otherwise the list is not actually enforced."""
-    required = list(required_files("mcpu_v1").values())
+    required = list(required_files("mcpu08").values())
     victim = "mcpu_params/hbond_seq_dep.bin"
     assert victim in required
     for rel in required:
@@ -122,7 +122,7 @@ def test_dropping_any_required_file_is_rejected(
     monkeypatch.setenv("MCPU_PARAMS_DIR", str(tmp_path))
     monkeypatch.delenv("MCPU_PARAMS_BUNDLE", raising=False)
     with pytest.raises(ParamsError) as excinfo:
-        ensure_params("mcpu_v1")
+        ensure_params("mcpu08")
     assert victim in str(excinfo.value)
 
 
@@ -134,13 +134,13 @@ def test_include_sc_is_accepted_but_ignored(
     It never worked: MCPUForceField lists the SC table as unconditionally
     required, so a core-only root was always rejected downstream.
     """
-    for rel in required_files("mcpu_v1").values():
+    for rel in required_files("mcpu08").values():
         dst = tmp_path / rel
         dst.parent.mkdir(parents=True, exist_ok=True)
         dst.write_bytes(b"x")
     monkeypatch.setenv("MCPU_PARAMS_DIR", str(tmp_path))
     monkeypatch.delenv("MCPU_PARAMS_BUNDLE", raising=False)
     with pytest.deprecated_call():
-        root = ensure_params("mcpu_v1", include_sc=False)
+        root = ensure_params("mcpu08", include_sc=False)
     # include_sc=False must NOT relax the requirement set
     assert root == tmp_path.resolve()

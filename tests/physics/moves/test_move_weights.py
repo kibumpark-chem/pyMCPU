@@ -33,7 +33,7 @@ SEED = 20260924
 def _simulation(weights=None):
     traj = md.load(str(default_example_pdb()))
     heavy = traj.atom_slice(traj.topology.select("not element H"))
-    forcefield = MCPUForceField(heavy, param_set="mcpu_v1")
+    forcefield = MCPUForceField(heavy, param_set="mcpu08")
     system = forcefield.create_system(heavy.topology)
 
     integrator = mcpu_core.Integrator(temperature=0.6, step_size_rad=0.1)

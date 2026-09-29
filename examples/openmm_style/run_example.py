@@ -34,7 +34,7 @@ def main() -> None:
     print(f"Loaded {PDB.name}: {heavy.n_atoms} heavy atoms, {heavy.n_residues} residues")
 
     # ── 2. Build the force field ───────────────────────────────────────
-    forcefield = MCPUForceField(heavy, param_set="mcpu_v1")
+    forcefield = MCPUForceField(heavy, param_set="mcpu08")
 
     # ── 3. Create the system (topology → potentials → system) ─────────────
     system = forcefield.create_system(heavy.topology)

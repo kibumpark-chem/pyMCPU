@@ -30,7 +30,7 @@ import pytest
 from pymcpu.params import constants_files, required_files
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
-_SHIPPED_DIR = _REPO_ROOT / "pymcpu" / "data" / "params" / "mcpu_v1"
+_SHIPPED_DIR = _REPO_ROOT / "pymcpu" / "data" / "params" / "mcpu08"
 
 
 def _is_git_ignored(path: Path) -> bool:
@@ -84,7 +84,7 @@ def test_dev_tree_required_constants_are_trackable() -> None:
     if not raw_root.is_dir():
         pytest.skip("raw parameter tree not present")
     offenders = []
-    for rel in constants_files("mcpu_v1"):
+    for rel in constants_files("mcpu08"):
         path = raw_root / rel
         if path.exists() and _is_git_ignored(path):
             offenders.append(rel)
@@ -99,15 +99,15 @@ def test_shipped_set_covers_every_required_role() -> None:
     archive = _SHIPPED_DIR / "tables.npz"
     tables = set(read_header(archive)["tables"])
     table_rels = {
-        rel for rel in required_files("mcpu_v1").values() if rel.startswith("mcpu_params/")
+        rel for rel in required_files("mcpu08").values() if rel.startswith("mcpu_params/")
     }
     const_rels = {
-        rel for rel in required_files("mcpu_v1").values() if rel.startswith("constants/")
+        rel for rel in required_files("mcpu08").values() if rel.startswith("constants/")
     }
     # every required .bin is carried by a table in the archive
     from pymcpu.params import table_layout
 
-    carried = {rel for name, rel in table_layout("mcpu_v1").items() if name in tables}
+    carried = {rel for name, rel in table_layout("mcpu08").items() if name in tables}
     assert table_rels <= carried, f"required tables not in archive: {table_rels - carried}"
     # every required constant is present verbatim
     missing = [rel for rel in const_rels if not (_SHIPPED_DIR / rel).is_file()]

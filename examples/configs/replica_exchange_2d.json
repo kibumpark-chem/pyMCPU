@@ -2,7 +2,7 @@
   "mode": "replica_exchange_2d",
   "pdb": "examples/data/1uao.pdb",
   "reference_pdb": null,
-  "param_set": "mcpu_v1",
+  "param_set": "mcpu08",
   "integrator": {
     "seed": 42
   },

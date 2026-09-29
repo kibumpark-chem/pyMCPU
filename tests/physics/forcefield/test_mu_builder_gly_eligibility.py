@@ -39,7 +39,7 @@ def acta_forcefield() -> MCPUForceField:
     pdb = resolve_test_pdb()  # actin (acta.pdb) is the suite default
     traj = md.load(str(pdb))
     heavy = traj.atom_slice(traj.topology.select("not element H"))
-    return MCPUForceField(heavy, param_set="mcpu_v1")
+    return MCPUForceField(heavy, param_set="mcpu08")
 
 
 def _gly_ca_atoms(ordered_atom_list) -> list[tuple[int, object]]:

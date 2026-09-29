@@ -33,7 +33,7 @@ from pymcpu.paramcodec import (
 from pymcpu.params import table_layout
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
-_ARCHIVE = _REPO_ROOT / "pymcpu" / "data" / "params" / "mcpu_v1" / "tables.npz"
+_ARCHIVE = _REPO_ROOT / "pymcpu" / "data" / "params" / "mcpu08" / "tables.npz"
 
 # Element counts derived from the builders that consume each table, so a
 # reshape change in a builder surfaces here instead of at a user's runtime.
@@ -70,8 +70,8 @@ def test_header_is_valid() -> None:
     header = read_header(_ARCHIVE)
     assert header["format"] == FORMAT_ID
     assert header["endianness"] == "little"
-    assert header["set"] == "mcpu_v1"
-    assert set(header["tables"]) == set(table_layout("mcpu_v1"))
+    assert header["set"] == "mcpu08"
+    assert set(header["tables"]) == set(table_layout("mcpu08"))
 
 
 @requires_archive

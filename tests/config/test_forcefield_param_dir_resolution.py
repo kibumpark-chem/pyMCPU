@@ -39,7 +39,7 @@ def _stub_forcefield_param_tree(root: Path) -> None:
     )
     # Registry-derived rather than hand-listed, so this stub cannot drift away
     # from what MCPUForceField._load_parameters actually opens.
-    for rel in required_files("mcpu_v1").values():
+    for rel in required_files("mcpu08").values():
         dst = root / rel
         if dst.exists():          # the three constants above have real content
             continue

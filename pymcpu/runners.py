@@ -41,7 +41,7 @@ def run_folding(
     output_dir: str | Path = "./out_folding",
     seed: int = 42,
     param_dir: str | Path | None = None,
-    param_set: str = "mcpu_v1",
+    param_set: str = "mcpu08",
     step_size_rad: float = 0.1,
     sidechain_move_mode: str = "rotamer_library",
     prefix: str = "folding",

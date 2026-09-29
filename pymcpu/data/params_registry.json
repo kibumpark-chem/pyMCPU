@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "sets": {
-    "mcpu_v1": {
+    "mcpu08": {
       "version": "1.0.0",
       "description": "MCPU08 pretrained core + sidechain triplet (logical set).",
       "layout": {
@@ -34,10 +34,10 @@
           "constants/rama_mixture.json"
         ]
       },
-      "archive": "mcpu_v1-1.0.0.tar.gz",
+      "archive": "mcpu08-1.0.0.tar.gz",
       "url": null,
       "sha256": null,
-      "unpack_root": "mcpu_v1",
+      "unpack_root": "mcpu08",
       "local_source": "../src/pymcpu/parameters/pretrained/mcpu08"
     }
   }

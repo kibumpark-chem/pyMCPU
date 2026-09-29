@@ -55,7 +55,7 @@ class FoldingRunner:
         output_dir: str | Path = "./out_folding",
         seed: int = 42,
         param_dir: str | Path | None = None,
-        param_set: str = "mcpu_v1",
+        param_set: str = "mcpu08",
         compute_dssp: bool = False,
         dssp_coil_state: str = "C",
         step_size_rad: float = 0.1,

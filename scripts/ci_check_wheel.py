@@ -125,14 +125,14 @@ def _baseline() -> None:
 def _params() -> None:
     from pymcpu.params import ensure_params
 
-    root = Path(ensure_params("mcpu_v1"))
+    root = Path(ensure_params("mcpu08"))
     print(f"    resolved to {root}")
     assert root.is_dir(), root
     from pymcpu.params import required_files
 
-    for role, rel in required_files("mcpu_v1").items():
+    for role, rel in required_files("mcpu08").items():
         assert (root / rel).is_file(), f"missing {role} -> {rel}"
-    print(f"    all {len(required_files('mcpu_v1'))} required files present")
+    print(f"    all {len(required_files('mcpu08'))} required files present")
 
 
 @check("a short simulation runs and conserves its running energy")
@@ -147,7 +147,7 @@ def _simulate() -> None:
 
     traj = md.load(str(default_example_pdb()))
     heavy = traj.atom_slice(traj.topology.select("not element H"))
-    ff = MCPUForceField(heavy, param_set="mcpu_v1")
+    ff = MCPUForceField(heavy, param_set="mcpu08")
     system = ff.create_system(heavy.topology)
     integ = mc.mcpu_core.Integrator(temperature=0.6, step_size_rad=0.1)
     integ.set_seed(42)

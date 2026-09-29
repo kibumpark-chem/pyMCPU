@@ -260,7 +260,7 @@ def apply_linker_energy_mask(
 class SimulationConfig:
     mode: Mode
     pdb: str
-    param_set: str = "mcpu_v1"
+    param_set: str = "mcpu08"
     param_dir: str | None = None
     #: Which force field to build: "mcpu08" (all-atom, the default and what
     #: every existing config means) or "korp" (backbone-only). See
@@ -317,7 +317,7 @@ class EngineSpec:
 
     pdb: str
     cv: tuple[dict, ...] = ()
-    param_set: str = "mcpu_v1"
+    param_set: str = "mcpu08"
     param_dir: str | None = None
     #: Which force field to build: "mcpu08" (all-atom, the default and what
     #: every existing config means) or "korp" (backbone-only). See
@@ -505,7 +505,7 @@ def config_from_dict(data: Mapping[str, Any]) -> SimulationConfig:
     return SimulationConfig(
         mode=mode,
         pdb=str(data["pdb"]),
-        param_set=str(data.get("param_set", "mcpu_v1")),
+        param_set=str(data.get("param_set", "mcpu08")),
         param_dir=data.get("param_dir"),
         forcefield=str(data.get("forcefield", "mcpu08")),
         forcefield_options=dict(data.get("forcefield_options") or {}),
@@ -770,7 +770,7 @@ def yaml_dict_to_config(data: Mapping[str, Any]) -> SimulationConfig:
     return SimulationConfig(
         mode=mode,
         pdb=str(data["pdb"]),
-        param_set=str(data.get("param_set", "mcpu_v1")),
+        param_set=str(data.get("param_set", "mcpu08")),
         param_dir=data.get("param_dir"),
         forcefield=str(data.get("forcefield", "mcpu08")),
         forcefield_options=dict(data.get("forcefield_options") or {}),

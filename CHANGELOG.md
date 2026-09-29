@@ -292,7 +292,7 @@ physics. This affects saved checkpoints, WESTPA `.h5` files and trajectories.
 - **`mcpu materialize-params`** decodes that archive once and prints the path,
   so an MPI launcher can serialize the decode instead of having N ranks race
   against a shared `$HOME`:
-  `export MCPU_PARAMS_DIR="$(mcpu materialize-params --set mcpu_v1)"`.
+  `export MCPU_PARAMS_DIR="$(mcpu materialize-params --set mcpu08)"`.
 - **Manual native-contact-pair mode** for the native-contacts bias and CV.
   `NativeContactsCV` — and everything built on it
   (`attach_native_contacts_bias_potential`, `ReplicaExchangeConfig`,

@@ -43,7 +43,7 @@ def _measure_engine_hbond_energy(pdb_path: Path) -> float:
 
     traj = md.load(str(pdb_path))
     heavy = traj.atom_slice(traj.topology.select("not element H"))
-    forcefield = MCPUForceField(heavy, param_set="mcpu_v1")
+    forcefield = MCPUForceField(heavy, param_set="mcpu08")
     system = forcefield.create_system(heavy.topology)
     context = mcpu_core.Context(system)
     context.set_positions((forcefield.coords[0] * 10.0).T.astype(np.float32))

@@ -77,7 +77,7 @@ def _cmd_materialize_params(args: argparse.Namespace) -> int:
     Exists so an MPI launcher can serialize the decode. `pymcpu.params`
     documents the recipe as one line before `mpirun`:
 
-        export MCPU_PARAMS_DIR="$(mcpu materialize-params --set mcpu_v1)"
+        export MCPU_PARAMS_DIR="$(mcpu materialize-params --set mcpu08)"
 
     which turns an N-way race between ranks cold-starting against a shared
     $HOME into a single call, and pins every rank to one identical root.
@@ -175,8 +175,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_dl.add_argument(
         "--set",
-        default="mcpu_v1",
-        help="Parameter set name from the registry (default: mcpu_v1)",
+        default="mcpu08",
+        help="Parameter set name from the registry (default: mcpu08)",
     )
     p_dl.add_argument(
         "--dir",
@@ -195,8 +195,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_mat.add_argument(
         "--set",
-        default="mcpu_v1",
-        help="Parameter set name from the registry (default: mcpu_v1)",
+        default="mcpu08",
+        help="Parameter set name from the registry (default: mcpu08)",
     )
     p_mat.add_argument(
         "--timeout",

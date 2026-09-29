@@ -1,7 +1,7 @@
 {
   "mode": "folding",
   "pdb": "examples/data/1uao.pdb",
-  "param_set": "mcpu_v1",
+  "param_set": "mcpu08",
   "param_dir": null,
   "integrator": {
     "temperature": 0.6,

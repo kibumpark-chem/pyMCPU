@@ -67,7 +67,7 @@ def _rename_all(traj: md.Trajectory, old: str, new: str) -> int:
 
 
 def _energy_and_torsions(traj: md.Trajectory) -> tuple[float, tuple[int, ...]]:
-    ff = MCPUForceField(traj, param_set="mcpu_v1")
+    ff = MCPUForceField(traj, param_set="mcpu08")
     system = ff.create_system(traj.topology)
     context = mcpu_core.Context(system)
     context.set_positions(np.ascontiguousarray((traj.xyz[0] * 10.0).T, dtype=np.float32))
@@ -120,7 +120,7 @@ def test_alias_emits_a_warning(caplog):
     traj = _load_heavy()
     _rename_all(traj, "HIS", "HSD")
     with caplog.at_level(logging.WARNING, logger="pymcpu.forcefields.mcpu"):
-        MCPUForceField(traj, param_set="mcpu_v1")
+        MCPUForceField(traj, param_set="mcpu08")
     assert any("HSD->HIS" in rec.getMessage() for rec in caplog.records), (
         "canonicalization must report what it renamed"
     )
@@ -129,7 +129,7 @@ def test_alias_emits_a_warning(caplog):
 def test_unmodified_input_warns_about_nothing(caplog):
     traj = _load_heavy()
     with caplog.at_level(logging.WARNING, logger="pymcpu.forcefields.mcpu"):
-        MCPUForceField(traj, param_set="mcpu_v1")
+        MCPUForceField(traj, param_set="mcpu08")
     assert not [r for r in caplog.records if "Renamed" in r.getMessage()], (
         "a topology with only standard residue names must be left alone"
     )
@@ -151,7 +151,7 @@ def test_unrepresentable_residue_raises_with_a_hint(standard, variant, hint):
     assert _rename_all(traj, standard, variant) > 0
 
     with pytest.raises(ValueError) as excinfo:
-        MCPUForceField(traj, param_set="mcpu_v1")
+        MCPUForceField(traj, param_set="mcpu08")
     message = str(excinfo.value)
     assert variant in message
     assert hint in message

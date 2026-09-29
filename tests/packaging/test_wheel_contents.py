@@ -64,7 +64,7 @@ def _members(wheel: Path) -> dict[str, int]:
 def test_wheel_contains_the_compact_parameters(built_wheel: Path) -> None:
     """Without this the installed package cannot build a force field at all."""
     members = _members(built_wheel)
-    archive = "pymcpu/data/params/mcpu_v1/tables.npz"
+    archive = "pymcpu/data/params/mcpu08/tables.npz"
     assert archive in members, (
         f"{archive} is missing from the wheel. Most likely a .gitignore rule "
         "matches it -- add a negation to the MUST SHIP block at the END of "
@@ -74,8 +74,8 @@ def test_wheel_contains_the_compact_parameters(built_wheel: Path) -> None:
 
     from pymcpu.params import constants_files
 
-    for rel in constants_files("mcpu_v1"):
-        member = f"pymcpu/data/params/mcpu_v1/{rel}"
+    for rel in constants_files("mcpu08"):
+        member = f"pymcpu/data/params/mcpu08/{rel}"
         if rel.endswith("rama_mixture.json"):
             continue  # optional
         assert member in members, f"required constant missing from wheel: {rel}"

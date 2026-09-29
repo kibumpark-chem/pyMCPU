@@ -22,13 +22,13 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 _RAW_ROOT = _REPO_ROOT / "src" / "pymcpu" / "parameters" / "pretrained" / "mcpu08"
 
 pytestmark = pytest.mark.skipif(
-    bundled_tables_path("mcpu_v1") is None,
+    bundled_tables_path("mcpu08") is None,
     reason="no in-wheel parameter archive (run scripts/encode_params.py)",
 )
 
 
 def _require_raw_tree() -> None:
-    missing = [r for r in required_files("mcpu_v1").values() if not (_RAW_ROOT / r).is_file()]
+    missing = [r for r in required_files("mcpu08").values() if not (_RAW_ROOT / r).is_file()]
     if missing:
         pytest.skip(f"raw reference tree incomplete: {missing[:2]}")
 
@@ -41,7 +41,7 @@ def materialized(tmp_path_factory) -> Path:
     old = os.environ.get("MCPU_CACHE_DIR")
     os.environ["MCPU_CACHE_DIR"] = str(cache)
     try:
-        yield materialize_from_wheel("mcpu_v1", verify=True)
+        yield materialize_from_wheel("mcpu08", verify=True)
     finally:
         if old is None:
             os.environ.pop("MCPU_CACHE_DIR", None)
@@ -52,7 +52,7 @@ def materialized(tmp_path_factory) -> Path:
 def test_every_required_file_is_bit_exact(materialized: Path) -> None:
     """Decoded tables and copied constants must match the raw tree byte for byte."""
     _require_raw_tree()
-    for relpath in required_files("mcpu_v1").values():
+    for relpath in required_files("mcpu08").values():
         produced, reference = materialized / relpath, _RAW_ROOT / relpath
         assert produced.is_file(), f"materialization omitted {relpath}"
         if relpath.endswith(".bin"):
@@ -67,10 +67,10 @@ def test_every_required_file_is_bit_exact(materialized: Path) -> None:
 
 def test_materialization_is_idempotent(materialized: Path) -> None:
     """A second call must return the same content-addressed directory."""
-    again = materialize_from_wheel("mcpu_v1", verify=False)
+    again = materialize_from_wheel("mcpu08", verify=False)
     assert again == materialized
     # name encodes the archive digest, so a table change yields a new directory
-    assert again.name.startswith("mcpu_v1-")
+    assert again.name.startswith("mcpu08-")
 
 
 def _build(param_dir: Path, steps: int):
@@ -83,7 +83,7 @@ def _build(param_dir: Path, steps: int):
         pytest.skip("examples/data/1uao.pdb not present")
     traj = md.load(str(pdb))
     heavy = traj.atom_slice(traj.topology.select("not element H"))
-    forcefield = MCPUForceField(heavy, param_set="mcpu_v1", param_dir=str(param_dir))
+    forcefield = MCPUForceField(heavy, param_set="mcpu08", param_dir=str(param_dir))
     system = forcefield.create_system(heavy.topology)
     integrator = mcpu_core.Integrator(0.6, 0.1)
     integrator.set_seed(42)

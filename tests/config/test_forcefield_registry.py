@@ -71,7 +71,7 @@ def test_unknown_options_name_the_force_field_that_refused_them():
     with pytest.raises(ValueError, match=r"'mcpu08' does not accept \['map_path'\]"):
         build_forcefield("mcpu08", None, {"map_path": "/nowhere"})
     with pytest.raises(ValueError, match=r"'korp' does not accept \['param_set'\]"):
-        build_forcefield("korp", None, {"param_set": "mcpu_v1"})
+        build_forcefield("korp", None, {"param_set": "mcpu08"})
 
 
 def test_mcpu_prepares_by_dropping_hydrogens(example_traj):

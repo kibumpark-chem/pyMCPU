@@ -55,7 +55,7 @@ requirements:
     # wrong.
   run:
     - python >=3.9
-    # All five hard runtime dependencies from pyproject.toml. pandas and
+    # All six hard runtime dependencies from pyproject.toml. pandas and
     # mdtraj are both imported at `import pymcpu` time, so omitting either
     # yields a package that installs and then cannot be imported.
     - numpy >=1.21
@@ -63,6 +63,7 @@ requirements:
     - pandas >=1.3
     - pooch >=1.7
     - pyyaml >=6.0
+    - h5py >=3.6
 
 test:
   imports:
@@ -82,7 +83,7 @@ test:
     # offline with no MCPU_PARAMS_DIR set. It is the single most likely thing
     # to silently break, because wheel contents are filtered through
     # .gitignore at build time.
-    - python -c "import pymcpu.params as p; print(p.ensure_params('mcpu_v1'))"
+    - python -c "import pymcpu.params as p; print(p.ensure_params('mcpu08'))"
     - mcpu version
     - mcpu --help
 

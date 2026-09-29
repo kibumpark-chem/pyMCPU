@@ -10,8 +10,8 @@ Usage::
 
     python scripts/encode_params.py \\
         --src src/pymcpu/parameters/pretrained/mcpu08 \\
-        --out pymcpu/data/params/mcpu_v1 \\
-        --set mcpu_v1
+        --out pymcpu/data/params/mcpu08 \\
+        --set mcpu08
 
     # release-prep gate: fail if the committed archive is stale
     python scripts/encode_params.py --check
@@ -112,9 +112,9 @@ def main() -> int:
     p.add_argument("--src", type=Path, default=_DEFAULT_SRC,
                    help="raw params root containing constants/ and mcpu_params/")
     p.add_argument("--out", type=Path,
-                   default=REPO_ROOT / "pymcpu" / "data" / "params" / "mcpu_v1",
+                   default=REPO_ROOT / "pymcpu" / "data" / "params" / "mcpu08",
                    help="destination for tables.npz + constants/")
-    p.add_argument("--set", dest="set_name", default="mcpu_v1")
+    p.add_argument("--set", dest="set_name", default="mcpu08")
     p.add_argument("--version", default="1.0.0")
     p.add_argument("--compresslevel", type=int, default=9)
     p.add_argument("--no-verify", action="store_true",
@@ -129,7 +129,7 @@ def main() -> int:
 
     if args.check:
         with tempfile.TemporaryDirectory() as tmp:
-            staging = Path(tmp) / "mcpu_v1"
+            staging = Path(tmp) / "mcpu08"
             _encode_into(src, staging, args.set_name, args.version,
                          args.compresslevel, not args.no_verify)
             # Compare decoded content, not archive bytes: zlib output is not

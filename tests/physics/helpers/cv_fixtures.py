@@ -13,7 +13,7 @@ import numpy as np
 from pymcpu.forcefields.mcpu import MCPUForceField
 
 
-def build_chignolin_forcefield(pdb_path: str, param_set: str = "mcpu_v1") -> MCPUForceField:
+def build_chignolin_forcefield(pdb_path: str, param_set: str = "mcpu08") -> MCPUForceField:
     """Heavy-atom-only ``MCPUForceField`` built from ``pdb_path``."""
     traj = md.load(str(pdb_path))
     heavy = traj.atom_slice(traj.topology.select("not element H"))

@@ -38,7 +38,7 @@ logger = logging.getLogger(__name__)
 
 _MU_LAMBDA_DEFAULT = 1.8
 _MU_ALPHA_DEFAULT  = 0.75
-_DEFAULT_PARAM_SET = "mcpu_v1"
+_DEFAULT_PARAM_SET = "mcpu08"
 
 @dataclass
 class MCPUAtom:
@@ -96,7 +96,7 @@ class MCPUForceField(BaseForceField):
             Explicit parameter root (``constants/`` + ``mcpu_params/``).
             If omitted, resolves via :func:`pymcpu.params.ensure_params`.
         param_set
-            Registry set name used when ``param_dir`` is omitted (default ``mcpu_v1``).
+            Registry set name used when ``param_dir`` is omitted (default ``mcpu08``).
         virtual_amide_h
             If True (default), use on-the-fly virtual amide H. If False, build
             explicit amide hydrogens into the topology (escape hatch).
@@ -322,7 +322,7 @@ class MCPUForceField(BaseForceField):
         # KeyError: 'rama mixture' from this constructor. That is precisely the
         # first thing an outside developer hits when they add their own
         # parameter set declaring only `required`/`tables`/`constants` -- the
-        # workflow this project wants to support. The shipped mcpu_v1 set does
+        # workflow this project wants to support. The shipped mcpu08 set does
         # declare it, so the bug was invisible in CI.
         _optional = optional_files(self.param_set)
         _rama_rel = _optional.get("rama mixture")

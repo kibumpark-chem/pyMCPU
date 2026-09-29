@@ -29,7 +29,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--output-dir", default="./out_folding")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--param-dir", default=None)
-    parser.add_argument("--param-set", default="mcpu_v1")
+    parser.add_argument("--param-set", default="mcpu08")
     parser.add_argument(
         "--fixed-residues",
         default=None,

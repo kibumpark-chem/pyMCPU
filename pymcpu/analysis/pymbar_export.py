@@ -81,7 +81,7 @@ def _load_arrays(path: Path) -> dict[str, Any]:
         except ImportError as exc:
             raise ImportError(
                 "h5py is required to read HDF5 RE analysis files; "
-                "install with: pip install 'pymcpu[analysis]'"
+                "install with: pip install h5py"
             ) from exc
         with h5py.File(path, "r") as h5:
             walker = h5["walker_id"] if "walker_id" in h5 else h5["replica_index"]

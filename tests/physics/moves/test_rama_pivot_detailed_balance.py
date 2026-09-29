@@ -67,7 +67,7 @@ def _independent_log_mixture_density(entry: dict, x: tuple[float, float], n_wrap
 
 
 def _load_real_rama_mixture_json() -> dict:
-    param_dir = ensure_params("mcpu_v1")
+    param_dir = ensure_params("mcpu08")
     path = param_dir / "constants" / "rama_mixture.json"
     with open(path) as f:
         return json.load(f)

@@ -40,7 +40,7 @@ from typing import Any
 from pymcpu import PACKAGE_ROOT
 
 _REGISTRY_PATH = Path(PACKAGE_ROOT) / "data" / "params_registry.json"
-_DEFAULT_SET = "mcpu_v1"
+_DEFAULT_SET = "mcpu08"
 
 logger = logging.getLogger(__name__)
 
@@ -112,7 +112,7 @@ def _layout(set_name: str) -> dict[str, Any]:
             f"Parameter set {set_name!r} has no 'layout' block in "
             f"{_REGISTRY_PATH}.\n"
             "The layout is the single source of truth for a set's contents; "
-            "see the mcpu_v1 entry for the expected shape."
+            "see the mcpu08 entry for the expected shape."
         )
     return layout
 
@@ -309,7 +309,7 @@ def materialize_from_wheel(
 
     In production, prefer avoiding the race altogether::
 
-        export MCPU_PARAMS_DIR="$(mcpu materialize-params --set mcpu_v1)"
+        export MCPU_PARAMS_DIR="$(mcpu materialize-params --set mcpu08)"
 
     before ``mpirun``, which turns an N-way race into one serial call.
     """
@@ -452,7 +452,7 @@ def ensure_params(
         if not archive.is_file():
             raise _complete_error(set_name, f"MCPU_PARAMS_BUNDLE is not a file: {archive}")
         _unpack_archive(archive, cache_root)
-        # Archives may unpack with or without a top-level mcpu_v1/ directory.
+        # Archives may unpack with or without a top-level mcpu08/ directory.
         if not _looks_like_params_root(cache_root, required):
             nested = cache_root / (entry.get("unpack_root") or set_name)
             if _looks_like_params_root(nested, required):

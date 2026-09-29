@@ -102,7 +102,7 @@ traj = md.load(str(default_example_pdb()))
 heavy = traj.atom_slice(traj.topology.select("not element H"))
 
 # Build the force field and the system
-forcefield = MCPUForceField(heavy, param_set="mcpu_v1")
+forcefield = MCPUForceField(heavy, param_set="mcpu08")
 system = forcefield.create_system(heavy.topology)
 
 # Temperature is a DIMENSIONLESS reduced parameter (~0.3 cold .. 0.6 hot)
@@ -182,13 +182,13 @@ documentation:
 mcpu version
 mcpu run config.yaml                   # run a JSON/YAML simulation config
 mcpu validate config.yaml              # check a config without running
-mcpu download-params --set mcpu_v1     # resolve parameters, print the path
-mcpu materialize-params --set mcpu_v1  # decode the bundled tables once
+mcpu download-params --set mcpu08     # resolve parameters, print the path
+mcpu materialize-params --set mcpu08  # decode the bundled tables once
 ```
 
 ## Pretrained parameters
 
-`pymcpu.params.ensure_params("mcpu_v1")` resolves the fitted potentials in this
+`pymcpu.params.ensure_params("mcpu08")` resolves the fitted potentials in this
 order; the first hit wins:
 
 | Priority | Source |
@@ -208,7 +208,7 @@ For multi-rank MPI jobs, decode once before launching so N ranks do not race
 against a shared `$HOME`:
 
 ```bash
-export MCPU_PARAMS_DIR="$(mcpu materialize-params --set mcpu_v1)"
+export MCPU_PARAMS_DIR="$(mcpu materialize-params --set mcpu08)"
 mpirun -n 32 python my_remd_run.py
 ```
 

@@ -41,7 +41,7 @@ def _fresh_simulation(chignolin_pdb):
 
     traj = md.load(str(chignolin_pdb))
     heavy = traj.atom_slice(traj.topology.select("not element H"))
-    forcefield = MCPUForceField(heavy, param_set="mcpu_v1")
+    forcefield = MCPUForceField(heavy, param_set="mcpu08")
     system = forcefield.create_system(heavy.topology)
     integrator = mc.Integrator(temperature=0.6, step_size_rad=0.1)
     integrator.set_seed(42)

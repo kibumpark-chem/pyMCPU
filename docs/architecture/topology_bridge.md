@@ -69,7 +69,7 @@ only the sidechain-segment copy contributes Mu energy.
 
 `MCPUForceField.__init__(trajectory, ...)` does the topology work once:
 
-1. `_load_parameters()` — resolve the parameter set (default `mcpu_v1`)
+1. `_load_parameters()` — resolve the parameter set (default `mcpu08`)
    and read the tables.
 2. `_canonicalize_residue_names(topology)` — fold protonation-state
    spellings (`HSD`, `CYX`, `ASH`, …) onto standard names, in place.

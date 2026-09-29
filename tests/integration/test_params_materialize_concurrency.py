@@ -26,7 +26,7 @@ from pymcpu.params import bundled_tables_path, required_files
 pytestmark = [
     pytest.mark.integration,
     pytest.mark.skipif(
-        bundled_tables_path("mcpu_v1") is None,
+        bundled_tables_path("mcpu08") is None,
         reason="no in-wheel parameter archive (run scripts/encode_params.py)",
     ),
 ]
@@ -57,7 +57,7 @@ def _worker(cache_dir: str, report_path: str) -> None:
 
     result: dict[str, object] = {"pid": os.getpid()}
     try:
-        root = params.materialize_from_wheel("mcpu_v1", verify=False, timeout=600.0)
+        root = params.materialize_from_wheel("mcpu08", verify=False, timeout=600.0)
         result["root"] = str(root)
         result["materialized"] = did_materialize["value"]
     except BaseException as exc:  # noqa: BLE001 - reported to the parent
@@ -104,7 +104,7 @@ def test_concurrent_materialization_is_serialized(tmp_path: Path) -> None:
 
     # 3. the result is complete and internally consistent -- no worker can
     #    have observed (or left) a partial file
-    for relpath in required_files("mcpu_v1").values():
+    for relpath in required_files("mcpu08").values():
         path = root / relpath
         assert path.is_file(), f"missing {relpath}"
         if relpath.endswith(".bin"):

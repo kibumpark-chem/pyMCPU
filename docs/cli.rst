@@ -28,12 +28,12 @@ an explanation if no source can satisfy the request.
 
 .. code-block:: bash
 
-   mcpu download-params --set mcpu_v1
-   mcpu download-params --set mcpu_v1 --dir /scratch/$USER/mcpu_params
+   mcpu download-params --set mcpu08
+   mcpu download-params --set mcpu08 --dir /scratch/$USER/mcpu_params
 
 .. option:: --set SET
 
-   Parameter set name from the registry. Default ``mcpu_v1``.
+   Parameter set name from the registry. Default ``mcpu08``.
 
 .. option:: --dir DIR
 
@@ -54,7 +54,7 @@ to one identical root:
 
 .. code-block:: bash
 
-   export MCPU_PARAMS_DIR="$(mcpu materialize-params --set mcpu_v1)"
+   export MCPU_PARAMS_DIR="$(mcpu materialize-params --set mcpu08)"
    mpirun -n 32 python my_remd_run.py
 
 The cache directory is content-addressed (``<set>-<sha256[:12]>``), so
@@ -63,7 +63,7 @@ invalidation, and repeated calls are cheap no-ops.
 
 .. option:: --set SET
 
-   Parameter set name from the registry. Default ``mcpu_v1``.
+   Parameter set name from the registry. Default ``mcpu08``.
 
 .. option:: --timeout TIMEOUT
 

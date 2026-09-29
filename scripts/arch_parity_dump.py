@@ -185,7 +185,7 @@ def _run_case_in_child(pdb: str, seed: int, steps: int) -> dict[str, Any]:
 
     traj = md.load(pdb)
     heavy = traj.atom_slice(traj.topology.select("not element H"))
-    forcefield = MCPUForceField(heavy, param_set="mcpu_v1")
+    forcefield = MCPUForceField(heavy, param_set="mcpu08")
     system = forcefield.create_system(heavy.topology)
 
     integrator = mcpu_core.Integrator(temperature=0.6, step_size_rad=0.1)
@@ -383,7 +383,7 @@ def _child_env(import_root: str | None) -> dict[str, str]:
         sys.path.insert(0, str(ROOT))
         from pymcpu.params import ensure_params
 
-        env["MCPU_PARAMS_DIR"] = str(ensure_params("mcpu_v1"))
+        env["MCPU_PARAMS_DIR"] = str(ensure_params("mcpu08"))
     except Exception:  # noqa: BLE001 -- fall back to the child's own resolution
         pass
     env["MCPU_NO_DOWNLOAD"] = "1"
