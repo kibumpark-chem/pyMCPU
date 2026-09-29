@@ -70,6 +70,24 @@ struct DownstreamCache {
 };
 
 // ---------------------------------------------------------------
+// KIC FIX (fixed targets): the loop-closure move's bond lengths, bond angles
+// and omegas, measured ONCE from the start structure. The move used to
+// re-measure them from the current coordinates on every proposal, so a bad
+// closure became the next move's target and N-CA-C drifted without bound.
+// Internal coordinates only (no atom indices), so an atom permutation, a
+// replica exchange or a checkpoint restore -- which replace positions, never
+// the System -- cannot change them. Double precision on the float32 start
+// coordinates. Per residue k: |N-CA|, |CA-C|, N-CA-C. Per peptide bond
+// k -> k+1 (size n_res - 1): |C(k)-N(k+1)|, CA(k)-C(k)-N(k+1),
+// C(k)-N(k+1)-CA(k+1) and omega = CA(k)-C(k)-N(k+1)-CA(k+1).
+// ---------------------------------------------------------------
+struct KicReference {
+    std::vector<double> len_na, len_ac, ang_nac;
+    std::vector<double> len_cn, ang_acn, ang_cna, omega;
+    [[nodiscard]] bool empty() const noexcept { return len_na.empty(); }
+};
+
+// ---------------------------------------------------------------
 // Atom memory layout:
 //
 // Legacy (default / reorder off):
@@ -144,6 +162,8 @@ private:
     EnergyMaskMode energy_mask_mode_ = EnergyMaskMode::IgnoreAll;
     bool has_energy_mask_ = false;
 
+    KicReference kic_reference_;  // KIC FIX: start-structure closure targets (setKicReference)
+
 public:
     System(int atoms, int residues);
 
@@ -198,6 +218,13 @@ public:
         return is_proline_[static_cast<size_t>(res_id)] != 0;
     }
     const std::vector<uint8_t>& isProlineFlags() const noexcept { return is_proline_; }
+
+    /// KIC FIX: store the closure targets from the START coordinates (3 x num_atoms,
+    /// Angstrom, build order -- the coordinates the replicas are positioned with).
+    /// Needs block indices; refused after a Context has reordered the atoms.
+    void setKicReference(const Eigen::Matrix3Xf& start_coords);
+    [[nodiscard]] bool hasKicReference() const noexcept { return !kic_reference_.empty(); }
+    [[nodiscard]] const KicReference& kicReference() const noexcept { return kic_reference_; }
 
     void setAminoIndex(std::vector<uint8_t> indices) {
         amino_index_ = std::move(indices);

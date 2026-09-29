@@ -45,22 +45,37 @@ half-angle tangent `t0`.
    expansion (Seok 2003).
 4. **`solve_sturm`** — isolate real roots using a Sturm sequence (Hook & McAree,
    Graphics Gems 1990). Float tolerances: `SMALL=1e-10f`, `RELERROR=1e-6f`.
-5. **`coord_from_poly_roots`** — for each root, recover `(t0,t2,t1)`, build residue
-   coordinates, and rotate into the global frame.
-6. **`loop_jacobian`** — compute `1/|det J|` for the concerted six-torsion move;
-   singular determinants trigger one deterministic LCG rotation retry.
+5. **`coord_from_poly_roots`** — for each root `t3`, recover the other two torsions
+   by a pole-free back-substitution (`back_substitute`: each closure equation is
+   written in the `(1, cos τ, sin τ)` basis, where no variable has a pole), build
+   residue coordinates, and rotate into the global frame. A closure whose three
+   N-CA-C angles miss their targets by more than 1e-6 rad is dropped
+   (`closes()`; `last_rejected()` reports how many).
+6. **`calculate_jacobian`** — compute `1/|det J|` for the concerted six-torsion
+   move; a near-singular determinant (`|det| < 1e-10`) returns -1 and the move is
+   rejected.
+
+The targets passed to step 1 are the start structure's, stored once per residue by
+`System.set_kic_reference` (called from `create_system`), not re-measured from the
+current coordinates.
 
 ## Jacobian structure
 
-`loop_jacobian` follows Dinner 2000 / Dobbs Appendix B.6–B.9:
+`calculate_jacobian` returns `1/|det M|`, where `M` is the 6×6 matrix whose
+columns are the twists `(u_i, (p_i − o) × u_i)` of the six window torsion axes
+(φ and ψ of each residue: N→CA and CA→C directions, `p_i` a point on the axis,
+`o` = CA1 to keep the moments small). The six torsions map onto the six-degree-
+of-freedom pose of the fixed end, and `M` is that map's derivative, so this is the
+closure Jacobian; a rigid motion multiplies `M` by a matrix of determinant 1, so
+`J` does not depend on how the molecule sits in the lab frame.
 
-- Six rotation axes: φ and ψ for each of three residues (N→CA and CA→C directions).
-- Rows 1–3: `axis × (r_CA3 − pivot)` for the first four axes.
-- Rows 4–5: selected components of `axis × (r_CA3→C3)`; if the CA3→C3 vector is
-  parallel to the z-axis (`|z| < 1e-10`), use x and z components instead of x and y
-  to avoid linear dependence.
-- Row 6 is implicitly `[0,0,0,0,0,-1]`; the determinant is evaluated via a 4×4
-  cofactor expansion on the upper-left block (`det3` helper, no Eigen).
+Before 2026-09-28 the body followed Dinner 2000 / Dobbs Appendix B.6–B.9 (and
+legacy `jac_local.h`): rows built from `axis × (r_CA3 − pivot)` and the lab x/y
+(or x/z) components of `axis × (r_CA3→C3)`. That value is the twist determinant
+divided by `|u_z|`, the lab z-component of the unit CA3→C3 bond. The phi driver
+rotates that bond, so the ratio `J_new/J_old` of a phi-driver move depended on
+the molecule's orientation (log-weight changed by up to 0.39 under a global
+rotation); psi-driver moves were unaffected.
 
 The Jacobian ratio enters the Metropolis criterion
 multiplicatively:

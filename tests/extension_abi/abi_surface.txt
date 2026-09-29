@@ -10,6 +10,7 @@ System.energy_mask_mode
 System.get_block_indices
 System.get_chi_atom_indices
 System.get_chi_moved_atom_ranges
+System.get_kic_reference
 System.get_num_atoms
 System.get_num_residues
 System.get_potentials
@@ -17,6 +18,7 @@ System.get_rama_mixture_library
 System.get_rotamer_library
 System.get_torsions_per_residue
 System.get_total_h_atoms
+System.has_kic_reference
 System.is_proline
 System.is_residue_energy_ignored
 System.residue_contiguous_layout
@@ -29,6 +31,7 @@ System.set_chi_moved_atom_ranges
 System.set_downstream_cache
 System.set_energy_ignored_residues
 System.set_is_proline
+System.set_kic_reference
 System.set_rama_mixture_library
 System.set_rotamer_library
 System.set_secondary_structure
@@ -125,6 +128,8 @@ Integrator.get_kic_attempted
 Integrator.get_kic_geometry_invalid
 Integrator.get_kic_jacobian_invalid
 Integrator.get_kic_presolve_zero
+Integrator.get_kic_proline_skipped
+Integrator.get_kic_reverse_missing
 Integrator.get_rama_pivot_accepted
 Integrator.get_rama_pivot_attempted
 Integrator.get_rng_state

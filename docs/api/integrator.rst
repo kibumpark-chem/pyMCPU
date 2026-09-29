@@ -251,11 +251,17 @@ statistics). Take differences if you want a per-window rate.
    * - ``get_fixed_rejected()``
      - Proposals rejected for touching a fixed residue
    * - ``get_kic_geometry_invalid()``
-     - KIC proposals with unusable geometry
+     - KIC closures the solver dropped because an N-CA-C angle missed
+       its target by more than 1e-6 rad (counts closures, not moves)
    * - ``get_kic_jacobian_invalid()``
      - KIC proposals with a non-finite Jacobian
    * - ``get_kic_presolve_zero()``
      - KIC proposals with no closure solution
+   * - ``get_kic_reverse_missing()``
+     - KIC proposals refused because the current window is not among
+       its own closure solutions, so the move could not be reversed
+   * - ``get_kic_proline_skipped()``
+     - KIC draws skipped because the move would change a proline's phi
    * - ``num_pivot_resample_pro_phi()``
      - Pivot phi draws resampled because of proline
    * - ``num_sc_resample_pro()``
@@ -268,8 +274,9 @@ statistics). Take differences if you want a per-window rate.
    ``num_propose_kic``, ``num_accept_kic``, ``num_propose_rotamer``,
    ``num_accept_rotamer``, ``num_propose_rama_pivot``,
    ``num_accept_rama_pivot``, ``steric_rejected``,
-   ``kic_geometry_invalid``, ``kic_jacobian_invalid`` and
-   ``kic_presolve_zero``.
+   ``kic_geometry_invalid``, ``kic_jacobian_invalid``,
+   ``kic_presolve_zero``, ``kic_reverse_missing`` and
+   ``kic_proline_skipped``.
 
 .. py:method:: Integrator.reset_step_stats() -> None
 

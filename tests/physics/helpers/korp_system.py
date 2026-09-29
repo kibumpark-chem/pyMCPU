@@ -72,6 +72,9 @@ def build_backbone_system(coords):
         for k in range(3):
             positions[:, 3 * r + k] = coords[r, k]
         positions[:, n_bb + r] = coords[r, 1]
+    # KIC takes its closure targets from the start structure and refuses to
+    # run on a System without them (KORPForceField.create_system sets them).
+    system.set_kic_reference(positions)
     context.set_positions(positions)
     return system, context
 

@@ -52,6 +52,80 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **KIC loop-closure moves no longer bend the backbone, and four related move
+  bugs are fixed.** Every move is meant to keep bond lengths and bond angles
+  fixed. KIC did not. Its solver found the root of the closure polynomial
+  accurately, then recovered the other two torsions as ratios (`calc_t2`,
+  `calc_t1`) whose top and bottom both fall to rounding level when a torsion is
+  near 180°, and returned "closed" windows with N-CA-C wrong by up to ~40°.
+  Nothing checked them — `kic_geometry_invalid` was declared and exported but
+  never incremented — and each move re-measured its target lengths and angles
+  from the current coordinates, so every bad closure became the next move's
+  target. N-CA-C random-walked without bound: in GA/GB folding runs 9–16 % of
+  residue-frames were more than 5° off, up to 69°, in every force field
+  including mcpu08. Legacy MCPU checks each closure against the start structure
+  and does not drift. The fix, all unconditional:
+
+  * a pole-free back-substitution replaces the ratios (each closure equation is
+    used in the `(1, cos, sin)` basis, where nothing has a pole);
+  * the solver drops any closure whose three N-CA-C angles miss their targets
+    by more than 1e-6 rad, in the pre-move and post-move solves alike, so the
+    solution-count ratio stays balanced; drops are counted in
+    `kic_geometry_invalid`;
+  * the targets are measured once, in double, from the start structure
+    (`System.set_kic_reference`, called by `MCPUForceField.create_system` and
+    `KORPForceField.create_system`), so replica swaps and checkpoint restores
+    cannot change them;
+  * the driver-moved anchor atoms are rounded to float before the post-move
+    solve, so the next move re-solves exactly this move's reverse problem;
+  * a move is refused unless the current window is one of its own pre-move
+    solutions (within 1e-3 Å), since it could not be reversed otherwise; new
+    counter `kic_reverse_missing`.
+
+  The four related bugs:
+
+  * **The KIC Jacobian depended on the lab frame.** It used the lab x/y
+    components of the CA→C bond, so it equalled the true Jacobian divided by
+    `|u_z|`, and a phi-driver move's weight changed (by up to 0.39 in log) when
+    the molecule was rotated. It is now the orientation-free twist determinant.
+  * **KIC changed proline phi**, by up to 76°. A window that would is now
+    skipped — residues r..r+2, plus r+3 for the phi driver, the set legacy
+    `loop.h` refuses — and counted in `kic_proline_skipped`. Under
+    `KORPForceField` the pivot turned proline phi as well, because
+    `create_system` never flagged prolines, so every `System.is_proline` was
+    False (10k moves on chignolin: 47° by KIC, 5.6° by the pivot). It now
+    flags them.
+  * **N-terminal psi pivots swung the carbonyl O(r)** with the moving side,
+    though it is bonded to C(r) on the axis. O=C-N was more than 5° off in
+    16–60 % of residue-frames of the N-terminal half of every production run, up
+    to 118°. O(r) now stays. With explicit amide H (`virtual_amide_h=False`) the
+    same kind of error left H(r) behind on N-terminal phi pivots and H(r+3)
+    behind on KIC's phi driver; both are fixed. So are the atom-reorder
+    layout's pivot branches, which had the same errors.
+  * **KIC left stale cached backbone torsions** on residue r-1 (phi driver) and
+    r-2, r+3 (psi driver), whose pCA/bCA read atoms KIC moves. The next move
+    touching them was billed the difference: more than 0.1 on 4–9 % of KIC
+    moves, up to 3.6. Every residue whose cache reads a moved atom is now
+    refreshed.
+
+  No energy code changed: every term is bit-identical on a fixed structure. In
+  a 5M-move mcpu08 chain N-CA-C drift fell from 45.8° max (9.8° rms) to 0.006°
+  (0.0008° rms); KIC refuses 0.1–0.4 % of proposals on the reverse check; a
+  rough timing showed no slowdown. **This changes every trajectory that uses
+  pivot or KIC moves**, mcpu08 included, and two things follow. A checkpoint
+  whose backbone has already drifted cannot be resumed usefully — KIC refuses
+  nearly every window — so start new runs from the start structure. And a
+  `System` built by hand rather than by `create_system` must call
+  `System.set_kic_reference(start_coords)` before KIC can run; KIC raises
+  `RuntimeError` otherwise, rather than measure targets from whatever the chain
+  looks like. `tests/physics/moves/test_kic_closure_fixes.py` covers each bug;
+  against the unfixed engine every one of its tests fails. Two frozen
+  trajectory baselines that run KIC were re-captured, since the first accepted
+  KIC move now lands a few float32 steps away and the runs then separate:
+  `test_coords_soa.py` (accepted moves 258 → 264) and
+  `test_rama_pivot_move.py`'s p = 0 check (92 → 79). The old values still
+  come out of the unfixed engine.
+
 - **KORP's rigid-pivot moved-moved elision is now off by default** — it gave
   Metropolis a wrong delta-E. `OrientationalPairPotential` skipped every pair of
   residues carried by the same rigid pivot, on the grounds that their six pair

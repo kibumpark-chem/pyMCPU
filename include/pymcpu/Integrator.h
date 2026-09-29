@@ -219,7 +219,12 @@ public:
     long long num_sc_resample_pro() const noexcept { return num_sc_resample_pro_; }
     long long get_kic_presolve_zero() const noexcept { return kic_presolve_zero_; }
     long long get_kic_jacobian_invalid() const noexcept { return kic_jacobian_invalid_; }
+    /// KIC FIX: closures dropped by the solver's 1e-6 rad N-CA-C check (pre- and post-move solves).
     long long get_kic_geometry_invalid() const noexcept { return kic_geometry_invalid_; }
+    /// KIC FIX: moves refused because the current window is not among its own pre-move solutions.
+    long long get_kic_reverse_missing() const noexcept { return kic_reverse_missing_; }
+    /// KIC FIX: moves skipped because they would change a proline's phi.
+    long long get_kic_proline_skipped() const noexcept { return kic_proline_skipped_; }
     long long get_steric_rejected() const noexcept { return steric_rejected_; }
 
     /// Test helpers: force a pivot/SC choice. Returns whether a move was proposed.
@@ -502,6 +507,8 @@ private:
     long long kic_presolve_zero_ = 0;
     long long kic_jacobian_invalid_ = 0;
     long long kic_geometry_invalid_ = 0;
+    long long kic_reverse_missing_ = 0;   // KIC FIX: reverse check refusals
+    long long kic_proline_skipped_ = 0;   // KIC FIX: proline-phi skips
     long long steric_rejected_ = 0;
     long long rotamer_attempted_ = 0;
     long long rotamer_accepted_ = 0;

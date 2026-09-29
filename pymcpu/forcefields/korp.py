@@ -397,6 +397,16 @@ class KORPForceField(BaseForceField):
         system.atom_to_residue = self.atom_to_res
         system.set_torsions_per_residue([0] * self.n_res)
         system.set_downstream_cache(self.downstream)
+        # KIC's closure targets (bond lengths, angles, omegas) come from the
+        # START structure, measured once here from the coordinates every run
+        # is positioned with -- see MCPUForceField.create_system.
+        system.set_kic_reference((self.coords[0] * 10.0).T.astype(np.float32))
+        # The moves keep proline phi fixed only for residues flagged here: the
+        # pivot resamples a phi pivot at a proline, and KIC skips any window
+        # whose phi it would change at one. Unflagged (as this used to be),
+        # every System.is_proline is False, and on chignolin 10k KIC moves
+        # turned proline phi by 47 deg, 10k pivots by 5.6 deg.
+        system.set_is_proline([int(name == "PRO") for name in self.res_names])
         # No rotamer or rama library: both are default-constructed on System and
         # the moves that would read them return before they get that far.
 

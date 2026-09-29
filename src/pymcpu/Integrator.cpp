@@ -628,8 +628,13 @@ void MCIntegrator::apply_pivot_at(Context& context, State& proposal, ProposalPat
             }
         } else if (residue_contig) {
             if (is_phi) {
+                // KIC FIX (F7): was [CA+1, res_end), which also swung H(r); H(r) is bonded to
+                // N(r) and stays with the fixed N side. Rotate SC(r), C(r) and O(r) only.
                 const auto& br = blocks[static_cast<size_t>(r)];
-                rotate_and_mark(br.ca_atom() + 1, br.res_end);
+                if (br.sc_start >= 0 && br.sc_count > 0)
+                    rotate_and_mark(br.sc_start, br.sc_start + br.sc_count);
+                rotate_and_mark(br.c_atom(), br.c_atom() + 1);
+                if (br.o_start >= 0) rotate_and_mark(br.o_start, br.o_start + 1);
             } else {
                 const auto& br = blocks[static_cast<size_t>(r)];
                 if (br.o_start >= 0) rotate_and_mark(br.o_start, br.o_start + 1);
@@ -668,20 +673,31 @@ void MCIntegrator::apply_pivot_at(Context& context, State& proposal, ProposalPat
 
         if (residue_contig || scattered) {
             // Per-residue rotate for reordered layouts.
-            if (is_phi) {
-                rotate_residue_spans(0, r);
-            } else {
-                rotate_residue_spans(0, r);
-                const auto& br = blocks[static_cast<size_t>(r)];
-                if (br.o_start >= 0) rotate_and_mark(br.o_start, br.o_start + 1);
+            // KIC FIX (F7): psi used to rotate O(r) (bonded to C(r), which is on the axis, so it
+            // belongs to the fixed side) and to leave N(r) and SC(r) behind (both on the moving
+            // side). H(r) is bonded to N(r), so it moves for phi and psi alike.
+            if (!residue_contig) {
+                throw std::runtime_error(
+                    "apply_pivot_at: N-terminal pivot on a permuted layout without residue "
+                    "spans is not supported");
             }
+            rotate_residue_spans(0, r);
+            const auto& br = blocks[static_cast<size_t>(r)];
+            if (!is_phi) {
+                rotate_and_mark(br.bb_start, br.bb_start + 1);
+                if (br.sc_start >= 0 && br.sc_count > 0)
+                    rotate_and_mark(br.sc_start, br.sc_start + br.sc_count);
+            }
+            if (br.h_start >= 0) rotate_and_mark(br.h_start, br.h_start + 1);
         } else {
             // Legacy contiguous BB|O|SC|H layout: rotate prefix segments.
             const int bb_end_nterm = is_phi ? idx_N : bb_start_contig;
             rotate_range(blocks[0].bb_start, bb_end_nterm, patch.bb_atom_moved);
 
+            // KIC FIX (F7): was [is_phi ? r : r + 1], which swung O(r) out of the peptide plane
+            // on psi. O(r) is bonded to C(r): on the axis for psi, on the fixed side for phi.
             const int o_end_nterm = system.getDownstreamCache().first_o_of_residue[
-                static_cast<size_t>(is_phi ? r : r + 1)];
+                static_cast<size_t>(r)];
             const int o_seg_start = system.getDownstreamCache().first_o_of_residue[0];
             rotate_range(o_seg_start, o_end_nterm, patch.o_atom_moved);
 
@@ -691,8 +707,10 @@ void MCIntegrator::apply_pivot_at(Context& context, State& proposal, ProposalPat
             rotate_range(sc_seg_start, sc_end_nterm, patch.sc_atom_moved);
 
             if (system.getTotalHAtoms() > 0) {
+                // KIC FIX (F7, explicit-H layout only): was [is_phi ? r : r + 1], which left H(r)
+                // behind on phi. H(r) is bonded to N(r), so it moves with the N side for both.
                 const int h_end_nterm = system.getDownstreamCache().first_h_of_residue[
-                    static_cast<size_t>(is_phi ? r : r + 1)];
+                    static_cast<size_t>(r + 1)];
                 const int h_seg_start = system.getDownstreamCache().first_h_of_residue[0];
                 rotate_range(h_seg_start, h_end_nterm, patch.h_atom_moved);
             }
@@ -1226,6 +1244,20 @@ void MCIntegrator::apply_concerted_rotation_move(Context& context, State& propos
         if (r < 2 || r > num_residues - 3) return;
     }
 
+    // KIC FIX (F8): never change a proline's phi (its ring would stay closed but N would go
+    // non-planar). The closure changes phi of r, r+1, r+2; the phi driver also changes phi(r+3)
+    // by moving C(r+2), while the psi driver changes psi(r-1) only. Legacy loop.h:77-101 refuses
+    // the same residues. Depends on the sequence alone, so detailed balance is kept.
+    {
+        const int pro_hi = is_phi ? r + 3 : r + 2;
+        for (int k = r; k <= pro_hi; ++k) {
+            if (system.is_proline(k)) {
+                ++kic_proline_skipped_;
+                return;
+            }
+        }
+    }
+
     // KIC affects residues r, r+1, r+2.  Driver anchor extends one more.
     if (hasFixedResidues()) {
         int lo = is_phi ? r : (r - 1);
@@ -1253,34 +1285,27 @@ void MCIntegrator::apply_concerted_rotation_move(Context& context, State& propos
     Eigen::Vector3d r_c3 = proposal.atom_pos(c3).cast<double>();
 
     // 3. Initialize solver using explicit, safe indices
+    // KIC FIX (F3): the 6 lengths, 7 angles and 2 omegas come from the START structure
+    // (System::setKicReference), not from the current coordinates. Re-measuring them made
+    // every accepted closure error the next move's target, so N-CA-C random-walked.
+    if (!system.hasKicReference()) {
+        throw std::runtime_error(
+            "KIC move: System has no start-structure closure targets; call "
+            "System.set_kic_reference(start_coords) when building it "
+            "(MCPUForceField.create_system does)");
+    }
+    const KicReference& ref = system.kicReference();
+    const size_t R0 = static_cast<size_t>(r), R1 = R0 + 1, R2 = R0 + 2;
     TripeptideSolver solver;
     std::array<double, 6> b_len = {
-        (proposal.atom_pos(c1) - proposal.atom_pos(a1)).norm(),
-        (proposal.atom_pos(n2) - proposal.atom_pos(c1)).norm(),
-        (proposal.atom_pos(a2) - proposal.atom_pos(n2)).norm(),
-        (proposal.atom_pos(c2) - proposal.atom_pos(a2)).norm(),
-        (proposal.atom_pos(n3) - proposal.atom_pos(c2)).norm(),
-        (proposal.atom_pos(a3) - proposal.atom_pos(n3)).norm() 
+        ref.len_ac[R0], ref.len_cn[R0], ref.len_na[R1],
+        ref.len_ac[R1], ref.len_cn[R1], ref.len_na[R2]
     };
     std::array<double, 7> b_ang = {
-        GeometryUtils::calculate_bond_angle(proposal.atom_pos(n1), proposal.atom_pos(a1), proposal.atom_pos(c1)),
-        GeometryUtils::calculate_bond_angle(proposal.atom_pos(a1), proposal.atom_pos(c1), proposal.atom_pos(n2)),
-        GeometryUtils::calculate_bond_angle(proposal.atom_pos(c1), proposal.atom_pos(n2), proposal.atom_pos(a2)),
-        GeometryUtils::calculate_bond_angle(proposal.atom_pos(n2), proposal.atom_pos(a2), proposal.atom_pos(c2)),
-        GeometryUtils::calculate_bond_angle(proposal.atom_pos(a2), proposal.atom_pos(c2), proposal.atom_pos(n3)),
-        GeometryUtils::calculate_bond_angle(proposal.atom_pos(c2), proposal.atom_pos(n3), proposal.atom_pos(a3)),
-        GeometryUtils::calculate_bond_angle(proposal.atom_pos(n3), proposal.atom_pos(a3), proposal.atom_pos(c3)) 
+        ref.ang_nac[R0], ref.ang_acn[R0], ref.ang_cna[R0], ref.ang_nac[R1],
+        ref.ang_acn[R1], ref.ang_cna[R1], ref.ang_nac[R2]
     };
-    std::array<double, 2> t_ang = {
-        GeometryUtils::calculate_dihedral(
-            proposal.atom_pos(a1), proposal.atom_pos(c1),
-            proposal.atom_pos(n2), proposal.atom_pos(a2)
-        ),
-        GeometryUtils::calculate_dihedral(
-            proposal.atom_pos(a2), proposal.atom_pos(c2),
-            proposal.atom_pos(n3), proposal.atom_pos(a3)
-        )
-    };
+    std::array<double, 2> t_ang = { ref.omega[R0], ref.omega[R1] };
 
     solver.initialize(b_len, b_ang, t_ang);
 
@@ -1290,10 +1315,38 @@ void MCIntegrator::apply_concerted_rotation_move(Context& context, State& propos
     //     finds 0 solutions the acceptance ratio n_new/n_old is undefined, so
     //     we must reject rather than clamp to 1.
     std::vector<Solution> pre_solutions = solver.solve(r_n1, r_a1, r_a3, r_c3);
+    // KIC FIX (F2): the solver drops closures that miss an N-CA-C target by > 1e-6 rad, in
+    // this solve and the post-move one alike, so both counts below are filtered the same way.
+    kic_geometry_invalid_ += solver.last_rejected();
     int n_soln_before = static_cast<int>(pre_solutions.size());
     if (n_soln_before == 0) {
         ++kic_presolve_zero_;
         return;
+    }
+
+    // KIC FIX (F5): the move is reversible only if the current window is itself one of the
+    // surviving pre-move solutions (the reverse move would have to pick it). Refuse otherwise.
+    {
+        constexpr double kReverseTolA = 1.0e-3;
+        const Eigen::Vector3d cur_c1 = proposal.atom_pos(c1).cast<double>();
+        const Eigen::Vector3d cur_n2 = proposal.atom_pos(n2).cast<double>();
+        const Eigen::Vector3d cur_a2 = proposal.atom_pos(a2).cast<double>();
+        const Eigen::Vector3d cur_c2 = proposal.atom_pos(c2).cast<double>();
+        const Eigen::Vector3d cur_n3 = proposal.atom_pos(n3).cast<double>();
+        bool reversible = false;
+        for (const Solution& s : pre_solutions) {
+            const double dev = std::max({
+                (s.r_c[0] - cur_c1).cwiseAbs().maxCoeff(),
+                (s.r_n[1] - cur_n2).cwiseAbs().maxCoeff(),
+                (s.r_a[1] - cur_a2).cwiseAbs().maxCoeff(),
+                (s.r_c[1] - cur_c2).cwiseAbs().maxCoeff(),
+                (s.r_n[2] - cur_n3).cwiseAbs().maxCoeff()});
+            if (dev <= kReverseTolA) { reversible = true; break; }
+        }
+        if (!reversible) {
+            ++kic_reverse_missing_;
+            return;
+        }
     }
 
     // 3c. Apply driver rotation to perturb one set of KIC endpoints.
@@ -1322,16 +1375,20 @@ void MCIntegrator::apply_concerted_rotation_move(Context& context, State& propos
         return driver_center + driver_R * (pt - driver_center);
     };
 
+    // KIC FIX (F4): round the driver-moved anchors to float BEFORE the solve, so the solver
+    // sees exactly the coordinates stored below. The next move's pre-move solve of this window
+    // is then bit-identical to this move's reverse problem, and the reverse check (F5) passes.
     if (is_phi) {
-        r_a3 = apply_driver(r_a3);
-        r_c3 = apply_driver(r_c3);
+        r_a3 = apply_driver(r_a3).cast<float>().cast<double>();
+        r_c3 = apply_driver(r_c3).cast<float>().cast<double>();
     } else {
-        r_n1 = apply_driver(r_n1);
-        r_a1 = apply_driver(r_a1);
+        r_n1 = apply_driver(r_n1).cast<float>().cast<double>();
+        r_a1 = apply_driver(r_a1).cast<float>().cast<double>();
     }
 
     // 4. Run the KIC Solver for the POST-rotation endpoints
     std::vector<Solution> new_solutions = solver.solve(r_n1, r_a1, r_a3, r_c3);
+    kic_geometry_invalid_ += solver.last_rejected();  // KIC FIX (F2)
     int n_new = static_cast<int>(new_solutions.size());
     if (n_new == 0) return;
 
@@ -1439,7 +1496,9 @@ void MCIntegrator::apply_concerted_rotation_move(Context& context, State& propos
             }
 
             // Hydrogen Transform (skipped when amide H are virtual / total_h_atoms==0)
-            if (system.getTotalHAtoms() > 0 && h_len > 0) {
+            // KIC FIX (F7, explicit H only): with the phi driver, H(r)'s frame C(r-1), N(r), CA(r)
+            // does not move, so skip it (it used to be rewritten at rounding level, unmarked).
+            if (system.getTotalHAtoms() > 0 && h_len > 0 && !(is_phi && i == 0)) {
                 int prev_c_idx = blocks[static_cast<size_t>(res_idx - 1)].c_atom();
                 if (prev_c_idx >= 0 && prev_c_idx < n_atoms &&
                     n_idx >= 0 && n_idx < n_atoms &&
@@ -1480,6 +1539,14 @@ void MCIntegrator::apply_concerted_rotation_move(Context& context, State& propos
             o_pos = apply_driver(o_pos);
             proposal.set_atom_pos(o_prev, o_pos.cast<float>());
         }
+    }
+    // KIC FIX (F7, explicit H only): the phi driver swings C(r+2) about N(r+3)-CA(r+3), and
+    // H(r+3) (bonded to N(r+3), in the C(r+2)-N(r+3)-CA(r+3) plane) must swing with it.
+    const int h_next = (is_phi && system.getTotalHAtoms() > 0)
+                           ? blocks[static_cast<size_t>(r + 3)].h_start : -1;
+    if (h_next >= 0) {
+        Eigen::Vector3d h_pos = context.state.atom_pos(h_next).cast<double>();
+        proposal.set_atom_pos(h_next, apply_driver(h_pos).cast<float>());
     }
 
     // 11. Record moved atoms for energy delta evaluation
@@ -1548,22 +1615,26 @@ void MCIntegrator::apply_concerted_rotation_move(Context& context, State& propos
                 patch.mark_moved(h);
             }
         }
+        if (h_next >= 0) {  // KIC FIX (F7): H(r+3), moved by the phi driver above
+            patch.h_atom_moved[static_cast<size_t>(h_next)] = 1;
+            patch.mark_moved(h_next);
+        }
     }
     patch.is_rigid = false;
 
-    if (!is_phi && r >= 2) patch.add_distorted_bb_residue(r - 1);
-    patch.add_distorted_bb_residue(r);
-    patch.add_distorted_bb_residue(r + 1);
-    patch.add_distorted_bb_residue(r + 2);
-    if (is_phi && r + 3 < num_residues) patch.add_distorted_bb_residue(r + 3);
+    // KIC FIX (F9): residue k's cached (phi, psi, pCA, bCA) reads C(k-1), N(k-1), CA(k-1), O(k-1),
+    // N(k), CA(k), C(k), N(k+1), CA(k+1), O(k+1) (recompute_backbone_torsion). Moved atoms:
+    //   phi driver: C,O of r; N,CA,C,O of r+1 and r+2        -> k = r-1 .. r+3
+    //   psi driver: O of r-1; N,CA,C,O of r and r+1; N,O of r+2 -> k = r-2 .. r+3
+    // It used to refresh only r..r+3 (phi) and r-1..r+2 (psi): r-1 (phi) and r-2, r+3 (psi)
+    // kept stale pCA/bCA, and the error was billed to a later move.
+    const int bb_lo = is_phi ? r - 1 : r - 2;   // >= 0: phi needs r >= 1, psi r >= 2
+    const int bb_hi = std::min(r + 3, num_residues - 1);
+    for (int k = bb_lo; k <= bb_hi; ++k) patch.add_distorted_bb_residue(k);
 
     // Refresh the cached backbone torsions for the residues just marked
     // distorted — see recompute_backbone_torsion()'s docstring above.
-    if (!is_phi && r >= 2) recompute_backbone_torsion(proposal, system, r - 1);
-    recompute_backbone_torsion(proposal, system, r);
-    recompute_backbone_torsion(proposal, system, r + 1);
-    recompute_backbone_torsion(proposal, system, r + 2);
-    if (is_phi && r + 3 < num_residues) recompute_backbone_torsion(proposal, system, r + 3);
+    for (int k = bb_lo; k <= bb_hi; ++k) recompute_backbone_torsion(proposal, system, k);
 }
 
 void MCIntegrator::verify_physics_consistency(Context& context, int num_steps, float atol)

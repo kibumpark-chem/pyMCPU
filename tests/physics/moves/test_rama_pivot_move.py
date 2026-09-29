@@ -221,7 +221,20 @@ def test_p_zero_is_bit_identical_to_genuine_legacy_code() -> None:
     the genuinely unmodified engine in the untouched `mcpu_dev` conda env
     (pkg/pyMCPU, pre-dating this feature's RamaMixtureLibrary/
     apply_rama_pivot_at/dispatch_pivot_move changes entirely) -- see the
-    git history of this test for the exact capture command."""
+    git history of this test for the exact capture command.
+
+    RE-CAPTURED 2026-09-28 after the KIC loop-closure fix (CHANGELOG
+    [Unreleased] -> Fixed). That fix changes KIC and the plain pivot's
+    N-terminal branch, so every trajectory that runs them changes; it does
+    not touch dispatch_pivot_move or the rama-mixture move. The unfixed
+    engine still gives the numbers captured above (sum 92, same head; checked
+    on a GCC 14.2 build of the unfixed tree). The fixed engine gives the same
+    head and sum 79: replayed one step at a time, the two engines are
+    bit-identical through step 9, and step 10 is an accepted KIC move that
+    moves the same 15 atoms in both, 12 of which land up to 7.6e-6 A apart
+    (float32 rounding of the new closure arithmetic); the runs then separate.
+    So the no-extra-draw property was established against the pre-feature
+    engine and is now pinned on the fixed one."""
     ctx, _ = build_raw_context(virtual_amide_h=True)
     integ = mcpu_core.Integrator(temperature=300.0, step_size_rad=0.1)
     integ.set_pivot_rama_probability(0.0)
@@ -229,7 +242,7 @@ def test_p_zero_is_bit_identical_to_genuine_legacy_code() -> None:
     integ.run(ctx, 300)
 
     legacy_accept_bits_head = [0, 0, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 1, 1, 1, 0, 1, 0, 1, 1]
-    legacy_accept_bits_sum = 92
+    legacy_accept_bits_sum = 79  # 92 before the KIC fix; see the docstring
 
     bits = list(integ.last_accept_bits())
     assert bits[:20] == legacy_accept_bits_head

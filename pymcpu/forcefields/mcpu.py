@@ -574,6 +574,12 @@ class MCPUForceField(BaseForceField):
         system.set_is_proline([int(x) for x in self.is_proline])
         system.set_amino_index([int(x) for x in self.amino_index])
         system.set_secondary_structure(self.secondary_structure)
+        # The loop-closure (KIC) move takes its bond lengths, bond angles and
+        # omegas from the START structure -- the exact float32 coordinates every
+        # replica is positioned with ((coords[0] * 10).T as float32) -- never
+        # from the moving chain. Built from the PDB, so replica exchange and
+        # checkpoint restores cannot change it. KIC refuses to run without it.
+        system.set_kic_reference((self.coords[0] * 10.0).T.astype(np.float32))
 
         # --- 3. Build Forces via Delegate Builders ---
         # (Pass ordered_atom_list instead of topology.atoms so builders use the new order)

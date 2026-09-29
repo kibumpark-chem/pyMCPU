@@ -122,7 +122,9 @@ PYBIND11_MODULE(mcpu_core, m) {
         .def("get_eta", &TripeptideSolver::get_eta)
         .def("get_delta", &TripeptideSolver::get_delta)
         .def("get_polynomial_coefficients", &TripeptideSolver::get_polynomial_coefficients)
-        .def("calculate_jacobian", &TripeptideSolver::calculate_jacobian, py::arg("solution"));
+        .def("calculate_jacobian", &TripeptideSolver::calculate_jacobian, py::arg("solution"))
+        // KIC FIX (F2): closures dropped by the 1e-6 rad N-CA-C check in the last solve().
+        .def("last_rejected", &TripeptideSolver::last_rejected);
 
     py::class_<mcpu::RotamerComponent>(m, "RotamerComponent")
         .def(py::init<>())
@@ -974,6 +976,9 @@ PYBIND11_MODULE(mcpu_core, m) {
         .def("get_kic_presolve_zero", &mcpu::MCIntegrator::get_kic_presolve_zero)
         .def("get_kic_jacobian_invalid", &mcpu::MCIntegrator::get_kic_jacobian_invalid)
         .def("get_kic_geometry_invalid", &mcpu::MCIntegrator::get_kic_geometry_invalid)
+        // KIC FIX (F5, F8): reverse-check refusals and proline-phi skips.
+        .def("get_kic_reverse_missing", &mcpu::MCIntegrator::get_kic_reverse_missing)
+        .def("get_kic_proline_skipped", &mcpu::MCIntegrator::get_kic_proline_skipped)
         .def("get_steric_rejected", &mcpu::MCIntegrator::get_steric_rejected)
         .def("move_stats",
              [](const mcpu::MCIntegrator& integ) {
@@ -991,6 +996,8 @@ PYBIND11_MODULE(mcpu_core, m) {
                  d["kic_presolve_zero"] = integ.get_kic_presolve_zero();
                  d["kic_jacobian_invalid"] = integ.get_kic_jacobian_invalid();
                  d["kic_geometry_invalid"] = integ.get_kic_geometry_invalid();
+                 d["kic_reverse_missing"] = integ.get_kic_reverse_missing();
+                 d["kic_proline_skipped"] = integ.get_kic_proline_skipped();
                  d["steric_rejected"] = integ.get_steric_rejected();
                  return d;
              })
@@ -1299,6 +1306,18 @@ PYBIND11_MODULE(mcpu_core, m) {
         .def("set_rama_mixture_library", &System::setRamaMixtureLibrary)
         .def("get_rama_mixture_library", &System::getRamaMixtureLibrary, py::return_value_policy::reference_internal)
         .def("set_downstream_cache",  &System::setDownstreamCache)
+        // KIC FIX (F3): closure targets from the START coordinates (3 x n_atoms, Angstrom,
+        // build order). MCPUForceField.create_system calls it; KIC refuses to run without it.
+        .def("set_kic_reference", &System::setKicReference, py::arg("start_coords"))
+        .def("has_kic_reference", &System::hasKicReference)
+        .def("get_kic_reference", [](const System& s) {
+                 const auto& r = s.kicReference();
+                 py::dict d;
+                 d["len_na"] = r.len_na;   d["len_ac"] = r.len_ac;   d["ang_nac"] = r.ang_nac;
+                 d["len_cn"] = r.len_cn;   d["ang_acn"] = r.ang_acn; d["ang_cna"] = r.ang_cna;
+                 d["omega"] = r.omega;
+                 return d;
+             })
         .def("set_is_proline",
              [](System& s, const std::vector<int>& flags) {
                  std::vector<uint8_t> u(flags.begin(), flags.end());

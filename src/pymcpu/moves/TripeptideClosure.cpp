@@ -4,6 +4,7 @@
 #include "pymcpu/utils/numbers_compat.h"
 #include <iostream>
 #include <iomanip>
+#include <limits>
 
 #include "pymcpu/moves/TripeptideClosure.h"
 #include "pymcpu/moves/TripeptideClosureUtils.h"
@@ -11,11 +12,53 @@
 
 using namespace TripeptideLoopClosure;
 
+namespace {
+
+// Helpers for the pole-free back-substitution (TripeptideSolver::back_substitute).
+//
+// Each closure equation is biquadratic in two half-angle tangents t = tan(tau/2). Multiplied by
+// cos^2(tau_a/2) cos^2(tau_b/2) it becomes v(tau_a)^T T v(tau_b) with v(tau) = (1, cos tau, sin tau),
+// which has no pole at tau = pi. With one angle known it is a line  k + a cos + b sin = 0  in the other.
+
+// The two unit vectors (c, s) on the line w[0] + w[1] c + w[2] s = 0; at a tangency both are the touching
+// point. No transcendental function; the only divisor is w[1]^2 + w[2]^2 > 0.
+inline void circle_line(const double w[3], double c[2], double s[2]) {
+    const double k = w[0], a = w[1], b = w[2];
+    const double rho2 = a * a + b * b;
+    const double h = rho2 - k * k;
+    const double r = (h > 0.0) ? std::sqrt(h) : 0.0;
+    c[0] = (-k * a - b * r) / rho2;  s[0] = (-k * b + a * r) / rho2;
+    c[1] = (-k * a + b * r) / rho2;  s[1] = (-k * b - a * r) / rho2;
+}
+
+// Relative residual of the line w at the unit vector (c, s).
+inline double line_residual(const double w[3], double c, double s) {
+    const double num = std::abs(w[0] + w[1] * c + w[2] * s);
+    const double den = std::abs(w[0]) + std::abs(w[1] * c) + std::abs(w[2] * s);
+    return den > 0.0 ? num / den : 0.0;
+}
+
+// Do the lines w0 and w1 meet ON the unit circle? Division-free form of |Cramer intersection|^2 == 1,
+// relative to the size of its terms.
+inline double pair_residual(const double w0[3], const double w1[3]) {
+    const double x = w0[0] * w1[2] - w1[0] * w0[2];
+    const double y = w0[1] * w1[0] - w1[1] * w0[0];
+    const double d = w0[1] * w1[2] - w1[1] * w0[2];
+    const double nx = std::abs(w0[0] * w1[2]) + std::abs(w1[0] * w0[2]);
+    const double ny = std::abs(w0[1] * w1[0]) + std::abs(w1[1] * w0[0]);
+    const double nd = std::abs(w0[1] * w1[2]) + std::abs(w1[1] * w0[2]);
+    const double den = nx * nx + ny * ny + nd * nd;
+    return den > 0.0 ? std::abs(x * x + y * y - d * d) / den : 0.0;
+}
+
+}  // namespace
+
 int TripeptideSolver::solv_3pep_poly(const Vec3& r_n1, const Vec3& r_a1, 
                                      const Vec3& r_a3, const Vec3& r_c3, 
                                      std::vector<Solution>& solutions) {
     int n_soln = 0;
     solutions.clear();
+    n_rejected_ = 0;
 
     get_input_angles(n_soln, r_n1, r_a1, r_a3, r_c3);
     if (n_soln == 0) {
@@ -359,6 +402,81 @@ void TripeptideSolver::solve_roots(const Eigen::Matrix<double, 17, 1>& poly_coef
 //     return (U31 * U13 - U11 * U33) / (U12 * U33 - U13 * U32);
 // }
 
+// Replaces calc_t2 / calc_t1 in coord_from_poly_roots. Those return the half-tangents t2, t1 as ratios whose
+// numerator and denominator both fall to rounding level when tau2 or tau1 is near pi or two roots nearly
+// coincide. Here every equation is used in the (1, cos, sin) basis, where no variable has a pole.
+//
+// T_i = M^T E_i M, with E_i(j, k) = C_k(j, i) the coefficient of
+//   eq0: t3^j t1^k,   eq1: t2^j t1^k,   eq2: t3^j t2^k     (t3 = the polynomial root, half_tan[2])
+// and M mapping (1, cos, sin) to the half-angle monomials (c^2, s c, s^2): c^2 = (1 + cos)/2, s c = sin/2,
+// s^2 = (1 - cos)/2.
+void TripeptideSolver::build_trig_coeff()
+{
+    // M = {{1/2, 1/2, 0}, {0, 0, 1/2}, {1/2, -1/2, 0}}; the product M^T E M written out (27 flops per equation).
+    const Eigen::Matrix3d* C[3] = {&C0, &C1, &C2};
+    for (int i = 0; i < 3; ++i) {
+        double F[3][3];                                   // F = E M
+        for (int j = 0; j < 3; ++j) {
+            const double e0 = (*C[0])(j, i), e1 = (*C[1])(j, i), e2 = (*C[2])(j, i);   // E(j, k) = C_k(j, i)
+            F[j][0] = 0.5 * (e0 + e2);
+            F[j][1] = 0.5 * (e0 - e2);
+            F[j][2] = 0.5 * e1;
+        }
+        for (int q = 0; q < 3; ++q) {                     // T = M^T F
+            trig_coeff_[i][0][q] = 0.5 * (F[0][q] + F[2][q]);
+            trig_coeff_[i][1][q] = 0.5 * (F[0][q] - F[2][q]);
+            trig_coeff_[i][2][q] = 0.5 * F[1][q];
+        }
+    }
+}
+
+// Given (cos tau3, sin tau3) of a root, return (cos, sin) of tau1 and tau2.
+//   tau2: eq2(tau3, .) is a line in (cos tau2, sin tau2); of its two circle points keep the one for which
+//         eq0(tau3, .) and eq1(tau2, .) meet on the circle (pair_residual; this is the quartic condition
+//         calc_t2 reduced, written without a division).
+//   tau1: of the two circle points of eq0(tau3, .) keep the one that satisfies eq1(tau2, .).
+void TripeptideSolver::back_substitute(double c3, double s3,
+                                       double& c1, double& s1,
+                                       double& c2, double& s2) const
+{
+    const auto& T0 = trig_coeff_[0];
+    const auto& T1 = trig_coeff_[1];
+    const auto& T2 = trig_coeff_[2];
+    double w0[3], w2[3];
+    for (int q = 0; q < 3; ++q) {
+        w0[q] = T0[0][q] + T0[1][q] * c3 + T0[2][q] * s3;
+        w2[q] = T2[0][q] + T2[1][q] * c3 + T2[2][q] * s3;
+    }
+    double cc[2], ss[2], w1[3], w1_best[3];
+    circle_line(w2, cc, ss);
+    double best = std::numeric_limits<double>::infinity();
+    for (int m = 0; m < 2; ++m) {
+        for (int q = 0; q < 3; ++q)
+            w1[q] = T1[0][q] + T1[1][q] * cc[m] + T1[2][q] * ss[m];
+        const double r = pair_residual(w0, w1);
+        if (m == 0 || r < best) {
+            best = r;
+            c2 = cc[m]; s2 = ss[m];
+            std::copy(w1, w1 + 3, w1_best);
+        }
+    }
+    circle_line(w0, cc, ss);
+    const int m = (line_residual(w1_best, cc[0], ss[0]) <= line_residual(w1_best, cc[1], ss[1])) ? 0 : 1;
+    c1 = cc[m]; s1 = ss[m];
+}
+
+// A returned closure must reproduce its three N-CA-C targets (theta, set in get_input_angles).
+bool TripeptideSolver::closes(const Solution& sol) const
+{
+    for (int i = 0; i < 3; ++i) {
+        const Vec3 u = sol.r_n[i] - sol.r_a[i];
+        const Vec3 v = sol.r_c[i] - sol.r_a[i];
+        const double cosang = std::clamp(u.dot(v) / std::sqrt(u.squaredNorm() * v.squaredNorm()), -1.0, 1.0);
+        if (!(std::abs(std::acos(cosang) - theta[i]) <= kClosureTol)) return false;
+    }
+    return true;
+}
+
 double TripeptideSolver::calc_t1(double t0, double t2) const {
     double t0_2 = t0 * t0;
     double t2_2 = t2 * t2;
@@ -443,20 +561,18 @@ void TripeptideSolver::coord_from_poly_roots(const std::vector<double>& roots,
     Eigen::Vector3d r0 = r_a1;
 
     std::array<double, 4> cos_tau, sin_tau; 
-    std::array<double, 3> cos_sig, sin_sig, half_tan;
+    std::array<double, 3> cos_sig, sin_sig;
 
+    build_trig_coeff();
     for (size_t i_soln = 0; i_soln < roots.size(); ++i_soln) {
-        half_tan[2] = roots[i_soln];
-        half_tan[1] = calc_t2(half_tan[2]);
-        half_tan[0] = calc_t1(half_tan[2], half_tan[1]);
+        // tau3 from the root t3 = tan(tau3/2); tau1, tau2 from the pole-free back-substitution
+        // (was: half_tan[1] = calc_t2(t3); half_tan[0] = calc_t1(t3, half_tan[1]); then t -> cos, sin).
+        const double t3 = roots[i_soln];
+        const double d3 = 1.0 + t3 * t3;
+        cos_tau[3] = (1.0 - t3 * t3) / d3;
+        sin_tau[3] = 2.0 * t3 / d3;
+        back_substitute(cos_tau[3], sin_tau[3], cos_tau[1], sin_tau[1], cos_tau[2], sin_tau[2]);
 
-        for (int i = 1; i < 4; ++i) {
-            double ht = half_tan[i-1];
-            double tmp = 1.0 + ht * ht;
-            cos_tau[i] = (1.0 - ht * ht) / tmp;
-            sin_tau[i] = 2.0 * ht / tmp;
-        }
-        
         cos_tau[0] = cos_tau[3]; sin_tau[0] = sin_tau[3];
 
         for (int i = 0; i < 3; ++i) {
@@ -480,6 +596,13 @@ void TripeptideSolver::coord_from_poly_roots(const std::vector<double>& roots,
         sol.r_n[1] = Us * (r_n[1] - r0) + r0; sol.r_a[1] = Us * (r_a[1] - r0) + r0; sol.r_c[1] = Us * (r_c[1] - r0) + r0;
         sol.r_n[2] = Us * (r_n[2] - r0) + r0; sol.r_a[2] = r_a3; sol.r_c[2] = r_c3;
 
+        // Safety net: drop a closure that misses an N-CA-C target by more than kClosureTol. Both solves of a
+        // KIC move (Integrator.cpp:1300, 1342) come through here, so the two solution counts in the
+        // acceptance ratio are filtered alike. The caller can add last_rejected() to kic_geometry_invalid_.
+        if (!closes(sol)) {
+            ++n_rejected_;
+            continue;
+        }
         solutions.push_back(sol);
     }
 }
@@ -534,126 +657,28 @@ void TripeptideSolver::coord_from_poly_roots(const std::vector<double>& roots,
 //     return 1.0 / std::abs(det); 
 // }
 
+// KIC FIX (F6): orientation-free Jacobian. The previous body (legacy jac_local.h:114-130) used
+// the lab x/y (or x/z) components of the CA3->C3 bond; the phi driver rotates that bond, so its J
+// was J_true / |u_z| and a phi-driver move's weight depended on how the molecule sat in the lab
+// (checked to 1e-12 on 1,240 closures). This is 1/|det| of the 6x6 matrix of Pluecker twists
+// (u_i, p_i x u_i) of the six window torsion axes (phi1, psi1, phi2, psi2, phi3, psi3): invariant
+// under any rigid motion, equal to J_true. Moments are taken about CA1 to keep them small.
 double TripeptideSolver::calculate_jacobian(const Solution& sol) const
 {
-    using Vec3 = Eigen::Vector3d;
     using Mat66 = Eigen::Matrix<double, 6, 6>;
-
-    // 1. Build axes and pivots exactly like legacy code
-    std::array<Vec3, 6> axis;
-    std::array<Vec3, 6> pivot;
-
-    // Residue 1
-    axis[0]  = (sol.r_a[0] - sol.r_n[0]);  // phi1: N1->CA1
-    axis[0].normalize();
-    pivot[0] = sol.r_a[0];                 // pivot at CA1
-
-    axis[1]  = (sol.r_c[0] - sol.r_a[0]);  // psi1: CA1->C1
-    axis[1].normalize();
-    pivot[1] = sol.r_c[0];                 // pivot at C1
-
-    // Residue 2
-    axis[2]  = (sol.r_a[1] - sol.r_n[1]);  // phi2
-    axis[2].normalize();
-    pivot[2] = sol.r_a[1];
-
-    axis[3]  = (sol.r_c[1] - sol.r_a[1]);  // psi2
-    axis[3].normalize();
-    pivot[3] = sol.r_c[1];
-
-    // Residue 3
-    axis[4]  = (sol.r_a[2] - sol.r_n[2]);  // phi3
-    axis[4].normalize();
-    pivot[4] = sol.r_a[2];
-
-    axis[5]  = (sol.r_c[2] - sol.r_a[2]);  // psi3
-    axis[5].normalize();
-    pivot[5] = sol.r_c[2];
-
-    // 2. End point (CA3) and final bond direction (CA3 -> C3)
-    Vec3 r_ca3  = sol.r_a[2];
-    Vec3 r_cac3 = (sol.r_c[2] - sol.r_a[2]).normalized();
-
-    // 3. Choose which components (c1, c2) to use for last two rows, as in legacy
-    int c1, c2;
-    if (std::abs(r_cac3.z()) < 1.0e-10) {
-        // x and z components: Fortran (4,6) -> zero-based (3,5)
-        c1 = 3;
-        c2 = 5;
-    } else {
-        // x and y components: Fortran (4,5) -> zero-based (3,4)
-        c1 = 3;
-        c2 = 4;
-    }
-
-    // 4. Build the 6x6 j matrix like the legacy routine
-    Mat66 j = Mat66::Zero();
-
-    // j(1..4, 1..3): axis x (r_ca3 - pivot)
-    for (int n = 0; n < 4; ++n) {
-        Vec3 v = axis[n].cross(r_ca3 - pivot[n]);
-        j(n, 0) = v.x();
-        j(n, 1) = v.y();
-        j(n, 2) = v.z();
-    }
-
-    // j(1..5, 4..6): axis x r_cac3
-    for (int n = 0; n < 5; ++n) {
-        Vec3 v = axis[n].cross(r_cac3);
-        j(n, 3) = v.x();
-        j(n, 4) = v.y();
-        j(n, 5) = v.z();
-    }
-
-    // 5. Helper det3() with the same orientation as legacy
-    auto det3 = [](const Vec3& j1, const Vec3& j2, const Vec3& j3) -> double {
-        // Replicates your C det3 mapping:
-        // j11 = j1[0]; j12 = j2[0]; j13 = j3[0];
-        // j21 = j1[1]; j22 = j2[1]; j23 = j3[1];
-        // j31 = j1[2]; j32 = j2[2]; j33 = j3[2];
-        double j11 = j1[0], j12 = j2[0], j13 = j3[0];
-        double j21 = j1[1], j22 = j2[1], j23 = j3[1];
-        double j31 = j1[2], j32 = j2[2], j33 = j3[2];
-
-        return j11 * (j22*j33 - j23*j32)
-             - j12 * (j21*j33 - j23*j31)
-             + j13 * (j21*j32 - j22*j31);
-    };
-
-    // 6. Build the 3-vectors used in the 3x3 determinants
-    Vec3 va_1, va_2, va_3;
-    Vec3 vb_1, vb_2, vb_3;
-    Vec3 vc_1, vc_2, vc_3;
-    Vec3 vd_1, vd_2, vd_3;
-
+    const Eigen::Vector3d o = sol.r_a[0];
+    Mat66 m;
     for (int i = 0; i < 3; ++i) {
-        va_1[i] = j(1, i);
-        va_2[i] = j(2, i);
-        va_3[i] = j(3, i);
-
-        vb_1[i] = j(0, i);
-        vb_2[i] = j(2, i);
-        vb_3[i] = j(3, i);
-
-        vc_1[i] = j(0, i);
-        vc_2[i] = j(1, i);
-        vc_3[i] = j(3, i);
-
-        vd_1[i] = j(0, i);
-        vd_2[i] = j(1, i);
-        vd_3[i] = j(2, i);
+        const Eigen::Vector3d u_phi = (sol.r_a[i] - sol.r_n[i]).normalized();  // N_i -> CA_i
+        const Eigen::Vector3d u_psi = (sol.r_c[i] - sol.r_a[i]).normalized();  // CA_i -> C_i
+        m.col(2 * i).head<3>() = u_phi;
+        m.col(2 * i).tail<3>() = (sol.r_a[i] - o).cross(u_phi);
+        m.col(2 * i + 1).head<3>() = u_psi;
+        m.col(2 * i + 1).tail<3>() = (sol.r_c[i] - o).cross(u_psi);
     }
+    const double det = m.determinant();
 
-    // 7. Determinant using the exact cofactor expression
-    double det =
-        -(j(4, c2)*j(0, c1) - j(4, c1)*j(0, c2)) * det3(va_1, va_2, va_3)
-        +(j(4, c2)*j(1, c1) - j(4, c1)*j(1, c2)) * det3(vb_1, vb_2, vb_3)
-        -(j(4, c2)*j(2, c1) - j(4, c1)*j(2, c2)) * det3(vc_1, vc_2, vc_3)
-        +(j(4, c2)*j(3, c1) - j(4, c1)*j(3, c2)) * det3(vd_1, vd_2, vd_3);
-
-    if (std::abs(det) < 1.0e-10) {
-        // If you want to fully match the original, you’d also implement
-        // the "random rotation and retry" logic here.
+    if (!(std::abs(det) >= 1.0e-10)) {   // near-singular (or non-finite): caller rejects
         return -1.0;
     }
 

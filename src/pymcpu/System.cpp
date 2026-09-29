@@ -2,10 +2,78 @@
 #include "pymcpu/Context.h"
 #include "pymcpu/AtomPermutation.h"
 
+#include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <stdexcept>
+#include <string>
 
 using namespace mcpu;
+
+// KIC FIX (fixed targets): see KicReference in System.h. Double-precision versions of
+// GeometryUtils::calculate_bond_angle / calculate_dihedral (same formulas, same sign
+// convention), which the move used to apply in float to the current coordinates.
+namespace {
+double kic_ref_angle(const Eigen::Vector3d& a, const Eigen::Vector3d& b, const Eigen::Vector3d& c) {
+    const Eigen::Vector3d u = (a - b).normalized();
+    const Eigen::Vector3d v = (c - b).normalized();
+    return std::acos(std::clamp(u.dot(v), -1.0, 1.0));
+}
+double kic_ref_dihedral(const Eigen::Vector3d& p1, const Eigen::Vector3d& p2,
+                        const Eigen::Vector3d& p3, const Eigen::Vector3d& p4) {
+    const Eigen::Vector3d b1 = p2 - p1, b2 = p3 - p2, b3 = p4 - p3;
+    const Eigen::Vector3d n1 = b1.cross(b2), n2 = b2.cross(b3);
+    return std::atan2(b1.dot(n2) * b2.norm(), n1.dot(n2));
+}
+}  // namespace
+
+void System::setKicReference(const Eigen::Matrix3Xf& start_coords) {
+    if (start_coords.cols() != num_atoms) {
+        throw std::invalid_argument(
+            "System::setKicReference: expected 3 x " + std::to_string(num_atoms) +
+            " start coordinates, got 3 x " + std::to_string(start_coords.cols()));
+    }
+    if (static_cast<int>(block_indices.size()) != num_residues) {
+        throw std::runtime_error("System::setKicReference: set_block_indices must come first");
+    }
+    if (residue_contiguous_layout_) {
+        // The coordinates are in build order; after a reorder the blocks are not.
+        throw std::runtime_error(
+            "System::setKicReference: must be called before a Context reorders the atoms");
+    }
+    const auto P = [&](int i) -> Eigen::Vector3d {
+        return start_coords.col(i).cast<double>();
+    };
+    const size_t n = static_cast<size_t>(num_residues);
+    const size_t nb = n > 0 ? n - 1 : 0;
+    KicReference ref;
+    ref.len_na.resize(n); ref.len_ac.resize(n); ref.ang_nac.resize(n);
+    ref.len_cn.resize(nb); ref.ang_acn.resize(nb); ref.ang_cna.resize(nb); ref.omega.resize(nb);
+    for (size_t k = 0; k < n; ++k) {
+        const auto& b = block_indices[k];
+        const Eigen::Vector3d N = P(b.bb_start), CA = P(b.ca_atom()), C = P(b.c_atom());
+        ref.len_na[k] = (CA - N).norm();
+        ref.len_ac[k] = (C - CA).norm();
+        ref.ang_nac[k] = kic_ref_angle(N, CA, C);
+        if (k + 1 < n) {
+            const auto& b2 = block_indices[k + 1];
+            const Eigen::Vector3d N2 = P(b2.bb_start), CA2 = P(b2.ca_atom());
+            ref.len_cn[k] = (N2 - C).norm();
+            ref.ang_acn[k] = kic_ref_angle(CA, C, N2);
+            ref.ang_cna[k] = kic_ref_angle(C, N2, CA2);
+            ref.omega[k] = kic_ref_dihedral(CA, C, N2, CA2);
+        }
+    }
+    for (const auto* v : {&ref.len_na, &ref.len_ac, &ref.ang_nac, &ref.len_cn,
+                          &ref.ang_acn, &ref.ang_cna, &ref.omega}) {
+        for (double x : *v) {
+            if (!std::isfinite(x)) {
+                throw std::runtime_error("System::setKicReference: non-finite start geometry");
+            }
+        }
+    }
+    kic_reference_ = std::move(ref);
+}
 
 // Constructs an empty System. Potentials and topology data are added
 // separately via addPotential() and the Python builder.

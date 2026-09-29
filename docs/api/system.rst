@@ -180,6 +180,36 @@ parameter files, and registers the five physics potentials.
 
       Install the Ramachandran mixture library.
 
+   .. rubric:: Loop-closure (KIC) targets
+
+   .. py:method:: set_kic_reference(start_coords) -> None
+
+      Store the bond lengths, bond angles and peptide omegas that the
+      KIC loop-closure move closes every window to. They are measured
+      once, in double precision, from ``start_coords``: a
+      ``(3, n_atoms)`` float32 array in Angstrom, in build order -- the
+      same array the context is positioned with.
+      ``MCPUForceField.create_system`` and ``KORPForceField.create_system``
+      call this for you. A ``System`` built by hand must call it before a
+      run that uses KIC moves; KIC raises ``RuntimeError`` otherwise,
+      rather than measure the targets from whatever the chain looks like
+      at the time. Only internal coordinates are stored, so
+      ``Context.set_positions`` (a replica swap, a checkpoint restore)
+      can never change them. Raises ``ValueError`` for the wrong shape,
+      and ``RuntimeError`` if called before ``set_block_indices`` or
+      after a context has reordered the atoms.
+
+   .. py:method:: has_kic_reference() -> bool
+
+      Whether ``set_kic_reference`` has been called.
+
+   .. py:method:: get_kic_reference() -> dict
+
+      The stored targets, in Angstrom and radians: ``len_na``,
+      ``len_ac`` and ``ang_nac`` (N-CA, CA-C, N-CA-C) per residue, and
+      ``len_cn``, ``ang_acn``, ``ang_cna`` and ``omega`` per peptide bond
+      ``k -> k+1``.
+
    .. rubric:: Virtual amide hydrogens
 
    .. py:method:: virtual_amide_h() -> bool

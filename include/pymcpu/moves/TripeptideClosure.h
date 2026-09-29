@@ -53,6 +53,11 @@ private:
     Eigen::Matrix3d C1;
     Eigen::Matrix3d C2;
 
+    // Closure equations in the (1, cos tau, sin tau) basis (build_trig_coeff), and the closure check.
+    double trig_coeff_[3][3][3];
+    int n_rejected_ = 0;
+    static constexpr double kClosureTol = 1.0e-6;   // rad, on each of the three N-CA-C angles
+
 public:
     void initialize(const std::array<double, 6>& b_len,
                                  const std::array<double, 7>& b_ang,
@@ -66,6 +71,9 @@ public:
                        std::vector<Solution>& solutions);
 
     double calculate_jacobian(const Solution& sol) const;
+
+    // Closures dropped by the N-CA-C check in the last solve.
+    int last_rejected() const { return n_rejected_; }
 
     // For DEBUGGING: Expose internal state for testing
     std::vector<double> get_xi() const {
@@ -111,6 +119,10 @@ private:
                                const Vec3& r_a3, const Vec3& r_c3,
                                std::vector<Solution>& solutions);
 
-    double calc_t2(double t0) const;
-    double calc_t1(double t0, double t2) const;
+    double calc_t2(double t0) const;                 // no longer called; kept for reference
+    double calc_t1(double t0, double t2) const;      // no longer called; kept for reference
+
+    void build_trig_coeff();
+    void back_substitute(double c3, double s3, double& c1, double& s1, double& c2, double& s2) const;
+    bool closes(const Solution& sol) const;
 };
