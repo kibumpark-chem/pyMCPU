@@ -84,7 +84,6 @@ EnergyChangeResult HBondPotential::calculateEnergyChange(
     float delta_E = 0.0f;
 
     const auto& ns = context.neighbors();
-    ns.maybe_print_neighbor_audit("HBondPotential::calculateEnergyChange");
     const auto& sys = context.getSystem();
     const int num_residues = sys.getNumResidues();
     const auto& blocks = sys.getBlockIndices();
