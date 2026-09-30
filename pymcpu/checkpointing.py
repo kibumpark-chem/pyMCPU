@@ -90,6 +90,10 @@ class CheckpointState:
     exchange_rng: Any = None
     exchange_rng_state: Any = None  # alias used by some tests / callers
     integrator_rng_states: list[Any] = field(default_factory=list)
+    #: Per replica, the integrator's cumulative move counters
+    #: (Integrator.get_move_counters). Empty in checkpoints written before
+    #: counters were saved; those replicas count from 0 again on resume.
+    integrator_move_counters: list[Any] = field(default_factory=list)
     n_replicas: int = 0
     # basename -> frame/row count at checkpoint time
     traj_frame_indices: dict[str, int] = field(default_factory=dict)
@@ -443,6 +447,25 @@ def set_integrator_rng_states(replicas: list[Any], states: list[Any]) -> None:
                     "Rebuild with C++20 toolchain to activate exact RNG restore."
                 )
                 warned = True
+
+
+def get_integrator_move_counters(replicas: list[Any]) -> list[dict[str, int]]:
+    """Each replica's cumulative move counters, for a checkpoint.
+
+    Without them a resumed run restarts every counter at 0 while its energy
+    CSV keeps appending, so the cumulative move columns drop back mid-file.
+    """
+    return [dict(_replica_integrator(replica).get_move_counters()) for replica in replicas]
+
+
+def set_integrator_move_counters(replicas: list[Any], counters: list[Any]) -> None:
+    """Restore counters saved by :func:`get_integrator_move_counters`.
+
+    Replicas with no saved counters (an older checkpoint) are left as they are.
+    """
+    for replica, saved in zip(replicas, counters):
+        if saved:
+            _replica_integrator(replica).set_move_counters(dict(saved))
 
 
 def _atomic_copy(src: Path, dst: Path) -> None:

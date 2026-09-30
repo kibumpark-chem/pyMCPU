@@ -83,6 +83,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   of an unexported class). The `set_sidechain_move_mode` and
   `set_pivot_rama_probability` docstrings gave `continuous` and `0.05` as
   defaults; the defaults are `rotamer_library` and `0.0`.
+- **Move counters survive a checkpoint resume.** Checkpoints saved only the
+  RNG state, so a resumed run restarted every accept/attempt counter at 0
+  while its energy CSV kept appending, and the cumulative move columns dropped
+  back to zero mid-file. Folding, serial REMD and MPI REMD checkpoints now
+  save the counters (`Integrator.get_move_counters()` /
+  `set_move_counters()`) and restore them. A checkpoint written before this
+  change still resumes, with counters from 0 as before.
 - Building a force field no longer prints `Maximum contact distance
   (squared): ...`, and the first H-bond energy change no longer prints a
   `[neighbor-audit]` line to stderr on every rank. Both were developer

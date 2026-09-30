@@ -228,7 +228,9 @@ Acceptance counters
 All of the following return ``int``. They count from construction and
 accumulate across :py:meth:`Integrator.run` calls; nothing resets them
 (:py:meth:`Integrator.reset_step_stats` clears only the timing
-statistics). Take differences if you want a per-window rate.
+statistics). Take differences if you want a per-window rate. The samplers
+save them in every checkpoint and restore them on resume, so the running
+totals in a resumed energy CSV continue rather than restarting at 0.
 
 .. list-table::
    :header-rows: 1
@@ -297,6 +299,17 @@ statistics). Take differences if you want a per-window rate.
    ``kic_geometry_invalid``, ``kic_jacobian_invalid``,
    ``kic_presolve_zero``, ``kic_reverse_missing`` and
    ``kic_proline_skipped``.
+
+.. py:method:: Integrator.get_move_counters() -> dict[str, int]
+
+   Every counter in the table above as ``{name: count}`` (``bb_attempted``,
+   ``bb_accepted``, ..., ``num_sc_resample_pro``), for checkpointing.
+
+.. py:method:: Integrator.set_move_counters(counters) -> None
+
+   Restore counters saved by :py:meth:`get_move_counters`. Every counter is
+   reset to 0 first, then the given ones are applied; an unknown name raises
+   ``ValueError`` and changes nothing.
 
 .. py:method:: Integrator.reset_step_stats() -> None
 

@@ -556,6 +556,7 @@ class MPIReplicaExchange:
         coords: list[Any] = []
         current_steps: list[int] = []
         integrator_rng_states: list[str] = []
+        move_counters: list[dict[str, int]] = []
         for rid in replica_ids:
             slot = self.replicas[rid]
             coords.append(np.asarray(get_coords(slot.simulation.context), dtype=np.float64))
@@ -568,12 +569,14 @@ class MPIReplicaExchange:
                     integrator_rng_states.append("")
             else:
                 integrator_rng_states.append("")
+            move_counters.append(dict(integ.get_move_counters()))
 
         local_state = {
             "replica_ids": replica_ids,
             "coords": coords,
             "current_steps": current_steps,
             "integrator_rng_states": integrator_rng_states,
+            "integrator_move_counters": move_counters,
             "traj_frame_indices": self._local_traj_frame_indices(),
         }
 
@@ -602,6 +605,7 @@ class MPIReplicaExchange:
             coords_ordered: list[Any] = [None] * n_replicas
             steps_ordered: list[int] = [0] * n_replicas
             rng_ordered: list[str] = [""] * n_replicas
+            counters_ordered: list[dict[str, int]] = [{} for _ in range(n_replicas)]
             frame_idx_merged: dict[str, int] = {}
 
             for s in all_states or []:
@@ -609,6 +613,7 @@ class MPIReplicaExchange:
                     coords_ordered[int(rid)] = s["coords"][i]
                     steps_ordered[int(rid)] = int(s["current_steps"][i])
                     rng_ordered[int(rid)] = s["integrator_rng_states"][i]
+                    counters_ordered[int(rid)] = s["integrator_move_counters"][i]
                 frame_idx_merged.update(s.get("traj_frame_indices") or {})
 
             steps_per = int(self._mc_replica_steps) if self._mc_replica_steps else 0
@@ -639,6 +644,7 @@ class MPIReplicaExchange:
                 current_steps=steps_ordered,
                 exchange_rng=None,  # MPI exchange RNG is deterministic from seed+cycle
                 integrator_rng_states=rng_ordered,
+                integrator_move_counters=counters_ordered,
                 n_replicas=n_replicas,
                 traj_frame_indices=dict(frame_idx_merged),
             )
@@ -722,6 +728,7 @@ class MPIReplicaExchange:
         coords_list = state.get("replica_coords") or []
         steps_list = state.get("current_steps") or []
         rng_list = state.get("integrator_rng_states") or []
+        counters_list = state.get("integrator_move_counters") or []
 
         for rid in self.local_replica_indices:
             if rid >= len(coords_list) or coords_list[rid] is None:
@@ -745,6 +752,8 @@ class MPIReplicaExchange:
                         integ.set_rng_state(str(rng_list[rid]))
                     except Exception:
                         pass
+            if rid < len(counters_list) and counters_list[rid]:
+                slot.simulation.integrator.set_move_counters(dict(counters_list[rid]))
 
         return state
 

@@ -131,6 +131,7 @@ Integrator.get_kic_jacobian_invalid
 Integrator.get_kic_presolve_zero
 Integrator.get_kic_proline_skipped
 Integrator.get_kic_reverse_missing
+Integrator.get_move_counters
 Integrator.get_rama_pivot_accepted
 Integrator.get_rama_pivot_attempted
 Integrator.get_rng_state
@@ -159,6 +160,7 @@ Integrator.reject_restore_enabled
 Integrator.reset_step_stats
 Integrator.run
 Integrator.set_fixed_residues
+Integrator.set_move_counters
 Integrator.set_move_weights
 Integrator.set_pivot_rama_probability
 Integrator.set_pivot_rama_schedule

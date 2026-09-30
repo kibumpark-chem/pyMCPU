@@ -364,6 +364,57 @@ void MCIntegrator::set_sidechain_move_mode(const std::string& mode) {
     }
 }
 
+// One table for save and restore, so a counter cannot be saved but not
+// restored (or the reverse).
+const MCIntegrator::MoveCounterTable& MCIntegrator::move_counter_table() {
+    static const MoveCounterTable table = {
+        {"bb_attempted", &MCIntegrator::bb_attempted_},
+        {"bb_accepted", &MCIntegrator::bb_accepted_},
+        {"sc_attempted", &MCIntegrator::sc_attempted_},
+        {"sc_accepted", &MCIntegrator::sc_accepted_},
+        {"kic_attempted", &MCIntegrator::kic_attempted_},
+        {"kic_accepted", &MCIntegrator::kic_accepted_},
+        {"rotamer_attempted", &MCIntegrator::rotamer_attempted_},
+        {"rotamer_accepted", &MCIntegrator::rotamer_accepted_},
+        {"rama_pivot_attempted", &MCIntegrator::rama_pivot_attempted_},
+        {"rama_pivot_accepted", &MCIntegrator::rama_pivot_accepted_},
+        {"kic_presolve_zero", &MCIntegrator::kic_presolve_zero_},
+        {"kic_jacobian_invalid", &MCIntegrator::kic_jacobian_invalid_},
+        {"kic_geometry_invalid", &MCIntegrator::kic_geometry_invalid_},
+        {"kic_reverse_missing", &MCIntegrator::kic_reverse_missing_},
+        {"kic_proline_skipped", &MCIntegrator::kic_proline_skipped_},
+        {"steric_rejected", &MCIntegrator::steric_rejected_},
+        {"fixed_rejected", &MCIntegrator::fixed_rejected_},
+        {"num_pivot_resample_pro_phi", &MCIntegrator::num_pivot_resample_pro_phi_},
+        {"num_sc_resample_pro", &MCIntegrator::num_sc_resample_pro_},
+    };
+    return table;
+}
+
+std::vector<std::pair<std::string, long long>> MCIntegrator::get_move_counters() const {
+    std::vector<std::pair<std::string, long long>> out;
+    for (const auto& [name, member] : move_counter_table()) out.emplace_back(name, this->*member);
+    return out;
+}
+
+void MCIntegrator::set_move_counters(
+    const std::vector<std::pair<std::string, long long>>& counters) {
+    // Resolve every name before touching anything, so a bad name changes nothing.
+    std::vector<std::pair<long long MCIntegrator::*, long long>> resolved;
+    for (const auto& [name, value] : counters) {
+        long long MCIntegrator::* member = nullptr;
+        for (const auto& [known, m] : move_counter_table()) {
+            if (name == known) member = m;
+        }
+        if (!member) {
+            throw std::invalid_argument("unknown move counter: '" + name + "'");
+        }
+        resolved.emplace_back(member, value);
+    }
+    for (const auto& entry : move_counter_table()) this->*(entry.second) = 0;
+    for (const auto& [member, value] : resolved) this->*member = value;
+}
+
 void MCIntegrator::set_move_weights(float pivot, float kic, float sidechain) {
     if (!(pivot >= 0.0f && kic >= 0.0f && sidechain >= 0.0f)) {
         throw std::invalid_argument("move weights must be non-negative");

@@ -18,11 +18,13 @@ from pymcpu.checkpointing import (
     CheckpointConfig,
     checkpoint_cycle_filename,
     find_latest_checkpoint,
+    get_integrator_move_counters,
     get_integrator_rng_states,
     load_checkpoint,
     restore_numpy_rng,
     save_checkpoint,
     serialize_numpy_rng,
+    set_integrator_move_counters,
     set_integrator_rng_states,
 )
 from pymcpu.sampling.replica_exchange_core import (
@@ -356,6 +358,7 @@ class ReplicaExchange:
         "current_steps": current_steps,
         "exchange_rng": serialize_numpy_rng(self.rng),
         "integrator_rng_states": get_integrator_rng_states(self.replicas),
+        "integrator_move_counters": get_integrator_move_counters(self.replicas),
         "n_replicas": int(self.n_replicas),
         "traj_frame_indices": {
           os.path.basename(fname): int(count)
@@ -442,6 +445,9 @@ class ReplicaExchange:
         rep.simulation.current_step = int(steps[i])
 
       set_integrator_rng_states(self.replicas, list(rng_states))
+      set_integrator_move_counters(
+        self.replicas, list(checkpoint.get("integrator_move_counters") or [])
+      )
 
       self._cycle = int(checkpoint["cycle"])
       self._walker_at_state = np.asarray(

@@ -976,6 +976,26 @@ PYBIND11_MODULE(mcpu_core, m) {
         .def("get_kic_reverse_missing", &mcpu::MCIntegrator::get_kic_reverse_missing)
         .def("get_kic_proline_skipped", &mcpu::MCIntegrator::get_kic_proline_skipped)
         .def("get_steric_rejected", &mcpu::MCIntegrator::get_steric_rejected)
+        .def("get_move_counters",
+             [](const mcpu::MCIntegrator& integ) {
+                 py::dict d;
+                 for (const auto& [name, value] : integ.get_move_counters()) d[py::str(name)] = value;
+                 return d;
+             },
+             "Every move counter as {name: count}, for checkpointing. Restore "
+             "with set_move_counters().")
+        .def("set_move_counters",
+             [](mcpu::MCIntegrator& integ, const py::dict& counters) {
+                 std::vector<std::pair<std::string, long long>> v;
+                 for (const auto& kv : counters) {
+                     v.emplace_back(py::cast<std::string>(kv.first), py::cast<long long>(kv.second));
+                 }
+                 integ.set_move_counters(v);
+             },
+             py::arg("counters"),
+             "Restore counters saved by get_move_counters(). All counters are "
+             "reset to 0 first; an unknown name raises ValueError and changes "
+             "nothing.")
         .def("move_counts",
              [](const mcpu::MCIntegrator& integ, bool include_unused) {
                  py::dict d;

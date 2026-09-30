@@ -219,6 +219,17 @@ public:
     long long get_rama_pivot_attempted() const noexcept { return rama_pivot_attempted_; }
     long long get_rama_pivot_accepted()  const noexcept { return rama_pivot_accepted_; }
 
+    /// Every move counter under its member name (bb_attempted, ...,
+    /// steric_rejected, num_sc_resample_pro), for checkpointing. The counters
+    /// are cumulative over the integrator's life, so a resumed run restores
+    /// them rather than restarting at 0 under an appended CSV.
+    [[nodiscard]] std::vector<std::pair<std::string, long long>> get_move_counters() const;
+
+    /// Restore counters saved by get_move_counters(). Every counter is reset
+    /// to 0 first, then the given ones are applied; an unknown name throws
+    /// std::invalid_argument and leaves the counters unchanged.
+    void set_move_counters(const std::vector<std::pair<std::string, long long>>& counters);
+
     /// Accept/attempt counts for one move kind; see move_counts().
     struct MoveCount {
         const char* name;
@@ -538,6 +549,11 @@ private:
     float sidechain_step_size_rad_;
 
     std::vector<std::shared_ptr<Reporter>> reporters_;
+    /// (name, member) for every move counter; the single table behind
+    /// get_move_counters() and set_move_counters().
+    using MoveCounterTable = std::vector<std::pair<const char*, long long MCIntegrator::*>>;
+    static const MoveCounterTable& move_counter_table();
+
     long long bb_attempted_ = 0;
     long long bb_accepted_ = 0;
     long long sc_attempted_ = 0;
