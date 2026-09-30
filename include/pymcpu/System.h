@@ -304,6 +304,13 @@ public:
 
     const std::vector<std::shared_ptr<Potential>>& getPotentials() const;
 
+    /// (group, name) for every energy group that has a potential, sorted by
+    /// group id. Disabled potentials are included. A group whose potentials
+    /// are all unnamed is reported as "group_<n>". Throws std::invalid_argument if
+    /// one group carries two different names or one name is used by two
+    /// groups -- the same check addPotential runs.
+    std::vector<std::pair<int, std::string>> energyTerms() const;
+
     /// Weighted total: Σ_g weight[g] * E_raw[g] (see EnergyWeights).
     /// When target_group >= 0, returns weight[g] * E_raw[g] for that group only.
     float getTotalEnergy(

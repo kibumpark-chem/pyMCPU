@@ -306,13 +306,20 @@ PYBIND11_MODULE(mcpu_core, m) {
                      by_group[py::int_(kv.first)] = kv.second;
                  }
                  d["by_group"] = by_group;
+                 py::dict by_name;
+                 for (const auto& [g, name] : c.getSystem().energyTerms()) {
+                     auto it = src.find(g);
+                     by_name[py::str(name)] = it != src.end() ? it->second : 0.0f;
+                 }
+                 d["by_name"] = by_name;
                  d["weighted"] = weighted;
                  d["use_legacy_weights"] = c.use_legacy_weights();
                  return d;
              },
              py::arg("weighted") = true,
-             "Return per-group energies. weighted=True uses legacy outer weights "
-             "(incl. HBond RDTHREE_CON); weighted=False returns raw per-potential energies.")
+             "Return per-term energies, keyed by group (by_group) and by name "
+             "(by_name). weighted=True uses legacy outer weights (incl. HBond "
+             "RDTHREE_CON); weighted=False returns raw per-potential energies.")
         .def("set_use_legacy_weights", &Context::set_use_legacy_weights, py::arg("on"))
         .def("use_legacy_weights", &Context::use_legacy_weights)
         .def("set_energy_weight", &Context::set_energy_weight,
@@ -934,12 +941,9 @@ PYBIND11_MODULE(mcpu_core, m) {
                          static_cast<double>(s.n_steps);
                  }
                  py::dict by_group;
-                 static const char* kNames[] = {
-                     "0", "mu", "backbone_torsion", "sidechain_torsion",
-                     "hydrogen_bond", "aromatic", "native_contacts_bias", "7"
-                 };
-                 for (int g = 1; g <= 6; ++g) {
-                     by_group[kNames[g]] = s.energy_delta_ns[g];
+                 // Only groups 1..7 have a timing slot (energy_delta_ns is [8]).
+                 for (const auto& [g, name] : s.energy_terms) {
+                     if (g >= 1 && g < 8) by_group[py::str(name)] = s.energy_delta_ns[g];
                  }
                  d["energy_delta_ns"] = by_group;
                  if (s.n_steps > 0) {
@@ -1290,6 +1294,16 @@ PYBIND11_MODULE(mcpu_core, m) {
         .def("get_num_atoms",         &System::getNumAtoms)
         .def("get_num_residues",      &System::getNumResidues)
         .def("get_potentials",           &System::getPotentials, py::return_value_policy::reference_internal)
+        .def("energy_terms",
+             [](const System& s) {
+                 py::dict d;
+                 for (const auto& [g, name] : s.energyTerms()) {
+                     d[py::int_(g)] = name;
+                 }
+                 return d;
+             },
+             "Energy terms as {group: name}, sorted by group. Unnamed groups "
+             "are reported as 'group_<n>'.")
         .def("set_atom_counts",       &System::setAtomCounts)
         .def("set_virtual_amide_h",    &System::setVirtualAmideH, py::arg("on"))
         .def("virtual_amide_h",       &System::virtualAmideH)
@@ -1364,6 +1378,9 @@ PYBIND11_MODULE(mcpu_core, m) {
     py::class_<Potential, std::shared_ptr<Potential>>(m, "Potential")
     .def("set_energy_group", &Potential::setEnergyGroup)
     .def("get_energy_group", &Potential::getEnergyGroup)
+    .def("set_name", &Potential::setName, py::arg("name"),
+         "Name this energy term (e.g. 'mu'); see System.energy_terms().")
+    .def("get_name", &Potential::getName)
     .def("set_enabled", &Potential::setEnabled, py::arg("enabled"))
     .def("is_enabled", &Potential::isEnabled);
     // @note: Matrices are copied from numpy arrays at construction.

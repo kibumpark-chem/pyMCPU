@@ -44,21 +44,8 @@ def compute_current_energies(pdb_file: str) -> dict:
     ctx.calculate_total_energy(-1)
 
     bd = ctx.energy_breakdown(weighted=True)
-    by_group = bd["by_group"]
-
-    group_names = {
-        1: "mu",
-        2: "backbone_torsion",
-        3: "sidechain_torsion",
-        4: "hydrogen_bond",
-        5: "aromatic",
-        6: "native_contacts_bias",
-    }
-
     results = {"total": float(bd["weighted_total"])}
-    for gid, name in group_names.items():
-        results[name] = float(by_group.get(gid, 0.0))
-
+    results.update({name: float(value) for name, value in bd["by_name"].items()})
     return results
 
 

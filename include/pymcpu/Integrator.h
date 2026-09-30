@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <string>
 #include <array>
+#include <utility>
 #include "ProposalPatch.h"
 #include "pymcpu/State.h"
 #include "pymcpu/reporters/Reporter.h"
@@ -121,6 +122,9 @@ struct StepStats {
     std::uint64_t tot_pivot_ns = 0, tot_kic_ns = 0, tot_sc_ns = 0;
     /// Per energy-group ΔE time (index = Potential::getEnergyGroup(); 0 unused).
     std::uint64_t energy_delta_ns[8] = {};
+    /// (group, name) of the System's energy terms, copied at the start of
+    /// run() so step_stats() can label energy_delta_ns without a System.
+    std::vector<std::pair<int, std::string>> energy_terms;
     std::size_t moved_atoms_sum = 0;
     std::size_t n_steps = 0;
     std::size_t n_valid_moves = 0;

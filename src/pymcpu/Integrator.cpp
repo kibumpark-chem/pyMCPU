@@ -1742,6 +1742,7 @@ void MCIntegrator::run(Context& context, int num_steps, int step_offset)
     ProposalPatch& move_patch = patch_;
     last_accept_bits_.assign(static_cast<size_t>(num_steps), 0);
     reset_step_stats();
+    step_stats_.energy_terms = context.getSystem().energyTerms();
     proposal_synced_ = false; // CHANGED: sparse — resync at start of every run()
     // CHANGED: was unconditional. These are 2 steady_clock::now() calls per
     // enabled potential per move (5 potentials -> ~195 ns/move at 19.55 ns/call on this
