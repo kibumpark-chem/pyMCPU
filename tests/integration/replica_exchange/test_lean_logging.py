@@ -67,13 +67,13 @@ def test_serial_rex_default_no_exchange_or_state_csv(tmp_path: Path, chignolin_p
     assert stats["temperature"]["attempts"] == summary.n_temp_attempts
     assert stats["temperature"]["accepted"] == summary.n_temp_accepts
 
-    # WalkerId column must be present on a per-walker data CSV even with
+    # walker_id column must be present on a per-walker data CSV even with
     # exchange/state logging off -- that column is controlled separately by
     # log_walker_in_data_csv.
     data_files = list(out.glob("rex_*_data.csv"))
     assert data_files
     header = data_files[0].read_text().splitlines()[0]
-    assert "WalkerId" in header.split(",")
+    assert header.split(",")[-1] == "walker_id"
     rows = data_files[0].read_text().strip().splitlines()[1:]
     assert rows
     wid = int(rows[0].split(",")[-1])

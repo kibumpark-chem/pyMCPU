@@ -26,7 +26,7 @@ CLASSES = [
     "TripletPotential", "SidechainTripletPotential", "AromaticPotential",
     "NativeContactsBiasPotential", "EnergyReporter", "SimulationReporter",
     "XtcReporter", "Reporter", "RamaMixtureLibrary", "RotamerLibrary",
-    "EnergyWeights", "BlockIndices", "EnergyComponents",
+    "EnergyWeights", "BlockIndices",
     "OrientationalPairMap", "OrientationalPairPotential",
     "CalphaExcludedVolumePotential",
 ]

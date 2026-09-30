@@ -1,0 +1,173 @@
+"""The energy CSV header comes from the registered terms and the moves in use.
+
+It is written when the first run() starts. In append mode an existing header
+must match, and any mismatch raises before a single move is made -- the
+failure the old fixed header allowed was columns silently shifting under a
+resumed run, or a KORP run writing six always-zero MCPU columns.
+"""
+
+from __future__ import annotations
+
+import os
+from pathlib import Path
+
+import numpy as np
+import pytest
+
+md = pytest.importorskip("mdtraj")
+
+import pymcpu as mc  # noqa: E402
+from pymcpu import mcpu_core  # noqa: E402
+from pymcpu.runners import default_example_pdb  # noqa: E402
+
+MCPU_HEADER = (
+    "step,total,mu,backbone_torsion,sidechain_torsion,hydrogen_bond,aromatic,"
+    "pivot_accepted,pivot_attempted,rama_pivot_accepted,rama_pivot_attempted,"
+    "kic_accepted,kic_attempted,rotamer_accepted,rotamer_attempted,walker_id"
+)
+
+
+@pytest.fixture(scope="module")
+def heavy():
+    traj = md.load(str(default_example_pdb()))
+    return traj.atom_slice(traj.topology.select("not element H"))
+
+
+def _sim(heavy):
+    ff = mc.MCPUForceField(heavy)
+    system = ff.create_system(heavy.topology)
+    integrator = mc.Integrator(temperature=0.6, step_size_rad=0.1)
+    integrator.set_seed(5)
+    sim = mc.Simulation(heavy.topology, system, integrator)
+    sim.context.set_positions((ff.coords[0] * 10.0).T.astype(np.float32))
+    return sim, system, integrator
+
+
+def _lines(path: Path) -> list[str]:
+    return path.read_text().splitlines()
+
+
+def test_mcpu_header(tmp_path: Path, heavy) -> None:
+    sim, _, _ = _sim(heavy)
+    path = tmp_path / "e.csv"
+    sim.add_energy_reporter(str(path), interval=10)
+    assert path.read_text() == ""  # nothing is known about the columns yet
+    sim.step(20)
+    lines = _lines(path)
+    assert lines[0] == MCPU_HEADER
+    assert len(lines) == 1 + 3  # steps 0, 10, 20
+    assert all(len(row.split(",")) == len(MCPU_HEADER.split(",")) for row in lines[1:])
+
+
+def test_append_to_matching_file_continues_without_a_second_header(tmp_path: Path, heavy) -> None:
+    path = tmp_path / "e.csv"
+    sim, _, _ = _sim(heavy)
+    sim.add_energy_reporter(str(path), interval=10)
+    sim.step(10)
+
+    sim2, _, _ = _sim(heavy)
+    sim2.add_reporter(mc.EnergyReporter(str(path), 10, True))
+    sim2.step(10)
+    lines = _lines(path)
+    assert lines.count(MCPU_HEADER) == 1
+    assert len(lines) == 1 + 2 + 2
+
+
+def test_append_to_missing_or_empty_file_writes_the_header(tmp_path: Path, heavy) -> None:
+    for path in [tmp_path / "missing.csv", tmp_path / "empty.csv"]:
+        if path.name == "empty.csv":
+            path.write_text("")
+        sim, _, _ = _sim(heavy)
+        sim.add_reporter(mc.EnergyReporter(str(path), 10, True))
+        sim.step(10)
+        assert _lines(path)[0] == MCPU_HEADER
+
+
+@pytest.mark.parametrize(
+    "existing",
+    [
+        "step,total,mu,walker_id\n0,1.0,1.0,-1\n",  # different columns
+        MCPU_HEADER,  # right text but no line ending: an incomplete write
+    ],
+)
+def test_mismatched_append_raises_before_any_move(tmp_path: Path, heavy, existing: str) -> None:
+    path = tmp_path / "e.csv"
+    path.write_text(existing)
+    sim, _, integrator = _sim(heavy)
+    sim.add_reporter(mc.EnergyReporter(str(path), 10, True))
+    with pytest.raises(RuntimeError, match="already has a different header"):
+        sim.step(10)
+    assert integrator.get_bb_attempted() + integrator.get_kic_attempted() + integrator.get_sc_attempted() == 0
+    assert path.read_text() == existing
+
+
+def test_a_term_added_after_the_header_raises(tmp_path: Path, heavy) -> None:
+    sim, system, _ = _sim(heavy)
+    sim.add_energy_reporter(str(tmp_path / "e.csv"), interval=10)
+    sim.step(10)
+    extra = mcpu_core.NativeContactsBiasPotential([0], [5], 5.0)
+    extra.set_energy_group(6)
+    extra.set_name("native_contacts_bias")
+    system.add_potential(extra)
+    with pytest.raises(RuntimeError, match="energy terms changed"):
+        sim.step(10)
+
+
+def test_a_move_kind_enabled_after_the_header_raises(tmp_path: Path, heavy) -> None:
+    sim, _, integrator = _sim(heavy)
+    sim.add_energy_reporter(str(tmp_path / "e.csv"), interval=10)
+    sim.step(10)
+    integrator.set_sidechain_move_mode("continuous")  # 'sidechain' has no column
+    with pytest.raises(RuntimeError, match="no columns for the 'sidechain' move"):
+        sim.step(10)
+
+
+def test_remd_replicas_share_one_header_under_a_rama_schedule(
+    tmp_path: Path, chignolin_pdb_path: str, monkeypatch
+) -> None:
+    """A schedule gives each replica its own rama probability (0 and 1 here);
+    the columns depend on slot weights only, so every file matches."""
+    from pymcpu.sampling.replica_exchange import ReplicaExchange
+
+    monkeypatch.chdir(tmp_path)
+    out = tmp_path / "out"
+    rex = ReplicaExchange(
+        str(chignolin_pdb_path),
+        temperatures=[0.4, 0.7],
+        n_targets=[0.0],
+        k_bias=0.0,
+        log_interval=5,
+        output_prefix="rex",
+        output_dir=out,
+        seed=0,
+        pivot_rama_schedule={"t_low": 0.4, "t_high": 0.7, "p_min": 0.0, "p_max": 1.0},
+    )
+    rex.run(1, 10, verbose=False, checkpoint_dir=None)
+    headers = {_lines(f)[0] for f in out.glob("rex_*_data.csv")}
+    # REMD attaches the umbrella bias, so its term gets a column too.
+    assert headers == {MCPU_HEADER.replace(",aromatic,", ",aromatic,native_contacts_bias,")}
+
+
+@pytest.mark.skipif(
+    not os.environ.get("KORP_MAP_PATH"),
+    reason="set KORP_MAP_PATH to the korp6Dv1.bin energy map",
+)
+def test_korp_header(tmp_path: Path) -> None:
+    from pymcpu.forcefields.korp import KORPForceField
+
+    traj = md.load(str(default_example_pdb()))
+    ff = KORPForceField(traj, map_path=os.environ["KORP_MAP_PATH"])
+    system = ff.create_system(traj.topology)
+    integrator = mcpu_core.Integrator(temperature=0.6, step_size_rad=0.05)
+    integrator.set_move_weights(0.5, 0.5, 0.0)
+    sim = mc.Simulation(ff.output_topology, system, integrator)
+    sim.context.set_positions((ff.coords[0] * 10.0).T.astype(np.float32))
+    ff.apply_energy_weights(sim.context)
+    path = tmp_path / "korp.csv"
+    sim.add_energy_reporter(str(path), interval=10)
+    sim.step(10)
+    assert _lines(path)[0] == (
+        "step,total,korp_6d,calpha_excluded_volume,"
+        "pivot_accepted,pivot_attempted,rama_pivot_accepted,rama_pivot_attempted,"
+        "kic_accepted,kic_attempted,walker_id"
+    )

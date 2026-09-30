@@ -82,6 +82,17 @@ parameter files, and registers the five physics potentials.
 
       The registered potentials, in registration order.
 
+   .. py:method:: energy_terms() -> dict[int, str]
+
+      The energy terms as ``{group: name}``, sorted by group -- for MCPU
+      ``{1: 'mu', 2: 'backbone_torsion', 3: 'sidechain_torsion',
+      4: 'hydrogen_bond', 5: 'aromatic'}``. A group whose potentials have no
+      name is reported as ``'group_<n>'``. These names label
+      ``energy_breakdown()['by_name']`` and the energy CSV columns.
+
+      ``add_potential`` raises ``ValueError`` if a potential would give one
+      group two names, or use one name for two groups.
+
       .. note::
          pybind11 renders the element type of this method and of
          ``add_potential`` using the raw C++ name ``mcpu::Potential``

@@ -285,15 +285,6 @@ BlockIndices.res_begin
 BlockIndices.res_end
 BlockIndices.sc_count
 BlockIndices.sc_start
-EnergyComponents.aromatic
-EnergyComponents.backbone_torsion
-EnergyComponents.get
-EnergyComponents.hydrogen_bond
-EnergyComponents.mu
-EnergyComponents.native_contacts_bias
-EnergyComponents.sidechain_torsion
-EnergyComponents.to_dict
-EnergyComponents.total
 OrientationalPairMap.cutoff
 OrientationalPairMap.min_r
 OrientationalPairMap.num_shells

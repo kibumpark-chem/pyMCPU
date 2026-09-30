@@ -51,7 +51,7 @@ log_interval: 30                      # int | steps between stdout/reporter writ
 # hdf5: rex_samples.h5                # str | HDF5/NPZ analysis output  # default: null
 exchange_log: none                    # none | all — per-attempt exchange.csv (default: none)
 state_log_interval: 0                 # int | write state.csv every N cycles (0 = off)
-log_walker_in_data_csv: true          # bool | stamp WalkerId on each _data.csv row
+log_walker_in_data_csv: true          # bool | stamp walker_id on each _data.csv row
 
 # ── Checkpointing ────────────────────────────────────────────
 checkpointing:

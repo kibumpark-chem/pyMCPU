@@ -44,8 +44,10 @@ def test_folding_config_runs_and_applies_move_settings(tmp_path: Path, monkeypat
 
     with (out / "folding_data.csv").open() as fh:
         last = list(csv.DictReader(fh))[-1]
-    assert int(last["Step"]) == steps
-    # move_weights=(1, 0, 0): every step is a pivot-slot move.
-    assert int(last["PivotAttempted"]) == steps
-    assert int(last["SidechainAttempted"]) == 0
-    assert int(last["KicAttempted"]) == 0
+    assert int(last["step"]) == steps
+    # move_weights=(1, 0, 0) with rama p=1: every step is a rama pivot, and
+    # only the pivot-slot kinds get columns.
+    assert int(last["rama_pivot_attempted"]) == steps
+    assert int(last["pivot_attempted"]) == 0
+    assert "kic_attempted" not in last
+    assert "rotamer_attempted" not in last

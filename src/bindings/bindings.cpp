@@ -55,17 +55,6 @@ PYBIND11_MODULE(mcpu_core, m) {
         "Base class of the output reporters. Exposed so that\n"
         "Simulation.add_reporter has a type to accept; not intended to be\n"
         "subclassed from Python.");
-    py::class_<mcpu::EnergyComponents>(m, "EnergyComponents")
-        .def(py::init<>())
-        .def_readwrite("total", &mcpu::EnergyComponents::total)
-        .def_readwrite("mu", &mcpu::EnergyComponents::mu)
-        .def_readwrite("backbone_torsion", &mcpu::EnergyComponents::backbone_torsion)
-        .def_readwrite("sidechain_torsion", &mcpu::EnergyComponents::sidechain_torsion)
-        .def_readwrite("hydrogen_bond", &mcpu::EnergyComponents::hydrogen_bond)
-        .def_readwrite("aromatic", &mcpu::EnergyComponents::aromatic)
-        .def_readwrite("native_contacts_bias", &mcpu::EnergyComponents::native_contacts_bias)
-        .def("to_dict", &mcpu::EnergyComponents::to_dict)
-        .def("get", &mcpu::EnergyComponents::get, py::arg("component"));
     py::class_<mcpu::XtcReporter, mcpu::Reporter, std::shared_ptr<mcpu::XtcReporter>>(m, "XtcReporter",
         "Writes coordinates to a GROMACS XTC trajectory every\n"
         "report_interval steps. Pass MCPUForceField.inverse_mapping so\n"
@@ -82,12 +71,15 @@ PYBIND11_MODULE(mcpu_core, m) {
         .def("filename", &mcpu::XtcReporter::filename,
              py::return_value_policy::reference_internal);
     py::class_<mcpu::EnergyReporter, mcpu::Reporter, std::shared_ptr<mcpu::EnergyReporter>>(m, "EnergyReporter",
-        "Writes a CSV row every report_interval steps holding the per-group\n"
-        "energies and the cumulative move accept/attempt counters.\n\n"
-        "This is a writer, not a buffer: there is no accessor to read\n"
-        "energies back out of it, so read the CSV. The Total column includes\n"
-        "the native-contacts bias when one is enabled, which makes it right\n"
-        "for monitoring and wrong for MBAR reweighting.")
+        "Writes a CSV row every report_interval steps: step, total, each\n"
+        "energy term by name (System.energy_terms()), then <kind>_accepted and\n"
+        "<kind>_attempted for each move kind in use (Integrator.move_counts()),\n"
+        "then walker_id. Counts are cumulative.\n\n"
+        "The header is written when the first run() starts. With append=True\n"
+        "an existing header must match, or run() raises before any move.\n"
+        "The total column includes the native-contacts bias when one is\n"
+        "enabled, which makes it right for monitoring and wrong for MBAR\n"
+        "reweighting.")
         .def(py::init<const std::string&, int, bool>(),
              py::arg("energy_filename"),
              py::arg("report_interval"),

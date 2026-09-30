@@ -267,6 +267,26 @@ statistics). Take differences if you want a per-window rate.
    * - ``num_sc_resample_pro()``
      - Sidechain draws resampled because of proline
 
+.. py:method:: Integrator.move_counts(include_unused=False) -> dict
+
+   Accept/attempt counts per move kind, as
+   ``{kind: (accepted, attempted)}``, with each move counted once. The kinds,
+   in order, are ``pivot`` (continuous pivot), ``rama_pivot``, ``kic``,
+   ``sidechain`` (continuous sidechain) and ``rotamer``. The slot counters
+   above are sums of these: ``get_bb_*`` is ``pivot`` + ``rama_pivot`` and
+   ``get_sc_*`` is ``sidechain`` + ``rotamer``.
+
+   Kinds the current move weights and sidechain mode cannot propose are left
+   out -- with the defaults that is ``sidechain`` -- unless
+   ``include_unused=True``. A kind that has already been proposed is always
+   included. These are the move columns of the energy CSV.
+
+   .. code-block:: python
+
+      for kind, (accepted, attempted) in integrator.move_counts().items():
+          rate = accepted / attempted if attempted else float("nan")
+          print(f"{kind:12} {accepted:6d} / {attempted:6d}  {rate:6.1%}")
+
 .. py:method:: Integrator.move_stats() -> dict
 
    Aggregate of the counters above, with keys ``num_propose_pivot``,

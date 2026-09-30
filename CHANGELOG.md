@@ -49,8 +49,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   now declares its own preprocessing through
   `BaseForceField.prepare_trajectory` (MCPU drops hydrogens; KORP slices its
   own backbone), and both expose `output_topology`.
+- **Energy terms have names.** Each force field names the terms it creates
+  (`mu`, `backbone_torsion`, `sidechain_torsion`, `hydrogen_bond`, `aromatic`;
+  `korp_6d`, `calpha_excluded_volume`; `native_contacts_bias`) with the new
+  `Potential.set_name()`. `System.energy_terms()` returns `{group: name}`,
+  `energy_breakdown()` gains a `by_name` key, and `step_stats()` labels its
+  per-term timings from the System. Before this the names lived in separate
+  hardcoded tables, one of which (`step_stats`) silently left out KORP.
+  `System.add_potential` rejects a name that would give one group two names or
+  one name two groups.
+- **`Integrator.move_counts()`** reports accept/attempt counts per move kind
+  -- `pivot`, `rama_pivot`, `kic`, `sidechain`, `rotamer` -- with each move
+  counted once. The slot getters count the knowledge-based sub-kinds inside
+  their slot, and the continuous moves had no counter of their own. The
+  counts are derived from the existing counters, so trajectories are
+  unchanged.
 
 ### Fixed
+
+- **Replica exchange ignored every move setting.** Each replica's integrator
+  was built from its temperature alone, so `move_weights`,
+  `sidechain_move_mode`, `pivot_rama_probability`/`pivot_rama_schedule` and
+  `step_size_rad` had no effect under REMD, from a config or the Python API.
+  `ReplicaExchange`, `MPIReplicaExchange` and the REMD runners now take them.
+  The defaults equal what an unconfigured integrator got, so default runs are
+  bit-identical.
+- **`mcpu run` of a folding config raised `TypeError`** before starting:
+  `run_from_config` passed the rama-pivot settings to `run_folding`, which did
+  not accept them. The existing tests mocked `run_folding`; a new one runs a
+  real simulation.
+- `scripts/install_check.py` reported 2 of 7 checks failed on a working
+  install (a `SimulationReporter` call with the wrong arguments, and a check
+  of an unexported class). The `set_sidechain_move_mode` and
+  `set_pivot_rama_probability` docstrings gave `continuous` and `0.05` as
+  defaults; the defaults are `rotamer_library` and `0.0`.
+- Building a force field no longer prints `Maximum contact distance
+  (squared): ...`, and the first H-bond energy change no longer prints a
+  `[neighbor-audit]` line to stderr on every rank. Both were developer
+  diagnostics; the audit is still available as
+  `Context.print_neighbor_audit()`.
 
 - **KIC loop-closure moves no longer bend the backbone, and four related move
   bugs are fixed.** Every move is meant to keep bond lengths and bond angles
@@ -190,6 +227,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The energy CSV's columns follow the simulation, in snake_case.** The
+  header is `step,total`, then one column per energy term
+  (`System.energy_terms()`), then `<kind>_accepted,<kind>_attempted` for each
+  move kind in use (`Integrator.move_counts()`), then `walker_id`. It used to
+  be a fixed MCPU list (`Step,Total,Mu,...,KicAttempted,WalkerId`), so a KORP
+  run wrote six always-zero columns with its own energies only in `Total`,
+  and rama-pivot and rotamer counts were never written. The header is now
+  written when the first `run()` starts. In append mode an existing header
+  must match exactly or `run()` raises before any move, where a changed force
+  field or move setting used to misalign the columns silently; a missing or
+  empty file gets a header, where the MPI resume path could produce a file
+  with none.
+- `SimulationReporter` prints the move kinds in use (from `move_counts()`)
+  instead of three fixed labels, and flushes each report.
 - **`Integrator.run` now raises** when the sidechain move weight is positive
   but no residue in the system has a chi angle. Previously that combination —
   which is what any backbone-only force field produces — silently discarded
@@ -208,6 +259,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   expected by asking the potential (`canHardReject()`) instead of testing
   `energy_group == 1`. The old test was correct only while `MuPotential` was
   the only hard-rejecting term.
+
+### Removed
+
+- `mcpu_core.EnergyComponents`. It held the fixed MCPU column set the energy
+  reporter used to write; nothing exported or used it.
 
 ## [0.1.0] — 2026-09-16
 
