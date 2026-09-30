@@ -144,12 +144,18 @@ class MPIReplicaExchange:
     Bias / exchange use hard native-contact count N
     (``U = 0.5 * k * (N - N0)^2``); fraction Q is logged only.
 
+    Keyword arguments not listed below mean the same as in
+    :class:`~pymcpu.sampling.ReplicaExchange`.
+
     Parameters
     ----------
     comm : mpi4py.MPI.Comm
         MPI communicator (typically ``MPI.COMM_WORLD``).
     pdb_path : str
         Input structure path.
+    step_size_rad, move_weights, sidechain_move_mode, pivot_rama_probability, pivot_rama_schedule
+        Move settings for every replica, as in
+        :class:`~pymcpu.sampling.ReplicaExchange`.
     """
 
     def __init__(
@@ -177,6 +183,11 @@ class MPIReplicaExchange:
         output_prefix: str = "rex",
         output_dir: str | Path | None = None,
         seed: int = 0,
+        step_size_rad: float = 0.1,
+        move_weights: tuple[float, float, float] | None = None,
+        sidechain_move_mode: str = "rotamer_library",
+        pivot_rama_probability: float = 0.0,
+        pivot_rama_schedule: dict[str, float] | None = None,
         fixed_residues: list[int] | None = None,
         linker_residues: list[int] | None = None,
         linker_energy_mode: str = "ignore_all",
@@ -210,11 +221,22 @@ class MPIReplicaExchange:
         self.log_interval = int(log_interval)
         self.fixed_residues = list(fixed_residues) if fixed_residues else []
         self.linker_residues = list(linker_residues) if linker_residues else []
-        from pymcpu.config import normalize_linker_energy_mode, validate_fixed_linker_disjoint
+        from pymcpu.config import (
+            normalize_linker_energy_mode,
+            normalize_move_settings,
+            validate_fixed_linker_disjoint,
+        )
 
         self.linker_energy_mode = normalize_linker_energy_mode(linker_energy_mode)
         validate_fixed_linker_disjoint(self.fixed_residues, self.linker_residues)
         self.seed = int(seed)
+        self.step_size_rad = float(step_size_rad)
+        self.move_settings = normalize_move_settings(
+            move_weights=move_weights,
+            sidechain_move_mode=sidechain_move_mode,
+            pivot_rama_probability=pivot_rama_probability,
+            pivot_rama_schedule=pivot_rama_schedule,
+        )
         self._cycle = 0
         self._exchange_tag = 0
         # MPI tags must stay in [0, TAG_UB]. Exchanges use tag_base..tag_base+2,
@@ -360,6 +382,8 @@ class MPIReplicaExchange:
                 coords_angstroms=coords_angstroms,
                 k_bias=self.k_bias,
                 n_target=n_target,
+                step_size_rad=self.step_size_rad,
+                move_settings=self.move_settings,
             )
 
             # Reporters attached in run() so resume can truncate then append.

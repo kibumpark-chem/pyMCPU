@@ -207,13 +207,16 @@ class FoldingRunner:
             fixed_residues=self.fixed_residues,
         )
 
+        from pymcpu.config import configure_integrator
+
         integrator = mcpu_core.Integrator(self.temperature, self.step_size_rad)
-        integrator.set_move_weights(*self.move_weights)
-        integrator.set_sidechain_move_mode(self.sidechain_move_mode)
-        if self.pivot_rama_schedule is not None:
-            integrator.set_pivot_rama_schedule(**self.pivot_rama_schedule)
-        else:
-            integrator.set_pivot_rama_probability(self.pivot_rama_probability)
+        configure_integrator(
+            integrator,
+            move_weights=self.move_weights,
+            sidechain_move_mode=self.sidechain_move_mode,
+            pivot_rama_probability=self.pivot_rama_probability,
+            pivot_rama_schedule=self.pivot_rama_schedule,
+        )
         if hasattr(integrator, "set_seed"):
             integrator.set_seed(self.seed)
         if self.fixed_residues:

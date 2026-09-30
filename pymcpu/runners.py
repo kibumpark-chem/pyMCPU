@@ -143,6 +143,11 @@ def run_replica_exchange_2d(
     exchange_log: str = "none",
     state_log_interval: int = 0,
     log_walker_in_data_csv: bool = True,
+    step_size_rad: float = 0.1,
+    move_weights: tuple[float, float, float] | None = None,
+    sidechain_move_mode: str = "rotamer_library",
+    pivot_rama_probability: float = 0.0,
+    pivot_rama_schedule: dict[str, float] | None = None,
 ) -> RunSummary:
     """Run 2D temperature × native-contact replica exchange (serial backend)."""
     if backend != "serial":
@@ -217,6 +222,11 @@ def run_replica_exchange_2d(
         exchange_log=exchange_log,
         state_log_interval=state_log_interval,
         log_walker_in_data_csv=log_walker_in_data_csv,
+        step_size_rad=float(step_size_rad),
+        move_weights=move_weights,
+        sidechain_move_mode=sidechain_move_mode,
+        pivot_rama_probability=pivot_rama_probability,
+        pivot_rama_schedule=pivot_rama_schedule,
     )
     if verbose:
         print(rex.describe())
@@ -273,6 +283,11 @@ def run_mpi_replica_exchange_2d(
     exchange_log: str = "none",
     state_log_interval: int = 0,
     log_walker_in_data_csv: bool = True,
+    step_size_rad: float = 0.1,
+    move_weights: tuple[float, float, float] | None = None,
+    sidechain_move_mode: str = "rotamer_library",
+    pivot_rama_probability: float = 0.0,
+    pivot_rama_schedule: dict[str, float] | None = None,
 ) -> RunSummary | None:
     """Run 2D temperature × N umbrella replica exchange under MPI.
 
@@ -345,6 +360,11 @@ def run_mpi_replica_exchange_2d(
         "exchange_log": exchange_log,
         "state_log_interval": state_log_interval,
         "log_walker_in_data_csv": log_walker_in_data_csv,
+        "step_size_rad": float(step_size_rad),
+        "move_weights": move_weights,
+        "sidechain_move_mode": sidechain_move_mode,
+        "pivot_rama_probability": pivot_rama_probability,
+        "pivot_rama_schedule": pivot_rama_schedule,
     }
     if temperatures is not None:
         rex_kwargs["temperatures"] = np.asarray(temperatures, dtype=np.float64)
@@ -460,6 +480,11 @@ def run_from_config(
             exchange_log=rex.exchange_log,
             state_log_interval=rex.state_log_interval,
             log_walker_in_data_csv=rex.log_walker_in_data_csv,
+            step_size_rad=cfg.integrator.step_size_rad,
+            move_weights=cfg.integrator.move_weights,
+            sidechain_move_mode=cfg.integrator.sidechain_move_mode,
+            pivot_rama_probability=cfg.integrator.pivot_rama_probability,
+            pivot_rama_schedule=cfg.integrator.pivot_rama_schedule,
         )
         if comm is not None:
             return run_mpi_replica_exchange_2d(comm=comm, **shared_kwargs)

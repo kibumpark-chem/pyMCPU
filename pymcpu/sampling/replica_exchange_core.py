@@ -18,7 +18,7 @@ import signal
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterator, Sequence
+from typing import Any, Iterator, Mapping, Sequence
 
 import mdtraj as md
 import numpy as np
@@ -430,11 +430,19 @@ def build_replica_simulation(
     coords_angstroms: np.ndarray,
     k_bias: float,
     n_target: float,
+    step_size_rad: float,
+    move_settings: Mapping[str, Any],
 ) -> Simulation:
     """Build one replica's Integrator + Simulation, positioned and biased,
     ready to step -- identical construction shared by the serial and MPI
-    engines (only *which* replicas get built here differs between them)."""
-    integrator = mcpu_core.Integrator(float(temperature))
+    engines (only *which* replicas get built here differs between them).
+
+    ``move_settings`` comes from :func:`pymcpu.config.normalize_move_settings`.
+    """
+    from pymcpu.config import configure_integrator
+
+    integrator = mcpu_core.Integrator(float(temperature), float(step_size_rad))
+    configure_integrator(integrator, **move_settings)
     if hasattr(integrator, "set_seed"):
         integrator.set_seed(replica_seed(seed, replica_idx))
     if fixed_residues:
