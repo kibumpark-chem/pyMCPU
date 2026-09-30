@@ -219,6 +219,44 @@ public:
     long long get_rama_pivot_attempted() const noexcept { return rama_pivot_attempted_; }
     long long get_rama_pivot_accepted()  const noexcept { return rama_pivot_accepted_; }
 
+    /// Accept/attempt counts for one move kind; see move_counts().
+    struct MoveCount {
+        const char* name;
+        long long accepted;
+        long long attempted;
+        /// The kind can be proposed with the current slot weights and
+        /// sidechain mode, or has been proposed already.
+        bool in_use;
+    };
+
+    /// Counts per move kind, each move counted once, in the fixed order
+    /// pivot, rama_pivot, kic, sidechain, rotamer. "pivot" and "sidechain"
+    /// are the continuous moves; the slot getters above are sums of these
+    /// (bb = pivot + rama_pivot, sc = sidechain + rotamer).
+    ///
+    /// in_use deliberately ignores the rama-pivot probability: a pivot slot
+    /// in use reports both pivot kinds, so replicas whose schedules give
+    /// different probabilities still report the same kinds.
+    [[nodiscard]] std::array<MoveCount, 5> move_counts() const noexcept {
+        const bool pivot_slot = move_w_pivot_ > 0.0f;
+        const bool sc_slot = move_w_sc_ > 0.0f;
+        const bool rotamer_mode = sidechain_move_mode_ == SidechainMoveMode::RotamerLibrary;
+        const long long pivot_att = bb_attempted_ - rama_pivot_attempted_;
+        const long long sc_att = sc_attempted_ - rotamer_attempted_;
+        return {{
+            {"pivot", bb_accepted_ - rama_pivot_accepted_, pivot_att,
+             pivot_slot || pivot_att > 0},
+            {"rama_pivot", rama_pivot_accepted_, rama_pivot_attempted_,
+             pivot_slot || rama_pivot_attempted_ > 0},
+            {"kic", kic_accepted_, kic_attempted_,
+             move_w_kic_ > 0.0f || kic_attempted_ > 0},
+            {"sidechain", sc_accepted_ - rotamer_accepted_, sc_att,
+             (sc_slot && !rotamer_mode) || sc_att > 0},
+            {"rotamer", rotamer_accepted_, rotamer_attempted_,
+             (sc_slot && rotamer_mode) || rotamer_attempted_ > 0},
+        }};
+    }
+
     long long num_pivot_resample_pro_phi() const noexcept { return num_pivot_resample_pro_phi_; }
     long long num_sc_resample_pro() const noexcept { return num_sc_resample_pro_; }
     long long get_kic_presolve_zero() const noexcept { return kic_presolve_zero_; }

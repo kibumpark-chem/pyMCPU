@@ -984,6 +984,21 @@ PYBIND11_MODULE(mcpu_core, m) {
         .def("get_kic_reverse_missing", &mcpu::MCIntegrator::get_kic_reverse_missing)
         .def("get_kic_proline_skipped", &mcpu::MCIntegrator::get_kic_proline_skipped)
         .def("get_steric_rejected", &mcpu::MCIntegrator::get_steric_rejected)
+        .def("move_counts",
+             [](const mcpu::MCIntegrator& integ, bool include_unused) {
+                 py::dict d;
+                 for (const auto& c : integ.move_counts()) {
+                     if (c.in_use || include_unused) {
+                         d[py::str(c.name)] = py::make_tuple(c.accepted, c.attempted);
+                     }
+                 }
+                 return d;
+             },
+             py::arg("include_unused") = false,
+             "Per-move-kind counts as {kind: (accepted, attempted)}, each move "
+             "counted once: pivot, rama_pivot, kic, sidechain, rotamer. Kinds "
+             "the current move weights and sidechain mode cannot propose are "
+             "left out unless include_unused=True.")
         .def("move_stats",
              [](const mcpu::MCIntegrator& integ) {
                  py::dict d;

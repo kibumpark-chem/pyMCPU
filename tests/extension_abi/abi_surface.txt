@@ -146,6 +146,7 @@ Integrator.last_log_jacobian_weight
 Integrator.last_move_is_rigid
 Integrator.last_move_kind
 Integrator.last_moved_indices
+Integrator.move_counts
 Integrator.move_stats
 Integrator.move_weights
 Integrator.num_pivot_resample_pro_phi
