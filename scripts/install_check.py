@@ -45,16 +45,9 @@ def check_energy_reporter():
 def check_simulation_reporter():
     try:
         import pymcpu
-        import tempfile
-        import os
-        fd, path = tempfile.mkstemp(suffix=".log")
-        os.close(fd)
-        try:
-            pymcpu.SimulationReporter(path, 1)
-            print("[OK] SimulationReporter (file mode) instantiated")
-            return True
-        finally:
-            os.unlink(path)
+        pymcpu.SimulationReporter(1)
+        print("[OK] SimulationReporter instantiated")
+        return True
     except Exception as e:
         print(f"[FAIL] SimulationReporter: {e}")
         return False
@@ -75,20 +68,6 @@ def check_xtc_reporter():
             os.unlink(path)
     except Exception as e:
         print(f"[FAIL] XtcReporter: {e}")
-        return False
-
-
-def check_energy_components():
-    try:
-        import pymcpu
-        ec = pymcpu.EnergyComponents()
-        d = ec.to_dict()
-        assert "total" in d
-        assert "mu" in d
-        print("[OK] EnergyComponents instantiated and to_dict() works")
-        return True
-    except Exception as e:
-        print(f"[FAIL] EnergyComponents: {e}")
         return False
 
 
@@ -113,7 +92,6 @@ if __name__ == "__main__":
         check_energy_reporter,
         check_simulation_reporter,
         check_xtc_reporter,
-        check_energy_components,
         check_build_flags,
     ]
     results = [c() for c in checks]

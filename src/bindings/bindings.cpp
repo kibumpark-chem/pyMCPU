@@ -612,15 +612,15 @@ PYBIND11_MODULE(mcpu_core, m) {
              "Restore mt19937 RNG state previously returned by get_rng_state.")
         .def("set_sidechain_move_mode", &mcpu::MCIntegrator::set_sidechain_move_mode,
              py::arg("mode"),
-             "Selects the Sidechain-slot proposal algorithm: 'continuous' "
-             "(default) or 'rotamer_library'.")
+             "Selects the Sidechain-slot proposal algorithm: 'rotamer_library' "
+             "(default) or 'continuous'.")
         .def("sidechain_move_mode", &mcpu::MCIntegrator::sidechain_move_mode)
         .def("set_pivot_rama_probability", &mcpu::MCIntegrator::set_pivot_rama_probability,
              py::arg("p"),
              "Fraction of Pivot-slot attempts using the knowledge-based "
              "(phi,psi) rama-mixture proposal instead of the continuous "
-             "single-dihedral pivot. Default 0.05; p=0.0 recovers exact "
-             "legacy behavior (including RNG-draw count).")
+             "single-dihedral pivot. Default 0.0 (opt-in); at p=0.0 no extra "
+             "RNG draw is consumed.")
         .def("pivot_rama_probability", &mcpu::MCIntegrator::pivot_rama_probability)
         .def("set_move_weights", &mcpu::MCIntegrator::set_move_weights,
              py::arg("pivot"), py::arg("kic"), py::arg("sidechain"),

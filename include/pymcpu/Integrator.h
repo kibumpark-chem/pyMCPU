@@ -250,8 +250,8 @@ public:
     /// callers choose their own residue).
     bool debug_force_rama_pivot_to(Context& context, int residue, float phi, float psi);
 
-    /// Selects which algorithm the "Sidechain" move slot uses. Default
-    /// "continuous" preserves today's behavior exactly.
+    /// Selects which algorithm the "Sidechain" move slot uses:
+    /// "rotamer_library" (the default) or "continuous".
     void set_sidechain_move_mode(const std::string& mode);
     [[nodiscard]] std::string sidechain_move_mode() const;
 
