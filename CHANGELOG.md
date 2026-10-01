@@ -67,6 +67,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Collective variables work with `KORPForceField`.** Every CV finds its
+  atoms through `build_contact_atom_index`, which read MCPU's per-atom
+  list, so an `EngineSession` with KORP and any CV stopped with an
+  `AttributeError`. It now reads the per-residue blocks every force field
+  provides. `contact_atom_mode="cb"` raises a `ValueError` for a force field
+  that does not model the CB, such as KORP, instead of quietly using the CA
+  against a CB reference.
 - Every `Integrator.debug_force_*` test hook records the move it proposes:
   `last_move_kind()`, `last_moved_indices()`, `last_delta_energy()` and
   `last_log_jacobian_weight()` then describe it. `debug_force_sc`,

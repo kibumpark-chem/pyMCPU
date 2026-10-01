@@ -13,10 +13,13 @@ the original combined file lives separately in
 
 from __future__ import annotations
 
+import os
+
 import mdtraj as md
 import numpy as np
 import pytest
 
+from pymcpu import mcpu_core
 from pymcpu.sampling.collective_variables import (
     NativeContactsCV,
     attach_native_contacts_bias_potential,
@@ -69,19 +72,61 @@ def test_cb_mode_uses_cb_or_falls_back_to_bb_ca() -> None:
 
 class _BackboneOnlyForceField:
     """Stands in for KORPForceField, which needs its 316 MiB map to build:
-    blocks with no sidechain and no per-atom list."""
+    per-residue N, CA, C blocks and no sidechain atoms."""
 
-    n_res = 1
-    blocks: list = []
+    def __init__(self, residue_names: list[str]) -> None:
+        self.blocks = []
+        for r in range(len(residue_names)):
+            block = mcpu_core.BlockIndices()
+            block.bb_start = 3 * r
+            block.c_start = 3 * r + 2
+            self.blocks.append(block)  # sc_start stays -1
+        self.n_res = len(residue_names)
+        self.output_topology = md.Topology()
+        chain = self.output_topology.add_chain()
+        for name in residue_names:
+            self.output_topology.add_residue(name, chain)
 
 
-@pytest.mark.parametrize("mode", ["ca", "cb"])
-def test_contact_atoms_need_an_all_atom_force_field(mode: str) -> None:
-    """A backbone-only force field has no CB to pick and no per-atom list to
-    pick from. Both modes must refuse it rather than return CA indices that a
-    CB reference would then be compared against."""
-    with pytest.raises(ValueError, match="all-atom force field"):
-        build_contact_atom_index(_BackboneOnlyForceField(), mode=mode)
+def test_ca_mode_needs_only_the_residue_blocks() -> None:
+    ff = _BackboneOnlyForceField(["ALA", "GLY", "LEU"])
+    assert build_contact_atom_index(ff, mode="ca").tolist() == [1, 4, 7]
+
+
+def test_cb_mode_refuses_a_force_field_without_cbs() -> None:
+    """Returning the CA instead would be compared against the reference's
+    CB coordinates, so the native contacts would be wrong without any error."""
+    ff = _BackboneOnlyForceField(["GLY", "ALA"])
+    with pytest.raises(ValueError, match=r"residue 1 \(ALA\).*contact_atom_mode='ca'"):
+        build_contact_atom_index(ff, mode="cb")
+
+
+def test_cb_mode_uses_the_ca_of_a_glycine() -> None:
+    ff = _BackboneOnlyForceField(["GLY", "GLY"])
+    assert build_contact_atom_index(ff, mode="cb").tolist() == [1, 4]
+
+
+@pytest.mark.skipif(not os.environ.get("KORP_MAP_PATH"), reason="set KORP_MAP_PATH")
+def test_a_korp_session_computes_native_contacts(engine_spec_factory) -> None:
+    """At its own native structure every native contact is formed."""
+    from pymcpu.sampling import EngineSession
+
+    native_q = engine_spec_factory().cv[0]
+
+    def session(contact_atom_mode: str) -> EngineSession:
+        return EngineSession(engine_spec_factory(
+            forcefield="korp",
+            forcefield_options={"map_path": os.environ["KORP_MAP_PATH"]},
+            move_weights=(0.5, 0.5, 0.0),
+            cv=(dict(native_q, contact_atom_mode=contact_atom_mode),),
+        ))
+
+    korp = session("ca")
+    native = korp.coords_from_auxref(korp.spec.pdb)
+    assert korp.compute_cv(native).tolist() == [1.0]
+    cb = session("cb")
+    with pytest.raises(ValueError, match="contact_atom_mode='ca'"):
+        cb.compute_cv(native)
 
 
 def test_gly_cb_mode_uses_backbone_ca() -> None:

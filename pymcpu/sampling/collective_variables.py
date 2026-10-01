@@ -19,7 +19,7 @@ import mdtraj as md
 from pymcpu.config import ContactAtomMode, VALID_CONTACT_ATOM_MODES
 
 if TYPE_CHECKING:  # avoid importing the engine just to use this module
-    from pymcpu.forcefields.mcpu import MCPUForceField
+    from pymcpu.forcefields.base import BaseForceField
 
 
 def normalize_contact_atom_mode(mode: str | None) -> ContactAtomMode:
@@ -333,44 +333,40 @@ def attach_native_contacts_bias_potential(system, cv: NativeContactsCV):
 
 
 def build_contact_atom_index(
-    forcefield: "MCPUForceField",
+    forcefield: "BaseForceField",
     mode: str = "ca",
 ) -> np.ndarray:
-    """Return engine-internal contact-atom indices, ordered by residue.
+    """Return engine-internal contact-atom indices, one per residue.
 
     * ``ca`` — backbone CA.
-    * ``cb`` — CB when present; otherwise backbone CA (GLY and any residue
-      without CB).
+    * ``cb`` — CB, or the backbone CA for glycine, which has none. A force
+      field that does not model the other residues' CB cannot be used in
+      this mode: KORP keeps only the backbone.
+
+    Works for any force field that provides ``blocks``, the per-residue
+    ``BlockIndices``.
     """
     mode_n = normalize_contact_atom_mode(mode)
-    atoms = getattr(forcefield, "ordered_atom_list", None)
-    if atoms is None:
-        raise ValueError(
-            f"contact atoms need an all-atom force field; {type(forcefield).__name__} "
-            "has no per-atom list"
-        )
-
-    if mode_n == "ca":
-        ca = [
-            (atom.residue_index, idx)
-            for idx, atom in enumerate(atoms)
-            if atom.name == "CA"
-        ]
-        ca.sort(key=lambda t: t[0])
-        return np.array([idx for _, idx in ca], dtype=np.int64)
-
-    # cb mode: one index per residue via BlockIndices
-    n_res = int(forcefield.n_res)
-    out = np.empty(n_res, dtype=np.int64)
-    for r in range(n_res):
-        block = forcefield.blocks[r]
-        bb_ca = block.bb_start + 1  # N, CA, C layout
-        sc = int(block.sc_start)  # the CB, or -1 for a residue without one
-        out[r] = sc if sc >= 0 else bb_ca
+    out = np.empty(len(forcefield.blocks), dtype=np.int64)
+    for r, block in enumerate(forcefield.blocks):
+        ca = block.bb_start + 1  # N, CA, C layout
+        if mode_n == "ca":
+            out[r] = ca
+        elif block.sc_start >= 0:
+            out[r] = block.sc_start  # MCPUForceField starts each sidechain at its CB
+        else:
+            name = forcefield.output_topology.residue(r).name
+            if name != "GLY":
+                raise ValueError(
+                    f"contact_atom_mode='cb' needs the CB of residue {r} ({name}), "
+                    f"which {type(forcefield).__name__} does not model; use "
+                    "contact_atom_mode='ca'"
+                )
+            out[r] = ca
     return out
 
 
-def build_ca_index(forcefield: "MCPUForceField") -> np.ndarray:
+def build_ca_index(forcefield: "BaseForceField") -> np.ndarray:
     """Return engine-internal indices of the backbone CA atoms, ordered by residue.
 
     Thin wrapper around :func:`build_contact_atom_index` with ``mode="ca"``.
