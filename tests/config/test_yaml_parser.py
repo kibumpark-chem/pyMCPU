@@ -20,7 +20,7 @@ from pymcpu.config import yaml_dict_to_config
 from pymcpu.utils.yaml_parser import config_from_yaml, load_yaml, simulation_from_yaml
 
 REPO_ROOT = Path(PACKAGE_ROOT).parent
-TEMPLATE_YAML = REPO_ROOT / "inputs" / "template.yaml"
+TEMPLATE_YAML = REPO_ROOT / "examples" / "configs" / "template.yaml"
 EXAMPLE_YAML = REPO_ROOT / "examples" / "gromacs_style" / "example_input.yaml"
 
 
