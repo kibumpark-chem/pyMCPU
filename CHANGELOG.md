@@ -67,6 +67,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Every `Integrator.debug_force_*` test hook records the move it proposes:
+  `last_move_kind()`, `last_moved_indices()`, `last_delta_energy()` and
+  `last_log_jacobian_weight()` then describe it. `debug_force_sc`,
+  `debug_force_rotamer` and `debug_force_rama_pivot` used to leave the
+  previous move's values in place.
 - **Coordinates of the wrong size are rejected.** `Context.set_positions`,
   `Context.coords` and `State.coords` used to resize the engine state to
   whatever array they were given, so a checkpoint or restart file written
