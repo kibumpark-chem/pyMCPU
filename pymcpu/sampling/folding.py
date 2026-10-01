@@ -16,6 +16,7 @@ from pymcpu.checkpointing import (
     CheckpointConfig,
     FoldingCheckpointState,
     checkpoint_cycle_filename,
+    checkpoint_layout_error,
     get_integrator_move_counters,
     get_integrator_rng_states,
     load_checkpoint as _load_checkpoint,
@@ -815,6 +816,11 @@ class FoldingRunner:
             )
 
         # Restore coordinates / step / RNG
+        layout_error = checkpoint_layout_error(
+            state.replica_coords, self.system.get_num_atoms(), checkpoint_path
+        )
+        if layout_error:
+            raise ValueError(layout_error)
         if state.replica_coords:
             coords = np.asarray(state.replica_coords[0], dtype=np.float64)
             if coords.ndim == 2 and coords.shape[0] == 3:

@@ -282,6 +282,8 @@ public:
 
     /// Test helpers: force a pivot/SC choice. Returns whether a move was proposed.
     /// Proline φ / proline SC increments the resample counters and returns false.
+    /// A proposed pivot is not committed; last_moved_indices() and
+    /// last_delta_energy() then describe it.
     bool debug_force_pivot(Context& context, int residue, bool is_phi);
     bool debug_force_sc(Context& context, int residue);
     /// Forces the rotamer-library sidechain move at `residue` regardless of

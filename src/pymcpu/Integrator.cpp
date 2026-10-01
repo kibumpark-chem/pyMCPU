@@ -2270,7 +2270,19 @@ bool MCIntegrator::debug_force_pivot(Context& context, int residue, bool is_phi)
     proposal.copy_dynamic_from(context.getState());
     move_patch.reset_for_step();
     apply_pivot_at(context, proposal, move_patch, residue, is_phi);
-    return move_patch.is_valid;
+    if (!move_patch.is_valid) return false;
+
+    // Record what the proposal did, as debug_force_rama_pivot_to does, so a
+    // test can check exactly which atoms a pivot moves. Inspection only: no
+    // accept/reject and no commit.
+    const EnergyChangeResult energy_change =
+        context.getSystem().evaluateDeltaEnergy(context, context.getState(), proposal, move_patch);
+    last_delta_e_ = energy_change.delta_energy;
+    last_log_jacobian_weight_ = move_patch.log_jacobian_weight;
+    last_move_kind_str_ = "Pivot";
+    last_is_rigid_ = move_patch.is_rigid;
+    last_moved_indices_ = move_patch.moved_indices;
+    return true;
 }
 
 bool MCIntegrator::debug_force_sc(Context& context, int residue) {

@@ -63,16 +63,24 @@ def compute_fingerprint(
     return hashlib.sha256(payload).hexdigest()[:16]
 
 
-def _load_heavy_forcefield(pdb_path: str | Path, **ff_kwargs: Any) -> tuple[MCPUForceField, md.Topology]:
-    """Load ``pdb_path``, slice to heavy atoms, and build the
-    :class:`MCPUForceField` it defines. Shared by :func:`build_forcefield`
-    (``spec.pdb``, full ``ff_kwargs``) and
-    :meth:`EngineSession.coords_from_auxref`'s ``.pdb`` branch (an arbitrary
-    basis-state path, reduced ``ff_kwargs``)."""
-    traj = md.load(str(pdb_path))
-    heavy = traj.atom_slice(traj.topology.select("not element H"))
-    forcefield = MCPUForceField(heavy, **ff_kwargs)
-    return forcefield, heavy.topology
+def _forcefield_options(spec: EngineSpec, *, include_dssp: bool = True) -> dict[str, Any]:
+    """Constructor options for the force field ``spec`` names.
+
+    `param_set` and friends are top-level EngineSpec fields because they
+    predate forcefield_options and existing configs set them there. They are
+    MCPU's, though, so they are only forwarded to MCPU -- KORP has no
+    parameter set and would reject them. An explicit entry in
+    forcefield_options still wins.
+    """
+    options: dict[str, Any] = dict(spec.forcefield_options)
+    if issubclass(get_forcefield(spec.forcefield), MCPUForceField):
+        options.setdefault("param_set", spec.param_set)
+        if include_dssp:
+            options.setdefault("compute_dssp", spec.compute_dssp)
+            options.setdefault("dssp_coil_state", spec.dssp_coil_state)
+        if spec.param_dir is not None:
+            options.setdefault("param_dir", spec.param_dir)
+    return options
 
 
 def build_forcefield(spec: EngineSpec) -> tuple[BaseForceField, md.Topology]:
@@ -88,22 +96,8 @@ def build_forcefield(spec: EngineSpec) -> tuple[BaseForceField, md.Topology]:
     sidechains, so trajectories written from it must be read back against
     the returned topology.
     """
-    options: dict[str, Any] = dict(spec.forcefield_options)
-    cls = get_forcefield(spec.forcefield)
-    if issubclass(cls, MCPUForceField):
-        # `param_set` and friends are top-level EngineSpec fields because they
-        # predate forcefield_options and existing configs set them there. They
-        # are MCPU's, though, so they are only forwarded to MCPU -- KORP has no
-        # parameter set and would reject them. An explicit entry in
-        # forcefield_options still wins.
-        options.setdefault("param_set", spec.param_set)
-        options.setdefault("compute_dssp", spec.compute_dssp)
-        options.setdefault("dssp_coil_state", spec.dssp_coil_state)
-        if spec.param_dir is not None:
-            options.setdefault("param_dir", spec.param_dir)
-
     forcefield = _build_registered_forcefield(
-        spec.forcefield, md.load(str(spec.pdb)), options)
+        spec.forcefield, md.load(str(spec.pdb)), _forcefield_options(spec))
     return forcefield, forcefield.output_topology
 
 
@@ -220,9 +214,10 @@ class EngineSession:
           production run) -- lets an external sampler start from prior
           pyMCPU output with no new API.
         * ``.pdb`` -- an arbitrary starting structure, mapped into engine atom
-          order via a (cached) throwaway ``MCPUForceField`` built from it.
-          This assumes the PDB is the same protein/topology as
-          ``spec.pdb``; nothing here checks that.
+          order by a throwaway force field of the session's own kind
+          (``spec.forcefield``) built from it. This assumes the PDB is the
+          same protein/topology as ``spec.pdb``; a different atom count is
+          caught when the coordinates are loaded.
 
         Results are cached per resolved path (a starting state is typically read
         many times, once per new or recycled trajectory).
@@ -259,15 +254,12 @@ class EngineSession:
             if coords.ndim == 2 and coords.shape[0] != 3 and coords.shape[1] == 3:
                 coords = coords.T
         elif suffix == ".pdb":
-            ff_kwargs: dict[str, Any] = {"param_set": self.spec.param_set}
-            if self.spec.param_dir is not None:
-                ff_kwargs["param_dir"] = self.spec.param_dir
-            # Intentionally omits compute_dssp/dssp_coil_state (unlike
-            # build_forcefield()'s ff_kwargs): harmless because this
-            # throwaway forcefield is used only for local_ff.coords, which
-            # is purely geometric (MCPUForceField._infer_hydrogens) and
-            # does not depend on compute_dssp/secondary_structure at all.
-            local_ff, _ = _load_heavy_forcefield(path, **ff_kwargs)
+            # The session's own force field, so the coordinates come out in
+            # its layout (KORP keeps only the backbone). DSSP is skipped: this
+            # throwaway force field is used only for its coordinates.
+            local_ff = _build_registered_forcefield(
+                self.spec.forcefield, md.load(str(path)),
+                _forcefield_options(self.spec, include_dssp=False))
             coords = (local_ff.coords[0] * 10.0).T.astype(np.float32)
         else:
             raise ValueError(

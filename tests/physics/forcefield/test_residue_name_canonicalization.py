@@ -70,7 +70,7 @@ def _energy_and_torsions(traj: md.Trajectory) -> tuple[float, tuple[int, ...]]:
     ff = MCPUForceField(traj, param_set="mcpu08")
     system = ff.create_system(traj.topology)
     context = mcpu_core.Context(system)
-    context.set_positions(np.ascontiguousarray((traj.xyz[0] * 10.0).T, dtype=np.float32))
+    context.set_positions(np.ascontiguousarray((ff.coords[0] * 10.0).T, dtype=np.float32))
     return context.calculate_total_energy(), tuple(system.get_torsions_per_residue())
 
 
