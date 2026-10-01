@@ -72,6 +72,19 @@ def test_step_stats_timings_are_keyed_by_name(mcpu_sim) -> None:
     assert list(integrator.step_stats()["energy_delta_ns"]) == list(MCPU_TERMS.values())
 
 
+def test_terms_are_sorted_by_group_not_by_registration(mcpu_sim) -> None:
+    """A term added last but with the lowest group comes first everywhere --
+    the dict order is what the CSV columns and by_name follow."""
+    sim, system, _ = mcpu_sim
+    extra = _bias_potential(group=0)
+    extra.set_name("extra_term")
+    system.add_potential(extra)
+
+    assert list(system.energy_terms().items()) == [(0, "extra_term"), *MCPU_TERMS.items()]
+    sim.step(5)
+    assert list(sim.context.energy_breakdown()["by_name"]) == ["extra_term", *MCPU_TERMS.values()]
+
+
 def test_unnamed_group_reports_as_group_n(mcpu_sim) -> None:
     _, system, _ = mcpu_sim
     system.add_potential(_bias_potential(group=9))
@@ -132,4 +145,4 @@ def test_korp_terms_are_named() -> None:
     ff = KORPForceField(traj, map_path=os.environ["KORP_MAP_PATH"])
     system = ff.create_system(traj.topology)
     # KORP adds the steric guard (8) before the KORP term (7); output is by group.
-    assert system.energy_terms() == {7: "korp_6d", 8: "calpha_excluded_volume"}
+    assert list(system.energy_terms().items()) == [(7, "korp_6d"), (8, "calpha_excluded_volume")]

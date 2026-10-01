@@ -101,6 +101,7 @@ def test_simulation_reporter_prints_the_kinds_in_use(heavy, capfd) -> None:
     sim.add_simulation_reporter(100)
     sim.step(100)
     out = capfd.readouterr().out
-    for kind in ["pivot:", "rama_pivot:", "kic:"]:
-        assert kind in out
-    assert "rotamer:" not in out and "sidechain:" not in out
+    # Compare whole line labels: "rama_pivot:" contains "pivot:" as a substring.
+    labels = {line.split(":", 1)[0] for line in out.splitlines() if ":" in line}
+    assert {"pivot", "rama_pivot", "kic"} <= labels
+    assert not labels & {"rotamer", "sidechain"}
