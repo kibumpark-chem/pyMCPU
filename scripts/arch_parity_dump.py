@@ -439,9 +439,9 @@ def _spawn(case: tuple[str, str, int, int], import_root: str | None) -> dict[str
             "failed": f"child exited {proc.returncode}",
             "stderr": proc.stderr[-2000:],
         }
-    # The C++ layer prints diagnostics to stdout ("Maximum contact distance",
-    # "[neighbor-audit] ..."), so the payload is framed rather than assumed to
-    # be the whole of stdout.
+    # Anything else the child prints (warnings, opt-in diagnostics) would mix
+    # with the payload, so it is framed rather than assumed to be the whole of
+    # stdout.
     marker = "@@ARCH_PARITY_JSON@@"
     _, _, payload = proc.stdout.rpartition(marker)
     try:

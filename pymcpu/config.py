@@ -89,8 +89,10 @@ def normalize_sidechain_move_mode(mode: str | None) -> SidechainMoveMode:
 
 
 def normalize_pivot_rama_probability(p: float | None) -> float:
+    # None means "not set": the engine's default, 0.0, because the rama pivot
+    # is opt-in (see MCIntegrator::set_pivot_rama_probability).
     if p is None:
-        return 0.05
+        return 0.0
     p = float(p)
     if not (0.0 <= p <= 1.0):
         raise ValueError(f"pivot_rama_probability must be in [0, 1], got {p!r}")
@@ -254,6 +256,48 @@ def apply_linker_energy_mask(
         return
     mode = normalize_linker_energy_mode(linker_energy_mode)
     system.set_energy_ignored_residues(list(int(r) for r in linker_residues), mode)
+
+
+def normalize_move_settings(
+    *,
+    move_weights: Sequence[float] | None = None,
+    sidechain_move_mode: str | None = "rotamer_library",
+    pivot_rama_probability: float | None = 0.0,
+    pivot_rama_schedule: Mapping[str, float] | None = None,
+) -> dict[str, Any]:
+    """Validate the move settings a sampler passes to :func:`configure_integrator`.
+
+    Returns them as keyword arguments for that function. Every default is the
+    engine's own, so an all-default call configures nothing new.
+    """
+    return {
+        "move_weights": normalize_move_weights(move_weights),
+        "sidechain_move_mode": normalize_sidechain_move_mode(sidechain_move_mode),
+        "pivot_rama_probability": normalize_pivot_rama_probability(pivot_rama_probability),
+        "pivot_rama_schedule": normalize_pivot_rama_schedule(pivot_rama_schedule),
+    }
+
+
+def configure_integrator(
+    integrator: Any,
+    *,
+    move_weights: Sequence[float],
+    sidechain_move_mode: str,
+    pivot_rama_probability: float,
+    pivot_rama_schedule: Mapping[str, float] | None,
+) -> None:
+    """Apply already-validated move settings to a new Integrator.
+
+    Takes the output of :func:`normalize_move_settings`, or the equivalent
+    fields of a config that normalized them itself. A schedule, when given,
+    overrides ``pivot_rama_probability``.
+    """
+    integrator.set_move_weights(*move_weights)
+    integrator.set_sidechain_move_mode(sidechain_move_mode)
+    if pivot_rama_schedule is not None:
+        integrator.set_pivot_rama_schedule(**pivot_rama_schedule)
+    else:
+        integrator.set_pivot_rama_probability(pivot_rama_probability)
 
 
 @dataclass

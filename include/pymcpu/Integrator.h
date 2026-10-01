@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <string>
 #include <array>
+#include <utility>
 #include "ProposalPatch.h"
 #include "pymcpu/State.h"
 #include "pymcpu/reporters/Reporter.h"
@@ -121,6 +122,9 @@ struct StepStats {
     std::uint64_t tot_pivot_ns = 0, tot_kic_ns = 0, tot_sc_ns = 0;
     /// Per energy-group ΔE time (index = Potential::getEnergyGroup(); 0 unused).
     std::uint64_t energy_delta_ns[8] = {};
+    /// (group, name) of the System's energy terms, copied at the start of
+    /// run() so step_stats() can label energy_delta_ns without a System.
+    std::vector<std::pair<int, std::string>> energy_terms;
     std::size_t moved_atoms_sum = 0;
     std::size_t n_steps = 0;
     std::size_t n_valid_moves = 0;
@@ -215,6 +219,55 @@ public:
     long long get_rama_pivot_attempted() const noexcept { return rama_pivot_attempted_; }
     long long get_rama_pivot_accepted()  const noexcept { return rama_pivot_accepted_; }
 
+    /// Every move counter under its member name (bb_attempted, ...,
+    /// steric_rejected, num_sc_resample_pro), for checkpointing. The counters
+    /// are cumulative over the integrator's life, so a resumed run restores
+    /// them rather than restarting at 0 under an appended CSV.
+    [[nodiscard]] std::vector<std::pair<std::string, long long>> get_move_counters() const;
+
+    /// Restore counters saved by get_move_counters(). Every counter is reset
+    /// to 0 first, then the given ones are applied; an unknown name throws
+    /// std::invalid_argument and leaves the counters unchanged.
+    void set_move_counters(const std::vector<std::pair<std::string, long long>>& counters);
+
+    /// Accept/attempt counts for one move kind; see move_counts().
+    struct MoveCount {
+        const char* name;
+        long long accepted;
+        long long attempted;
+        /// The kind can be proposed with the current slot weights and
+        /// sidechain mode, or has been proposed already.
+        bool in_use;
+    };
+
+    /// Counts per move kind, each move counted once, in the fixed order
+    /// pivot, rama_pivot, kic, sidechain, rotamer. "pivot" and "sidechain"
+    /// are the continuous moves; the slot getters above are sums of these
+    /// (bb = pivot + rama_pivot, sc = sidechain + rotamer).
+    ///
+    /// in_use deliberately ignores the rama-pivot probability: a pivot slot
+    /// in use reports both pivot kinds, so replicas whose schedules give
+    /// different probabilities still report the same kinds.
+    [[nodiscard]] std::array<MoveCount, 5> move_counts() const noexcept {
+        const bool pivot_slot = move_w_pivot_ > 0.0f;
+        const bool sc_slot = move_w_sc_ > 0.0f;
+        const bool rotamer_mode = sidechain_move_mode_ == SidechainMoveMode::RotamerLibrary;
+        const long long pivot_att = bb_attempted_ - rama_pivot_attempted_;
+        const long long sc_att = sc_attempted_ - rotamer_attempted_;
+        return {{
+            {"pivot", bb_accepted_ - rama_pivot_accepted_, pivot_att,
+             pivot_slot || pivot_att > 0},
+            {"rama_pivot", rama_pivot_accepted_, rama_pivot_attempted_,
+             pivot_slot || rama_pivot_attempted_ > 0},
+            {"kic", kic_accepted_, kic_attempted_,
+             move_w_kic_ > 0.0f || kic_attempted_ > 0},
+            {"sidechain", sc_accepted_ - rotamer_accepted_, sc_att,
+             (sc_slot && !rotamer_mode) || sc_att > 0},
+            {"rotamer", rotamer_accepted_, rotamer_attempted_,
+             (sc_slot && rotamer_mode) || rotamer_attempted_ > 0},
+        }};
+    }
+
     long long num_pivot_resample_pro_phi() const noexcept { return num_pivot_resample_pro_phi_; }
     long long num_sc_resample_pro() const noexcept { return num_sc_resample_pro_; }
     long long get_kic_presolve_zero() const noexcept { return kic_presolve_zero_; }
@@ -250,8 +303,8 @@ public:
     /// callers choose their own residue).
     bool debug_force_rama_pivot_to(Context& context, int residue, float phi, float psi);
 
-    /// Selects which algorithm the "Sidechain" move slot uses. Default
-    /// "continuous" preserves today's behavior exactly.
+    /// Selects which algorithm the "Sidechain" move slot uses:
+    /// "rotamer_library" (the default) or "continuous".
     void set_sidechain_move_mode(const std::string& mode);
     [[nodiscard]] std::string sidechain_move_mode() const;
 
@@ -496,6 +549,11 @@ private:
     float sidechain_step_size_rad_;
 
     std::vector<std::shared_ptr<Reporter>> reporters_;
+    /// (name, member) for every move counter; the single table behind
+    /// get_move_counters() and set_move_counters().
+    using MoveCounterTable = std::vector<std::pair<const char*, long long MCIntegrator::*>>;
+    static const MoveCounterTable& move_counter_table();
+
     long long bb_attempted_ = 0;
     long long bb_accepted_ = 0;
     long long sc_attempted_ = 0;
@@ -533,7 +591,11 @@ private:
     /// literals and could drift apart without anything noticing.
     [[nodiscard]] int select_move_slot(float roll) const noexcept {
         if (roll < move_w_pivot_) return 0;
-        if (roll < move_w_pivot_ + move_w_kic_) return 1;
+        // A zero-weight sidechain slot must stay unreachable. In float32 the
+        // normalized pivot + kic can sum to just under 1 (0.4/0.2/0 gives
+        // 0.99999994f), and the [0,1) roll can land exactly there, about once
+        // per 1e7 steps. Same single roll, so the RNG stream is unchanged.
+        if (roll < move_w_pivot_ + move_w_kic_ || move_w_sc_ <= 0.0f) return 1;
         return 2;
     }
 

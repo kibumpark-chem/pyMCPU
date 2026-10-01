@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <map>
 #include <stdexcept>
 #include <string>
 
@@ -305,12 +306,54 @@ bool System::is_amide_h_atom(int atom_id) const noexcept {
     return block_indices[static_cast<size_t>(r)].h_start == atom_id;
 }
 
+namespace {
+// group -> name for every group in use; unnamed groups map to "".
+std::map<int, std::string> collect_energy_terms(
+    const std::vector<std::shared_ptr<Potential>>& potentials) {
+    std::map<int, std::string> by_group;
+    std::map<std::string, int> by_name;
+    for (const auto& p : potentials) {
+        const int g = p->getEnergyGroup();
+        const std::string& name = p->getName();
+        auto it = by_group.emplace(g, std::string()).first;
+        if (name.empty()) continue;
+        if (!it->second.empty() && it->second != name) {
+            throw std::invalid_argument(
+                "energy group " + std::to_string(g) + " has two names: '" +
+                it->second + "' and '" + name + "'");
+        }
+        auto [nit, inserted] = by_name.emplace(name, g);
+        if (!inserted && nit->second != g) {
+            throw std::invalid_argument(
+                "energy term name '" + name + "' is used by groups " +
+                std::to_string(nit->second) + " and " + std::to_string(g));
+        }
+        it->second = name;
+    }
+    return by_group;
+}
+}  // namespace
+
 int System::addPotential(std::shared_ptr<Potential> potential) {
     if (!potential) {
         throw std::invalid_argument("System::addPotential: null potential pointer");
     }
     potentials.push_back(std::move(potential));
+    try {
+        collect_energy_terms(potentials);
+    } catch (...) {
+        potentials.pop_back();
+        throw;
+    }
     return static_cast<int>(potentials.size() - 1);
+}
+
+std::vector<std::pair<int, std::string>> System::energyTerms() const {
+    std::vector<std::pair<int, std::string>> out;
+    for (auto& [g, name] : collect_energy_terms(potentials)) {
+        out.emplace_back(g, name.empty() ? "group_" + std::to_string(g) : name);
+    }
+    return out;
 }
 
 int System::getNumAtoms() const noexcept { 

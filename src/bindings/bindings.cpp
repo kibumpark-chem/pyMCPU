@@ -55,17 +55,6 @@ PYBIND11_MODULE(mcpu_core, m) {
         "Base class of the output reporters. Exposed so that\n"
         "Simulation.add_reporter has a type to accept; not intended to be\n"
         "subclassed from Python.");
-    py::class_<mcpu::EnergyComponents>(m, "EnergyComponents")
-        .def(py::init<>())
-        .def_readwrite("total", &mcpu::EnergyComponents::total)
-        .def_readwrite("mu", &mcpu::EnergyComponents::mu)
-        .def_readwrite("backbone_torsion", &mcpu::EnergyComponents::backbone_torsion)
-        .def_readwrite("sidechain_torsion", &mcpu::EnergyComponents::sidechain_torsion)
-        .def_readwrite("hydrogen_bond", &mcpu::EnergyComponents::hydrogen_bond)
-        .def_readwrite("aromatic", &mcpu::EnergyComponents::aromatic)
-        .def_readwrite("native_contacts_bias", &mcpu::EnergyComponents::native_contacts_bias)
-        .def("to_dict", &mcpu::EnergyComponents::to_dict)
-        .def("get", &mcpu::EnergyComponents::get, py::arg("component"));
     py::class_<mcpu::XtcReporter, mcpu::Reporter, std::shared_ptr<mcpu::XtcReporter>>(m, "XtcReporter",
         "Writes coordinates to a GROMACS XTC trajectory every\n"
         "report_interval steps. Pass MCPUForceField.inverse_mapping so\n"
@@ -82,12 +71,15 @@ PYBIND11_MODULE(mcpu_core, m) {
         .def("filename", &mcpu::XtcReporter::filename,
              py::return_value_policy::reference_internal);
     py::class_<mcpu::EnergyReporter, mcpu::Reporter, std::shared_ptr<mcpu::EnergyReporter>>(m, "EnergyReporter",
-        "Writes a CSV row every report_interval steps holding the per-group\n"
-        "energies and the cumulative move accept/attempt counters.\n\n"
-        "This is a writer, not a buffer: there is no accessor to read\n"
-        "energies back out of it, so read the CSV. The Total column includes\n"
-        "the native-contacts bias when one is enabled, which makes it right\n"
-        "for monitoring and wrong for MBAR reweighting.")
+        "Writes a CSV row every report_interval steps: step, total, each\n"
+        "energy term by name (System.energy_terms()), then <kind>_accepted and\n"
+        "<kind>_attempted for each move kind in use (Integrator.move_counts()),\n"
+        "then walker_id. Counts are cumulative.\n\n"
+        "The header is written when the first run() starts. With append=True\n"
+        "an existing header must match, or run() raises before any move.\n"
+        "The total column includes the native-contacts bias when one is\n"
+        "enabled, which makes it right for monitoring and wrong for MBAR\n"
+        "reweighting.")
         .def(py::init<const std::string&, int, bool>(),
              py::arg("energy_filename"),
              py::arg("report_interval"),
@@ -306,13 +298,20 @@ PYBIND11_MODULE(mcpu_core, m) {
                      by_group[py::int_(kv.first)] = kv.second;
                  }
                  d["by_group"] = by_group;
+                 py::dict by_name;
+                 for (const auto& [g, name] : c.getSystem().energyTerms()) {
+                     auto it = src.find(g);
+                     by_name[py::str(name)] = it != src.end() ? it->second : 0.0f;
+                 }
+                 d["by_name"] = by_name;
                  d["weighted"] = weighted;
                  d["use_legacy_weights"] = c.use_legacy_weights();
                  return d;
              },
              py::arg("weighted") = true,
-             "Return per-group energies. weighted=True uses legacy outer weights "
-             "(incl. HBond RDTHREE_CON); weighted=False returns raw per-potential energies.")
+             "Return per-term energies, keyed by group (by_group) and by name "
+             "(by_name). weighted=True uses legacy outer weights (incl. HBond "
+             "RDTHREE_CON); weighted=False returns raw per-potential energies.")
         .def("set_use_legacy_weights", &Context::set_use_legacy_weights, py::arg("on"))
         .def("use_legacy_weights", &Context::use_legacy_weights)
         .def("set_energy_weight", &Context::set_energy_weight,
@@ -612,15 +611,15 @@ PYBIND11_MODULE(mcpu_core, m) {
              "Restore mt19937 RNG state previously returned by get_rng_state.")
         .def("set_sidechain_move_mode", &mcpu::MCIntegrator::set_sidechain_move_mode,
              py::arg("mode"),
-             "Selects the Sidechain-slot proposal algorithm: 'continuous' "
-             "(default) or 'rotamer_library'.")
+             "Selects the Sidechain-slot proposal algorithm: 'rotamer_library' "
+             "(default) or 'continuous'.")
         .def("sidechain_move_mode", &mcpu::MCIntegrator::sidechain_move_mode)
         .def("set_pivot_rama_probability", &mcpu::MCIntegrator::set_pivot_rama_probability,
              py::arg("p"),
              "Fraction of Pivot-slot attempts using the knowledge-based "
              "(phi,psi) rama-mixture proposal instead of the continuous "
-             "single-dihedral pivot. Default 0.05; p=0.0 recovers exact "
-             "legacy behavior (including RNG-draw count).")
+             "single-dihedral pivot. Default 0.0 (opt-in); at p=0.0 no extra "
+             "RNG draw is consumed.")
         .def("pivot_rama_probability", &mcpu::MCIntegrator::pivot_rama_probability)
         .def("set_move_weights", &mcpu::MCIntegrator::set_move_weights,
              py::arg("pivot"), py::arg("kic"), py::arg("sidechain"),
@@ -934,12 +933,9 @@ PYBIND11_MODULE(mcpu_core, m) {
                          static_cast<double>(s.n_steps);
                  }
                  py::dict by_group;
-                 static const char* kNames[] = {
-                     "0", "mu", "backbone_torsion", "sidechain_torsion",
-                     "hydrogen_bond", "aromatic", "native_contacts_bias", "7"
-                 };
-                 for (int g = 1; g <= 6; ++g) {
-                     by_group[kNames[g]] = s.energy_delta_ns[g];
+                 // Only groups 1..7 have a timing slot (energy_delta_ns is [8]).
+                 for (const auto& [g, name] : s.energy_terms) {
+                     if (g >= 1 && g < 8) by_group[py::str(name)] = s.energy_delta_ns[g];
                  }
                  d["energy_delta_ns"] = by_group;
                  if (s.n_steps > 0) {
@@ -980,6 +976,41 @@ PYBIND11_MODULE(mcpu_core, m) {
         .def("get_kic_reverse_missing", &mcpu::MCIntegrator::get_kic_reverse_missing)
         .def("get_kic_proline_skipped", &mcpu::MCIntegrator::get_kic_proline_skipped)
         .def("get_steric_rejected", &mcpu::MCIntegrator::get_steric_rejected)
+        .def("get_move_counters",
+             [](const mcpu::MCIntegrator& integ) {
+                 py::dict d;
+                 for (const auto& [name, value] : integ.get_move_counters()) d[py::str(name)] = value;
+                 return d;
+             },
+             "Every move counter as {name: count}, for checkpointing. Restore "
+             "with set_move_counters().")
+        .def("set_move_counters",
+             [](mcpu::MCIntegrator& integ, const py::dict& counters) {
+                 std::vector<std::pair<std::string, long long>> v;
+                 for (const auto& kv : counters) {
+                     v.emplace_back(py::cast<std::string>(kv.first), py::cast<long long>(kv.second));
+                 }
+                 integ.set_move_counters(v);
+             },
+             py::arg("counters"),
+             "Restore counters saved by get_move_counters(). All counters are "
+             "reset to 0 first; an unknown name raises ValueError and changes "
+             "nothing.")
+        .def("move_counts",
+             [](const mcpu::MCIntegrator& integ, bool include_unused) {
+                 py::dict d;
+                 for (const auto& c : integ.move_counts()) {
+                     if (c.in_use || include_unused) {
+                         d[py::str(c.name)] = py::make_tuple(c.accepted, c.attempted);
+                     }
+                 }
+                 return d;
+             },
+             py::arg("include_unused") = false,
+             "Per-move-kind counts as {kind: (accepted, attempted)}, each move "
+             "counted once: pivot, rama_pivot, kic, sidechain, rotamer. Kinds "
+             "the current move weights and sidechain mode cannot propose are "
+             "left out unless include_unused=True.")
         .def("move_stats",
              [](const mcpu::MCIntegrator& integ) {
                  py::dict d;
@@ -1290,6 +1321,16 @@ PYBIND11_MODULE(mcpu_core, m) {
         .def("get_num_atoms",         &System::getNumAtoms)
         .def("get_num_residues",      &System::getNumResidues)
         .def("get_potentials",           &System::getPotentials, py::return_value_policy::reference_internal)
+        .def("energy_terms",
+             [](const System& s) {
+                 py::dict d;
+                 for (const auto& [g, name] : s.energyTerms()) {
+                     d[py::int_(g)] = name;
+                 }
+                 return d;
+             },
+             "Energy terms as {group: name}, sorted by group. Unnamed groups "
+             "are reported as 'group_<n>'.")
         .def("set_atom_counts",       &System::setAtomCounts)
         .def("set_virtual_amide_h",    &System::setVirtualAmideH, py::arg("on"))
         .def("virtual_amide_h",       &System::virtualAmideH)
@@ -1364,6 +1405,9 @@ PYBIND11_MODULE(mcpu_core, m) {
     py::class_<Potential, std::shared_ptr<Potential>>(m, "Potential")
     .def("set_energy_group", &Potential::setEnergyGroup)
     .def("get_energy_group", &Potential::getEnergyGroup)
+    .def("set_name", &Potential::setName, py::arg("name"),
+         "Name this energy term (e.g. 'mu'); see System.energy_terms().")
+    .def("get_name", &Potential::getName)
     .def("set_enabled", &Potential::setEnabled, py::arg("enabled"))
     .def("is_enabled", &Potential::isEnabled);
     // @note: Matrices are copied from numpy arrays at construction.

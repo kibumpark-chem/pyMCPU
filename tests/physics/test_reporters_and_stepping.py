@@ -9,7 +9,7 @@ backbone-only system is enough):
    directly, then ``step()`` resyncs it" OpenMM-compatibility case.
 2. ``add_reporter`` rejects unexpected kwargs (fails fast on a typo'd kwarg
    rather than silently ignoring it).
-3. ``EnergyReporter`` writes CSV rows at the correct global ``Step`` values,
+3. ``EnergyReporter`` writes CSV rows at the correct global ``step`` values,
    including across multiple ``sim.step()`` calls (the REMD case, where the
    global step counter must accumulate rather than reset per call).
 4. ``EnergyReporter`` raises instead of silently going quiet on a real write
@@ -37,16 +37,17 @@ import pytest
 from pymcpu import EnergyReporter, Integrator, Simulation
 from tests.physics.helpers.minimal_system_builders import setup_minimal_bb_system
 
-# EnergyReporter's CSV header (src/reporters/EnergyReporter.cpp) -- looked up
-# by name below rather than hardcoding column indices, so a future column
-# reorder doesn't silently break these assertions.
+# EnergyReporter's move columns for this backbone-only system (weights
+# 0.5/0.5/0: no sidechain kinds in use) -- looked up by name below rather than
+# hardcoding column indices, so a future column reorder doesn't silently break
+# these assertions.
 _MOVE_COUNTER_COLUMNS = (
-    "PivotAccepted",
-    "PivotAttempted",
-    "SidechainAccepted",
-    "SidechainAttempted",
-    "KicAccepted",
-    "KicAttempted",
+    "pivot_accepted",
+    "pivot_attempted",
+    "rama_pivot_accepted",
+    "rama_pivot_attempted",
+    "kic_accepted",
+    "kic_attempted",
 )
 
 
@@ -121,8 +122,8 @@ def test_energy_reporter_interval(tmp_path: Path) -> None:
     sim.step(10)
 
     header, rows = _read_energy_csv(path)
-    assert header[0] == "Step"
-    steps = [int(row["Step"]) for row in rows]
+    assert header == ["step", "total", *_MOVE_COUNTER_COLUMNS, "walker_id"]
+    steps = [int(row["step"]) for row in rows]
     # OpenMM-style: initial frame at 0 (before any moves), then a completed
     # frame every `interval` steps -- for step(10) with interval=5: 0, 5, 10.
     assert steps == [0, 5, 10]
@@ -131,11 +132,11 @@ def test_energy_reporter_interval(tmp_path: Path) -> None:
     # move has run yet.
     attempted = [int(rows[0][col]) for col in _MOVE_COUNTER_COLUMNS]
     assert attempted == [0] * len(_MOVE_COUNTER_COLUMNS)
-    assert int(rows[0]["WalkerId"]) >= -1  # -1 (unset) is a valid serial-run value.
+    assert int(rows[0]["walker_id"]) >= -1  # -1 (unset) is a valid serial-run value.
 
 
 def test_energy_reporter_step_offset_across_batches(tmp_path: Path) -> None:
-    """REMD-style: multiple step() calls must accumulate the global Step column."""
+    """REMD-style: multiple step() calls must accumulate the global step column."""
     sim = _tiny_simulation()
     path = tmp_path / "energy.csv"
     sim.add_energy_reporter(str(path), interval=50)
@@ -144,7 +145,7 @@ def test_energy_reporter_step_offset_across_batches(tmp_path: Path) -> None:
         sim.step(50)
 
     header, rows = _read_energy_csv(path)
-    steps = [int(row["Step"]) for row in rows]
+    steps = [int(row["step"]) for row in rows]
     # 3 calls of 50 steps each, interval=50 -> frames at 0, 50, 100, 150;
     # this is the step-offset accumulation contract, not a fresh count per call.
     assert steps == [0, 50, 100, 150]
@@ -154,18 +155,18 @@ def test_energy_reporter_step_offset_across_batches(tmp_path: Path) -> None:
     assert attempted_first == [0] * len(_MOVE_COUNTER_COLUMNS)  # No moves before step 0.
     # By the second frame some moves have been attempted (exact split across
     # move types is stochastic, so we only check attempts have accumulated).
-    assert int(rows[1]["PivotAttempted"]) > 0
+    assert int(rows[1]["pivot_attempted"]) > 0
 
 
 def test_energy_reporter_raises_on_write_failure(tmp_path: Path) -> None:
     """A real OS-level write failure must raise, not silently go quiet.
 
     Forces an actual failed write via RLIMIT_FSIZE (the file is allowed to
-    grow past the CSV header but not past the first data row), with SIGXFSZ
-    ignored so the process isn't killed outright -- this reproduces exactly
-    the "write() fails after some records have already been written" shape
-    of the production incident, as opposed to a failure on the very first
-    byte.
+    grow past the CSV header and a few data rows, but not much further), with
+    SIGXFSZ ignored so the process isn't killed outright -- this reproduces
+    exactly the "write() fails after some records have already been written"
+    shape of the production incident, as opposed to a failure on the very
+    first byte.
     """
     path = tmp_path / "energy.csv"
     old_soft, old_hard = resource.getrlimit(resource.RLIMIT_FSIZE)

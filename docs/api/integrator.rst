@@ -116,11 +116,6 @@ each slot is chosen; the remaining knobs select the algorithm used
    ``'continuous'`` perturbs each chi by a Gaussian of width
    :py:meth:`Integrator.sidechain_step_size_rad`.
 
-   .. note::
-      The inline pybind11 docstring for this method still claims
-      ``'continuous'`` is the default. The value read back from a
-      freshly constructed ``Integrator`` is ``'rotamer_library'``.
-
 .. py:method:: Integrator.sidechain_move_mode() -> str
 
    The active sidechain mode.
@@ -154,11 +149,6 @@ each slot is chosen; the remaining knobs select the algorithm used
    whole C-terminal segment and is rejected on displacement grounds
    most of the time. ``p=0.0`` also reproduces legacy behaviour
    exactly, RNG draw count included.
-
-   .. note::
-      The inline pybind11 docstring for this method still claims a
-      default of 0.05. A freshly constructed ``Integrator`` reports
-      0.0.
 
 .. py:method:: Integrator.pivot_rama_probability() -> float
 
@@ -228,7 +218,9 @@ Acceptance counters
 All of the following return ``int``. They count from construction and
 accumulate across :py:meth:`Integrator.run` calls; nothing resets them
 (:py:meth:`Integrator.reset_step_stats` clears only the timing
-statistics). Take differences if you want a per-window rate.
+statistics). Take differences if you want a per-window rate. The samplers
+save them in every checkpoint and restore them on resume, so the running
+totals in a resumed energy CSV continue rather than restarting at 0.
 
 .. list-table::
    :header-rows: 1
@@ -267,6 +259,26 @@ statistics). Take differences if you want a per-window rate.
    * - ``num_sc_resample_pro()``
      - Sidechain draws resampled because of proline
 
+.. py:method:: Integrator.move_counts(include_unused=False) -> dict
+
+   Accept/attempt counts per move kind, as
+   ``{kind: (accepted, attempted)}``, with each move counted once. The kinds,
+   in order, are ``pivot`` (continuous pivot), ``rama_pivot``, ``kic``,
+   ``sidechain`` (continuous sidechain) and ``rotamer``. The slot counters
+   above are sums of these: ``get_bb_*`` is ``pivot`` + ``rama_pivot`` and
+   ``get_sc_*`` is ``sidechain`` + ``rotamer``.
+
+   Kinds the current move weights and sidechain mode cannot propose are left
+   out -- with the defaults that is ``sidechain`` -- unless
+   ``include_unused=True``. A kind that has already been proposed is always
+   included. These are the move columns of the energy CSV.
+
+   .. code-block:: python
+
+      for kind, (accepted, attempted) in integrator.move_counts().items():
+          rate = accepted / attempted if attempted else float("nan")
+          print(f"{kind:12} {accepted:6d} / {attempted:6d}  {rate:6.1%}")
+
 .. py:method:: Integrator.move_stats() -> dict
 
    Aggregate of the counters above, with keys ``num_propose_pivot``,
@@ -277,6 +289,17 @@ statistics). Take differences if you want a per-window rate.
    ``kic_geometry_invalid``, ``kic_jacobian_invalid``,
    ``kic_presolve_zero``, ``kic_reverse_missing`` and
    ``kic_proline_skipped``.
+
+.. py:method:: Integrator.get_move_counters() -> dict[str, int]
+
+   Every counter in the table above as ``{name: count}`` (``bb_attempted``,
+   ``bb_accepted``, ..., ``num_sc_resample_pro``), for checkpointing.
+
+.. py:method:: Integrator.set_move_counters(counters) -> None
+
+   Restore counters saved by :py:meth:`get_move_counters`. Every counter is
+   reset to 0 first, then the given ones are applied; an unknown name raises
+   ``ValueError`` and changes nothing.
 
 .. py:method:: Integrator.reset_step_stats() -> None
 

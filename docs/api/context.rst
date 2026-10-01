@@ -65,7 +65,7 @@ Core state
       ``Simulation.step()`` seeds it once per object, but code driving
       a raw ``Context`` must call ``calculate_total_energy(-1)``
       itself afterwards, or the first reported total (and the
-      ``Total`` column of an energy report) will read 0.
+      ``total`` column of an energy report) will read 0.
 
 .. py:attribute:: Context.coords
 
@@ -107,15 +107,17 @@ Energy
 
 .. py:method:: Context.energy_breakdown(weighted=True) -> dict
 
-   Return per-group energies. ``weighted=True`` uses legacy outer
+   Return per-term energies. ``weighted=True`` uses legacy outer
    weights (incl. HBond ``RDTHREE_CON``); ``weighted=False`` returns
    raw per-potential energies.
 
    The returned dict has keys ``raw_total``, ``weighted_total``,
    ``by_group`` (a ``dict[int, float]`` keyed by energy group),
+   ``by_name`` (the same values keyed by term name, in group order --
+   see :py:meth:`System.energy_terms() <pymcpu.mcpu_core.System.energy_terms>`),
    ``weighted`` and ``use_legacy_weights``. Note that ``raw_total``
    and ``weighted_total`` are both always present; ``weighted`` says
-   which one ``by_group`` was computed with.
+   which one ``by_group`` and ``by_name`` were computed with.
 
 .. py:method:: Context.get_energy_weights() -> dict
 
@@ -297,7 +299,7 @@ State
    .. py:attribute:: current_energy
 
       The running total energy. This is the value an energy report
-      writes as ``Total``, and it is 0 until something seeds it -- see
+      writes as ``total``, and it is 0 until something seeds it -- see
       the warning under :py:meth:`pymcpu.Context.set_positions`.
 
    .. py:attribute:: backbone_torsions

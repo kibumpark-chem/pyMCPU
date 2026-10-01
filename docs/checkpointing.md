@@ -27,7 +27,7 @@ intact or the new one does.
 
 ### Payload
 
-`CheckpointState` carries 26 fields — enough to reconstruct a run bit-exactly
+`CheckpointState` carries 27 fields — enough to reconstruct a run bit-exactly
 rather than merely approximately. Grouped by purpose:
 
 - **Position in the run** — `cycle`, `global_step`, `epoch`, `current_steps`
@@ -40,6 +40,10 @@ rather than merely approximately. Grouped by purpose:
 - **Random state** — `seed`, `exchange_rng`, `exchange_rng_state` (the NumPy
   BitGenerator state driving exchange decisions) and `integrator_rng_states`
   (one serialized `std::mt19937` state string per replica)
+- **Move statistics** — `integrator_move_counters` (one dict per replica from
+  `Integrator.get_move_counters()`), so the cumulative `<kind>_accepted` /
+  `<kind>_attempted` columns of the energy CSV keep counting after a resume.
+  Older checkpoints have none; their replicas count from 0 again.
 - **Output alignment** — `traj_frame_indices`, `format_version`, `kind`
 
 Capturing both RNG streams is what makes a resumed trajectory a continuation

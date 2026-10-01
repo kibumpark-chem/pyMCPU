@@ -29,8 +29,8 @@ EnergyReporter
 
 .. py:class:: EnergyReporter(energy_filename, report_interval, append=False)
 
-   Writes a CSV row every ``report_interval`` steps holding the per-group
-   energies and the cumulative move accept/attempt counters.
+   Writes a CSV row every ``report_interval`` steps holding each energy term
+   and the cumulative move accept/attempt counts.
 
    :param str energy_filename: Output CSV path.
    :param int report_interval: Steps between rows.
@@ -38,13 +38,29 @@ EnergyReporter
       Used when resuming from a checkpoint, after the file has been truncated
       back to the checkpointed row count.
 
-   The columns are ``Step``, ``Total``, ``Mu``, ``BackboneTorsion``,
-   ``SidechainTorsion``, ``HydrogenBond``, ``Aromatic``,
-   ``NativeContactsBias``, ``PivotAccepted``, ``PivotAttempted``,
-   ``SidechainAccepted``, ``SidechainAttempted``, ``KicAccepted``,
-   ``KicAttempted``, ``WalkerId``.
+   The columns follow the simulation rather than a fixed list:
 
-   ``Total`` includes the native-contacts bias when one is enabled. That makes
+   * ``step`` and ``total`` (the weighted total energy);
+   * one column per energy term, named as in
+     :py:meth:`System.energy_terms() <pymcpu.mcpu_core.System.energy_terms>`
+     -- ``mu``, ``backbone_torsion``, ``sidechain_torsion``,
+     ``hydrogen_bond`` and ``aromatic`` for MCPU (plus
+     ``native_contacts_bias`` under replica exchange), ``korp_6d`` and
+     ``calpha_excluded_volume`` for KORP;
+   * ``<kind>_accepted`` and ``<kind>_attempted`` for each move kind the
+     move weights and sidechain mode can propose, as in
+     :py:meth:`Integrator.move_counts() <pymcpu.mcpu_core.Integrator.move_counts>`
+     -- by default ``pivot``, ``rama_pivot``, ``kic`` and ``rotamer``;
+   * ``walker_id``, always last.
+
+   The header is written when the first ``run()`` starts, because that is
+   when the terms and move settings are known. With ``append=True`` an
+   existing header must match exactly; if it does not -- a different force
+   field or different move settings -- ``run()`` raises before making any
+   move rather than writing misaligned columns. A missing or empty file gets
+   a fresh header.
+
+   ``total`` includes the native-contacts bias when one is enabled. That makes
    it the right quantity for monitoring a biased run and the **wrong** one for
    MBAR reweighting — use the replica-exchange HDF5 samples and
    :doc:`analysis` for that.
@@ -63,7 +79,7 @@ EnergyReporter
    .. py:attribute:: walker_id
       :type: int
 
-      Value written in the ``WalkerId`` column; ``-1`` when unset.
+      Value written in the ``walker_id`` column; ``-1`` when unset.
 
    .. py:method:: set_walker_id(walker_id)
 

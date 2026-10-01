@@ -16,9 +16,11 @@ from pymcpu.checkpointing import (
     CheckpointConfig,
     FoldingCheckpointState,
     checkpoint_cycle_filename,
+    get_integrator_move_counters,
     get_integrator_rng_states,
     load_checkpoint as _load_checkpoint,
     save_checkpoint as _save_checkpoint,
+    set_integrator_move_counters,
     set_integrator_rng_states,
 )
 from pymcpu.forcefields.mcpu import MCPUForceField
@@ -207,13 +209,16 @@ class FoldingRunner:
             fixed_residues=self.fixed_residues,
         )
 
+        from pymcpu.config import configure_integrator
+
         integrator = mcpu_core.Integrator(self.temperature, self.step_size_rad)
-        integrator.set_move_weights(*self.move_weights)
-        integrator.set_sidechain_move_mode(self.sidechain_move_mode)
-        if self.pivot_rama_schedule is not None:
-            integrator.set_pivot_rama_schedule(**self.pivot_rama_schedule)
-        else:
-            integrator.set_pivot_rama_probability(self.pivot_rama_probability)
+        configure_integrator(
+            integrator,
+            move_weights=self.move_weights,
+            sidechain_move_mode=self.sidechain_move_mode,
+            pivot_rama_probability=self.pivot_rama_probability,
+            pivot_rama_schedule=self.pivot_rama_schedule,
+        )
         if hasattr(integrator, "set_seed"):
             integrator.set_seed(self.seed)
         if self.fixed_residues:
@@ -760,6 +765,7 @@ class FoldingRunner:
             exchange_rng=None,
             exchange_rng_state=None,
             integrator_rng_states=get_integrator_rng_states(self.replicas),
+            integrator_move_counters=get_integrator_move_counters(self.replicas),
             n_replicas=1,
             traj_frame_indices=self._local_traj_frame_indices(),
             native_contacts_fraction=q_values,
@@ -826,6 +832,7 @@ class FoldingRunner:
                 self.temperature = float(temps[0])
 
         set_integrator_rng_states(self.replicas, state.integrator_rng_states or [])
+        set_integrator_move_counters(self.replicas, state.integrator_move_counters or [])
 
         self._cycle = int(state.cycle)
         self.traj_frame_counts = {

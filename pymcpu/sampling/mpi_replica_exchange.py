@@ -144,12 +144,18 @@ class MPIReplicaExchange:
     Bias / exchange use hard native-contact count N
     (``U = 0.5 * k * (N - N0)^2``); fraction Q is logged only.
 
+    Keyword arguments not listed below mean the same as in
+    :class:`~pymcpu.sampling.ReplicaExchange`.
+
     Parameters
     ----------
     comm : mpi4py.MPI.Comm
         MPI communicator (typically ``MPI.COMM_WORLD``).
     pdb_path : str
         Input structure path.
+    step_size_rad, move_weights, sidechain_move_mode, pivot_rama_probability, pivot_rama_schedule
+        Move settings for every replica, as in
+        :class:`~pymcpu.sampling.ReplicaExchange`.
     """
 
     def __init__(
@@ -177,6 +183,11 @@ class MPIReplicaExchange:
         output_prefix: str = "rex",
         output_dir: str | Path | None = None,
         seed: int = 0,
+        step_size_rad: float = 0.1,
+        move_weights: tuple[float, float, float] | None = None,
+        sidechain_move_mode: str = "rotamer_library",
+        pivot_rama_probability: float = 0.0,
+        pivot_rama_schedule: dict[str, float] | None = None,
         fixed_residues: list[int] | None = None,
         linker_residues: list[int] | None = None,
         linker_energy_mode: str = "ignore_all",
@@ -210,11 +221,22 @@ class MPIReplicaExchange:
         self.log_interval = int(log_interval)
         self.fixed_residues = list(fixed_residues) if fixed_residues else []
         self.linker_residues = list(linker_residues) if linker_residues else []
-        from pymcpu.config import normalize_linker_energy_mode, validate_fixed_linker_disjoint
+        from pymcpu.config import (
+            normalize_linker_energy_mode,
+            normalize_move_settings,
+            validate_fixed_linker_disjoint,
+        )
 
         self.linker_energy_mode = normalize_linker_energy_mode(linker_energy_mode)
         validate_fixed_linker_disjoint(self.fixed_residues, self.linker_residues)
         self.seed = int(seed)
+        self.step_size_rad = float(step_size_rad)
+        self.move_settings = normalize_move_settings(
+            move_weights=move_weights,
+            sidechain_move_mode=sidechain_move_mode,
+            pivot_rama_probability=pivot_rama_probability,
+            pivot_rama_schedule=pivot_rama_schedule,
+        )
         self._cycle = 0
         self._exchange_tag = 0
         # MPI tags must stay in [0, TAG_UB]. Exchanges use tag_base..tag_base+2,
@@ -360,6 +382,8 @@ class MPIReplicaExchange:
                 coords_angstroms=coords_angstroms,
                 k_bias=self.k_bias,
                 n_target=n_target,
+                step_size_rad=self.step_size_rad,
+                move_settings=self.move_settings,
             )
 
             # Reporters attached in run() so resume can truncate then append.
@@ -532,6 +556,7 @@ class MPIReplicaExchange:
         coords: list[Any] = []
         current_steps: list[int] = []
         integrator_rng_states: list[str] = []
+        move_counters: list[dict[str, int]] = []
         for rid in replica_ids:
             slot = self.replicas[rid]
             coords.append(np.asarray(get_coords(slot.simulation.context), dtype=np.float64))
@@ -544,12 +569,14 @@ class MPIReplicaExchange:
                     integrator_rng_states.append("")
             else:
                 integrator_rng_states.append("")
+            move_counters.append(dict(integ.get_move_counters()))
 
         local_state = {
             "replica_ids": replica_ids,
             "coords": coords,
             "current_steps": current_steps,
             "integrator_rng_states": integrator_rng_states,
+            "integrator_move_counters": move_counters,
             "traj_frame_indices": self._local_traj_frame_indices(),
         }
 
@@ -578,6 +605,7 @@ class MPIReplicaExchange:
             coords_ordered: list[Any] = [None] * n_replicas
             steps_ordered: list[int] = [0] * n_replicas
             rng_ordered: list[str] = [""] * n_replicas
+            counters_ordered: list[dict[str, int]] = [{} for _ in range(n_replicas)]
             frame_idx_merged: dict[str, int] = {}
 
             for s in all_states or []:
@@ -585,6 +613,7 @@ class MPIReplicaExchange:
                     coords_ordered[int(rid)] = s["coords"][i]
                     steps_ordered[int(rid)] = int(s["current_steps"][i])
                     rng_ordered[int(rid)] = s["integrator_rng_states"][i]
+                    counters_ordered[int(rid)] = s["integrator_move_counters"][i]
                 frame_idx_merged.update(s.get("traj_frame_indices") or {})
 
             steps_per = int(self._mc_replica_steps) if self._mc_replica_steps else 0
@@ -615,6 +644,7 @@ class MPIReplicaExchange:
                 current_steps=steps_ordered,
                 exchange_rng=None,  # MPI exchange RNG is deterministic from seed+cycle
                 integrator_rng_states=rng_ordered,
+                integrator_move_counters=counters_ordered,
                 n_replicas=n_replicas,
                 traj_frame_indices=dict(frame_idx_merged),
             )
@@ -698,6 +728,7 @@ class MPIReplicaExchange:
         coords_list = state.get("replica_coords") or []
         steps_list = state.get("current_steps") or []
         rng_list = state.get("integrator_rng_states") or []
+        counters_list = state.get("integrator_move_counters") or []
 
         for rid in self.local_replica_indices:
             if rid >= len(coords_list) or coords_list[rid] is None:
@@ -721,6 +752,8 @@ class MPIReplicaExchange:
                         integ.set_rng_state(str(rng_list[rid]))
                     except Exception:
                         pass
+            if rid < len(counters_list) and counters_list[rid]:
+                slot.simulation.integrator.set_move_counters(dict(counters_list[rid]))
 
         return state
 

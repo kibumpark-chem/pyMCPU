@@ -88,6 +88,17 @@ parameter files, and registers the five physics potentials.
          rather than ``pymcpu.mcpu_core.Potential``. The objects
          themselves are ordinary ``Potential`` instances.
 
+   .. py:method:: energy_terms() -> dict[int, str]
+
+      The energy terms as ``{group: name}``, sorted by group -- for MCPU
+      ``{1: 'mu', 2: 'backbone_torsion', 3: 'sidechain_torsion',
+      4: 'hydrogen_bond', 5: 'aromatic'}``. A group whose potentials have no
+      name is reported as ``'group_<n>'``. These names label
+      ``energy_breakdown()['by_name']`` and the energy CSV columns.
+
+      ``add_potential`` raises ``ValueError`` if a potential would give one
+      group two names, or use one name for two groups.
+
    .. rubric:: Residue chemistry
 
    .. py:method:: amino_index(res_id) -> int

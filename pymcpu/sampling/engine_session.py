@@ -31,7 +31,7 @@ import mdtraj as md
 import numpy as np
 
 from pymcpu import mcpu_core
-from pymcpu.config import EngineSpec, apply_linker_energy_mask
+from pymcpu.config import EngineSpec, apply_linker_energy_mask, configure_integrator
 from pymcpu.forcefields import build_forcefield as _build_registered_forcefield
 from pymcpu.forcefields import get_forcefield
 from pymcpu.forcefields.base import BaseForceField
@@ -144,12 +144,13 @@ class EngineSession:
                 fixed_residues=list(self.spec.fixed_residues),
             )
             integrator = mcpu_core.Integrator(self.spec.temperature, self.spec.step_size_rad)
-            integrator.set_move_weights(*self.spec.move_weights)
-            integrator.set_sidechain_move_mode(self.spec.sidechain_move_mode)
-            if self.spec.pivot_rama_schedule is not None:
-                integrator.set_pivot_rama_schedule(**self.spec.pivot_rama_schedule)
-            else:
-                integrator.set_pivot_rama_probability(self.spec.pivot_rama_probability)
+            configure_integrator(
+                integrator,
+                move_weights=self.spec.move_weights,
+                sidechain_move_mode=self.spec.sidechain_move_mode,
+                pivot_rama_probability=self.spec.pivot_rama_probability,
+                pivot_rama_schedule=self.spec.pivot_rama_schedule,
+            )
             if self.spec.fixed_residues:
                 integrator.set_fixed_residues(list(self.spec.fixed_residues), system.get_num_residues())
 

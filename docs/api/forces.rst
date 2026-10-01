@@ -45,6 +45,18 @@ Base class
       Assign the energy group. ``group_id`` is positional-only --
       pybind11 exposes no keyword name for it.
 
+   .. py:method:: get_name() -> str
+
+      The term's name, or ``''`` if it has none.
+
+   .. py:method:: set_name(name) -> None
+
+      Name the term, e.g. ``'mu'``. The force fields name every term they
+      create. A name must match ``[a-z][a-z0-9_]*`` and cannot be one of the
+      energy CSV's own columns (``step``, ``total``, ``walker_id``,
+      ``group_<n>`` or anything ending in ``_accepted``/``_attempted``);
+      anything else raises ``ValueError``.
+
    .. py:method:: is_enabled() -> bool
 
       Whether the potential is evaluated.

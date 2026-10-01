@@ -428,6 +428,7 @@ class KORPForceField(BaseForceField):
                 min_distance=self.min_distance,
             )
             guard.set_energy_group(STERIC_ENERGY_GROUP)
+            guard.set_name("calpha_excluded_volume")
             system.add_potential(guard)
 
         potential = KorpPotentialBuilder.build_pair_potential(
@@ -440,6 +441,7 @@ class KORPForceField(BaseForceField):
             chain_ids=self.chain_ids,
         )
         potential.set_energy_group(KORP_ENERGY_GROUP)
+        potential.set_name("korp_6d")
         system.add_potential(potential)
         #: Kept so callers can reach the term after the system is built -- the
         #: rigid-skip toggle in particular, which tests use to check the

@@ -18,11 +18,13 @@ from pymcpu.checkpointing import (
     CheckpointConfig,
     checkpoint_cycle_filename,
     find_latest_checkpoint,
+    get_integrator_move_counters,
     get_integrator_rng_states,
     load_checkpoint,
     restore_numpy_rng,
     save_checkpoint,
     serialize_numpy_rng,
+    set_integrator_move_counters,
     set_integrator_rng_states,
 )
 from pymcpu.sampling.replica_exchange_core import (
@@ -90,6 +92,12 @@ class ReplicaExchange:
         Prefix for per-replica XTC/CSV outputs.
     seed : int
         RNG seed for exchange attempts.
+    step_size_rad : float
+        Monte Carlo step size for every replica, in radians.
+    move_weights, sidechain_move_mode, pivot_rama_probability, pivot_rama_schedule
+        Move settings for every replica, with the same meaning and defaults as
+        in :class:`~pymcpu.sampling.FoldingRunner`. A schedule sets each
+        replica's rama-pivot probability from its own temperature.
     """
 
     def __init__(
@@ -116,6 +124,11 @@ class ReplicaExchange:
       output_prefix: str = "rex",
       output_dir: str | Path | None = None,
       seed: int = 0,
+      step_size_rad: float = 0.1,
+      move_weights: tuple[float, float, float] | None = None,
+      sidechain_move_mode: str = "rotamer_library",
+      pivot_rama_probability: float = 0.0,
+      pivot_rama_schedule: dict[str, float] | None = None,
       fixed_residues: list[int] | None = None,
       linker_residues: list[int] | None = None,
       linker_energy_mode: str = "ignore_all",
@@ -141,11 +154,22 @@ class ReplicaExchange:
       self.log_interval = int(log_interval)
       self.fixed_residues = list(fixed_residues) if fixed_residues else []
       self.linker_residues = list(linker_residues) if linker_residues else []
-      from pymcpu.config import normalize_linker_energy_mode, validate_fixed_linker_disjoint
+      from pymcpu.config import (
+        normalize_linker_energy_mode,
+        normalize_move_settings,
+        validate_fixed_linker_disjoint,
+      )
 
       self.linker_energy_mode = normalize_linker_energy_mode(linker_energy_mode)
       validate_fixed_linker_disjoint(self.fixed_residues, self.linker_residues)
       self.seed = int(seed)
+      self.step_size_rad = float(step_size_rad)
+      self.move_settings = normalize_move_settings(
+        move_weights=move_weights,
+        sidechain_move_mode=sidechain_move_mode,
+        pivot_rama_probability=pivot_rama_probability,
+        pivot_rama_schedule=pivot_rama_schedule,
+      )
       ex_mode = str(exchange_log or "none").strip().lower()
       if ex_mode not in ("none", "all"):
         raise ValueError("exchange_log must be 'none' or 'all'")
@@ -334,6 +358,7 @@ class ReplicaExchange:
         "current_steps": current_steps,
         "exchange_rng": serialize_numpy_rng(self.rng),
         "integrator_rng_states": get_integrator_rng_states(self.replicas),
+        "integrator_move_counters": get_integrator_move_counters(self.replicas),
         "n_replicas": int(self.n_replicas),
         "traj_frame_indices": {
           os.path.basename(fname): int(count)
@@ -420,6 +445,9 @@ class ReplicaExchange:
         rep.simulation.current_step = int(steps[i])
 
       set_integrator_rng_states(self.replicas, list(rng_states))
+      set_integrator_move_counters(
+        self.replicas, list(checkpoint.get("integrator_move_counters") or [])
+      )
 
       self._cycle = int(checkpoint["cycle"])
       self._walker_at_state = np.asarray(
@@ -821,6 +849,8 @@ class ReplicaExchange:
             coords_angstroms=coords_angstroms,
             k_bias=self.k_bias,
             n_target=float(n_target),
+            step_size_rad=self.step_size_rad,
+            move_settings=self.move_settings,
           )
 
           replicas.append(

@@ -327,6 +327,7 @@ def attach_native_contacts_bias_potential(system, cv: NativeContactsCV):
     atom_i, atom_j = cv.atom_pair_indices()
     potential = mcpu_core.NativeContactsBiasPotential(atom_i, atom_j, float(cv.q_cutoff))
     potential.set_energy_group(6)
+    potential.set_name("native_contacts_bias")
     system.add_potential(potential)
     return potential
 

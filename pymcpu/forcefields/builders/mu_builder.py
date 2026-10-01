@@ -21,8 +21,9 @@ if TYPE_CHECKING:  # avoid a circular import -- pymcpu.forcefields.mcpu imports 
 
 N_ATOM_TYPES = 84 # MCPU08 has 84 atom types
 
-# Controllable diagnostics (skin sweeps / quiet scripts can silence).
-_MU_BUILDER_VERBOSE = True
+# Set True to print the largest contact cutoff once per process (a developer
+# sanity check against the neighbour-grid cell size). Off for normal runs.
+_MU_BUILDER_VERBOSE = False
 _MAX_CONTACT_PRINTED = False
 
 

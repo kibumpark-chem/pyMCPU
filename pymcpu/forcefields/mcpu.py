@@ -605,6 +605,7 @@ class MCPUForceField(BaseForceField):
             self.coords[0].T * 10.0  # Pass coordinates in Angstroms
         )
         mu_potential.set_energy_group(1)
+        mu_potential.set_name("mu")
         system.add_potential(mu_potential)
         
         bb_potential = TripletPotentialBuilder.build(
@@ -612,6 +613,7 @@ class MCPUForceField(BaseForceField):
             reshaped_params=self.bb_triplet
         )
         bb_potential.set_energy_group(2)
+        bb_potential.set_name("backbone_torsion")
         system.add_potential(bb_potential)
 
         sc_potential = SidechainTripletBuilder.build(
@@ -619,6 +621,7 @@ class MCPUForceField(BaseForceField):
             reshaped_params=self.sc_triplet
         )
         sc_potential.set_energy_group(3)
+        sc_potential.set_name("sidechain_torsion")
         system.add_potential(sc_potential)
 
         hbond_potential = HydrogenBondBuilder.build(
@@ -626,6 +629,7 @@ class MCPUForceField(BaseForceField):
             seq_dep_params=self.hbond_seq_dep,
         )
         hbond_potential.set_energy_group(4)
+        hbond_potential.set_name("hydrogen_bond")
         system.add_potential(hbond_potential)
 
         # One ring entry per aromatic residue (PHE / TRP; TYR excluded to match
@@ -665,6 +669,7 @@ class MCPUForceField(BaseForceField):
             reshaped_params=self.aromatic
         )
         aromatic_potential.set_energy_group(5)
+        aromatic_potential.set_name("aromatic")
         system.add_potential(aromatic_potential)
         
         return system
