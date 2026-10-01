@@ -120,9 +120,6 @@ sim.step(10_000)
 print(sim.context.energy_breakdown(weighted=True))
 ```
 
-Note that `mc.Integrator` defaults to `temperature=300.0`, which is **not** a
-reduced temperature — always pass one explicitly.
-
 ## Energy components
 
 | Component | Energy group | Default weight | Description |

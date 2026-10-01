@@ -248,6 +248,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`Integrator` requires a temperature.** Its Python constructor defaulted to
+  `temperature=300.0`, a physical-units value about 500x the top of the
+  useful reduced range (0.3-0.6), so `Integrator()` silently ran a
+  near-random walk. Leaving the temperature out now raises `TypeError`.
 - **The energy CSV's columns follow the simulation, in snake_case.** The
   header is `step,total`, then one column per energy term
   (`System.energy_terms()`), then `<kind>_accepted,<kind>_attempted` for each
