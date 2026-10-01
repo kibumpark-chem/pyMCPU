@@ -21,6 +21,7 @@ import numpy as np
 import pytest
 
 from pymcpu.checkpointing import (
+    CHECKPOINT_FORMAT_VERSION,
     find_latest_checkpoint,
     load_checkpoint,
     prune_cycle_checkpoints,
@@ -89,6 +90,21 @@ def test_checkpoint_atomic_write_leaves_no_corrupt_file_on_crash(
     # success -- the crash must happen before that swap.
     assert not final.exists(), "atomic write must not leave a corrupted final file"
     assert find_latest_checkpoint(tmp_path) is None
+
+
+def test_a_newer_format_version_is_rejected(tmp_path: Path) -> None:
+    path = save_checkpoint(
+        {"cycle": 1, "format_version": CHECKPOINT_FORMAT_VERSION + 1}, tmp_path
+    )
+    with pytest.raises(ValueError, match="newer than supported"):
+        load_checkpoint(path)
+
+
+def test_a_version_1_checkpoint_still_loads(tmp_path: Path) -> None:
+    """Version 1 files load; resuming one is refused only if its atom count
+    differs from the system's (see test_atom_layout_guard.py)."""
+    path = save_checkpoint({"cycle": 3, "format_version": 1}, tmp_path)
+    assert load_checkpoint(path)["cycle"] == 3
 
 
 def test_load_checkpoint_missing_path_raises_file_not_found(tmp_path: Path) -> None:

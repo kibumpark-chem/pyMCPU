@@ -41,16 +41,9 @@ class MuPotentialBuilder:
     """
 
     # legacy pdb_util.h IsSidechainAtom(): backbone-named atoms are never
-    # "sidechain" for clash/contact ELIGIBILITY purposes, regardless of which
-    # array segment they happen to live in. This matters specifically for
-    # GLY's CA: _order_atoms duplicates it into the sidechain segment purely
-    # so the sidechain block-rotation move has a valid index range for every
-    # residue (an array-layout fact) -- legacy itself treats GLY's CA as
-    # ordinary backbone for eligibility, only assigning it a distinct
-    # Mu-potential *type* value (see docs/hbond_legacy_parity.md's sibling
-    # investigation notes). Conflating the two previously let the GLY-CA
-    # sidechain-segment duplicate skip the "both atoms backbone" long-range
-    # contact exclusion that every other residue's CA correctly gets.
+    # "sidechain" for clash/contact ELIGIBILITY purposes, decided by name
+    # alone. GLY's CA is ordinary backbone here, like every other CA; it
+    # differs only in its Mu-potential *type* value.
     _ELIGIBILITY_BACKBONE_NAMES = frozenset({'N', 'CA', 'C', 'O', 'OCT', 'OXT'})
 
     @classmethod
@@ -104,18 +97,13 @@ class MuPotentialBuilder:
         Special-cased categories, in the order they're checked below (each is
         reverse-engineered from legacy MCPU behaviour, not derived):
 
-        * Virtual H atoms, and the GLY backbone-segment CA duplicate (the copy
-          with ``is_sidechain=False`` -- GLY has no CB, so its CA is also
-          duplicated into the sidechain segment, see ``_order_atoms``): zeroed
-          out of both masks entirely. Only the sidechain-segment GLY CA
-          duplicate participates in mu energy.
+        * H atoms: zeroed out of both masks entirely.
         * ``res_diff == 0`` (same residue): BB-BB and SC-SC pairs never clash
           (covalently close / already accounted for elsewhere). A BB-SC pair
           is exempted from clash only for the direct peptide-adjacent
           backbone/CB bond (C/N/CA vs CB), for any pair within a PRO residue
           (ring geometry makes the generic BB/SC clash rule inapplicable), or
-          for a backbone CA paired with a sidechain "G*"-named atom (the GLY
-          CA-as-sidechain convention).
+          for a backbone CA paired with a sidechain "G*"-named atom.
         * ``res_diff == 1`` (adjacent residues): the peptide-bond exemption is
           the N of the second (higher-index) residue clashing with the C/CA of
           the first -- except when the second residue is PRO, whose CD ring
@@ -137,7 +125,7 @@ class MuPotentialBuilder:
         contact_mask = np.zeros((n_atoms, n_atoms), dtype=np.int8)
         for i in range(n_atoms):
             atom_i = ordered_atom_list[i]
-            if atom_i.name == 'H' or (atom_i.residue_name == 'GLY' and atom_i.name == 'CA' and not atom_i.is_sidechain):
+            if atom_i.name == 'H':
                 clash_mask[i, :] = 0
                 clash_mask[:, i] = 0
                 contact_mask[i, :] = 0
@@ -145,7 +133,7 @@ class MuPotentialBuilder:
                 continue
             for j in range(i + 1, n_atoms):
                 atom_j = ordered_atom_list[j]
-                if atom_j.name == 'H' or (atom_j.residue_name == 'GLY' and atom_j.name == 'CA' and not atom_j.is_sidechain):
+                if atom_j.name == 'H':
                     clash_mask[j, :] = 0
                     clash_mask[:, j] = 0
                     contact_mask[j, :] = 0
@@ -160,7 +148,7 @@ class MuPotentialBuilder:
                     # Same residue: BB-BB / SC-SC never clash. A BB-SC pair is
                     # exempted only for the direct C/N/CA-CB bond, for any pair
                     # within PRO (ring geometry), or for CA paired with a
-                    # sidechain "G*" atom (the GLY CA-as-sidechain convention).
+                    # sidechain "G*" atom.
                     if sc_i == sc_j:
                         check_clash = 0
                     else:
@@ -234,7 +222,7 @@ class MuPotentialBuilder:
     _ROLE_CD = 7
     _ROLE_SG = 8
     _ROLE_GX = 9
-    _ROLE_GLY_CA_BB = 10
+    _ROLE_GLY_CA_BB = 10  # never emitted: GLY's CA has one slot, role CA
     _RES_OTHER = 0
     _RES_PRO = 1
     _RES_CYS = 2
@@ -256,12 +244,6 @@ class MuPotentialBuilder:
             name = atom.name
             if name == "H":
                 role = cls._ROLE_H
-            elif (
-                atom.residue_name == "GLY"
-                and name == "CA"
-                and not atom.is_sidechain
-            ):
-                role = cls._ROLE_GLY_CA_BB
             elif name == "N":
                 role = cls._ROLE_N
             elif name == "CA":

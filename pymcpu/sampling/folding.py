@@ -372,8 +372,8 @@ class FoldingRunner:
         Build native CA–CA contact pairs from the reference structure.
 
         Uses engine CA indices (via ``_get_engine_ca_indices``) and residue
-        lookup through ``self.mapping`` (inverse_mapping), skipping ``-1``
-        GLY duplicate slots. Caches in ``self._native_contacts``. Returns
+        lookup through ``self.mapping`` (inverse_mapping), skipping the ``-1``
+        slots of explicit amide hydrogens. Caches in ``self._native_contacts``. Returns
         ``[]`` (never ``None``) when unavailable.
         """
         if self._native_contacts is not None:
@@ -465,7 +465,7 @@ class FoldingRunner:
                 if mapping:
                     for eng_i, top_i in enumerate(mapping):
                         if int(top_i) < 0:
-                            continue  # GLY CA duplicate slot
+                            continue  # explicit amide H: no topology atom
                         top_to_engine[int(top_i)] = int(eng_i)
 
                 ref_xyz_nm = ref.xyz[0]

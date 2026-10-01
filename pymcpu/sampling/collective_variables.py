@@ -338,9 +338,9 @@ def build_contact_atom_index(
 ) -> np.ndarray:
     """Return engine-internal contact-atom indices, ordered by residue.
 
-    * ``ca`` — backbone CA (excludes the GLY sidechain CA duplicate).
+    * ``ca`` — backbone CA.
     * ``cb`` — CB when present; otherwise backbone CA (GLY and any residue
-      without CB). Never uses the GLY SC-slot CA duplicate.
+      without CB).
     """
     mode_n = normalize_contact_atom_mode(mode)
     n_bb = forcefield.total_bb_atoms

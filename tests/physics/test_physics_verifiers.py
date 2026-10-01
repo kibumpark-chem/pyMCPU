@@ -96,7 +96,7 @@ def test_mu_layered_eval_v1_matches_v2(chignolin_pdb_path, capfd) -> None:
 
     Uses chignolin explicitly rather than the shared ``chignolin_context``
     fixture, which defaults to actin: this verifier is O(N^2 x 6), which is
-    ~19k pair evaluations at N=80 but ~158M at N=2971.
+    ~18k pair evaluations at N=77 but ~26M at N=2943.
     """
     mdtraj = pytest.importorskip("mdtraj")
     from pymcpu.forcefields.mcpu import MCPUForceField

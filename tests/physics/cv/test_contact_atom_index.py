@@ -1,10 +1,8 @@
 """CA/CB "contact atom mode" index and reference-coordinate construction.
 
 Covers mode-string normalization/validation, building per-residue
-contact-atom index arrays (CA vs. CB, with GLY correctly falling back to
-backbone CA rather than its sidechain-segment CA duplicate -- see
-``tests/physics/forcefield/test_mu_builder_gly_eligibility.py`` for the
-underlying eligibility bug this depends on), loading matching reference
+contact-atom index arrays (CA vs. CB, with GLY falling back to its backbone
+CA), loading matching reference
 coordinates from a PDB, and constructing/attaching a NativeContactsCV+bias
 potential in CB mode. Pure physics_internal: every assertion checks
 pyMCPU's own forcefield-derived indices/coordinates against pyMCPU's
@@ -71,7 +69,7 @@ def test_cb_mode_uses_cb_or_falls_back_to_bb_ca() -> None:
     assert n_diff > 0, "test PDB should contain at least one residue with a real CB"
 
 
-def test_gly_cb_mode_uses_backbone_ca_not_sidechain_duplicate() -> None:
+def test_gly_cb_mode_uses_backbone_ca() -> None:
     _, ff = build_test_context(with_qbias=False)
     cb_idx = build_contact_atom_index(ff, mode="cb")
     n_bb = ff.total_bb_atoms
@@ -83,10 +81,8 @@ def test_gly_cb_mode_uses_backbone_ca_not_sidechain_duplicate() -> None:
         gly_found = True
         idx = int(cb_idx[r])
         assert ff.ordered_atom_list[idx].name == "CA"
-        assert idx < n_bb  # must resolve to the backbone segment, not sc_start
-        sc = int(ff.blocks[r].sc_start)
-        if sc >= 0:
-            assert idx != sc
+        assert idx == ff.blocks[r].bb_start + 1
+        assert idx < n_bb
     assert gly_found, "test PDB should contain GLY"
 
 
@@ -180,11 +176,10 @@ def test_cb_mode_explicit_pairs_bias_potential_attaches_and_evaluates_finite() -
 
 
 def test_cb_mode_explicit_pair_referencing_gly_resolves_to_backbone_ca() -> None:
-    """Regression guard: an explicit pair that names a GLY residue must
-    resolve to that residue's backbone CA under ``contact_atom_mode="cb"``,
-    not the sidechain-segment CA duplicate -- same underlying behavior as
-    :func:`test_gly_cb_mode_uses_backbone_ca_not_sidechain_duplicate`, now
-    exercised through the explicit-pairs path (no new resolution logic)."""
+    """An explicit pair that names a GLY residue resolves to that residue's
+    backbone CA under ``contact_atom_mode="cb"`` -- same behavior as
+    :func:`test_gly_cb_mode_uses_backbone_ca`, exercised through the
+    explicit-pairs path (no new resolution logic)."""
     _, ff = build_test_context(with_qbias=False)
     pdb = str(resolve_test_pdb())
     idx = build_contact_atom_index(ff, "cb")
@@ -210,7 +205,5 @@ def test_cb_mode_explicit_pair_referencing_gly_resolves_to_backbone_ca() -> None
     gly_atom_idx = int(ai[0])  # pairs_i[0] == gly_res, so ai[0] is its resolved atom
     n_bb = ff.total_bb_atoms
     assert ff.ordered_atom_list[gly_atom_idx].name == "CA"
-    assert gly_atom_idx < n_bb  # must resolve to the backbone segment, not sc_start
-    sc = int(ff.blocks[gly_res].sc_start)
-    if sc >= 0:
-        assert gly_atom_idx != sc
+    assert gly_atom_idx == ff.blocks[gly_res].bb_start + 1
+    assert gly_atom_idx < n_bb

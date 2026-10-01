@@ -47,9 +47,10 @@ class MCPUAtom:
     Built by :meth:`MCPUForceField._order_atoms` (and appended to by
     :meth:`MCPUForceField._infer_hydrogens` for explicit amide hydrogens) to
     track, for each atom in the engine's internal order, which original
-    topology atom it came from, where it sits in the topology, and whether
-    it should be written back out (``to_write``) or counted as a sidechain
-    atom for block bookkeeping (``is_sidechain``).
+    topology atom it came from, where it sits in the topology, whether it is
+    written back out (``to_write``; false only for explicit amide hydrogens,
+    which have no topology atom) and whether it lies in the sidechain segment
+    (``is_sidechain``).
     """
 
     original_index: int
@@ -388,7 +389,6 @@ class MCPUForceField(BaseForceField):
         self.blocks = [mcpu_core.BlockIndices() for _ in range(self.n_res)]
         for atom_idx, atom in enumerate(self.ordered_atom_list):
             res_idx = atom.residue_index
-            res_name = atom.residue_name
             if atom.name == "N":
                 self.blocks[res_idx].bb_start = atom_idx
             elif atom.name == "C":
@@ -396,16 +396,9 @@ class MCPUForceField(BaseForceField):
             elif atom.name == "O":
                 self.blocks[res_idx].o_start = atom_idx
             elif atom.name == "CB":
-                self.blocks[res_idx].sc_start = atom_idx
-            elif atom.name == "CA" and res_name == "GLY":
-                # GLY has no CB; _order_atoms duplicates its CA into the
-                # sidechain segment (see comment there). That duplicate is
-                # visited here *after* the backbone-segment CA (bb-block
-                # before o-block before sc-block, per ordered_atom_list's
-                # construction), so this assignment intentionally overwrites
-                # the backbone one above and sc_start ends up correct. If the
-                # segment order in _order_atoms ever changes, this silently
-                # breaks.
+                # GLY has no CB, so its block keeps sc_start = -1: no
+                # sidechain atoms. sc_count and first_sc_of_residue below
+                # handle that.
                 self.blocks[res_idx].sc_start = atom_idx
             elif atom.name == "H":
                 self.blocks[res_idx].h_start = atom_idx
@@ -686,8 +679,6 @@ class MCPUForceField(BaseForceField):
             'o': {},
             'sc': {}
         }
-        # GLY CA will be included both in backbone and sidechain blocks
-        # but only written once for the final output.
 
         for residue in topology.residues:
             expected_order = self.ff_template.get(residue.name).get("atoms")
@@ -714,9 +705,6 @@ class MCPUForceField(BaseForceField):
                     if atom_name in current_atoms:
                         sc_indices.append(current_atoms[atom_name].index)
                         to_write_dict['sc'][current_atoms[atom_name].index] = True
-                if residue.name == "GLY" and atom_name == "CA":
-                    sc_indices.append(current_atoms[atom_name].index)  # Glycine's CA is treated as its "sidechain" for simplicity
-                    to_write_dict['sc'][current_atoms[atom_name].index] = False
         self.total_bb_atoms = len(bb_indices)
         self.total_o_atoms = len(o_indices)
         self.total_sc_atoms = len(sc_indices)
@@ -727,7 +715,6 @@ class MCPUForceField(BaseForceField):
                                 [to_write_dict['sc'].get(idx, False) for idx in sc_indices]
 
         self.ordered_atom_list = []
-        sidechain_indices_set = set(sc_indices)
         for i, idx in enumerate(self.ordered_indices):
             atom = topology.atom(idx)
             self.ordered_atom_list.append(
@@ -737,7 +724,7 @@ class MCPUForceField(BaseForceField):
                     residue_name=atom.residue.name,
                     residue_index=atom.residue.index,
                     to_write=ordered_to_write[i],
-                    is_sidechain=(idx in sidechain_indices_set and (i >= self.total_bb_atoms + self.total_o_atoms))
+                    is_sidechain=(i >= self.total_bb_atoms + self.total_o_atoms)
                 )
             )
     
@@ -747,7 +734,8 @@ class MCPUForceField(BaseForceField):
         Generates the mapping from internal MCPU atom indices back to the 
         original MDTraj topology indices.
         Returns a list where index is the internal atom index, and the value 
-        is the original topology index. Returns -1 for atoms that should not be written.
+        is the original topology index. The value is -1 for explicit amide
+        hydrogens, which have no atom in the topology and are not written.
         """
         mapping = []
         for atom in self.ordered_atom_list:

@@ -23,7 +23,10 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
-CHECKPOINT_FORMAT_VERSION = 1
+# 2: the MCPU layout stores each glycine CA once. Version 1 files from a
+# protein with glycine have one extra atom per glycine and are rejected on
+# resume by checkpoint_layout_error.
+CHECKPOINT_FORMAT_VERSION = 2
 DEFAULT_FILENAME = "last.chk"
 _CYCLE_NAME_RE = re.compile(r"^checkpoint_cycle_(\d+)\.chk$")
 
@@ -456,7 +459,8 @@ def checkpoint_layout_error(
 
     Coordinates are stored per atom slot in the engine's layout. A checkpoint
     from a version with a different layout has the wrong number of columns,
-    and loading it would shift every atom after the first difference.
+    and loading it would shift every atom after the first difference. For
+    example, format version 1 gave every glycine CA a second slot.
     """
     for i, coords in enumerate(replica_coords or []):
         if coords is None:
