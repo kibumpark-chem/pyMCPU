@@ -54,7 +54,6 @@ def test_cb_mode_uses_cb_or_falls_back_to_bb_ca() -> None:
     cb_idx = build_contact_atom_index(ff, mode="cb")
     assert cb_idx.shape == ca_idx.shape
     atoms = ff.ordered_atom_list
-    n_bb = ff.total_bb_atoms
     n_diff = 0
     for r in range(ff.n_res):
         atom = atoms[int(cb_idx[r])]
@@ -64,15 +63,30 @@ def test_cb_mode_uses_cb_or_falls_back_to_bb_ca() -> None:
             assert int(cb_idx[r]) != int(ca_idx[r])
         else:
             assert atom.name == "CA"
-            assert int(cb_idx[r]) < n_bb
             assert int(cb_idx[r]) == int(ca_idx[r])
     assert n_diff > 0, "test PDB should contain at least one residue with a real CB"
+
+
+class _BackboneOnlyForceField:
+    """Stands in for KORPForceField, which needs its 316 MiB map to build:
+    blocks with no sidechain and no per-atom list."""
+
+    n_res = 1
+    blocks: list = []
+
+
+@pytest.mark.parametrize("mode", ["ca", "cb"])
+def test_contact_atoms_need_an_all_atom_force_field(mode: str) -> None:
+    """A backbone-only force field has no CB to pick and no per-atom list to
+    pick from. Both modes must refuse it rather than return CA indices that a
+    CB reference would then be compared against."""
+    with pytest.raises(ValueError, match="all-atom force field"):
+        build_contact_atom_index(_BackboneOnlyForceField(), mode=mode)
 
 
 def test_gly_cb_mode_uses_backbone_ca() -> None:
     _, ff = build_test_context(with_qbias=False)
     cb_idx = build_contact_atom_index(ff, mode="cb")
-    n_bb = ff.total_bb_atoms
     gly_found = False
     for r in range(ff.n_res):
         res_name = next(a.residue_name for a in ff.ordered_atom_list if a.residue_index == r)
@@ -82,7 +96,6 @@ def test_gly_cb_mode_uses_backbone_ca() -> None:
         idx = int(cb_idx[r])
         assert ff.ordered_atom_list[idx].name == "CA"
         assert idx == ff.blocks[r].bb_start + 1
-        assert idx < n_bb
     assert gly_found, "test PDB should contain GLY"
 
 
@@ -124,12 +137,8 @@ def test_cb_vs_ca_cv_pair_atoms() -> None:
     assert cb_cv.contact_atom_mode == "cb"
     ai, aj = cb_cv.atom_pair_indices()
     atoms = ff.ordered_atom_list
-    n_bb = ff.total_bb_atoms
     for a in np.concatenate([ai, aj]):
-        name = atoms[int(a)].name
-        assert name in ("CB", "CA")
-        if name == "CA":
-            assert int(a) < n_bb
+        assert atoms[int(a)].name in ("CB", "CA")
 
 
 def test_cb_mode_bias_potential_attaches_and_evaluates_finite() -> None:
@@ -203,7 +212,5 @@ def test_cb_mode_explicit_pair_referencing_gly_resolves_to_backbone_ca() -> None
     )
     ai, aj = cv.atom_pair_indices()
     gly_atom_idx = int(ai[0])  # pairs_i[0] == gly_res, so ai[0] is its resolved atom
-    n_bb = ff.total_bb_atoms
     assert ff.ordered_atom_list[gly_atom_idx].name == "CA"
     assert gly_atom_idx == ff.blocks[gly_res].bb_start + 1
-    assert gly_atom_idx < n_bb

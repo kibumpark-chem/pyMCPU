@@ -321,6 +321,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- `MCPUAtom.to_write` and `MCPUAtom.is_sidechain`. They existed to tell
+  glycine's second CA slot (see Changed) apart from real atoms. `to_write`
+  was then false only for explicit amide hydrogens, exactly when
+  `original_index` is -1, and nothing read `is_sidechain`.
+  `MCPUForceField.inverse_mapping` is now each atom's `original_index`.
 - `mcpu_core.EnergyComponents`. It held the fixed MCPU column set the energy
   reporter used to write; nothing exported or used it.
 

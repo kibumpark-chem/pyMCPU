@@ -222,11 +222,9 @@ class MuPotentialBuilder:
     _ROLE_CD = 7
     _ROLE_SG = 8
     _ROLE_GX = 9
-    _ROLE_GLY_CA_BB = 10  # never emitted: GLY's CA has one slot, role CA
     _RES_OTHER = 0
     _RES_PRO = 1
     _RES_CYS = 2
-    _RES_GLY = 3
 
     @classmethod
     def layer1_atom_meta(
@@ -267,8 +265,6 @@ class MuPotentialBuilder:
                 res_class.append(cls._RES_PRO)
             elif atom.residue_name == "CYS":
                 res_class.append(cls._RES_CYS)
-            elif atom.residue_name == "GLY":
-                res_class.append(cls._RES_GLY)
             else:
                 res_class.append(cls._RES_OTHER)
         return res_index, is_sidechain, atom_role, res_class

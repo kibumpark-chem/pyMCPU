@@ -11,7 +11,7 @@ unchanged. Only the residue label differs.
 
 ``MCPUForceField._canonicalize_residue_names`` folds those labels to the
 standard name in place, before any of the ~15 downstream consumers (atom
-typing, the PRO/CYS/GLY contact rules in ``mu_builder``, chi-atom resolution,
+typing, the PRO/CYS contact rules in ``mu_builder``, chi-atom resolution,
 per-residue torsion counts) reads a residue name -- so none of them needs its
 own alias table -- and warns that it did so.
 

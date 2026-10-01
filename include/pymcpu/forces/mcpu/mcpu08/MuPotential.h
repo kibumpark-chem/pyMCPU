@@ -133,15 +133,13 @@ namespace mcpu::forces::mcpu08 {
             CB = 6,
             CD = 7,
             SG = 8,
-            Gx = 9,      ///< name.startswith('G') — CG*, OG*, …
-            GlyCaBb = 10 ///< no longer emitted: GLY's CA has one slot, role CA
+            Gx = 9       ///< name.startswith('G') — CG*, OG*, …
         };
         /// Residue class for Layer 1 PRO / CYS specials.
         enum class MuResClass : uint8_t {
             Other = 0,
             PRO = 1,
-            CYS = 2,
-            GLY = 3
+            CYS = 2
         };
 
         std::vector<int32_t> res_index_;   ///< residue index per atom; size N
@@ -196,9 +194,8 @@ namespace mcpu::forces::mcpu08 {
             contact_on = false;
             const auto ri = static_cast<MuAtomRole>(atom_role_[static_cast<size_t>(i)]);
             const auto rj = static_cast<MuAtomRole>(atom_role_[static_cast<size_t>(j)]);
-            // Rule 0: mute H for all pairs (and GlyCaBb, never emitted now)
-            if (ri == MuAtomRole::H || rj == MuAtomRole::H ||
-                ri == MuAtomRole::GlyCaBb || rj == MuAtomRole::GlyCaBb) {
+            // Rule 0: mute H for all pairs
+            if (ri == MuAtomRole::H || rj == MuAtomRole::H) {
                 return;
             }
             const int sep = std::abs(

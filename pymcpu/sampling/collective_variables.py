@@ -343,14 +343,18 @@ def build_contact_atom_index(
       without CB).
     """
     mode_n = normalize_contact_atom_mode(mode)
-    n_bb = forcefield.total_bb_atoms
-    atoms = forcefield.ordered_atom_list
+    atoms = getattr(forcefield, "ordered_atom_list", None)
+    if atoms is None:
+        raise ValueError(
+            f"contact atoms need an all-atom force field; {type(forcefield).__name__} "
+            "has no per-atom list"
+        )
 
     if mode_n == "ca":
         ca = [
             (atom.residue_index, idx)
             for idx, atom in enumerate(atoms)
-            if atom.name == "CA" and idx < n_bb
+            if atom.name == "CA"
         ]
         ca.sort(key=lambda t: t[0])
         return np.array([idx for _, idx in ca], dtype=np.int64)
@@ -361,11 +365,8 @@ def build_contact_atom_index(
     for r in range(n_res):
         block = forcefield.blocks[r]
         bb_ca = block.bb_start + 1  # N, CA, C layout
-        sc = int(block.sc_start)
-        if sc >= 0 and sc < len(atoms) and atoms[sc].name == "CB":
-            out[r] = sc
-        else:
-            out[r] = bb_ca
+        sc = int(block.sc_start)  # the CB, or -1 for a residue without one
+        out[r] = sc if sc >= 0 else bb_ca
     return out
 
 

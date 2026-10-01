@@ -69,10 +69,10 @@ def test_glycine_ca_is_backbone_for_eligibility(acta_forcefield: MCPUForceField)
 
 
 def test_glycine_ca_has_the_ca_role(acta_forcefield: MCPUForceField) -> None:
-    """The C++ side mutes every atom with the GLY_CA_BB role (Rule 0)."""
+    """The C++ side mutes every atom with the H role (Rule 0), so only H may have it."""
     ordered = acta_forcefield.ordered_atom_list
     _, _, role, _ = MuPotentialBuilder.layer1_atom_meta(ordered)
-    assert MuPotentialBuilder._ROLE_GLY_CA_BB not in role
+    assert all((r == MuPotentialBuilder._ROLE_H) == (a.name == "H") for r, a in zip(role, ordered))
     assert {role[i] for i in _gly_cas(ordered)} == {MuPotentialBuilder._ROLE_CA}
 
 
