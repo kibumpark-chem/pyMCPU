@@ -37,18 +37,6 @@ what every script under `scripts/parity_*.py` does.
 Accept/reject decisions are never affected, because the Metropolis criterion
 consumes ΔE rather than the running total. Only reported energies are.
 
-## `Integrator` defaults to a temperature of 300.0
-
-**Symptom.** `mc.Integrator()` with no arguments produces almost no accepted
-moves and appears to be stuck.
-
-**Cause.** The default is `temperature=300.0`, which looks like Kelvin but is
-interpreted as a *reduced* temperature — roughly 500× the hot end of the useful
-range (about 0.3 to 0.6).
-
-**What to do.** Always pass `temperature` explicitly. The default is retained
-for backward compatibility with existing scripts and is not a recommendation.
-
 ## Linux x86-64 only, with an x86-64-v3 baseline
 
 **Symptom.** No wheel for your platform, or `Illegal instruction` on a CPU

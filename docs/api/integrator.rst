@@ -12,11 +12,6 @@ or rejects, and feeds the attached :doc:`reporters <reporters>`.
    there is no kT and no Boltzmann constant in the acceptance test --
    see :doc:`../physics_notes/mc_acceptance`.
 
-.. warning::
-   The constructor default is ``temperature=300.0``, a leftover
-   physical-units value roughly 500x the top of the usable reduced
-   range. Always pass ``temperature`` explicitly.
-
 .. note::
    ``Integrator`` is a compiled ``pymcpu.mcpu_core`` class (the C++
    type is ``MCIntegrator``; ``Integrator`` is the only name exposed to
@@ -26,12 +21,13 @@ or rejects, and feeds the attached :doc:`reporters <reporters>`.
 
 .. py:currentmodule:: pymcpu
 
-.. py:class:: Integrator(temperature=300.0, step_size_rad=0.1, sidechain_step_size_rad=-1.0)
+.. py:class:: Integrator(temperature, step_size_rad=0.1, sidechain_step_size_rad=-1.0)
 
-   :param temperature: reduced temperature of this replica. Fixed for
-      the object's lifetime -- there is no ``set_temperature``, and
-      replica exchange swaps coordinates between fixed-temperature
-      replicas rather than changing a replica's temperature.
+   :param temperature: reduced temperature of this replica. Required:
+      there is no default. Fixed for the object's lifetime -- there is no
+      ``set_temperature``, and replica exchange swaps coordinates between
+      fixed-temperature replicas rather than changing a replica's
+      temperature.
    :param step_size_rad: backbone torsion step amplitude in radians.
    :param sidechain_step_size_rad: chi step amplitude in radians for
       the continuous sidechain mode. A negative value means "same as
