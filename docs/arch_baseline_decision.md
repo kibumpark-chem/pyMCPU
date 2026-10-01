@@ -81,7 +81,8 @@ Both arms GCC 12.2.0, Release with LTO, differing only in `MCPU_ARCH`:
 | `v3` (`x86-64-v3`) | **0** | **0** | 2692 | 1291 | `40a653a67ed1bac9` |
 
 Result: **all four cases bit-identical** -- chignolin (80 atoms) and actin
-(2971 atoms), seeds 42 and 1337, comparing accept-bit streams, per-group
+(2971 atoms; both counts include the second glycine-CA slot of the time, so
+77 and 2943 today), seeds 42 and 1337, comparing accept-bit streams, per-group
 energies as hex floats, coordinate hashes, move counters and neighbour-list
 counters with `==` and no tolerance.
 

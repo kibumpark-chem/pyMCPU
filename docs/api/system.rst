@@ -31,17 +31,17 @@ parameter files, and registers the five physics potentials.
    :param n_atoms: number of atom slots in the engine layout.
    :param n_residues: number of residues.
 
-   ``repr()`` renders as ``<System: 80 atoms, 10 residues>``.
+   ``repr()`` renders as ``<System: 77 atoms, 10 residues>``.
 
    .. rubric:: Size and layout
 
    .. py:method:: get_num_atoms() -> int
 
-      Number of atom slots in the engine layout. This is not
-      necessarily the atom count of the input topology: the builder can
-      allocate extra slots (for example for virtual amide hydrogens),
-      and ``MCPUForceField.inverse_mapping`` uses ``-1`` for engine
-      slots with no counterpart in the input topology.
+      Number of atom slots in the engine layout. For ``MCPUForceField``
+      this is the input topology's heavy-atom count, plus one slot per
+      explicit amide hydrogen when ``virtual_amide_h=False``;
+      ``MCPUForceField.inverse_mapping`` uses ``-1`` for those hydrogen
+      slots, which have no counterpart in the input topology.
 
    .. py:method:: get_num_residues() -> int
 

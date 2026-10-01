@@ -134,7 +134,7 @@ namespace mcpu::forces::mcpu08 {
             CD = 7,
             SG = 8,
             Gx = 9,      ///< name.startswith('G') — CG*, OG*, …
-            GlyCaBb = 10 ///< GLY CA in BB segment (Rule 0 mute)
+            GlyCaBb = 10 ///< no longer emitted: GLY's CA has one slot, role CA
         };
         /// Residue class for Layer 1 PRO / CYS specials.
         enum class MuResClass : uint8_t {
@@ -196,7 +196,7 @@ namespace mcpu::forces::mcpu08 {
             contact_on = false;
             const auto ri = static_cast<MuAtomRole>(atom_role_[static_cast<size_t>(i)]);
             const auto rj = static_cast<MuAtomRole>(atom_role_[static_cast<size_t>(j)]);
-            // Rule 0: mute H and GLY-CA-BB for all pairs
+            // Rule 0: mute H for all pairs (and GlyCaBb, never emitted now)
             if (ri == MuAtomRole::H || rj == MuAtomRole::H ||
                 ri == MuAtomRole::GlyCaBb || rj == MuAtomRole::GlyCaBb) {
                 return;

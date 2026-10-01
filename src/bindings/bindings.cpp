@@ -1312,8 +1312,9 @@ PYBIND11_MODULE(mcpu_core, m) {
         "backbone/oxygen/sidechain segments, and the five knowledge-based\n"
         "potentials are a fitted set only meaningful together, so\n"
         "create_system registers all of them.\n\n"
-        "get_num_atoms() can exceed the input heavy-atom count: each\n"
-        "glycine carries one extra bookkeeping slot.")
+        "For MCPUForceField, get_num_atoms() is the input heavy-atom\n"
+        "count, plus one slot per explicit amide hydrogen when\n"
+        "virtual_amide_h=False.")
         .def(py::init<int, int>())
         .def("add_potential",             &System::addPotential)
         .def("get_num_atoms",         &System::getNumAtoms)

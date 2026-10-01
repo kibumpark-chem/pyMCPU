@@ -66,6 +66,19 @@ implemented. If you resume a run that wrote DCD, delete the DCD manually first
 or you will get duplicated frames. Prefer XTC.
 ```
 
+### Checkpoints from other versions
+
+Every checkpoint records its `format_version`, and a file newer than the
+installed pyMCPU understands is refused. Before restoring anything, every
+resume path also checks that the stored coordinates have the system's atom
+count. A checkpoint written with a different atom layout stops with an error
+that names both counts, instead of loading with its atoms shifted.
+
+Format version 2 changed the layout. Version 1 gave each glycine CA a second
+slot, so a version 1 checkpoint of a protein with glycine cannot be resumed:
+start the run again from its input structure. Version 1 checkpoints of
+glycine-free proteins, and of KORP runs, still resume.
+
 ### From the command line
 
 ```bash

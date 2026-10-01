@@ -67,6 +67,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Coordinates of the wrong size are rejected.** `Context.set_positions`,
+  `Context.coords` and `State.coords` used to resize the engine state to
+  whatever array they were given, so a checkpoint or restart file written
+  with a different atom layout loaded with every atom after the first
+  difference shifted. Only replica exchange noticed, by accident, through a
+  steric clash. They now raise `ValueError` naming both counts, and the
+  folding, serial and MPI replica-exchange resume paths check the stored
+  coordinates before restoring anything; under MPI every rank raises
+  together.
+- `EngineSession.coords_from_auxref` built an `MCPUForceField` for a `.pdb`
+  starting state even in a KORP session, so the coordinates had MCPU's
+  layout. It now builds the session's own force field.
+- The two copies of each glycine CA (see Changed) drifted apart, by about
+  1e-5 Å over 10^5-2x10^5 steps, because moves updated them separately.
 - **Replica exchange ignored every move setting.** Each replica's integrator
   was built from its temperature alone, so `move_weights`,
   `sidechain_move_mode`, `pivot_rama_probability`/`pivot_rama_schedule` and
@@ -248,6 +262,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Glycine's CA has one engine slot.** `MCPUForceField` stored each glycine
+  CA twice, in the backbone segment and again as the residue's sidechain,
+  and the Mu potential muted the backbone copy so the atom was scored once.
+  The engine now has one slot per heavy atom, plus the explicit amide
+  hydrogens when `virtual_amide_h=False`: 77 atoms for `1uao.pdb` instead of
+  80, and 2943 for actin instead of 2971. `forcefield.coords`, `n_atoms`,
+  `System.get_num_atoms()` and its `repr`, and checkpoint coordinates change
+  to match, and `inverse_mapping` now holds `-1` only for explicit
+  hydrogens. Written trajectories already had one CA per glycine and are
+  unchanged. Energies agree to float rounding (Mu within 1e-4, the other
+  terms bit for bit), and on the parity cases and three 50,000-step
+  chignolin runs a given seed reproduces the old trajectory bit for bit; a
+  much longer run can eventually diverge, because the old copy drifted.
+  **Checkpoints and `EngineSession` restart states of a protein with glycine
+  from earlier versions cannot be resumed**: they stop with an error naming
+  both atom counts. The checkpoint `format_version` is now 2, and
+  `EngineSession.fingerprint` changes for proteins with glycine.
 - **`Integrator` requires a temperature.** Its Python constructor defaulted to
   `temperature=300.0`, a physical-units value about 500x the top of the
   useful reduced range (0.3-0.6), so `Integrator()` silently ran a

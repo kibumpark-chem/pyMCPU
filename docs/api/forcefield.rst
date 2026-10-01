@@ -69,16 +69,14 @@ originating MDTraj index for each atom, and exposes the result as
 :attr:`~pymcpu.MCPUForceField.inverse_mapping` (internal index ->
 topology index).
 
-Two consequences matter in practice:
-
-* The engine atom count can exceed the topology's. Glycine has no
-  sidechain, so its ``CA`` is listed a second time as that residue's
-  sidechain entry. The shipped ``1uao.pdb`` has 10 residues, 3 of them
-  glycine, so its 77 heavy atoms become 80 engine atoms.
-* :attr:`~pymcpu.MCPUForceField.inverse_mapping` holds ``-1`` for those
-  duplicate entries, which tells ``XtcReporter`` to skip the coordinate
-  instead of writing it twice. Pass it to the reporter so frames come
-  out in topology order with the original atom count.
+Each heavy atom has one engine slot, so with the default virtual amide
+hydrogens the engine atom count equals the topology's: 77 for the shipped
+``1uao.pdb``. Glycine, which has no sidechain, simply has an empty
+sidechain block. Only ``virtual_amide_h=False`` adds slots, one explicit
+amide hydrogen per non-proline residue after the first; the topology has
+no such atoms, so :attr:`~pymcpu.MCPUForceField.inverse_mapping` holds
+``-1`` for them, which tells ``XtcReporter`` to skip them. Pass
+``inverse_mapping`` to the reporter so frames come out in topology order.
 
 Units and layout differ between MDTraj and the engine, and the
 conversion is the caller's job:
@@ -135,8 +133,9 @@ Set during construction and safe to read:
 .. py:attribute:: pymcpu.MCPUForceField.n_atoms
    :type: int
 
-   Number of atoms in the engine layout (see the glycine note above:
-   this can exceed ``topology.n_atoms``).
+   Number of atoms in the engine layout: ``topology.n_atoms``, plus
+   :attr:`~pymcpu.MCPUForceField.total_h_atoms` explicit amide hydrogens
+   when ``virtual_amide_h=False``.
 
 .. py:attribute:: pymcpu.MCPUForceField.n_res
    :type: int
@@ -174,9 +173,9 @@ Set during construction and safe to read:
 .. py:attribute:: pymcpu.MCPUForceField.ordered_indices
    :type: list[int]
 
-   Original MDTraj atom index for each engine atom index, before the
-   ``to_write`` filtering that
-   :attr:`~pymcpu.MCPUForceField.inverse_mapping` applies.
+   Original MDTraj atom index for each heavy-atom engine slot, in
+   engine order. Unlike :attr:`~pymcpu.MCPUForceField.inverse_mapping`
+   it has no entries for explicit amide hydrogens.
 
 .. py:attribute:: pymcpu.MCPUForceField.ordered_atom_list
    :type: list[MCPUAtom]
