@@ -101,6 +101,57 @@ def test_mismatched_append_raises_before_any_move(tmp_path: Path, heavy, existin
     assert path.read_text() == existing
 
 
+# The fixed header every energy file had before per-term columns.
+LEGACY_HEADER = (
+    "Step,Total,Mu,BackboneTorsion,SidechainTorsion,HydrogenBond,Aromatic,"
+    "NativeContactsBias,PivotAccepted,PivotAttempted,SidechainAccepted,"
+    "SidechainAttempted,KicAccepted,KicAttempted,WalkerId"
+)
+
+
+def test_a_legacy_header_gets_its_own_error(tmp_path: Path, heavy) -> None:
+    """No setting can make a run match the old fixed columns, so the error says
+    the file is from an earlier version instead of blaming the run's settings."""
+    path = tmp_path / "e.csv"
+    existing = LEGACY_HEADER + "\n0,-14.7,-3.4,-3.2,-7.8,-0.1,0.0,0.0,0,0,0,0,0,0,-1\n"
+    path.write_text(existing)
+    sim, _, integrator = _sim(heavy)
+    sim.add_reporter(mc.EnergyReporter(str(path), 10, True))
+    with pytest.raises(RuntimeError, match="written by an earlier pyMCPU"):
+        sim.step(10)
+    assert integrator.get_bb_attempted() + integrator.get_kic_attempted() + integrator.get_sc_attempted() == 0
+    assert path.read_text() == existing
+
+
+def test_resuming_a_run_with_a_legacy_csv_raises_before_any_move(
+    tmp_path: Path, chignolin_pdb_path: str
+) -> None:
+    """End to end: a folding run checkpoints, its CSV is swapped for one in the
+    old format (as a run started before this change would have), and the
+    resume stops with the specific error."""
+    from pymcpu.checkpointing import load_checkpoint
+    from pymcpu.sampling.folding import FoldingRunner
+
+    def runner(resume: bool) -> FoldingRunner:
+        return FoldingRunner(
+            chignolin_pdb_path, output_dir=str(tmp_path / "out"),
+            checkpoint_dir=str(tmp_path / "ck"), seed=3, report_interval=5,
+            steps_per_cycle=5, checkpoint_interval=1, resume=resume, verbose=False,
+        )
+
+    runner(resume=False).run(n_cycles=2)
+    csv_path = tmp_path / "out" / "folding_data.csv"
+    rows = _lines(csv_path)[1:]
+    csv_path.write_text("\n".join([LEGACY_HEADER, *rows]) + "\n")
+
+    resumed = runner(resume=True)
+    with pytest.raises(RuntimeError, match="written by an earlier pyMCPU"):
+        resumed.run(n_cycles=4)
+    # The resume restored the checkpoint's counters; no move was made after that.
+    saved = load_checkpoint(tmp_path / "ck" / "last.chk")["integrator_move_counters"][0]
+    assert resumed.simulation.integrator.get_move_counters() == saved
+
+
 def test_a_term_added_after_the_header_raises(tmp_path: Path, heavy) -> None:
     sim, system, _ = _sim(heavy)
     sim.add_energy_reporter(str(tmp_path / "e.csv"), interval=10)

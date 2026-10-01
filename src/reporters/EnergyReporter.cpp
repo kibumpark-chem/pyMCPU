@@ -78,16 +78,26 @@ void EnergyReporter::ensure_header(const Context& context, const MCIntegrator& i
 
     if (!existing_header_.empty()) {
         if (existing_header_ != expected) {
-            const auto w = integrator.move_weights();
             std::ostringstream msg;
-            msg << "energy file " << filename_ << " already has a different header, so "
-                << "appending would misalign its columns.\n"
-                << "  in the file: " << existing_header_ << "\n"
-                << "  this run:    " << expected << "\n"
-                << "  (move weights pivot/kic/sidechain = " << w[0] << "/" << w[1] << "/"
-                << w[2] << ", sidechain mode " << integrator.sidechain_move_mode() << ")\n"
-                << "Resume with the same force field and move settings, or write to a "
-                << "new file.";
+            // Before per-term columns, every energy file started with this
+            // fixed header. No setting can make a run match it.
+            if (existing_header_.rfind("Step,Total,", 0) == 0) {
+                msg << "energy file " << filename_ << " was written by an earlier "
+                    << "pyMCPU, whose fixed columns (Step,Total,Mu,...,WalkerId) differ "
+                    << "from this version's, so this run cannot append to it. Resume "
+                    << "into a new file: change the output prefix or directory, or move "
+                    << "this file aside.";
+            } else {
+                const auto w = integrator.move_weights();
+                msg << "energy file " << filename_ << " already has a different header, so "
+                    << "appending would misalign its columns.\n"
+                    << "  in the file: " << existing_header_ << "\n"
+                    << "  this run:    " << expected << "\n"
+                    << "  (move weights pivot/kic/sidechain = " << w[0] << "/" << w[1] << "/"
+                    << w[2] << ", sidechain mode " << integrator.sidechain_move_mode() << ")\n"
+                    << "Resume with the same force field and move settings, or write to a "
+                    << "new file.";
+            }
             throw std::runtime_error(msg.str());
         }
     } else {

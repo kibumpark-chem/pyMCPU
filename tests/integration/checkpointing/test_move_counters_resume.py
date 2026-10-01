@@ -22,7 +22,8 @@ pytest.importorskip("mdtraj")
 
 from pymcpu.checkpointing import (  # noqa: E402
     get_integrator_move_counters,
-    set_integrator_move_counters,
+    load_checkpoint,
+    save_checkpoint,
 )
 from pymcpu.sampling.folding import FoldingRunner  # noqa: E402
 from pymcpu.sampling.replica_exchange import ReplicaExchange  # noqa: E402
@@ -107,12 +108,18 @@ def test_remd_resume_continues_the_counters(chignolin_pdb_path: str, tmp_path: P
         _assert_never_decreases(_move_columns(f))
 
 
-def test_counters_from_an_older_checkpoint_are_optional(chignolin_pdb_path: str, tmp_path: Path) -> None:
-    """A checkpoint written before counters were saved has none: nothing is
-    restored and the replica keeps counting from where it is."""
-    runner = _folding(chignolin_pdb_path, tmp_path / "o", tmp_path / "ck")
-    runner.run(n_cycles=1)
-    before = runner.simulation.integrator.get_move_counters()
-    set_integrator_move_counters(runner.replicas, [])
-    set_integrator_move_counters(runner.replicas, [{}])
-    assert runner.simulation.integrator.get_move_counters() == before
+def test_a_checkpoint_without_counters_still_resumes(chignolin_pdb_path: str, tmp_path: Path) -> None:
+    """A checkpoint written before counters were saved has none. It still
+    loads, and its replica counts from 0 again, as every resume used to."""
+    first = _folding(chignolin_pdb_path, tmp_path / "o", tmp_path / "ck")
+    first.run(n_cycles=2)
+    for chk in (tmp_path / "ck").glob("*.chk"):
+        state = load_checkpoint(chk)
+        assert state.pop("integrator_move_counters")  # saved by this version...
+        save_checkpoint(state, chk.parent, filename=chk.name)  # ...and now removed
+
+    resumed = _folding(chignolin_pdb_path, tmp_path / "o", tmp_path / "ck", resume=True)
+    resumed.run(n_cycles=4)
+    integ = resumed.simulation.integrator
+    # Only the 2 cycles after the resume (5 steps each) were counted.
+    assert integ.get_bb_attempted() + integ.get_kic_attempted() + integ.get_sc_attempted() == 2 * 5

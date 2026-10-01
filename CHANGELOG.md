@@ -102,8 +102,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   while its energy CSV kept appending, and the cumulative move columns dropped
   back to zero mid-file. Folding, serial REMD and MPI REMD checkpoints now
   save the counters (`Integrator.get_move_counters()` /
-  `set_move_counters()`) and restore them. A checkpoint written before this
-  change still resumes, with counters from 0 as before.
+  `set_move_counters()`) and restore them. A checkpoint that has no saved
+  counters still loads, and its counters start from 0 as before.
 - Building a force field no longer prints `Maximum contact distance
   (squared): ...`, and the first H-bond energy change no longer prints a
   `[neighbor-audit]` line to stderr on every rank. Both were developer
@@ -259,7 +259,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   must match exactly or `run()` raises before any move, where a changed force
   field or move setting used to misalign the columns silently; a missing or
   empty file gets a header, where the MPI resume path could produce a file
-  with none.
+  with none. **A run started before this change cannot resume into its old
+  energy file**: that file has the old fixed header, so `run()` stops with an
+  error saying so. Resume it into a new file (a different output prefix or
+  directory), or move the old file aside.
 - `SimulationReporter` prints the move kinds in use (from `move_counts()`)
   instead of three fixed labels, and flushes each report.
 - **`Integrator.run` now raises** when the sidechain move weight is positive
