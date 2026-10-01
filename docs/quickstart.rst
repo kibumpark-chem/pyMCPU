@@ -13,7 +13,8 @@ A complete run
 
 This is the whole pipeline. It works from any working directory on a plain
 ``pip install pymcpu``, with no parameter download and no environment
-variables.
+variables. It writes ``energies.csv`` and ``traj.xtc`` to the current
+directory and takes under a minute.
 
 .. code-block:: python
 
@@ -35,22 +36,28 @@ variables.
    forcefield = MCPUForceField(heavy, param_set="mcpu08")
    system = forcefield.create_system(heavy.topology)
 
-   # 3. Set up sampling. Always pass a temperature: the default is 300.0,
-   #    which is not a reduced temperature. Set the seed -- the trajectory is
-   #    fully determined by it.
+   # 3. Set up sampling. The temperature is required, and is a reduced value
+   #    (see the conventions above). Set the seed: the same seed, input and
+   #    pyMCPU build reproduce a run exactly (other compilers can differ; see
+   #    Known issues).
    integrator = mc.Integrator(temperature=0.6, step_size_rad=0.1)
    integrator.set_seed(42)
 
    sim = mc.Simulation(heavy.topology, system, integrator)
 
-   # 4. Give it coordinates. Note the transpose and the nm -> Angstrom factor:
-   #    mdtraj stores (n_frames, n_atoms, 3) in nm, the engine wants (3, n_atoms)
-   #    in Angstroms, float32.
+   # 4. Give it coordinates. The cleanest way is to keep feeding in the
+   #    mdtraj object: the force field read your structure from `heavy`, and
+   #    forcefield.coords holds it ready for the engine, so never build this
+   #    array yourself. The engine wants one frame as (3, n_atoms) in
+   #    Angstroms, float32 -- hence the x10, the transpose and the cast.
    sim.context.set_positions((forcefield.coords[0] * 10.0).T.astype(np.float32))
 
-   # 5. Attach reporters. These write files; the library does not print.
+   # 5. Attach reporters. They write to these files as the run goes.
+   #    inverse_mapping writes the frames back in your topology's atom order,
+   #    so md.load("traj.xtc", top=heavy.topology) reads them.
    sim.add_energy_reporter("energies.csv", interval=100)
-   sim.add_xtc_reporter("traj.xtc", interval=1000)
+   sim.add_xtc_reporter("traj.xtc", interval=1000,
+                        inverse_mapping=forcefield.inverse_mapping)
 
    # 6. Run.
    sim.step(10_000)
@@ -61,69 +68,100 @@ The composition pattern
 -----------------------
 
 1. :doc:`api/forcefield` — ``MCPUForceField(trajectory, param_set=...)`` turns
-   an mdtraj topology into typed, ordered atoms plus loaded potentials.
-2. ``forcefield.create_system(topology)`` produces a :doc:`api/system`, with all
-   five energy terms already registered. You do not add them individually.
+   an mdtraj structure into typed, engine-ordered atoms and loads the fitted
+   potentials.
+2. ``forcefield.create_system(topology)`` returns a :doc:`api/system` with all
+   five energy terms already registered.
 3. :doc:`api/integrator` — ``Integrator(temperature, step_size_rad)`` holds the
-   Monte Carlo move parameters.
+   Monte Carlo move settings.
 4. :doc:`api/simulation` — ``Simulation(topology, system, integrator)`` owns the
-   :doc:`api/context` and the reporter list, and is what you call ``step()`` on.
-5. :doc:`api/reporters` write output; :doc:`api/analysis` reweights it.
-
-Unlike OpenMM, you do not compose the energy terms yourself. The five
-knowledge-based potentials are a fitted set that is only meaningful together,
-so ``create_system`` registers all of them.
+   :doc:`api/context` and the reporters; you call ``step()`` on it.
+5. :doc:`api/reporters` write output during the run; :doc:`api/analysis`
+   prepares replica-exchange output for MBAR reweighting.
 
 Reading the results
 -------------------
 
-``energy_breakdown()`` gives both raw table sums and weighted values, keyed by
-energy group:
+``energy_breakdown()`` returns the total energy both raw and weighted
+(``raw_total`` and ``weighted_total``), plus the energy of each term in
+``by_name``, keyed by the term's name (``by_group`` holds the same values keyed
+by group number). The per-term values are weighted by default; pass
+``weighted=False`` for the raw table sums.
 
 .. code-block:: python
 
    breakdown = sim.context.energy_breakdown(weighted=True)
 
-   names = {1: "mu", 2: "backbone_torsion", 3: "sidechain_torsion",
-            4: "hydrogen_bond", 5: "aromatic"}
-   for group, value in sorted(breakdown["by_group"].items()):
-       print(f"{names.get(group, group):20} {value:12.4f}")
+   for name, value in breakdown["by_name"].items():
+       print(f"{name:20} {value:12.4f}")
 
-Acceptance rates are the first diagnostic to check on any Monte Carlo run — very
-low means the step size is too large for the temperature, very high means the
-moves are too timid to explore:
+Acceptance rates are the first thing to check on any Monte Carlo run. For
+``pivot`` and ``kic``, a very low rate means ``step_size_rad`` is too large for
+the temperature, and a very high rate means the moves are too small to
+explore. The ``rotamer`` move draws whole rotamers from a library and does not
+use ``step_size_rad``:
 
 .. code-block:: python
 
-   for label, accepted, attempted in [
-       ("pivot", integrator.get_bb_accepted(), integrator.get_bb_attempted()),
-       ("sidechain", integrator.get_sc_accepted(), integrator.get_sc_attempted()),
-       ("KIC", integrator.get_kic_accepted(), integrator.get_kic_attempted()),
-   ]:
+   for kind, (accepted, attempted) in integrator.move_counts().items():
        rate = accepted / attempted if attempted else float("nan")
-       print(f"{label:10} {accepted:6d} / {attempted:6d}  {rate:6.1%}")
+       print(f"{kind:12} {accepted:6d} / {attempted:6d}  {rate:6.1%}")
 
-The ``EnergyReporter`` is a writer, not a buffer — there is no accessor to read
-energies back out of it. Read the CSV:
+``move_counts()`` lists each kind of move the run can propose. With the
+default settings these are the continuous ``pivot``, the knowledge-based
+``rama_pivot`` (off until you set a rama probability, so it shows ``0 / 0``),
+``kic`` and the ``rotamer`` sidechain move.
+
+The energy reporter only writes to disk. To analyse energies, read the CSV
+back. It has a row for the starting structure (step 0, all move counts zero)
+and then one every ``interval`` steps -- 101 rows for this run. The columns
+are ``step``, ``total``, one column per energy term, ``<kind>_accepted`` and
+``<kind>_attempted`` for each move kind, and ``walker_id``:
 
 .. code-block:: python
 
    import pandas as pd
 
    energies = pd.read_csv("energies.csv")
+   print(energies[["step", "total", "mu", "hydrogen_bond"]].tail())
 
 Using your own structure
 ------------------------
 
-``default_example_pdb()`` is a convenience for the bundled 1UAO chignolin
-model. Any PDB works — pass it to ``md.load`` instead:
+``default_example_pdb()`` returns the bundled 1UAO chignolin structure. For
+your own protein, load its file instead and keep the heavy atoms, dropping
+water:
 
 .. code-block:: python
 
    traj = md.load("my_protein.pdb")
+   heavy = traj.atom_slice(traj.topology.select("not water and not element H"))
 
-No per-protein preparation step is required: the potentials are general
-knowledge-based tables, not per-structure caches.
+The MCPU force field has parameters for the 20 standard amino acids.
+Protonation-state variants such as ``HID``, ``CYX`` or ``ASH`` are renamed to
+the standard residue automatically. Anything else -- ions, ligands, ``MSE``,
+phosphorylated residues -- makes ``MCPUForceField`` raise a ``ValueError``
+that names the residues; remove them by name, for example by adding
+``and not resname NA CL LIG`` to the selection.
+
+The structure must be **one continuous chain** of at least three residues,
+with **every heavy atom present**. The force field does not check either:
+
+* A file with several chains, or a chain with missing residues, builds and
+  runs without any warning, but the engine joins the pieces as if they were
+  bonded. Keep one chain (for example, add ``and chainid 0`` to the
+  selection) and model any missing residues first.
+* A residue with missing side-chain atoms, common in crystal structures,
+  fails with a bare ``KeyError`` that names only the atom
+  (``KeyError: 'OE2'``). Rebuild missing atoms first, for example with
+  PDBFixer.
+
+Avoid ``select("protein")`` here: mdtraj does not count some
+protonation-variant names (``ASH``, for example) as protein, so that selection
+silently drops those residues and breaks the chain.
+
+Beyond that, no preparation is needed: the potentials are general
+knowledge-based tables, not fitted to a particular structure.
 
 Where to go next
 ----------------
