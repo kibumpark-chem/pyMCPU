@@ -74,6 +74,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `ReplicaExchange`, `MPIReplicaExchange` and the REMD runners now take them.
   The defaults equal what an unconfigured integrator got, so default runs are
   bit-identical.
+- **YAML configs turned on the rama pivot.** The YAML loader filled a missing
+  `pivot_rama_probability` with 0.05, where the engine, `IntegratorConfig`,
+  JSON configs and every Python signature default to 0.0 (the move is
+  opt-in). An engine built from such a config with
+  `EngineSpec.from_simulation_config` ran rama pivots at 5% without the config
+  asking for them; with the move settings now reaching folding and REMD, so
+  would those. A missing value now means 0.0.
 - **`mcpu run` of a folding config raised `TypeError`** before starting:
   `run_from_config` passed the rama-pivot settings to `run_folding`, which did
   not accept them. The existing tests mocked `run_folding`; a new one runs a

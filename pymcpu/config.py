@@ -89,8 +89,10 @@ def normalize_sidechain_move_mode(mode: str | None) -> SidechainMoveMode:
 
 
 def normalize_pivot_rama_probability(p: float | None) -> float:
+    # None means "not set": the engine's default, 0.0, because the rama pivot
+    # is opt-in (see MCIntegrator::set_pivot_rama_probability).
     if p is None:
-        return 0.05
+        return 0.0
     p = float(p)
     if not (0.0 <= p <= 1.0):
         raise ValueError(f"pivot_rama_probability must be in [0, 1], got {p!r}")
