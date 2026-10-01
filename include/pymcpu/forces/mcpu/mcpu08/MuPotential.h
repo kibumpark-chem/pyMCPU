@@ -356,6 +356,20 @@ namespace mcpu::forces::mcpu08 {
             return (r2 > 0.f && std::isfinite(r2)) ? std::sqrt(r2) : 0.f;
         }
 
+        /// True when the residue energy mask switches pair (i, j) off entirely
+        /// (IgnoreAll with either residue masked), as eval_pair does: such a
+        /// pair can neither clash nor make a contact. ClashOnly keeps clashes,
+        /// so it never switches a pair off here.
+        [[nodiscard]] inline bool mask_ignores_pair(int i, int j) const noexcept {
+            if (!energy_mask_ptr_ || energy_mask_mode_cached_ != EnergyMaskMode::IgnoreAll) {
+                return false;
+            }
+            const auto ri = atom_to_residue[static_cast<size_t>(i)];
+            const auto rj = atom_to_residue[static_cast<size_t>(j)];
+            return (energy_mask_ptr_[static_cast<size_t>(ri)] |
+                    energy_mask_ptr_[static_cast<size_t>(rj)]) != 0;
+        }
+
         /// Clash-check one MM pair under skip_rigid_mm using topo clash bit +
         /// 3-decimal hard_r comparison (not soft eval_pair energy).
         [[nodiscard]] inline bool rigid_mm_pair_clashes(
@@ -366,6 +380,7 @@ namespace mcpu::forces::mcpu08 {
             // here cannot change a decision. Avoids a random byte load into the
             // N²-byte topo_flag_ table plus a type_params_ load per MM pair.
             if (!(r2_new < mm_guard_prefilter_r2_)) return false;
+            if (mask_ignores_pair(i, j)) return false;
             const size_t N = static_cast<size_t>(num_atoms_cached_);
             if (!topo_flag_.empty()) {
                 const uint8_t flag =

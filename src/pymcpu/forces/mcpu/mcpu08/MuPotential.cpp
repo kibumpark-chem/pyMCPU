@@ -1735,6 +1735,7 @@ struct CpTimer {
                                                 const uint8_t flag =
                                                     topo_flag_[pidx];
                                                 if (!(flag & 1u)) continue;
+                                                if (mask_ignores_pair(i, j)) continue;
                                                 const int ti =
                                                     atom_types[static_cast<
                                                         size_t>(i)];

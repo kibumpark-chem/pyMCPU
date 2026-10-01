@@ -67,6 +67,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Rigid moves no longer stick on overlaps that an `ignore_all` mask
+  allows.** With `ignore_all`, a pair involving a masked residue (a linker,
+  for example) neither clashes nor makes a contact, and the full energy and
+  the ordinary delta paths respected that. The guard that re-checks the
+  moved-moved pairs of a rigid move did not, so a rigid move carrying such an
+  overlap was rejected as a steric clash, and masked residues that overlapped
+  could get stuck. `clash_only` is unchanged: moves are still rejected on a
+  clash. Runs without a mask are bit-identical.
 - Mu checks that every atom of a type has one radius. The engine keeps one
   hard-core distance, contact distance and energy per pair of atom types,
   filled in atom order, so a parameter set that gave one type two radii
