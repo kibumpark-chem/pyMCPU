@@ -116,11 +116,6 @@ each slot is chosen; the remaining knobs select the algorithm used
    ``'continuous'`` perturbs each chi by a Gaussian of width
    :py:meth:`Integrator.sidechain_step_size_rad`.
 
-   .. note::
-      The inline pybind11 docstring for this method still claims
-      ``'continuous'`` is the default. The value read back from a
-      freshly constructed ``Integrator`` is ``'rotamer_library'``.
-
 .. py:method:: Integrator.sidechain_move_mode() -> str
 
    The active sidechain mode.
@@ -154,11 +149,6 @@ each slot is chosen; the remaining knobs select the algorithm used
    whole C-terminal segment and is rejected on displacement grounds
    most of the time. ``p=0.0`` also reproduces legacy behaviour
    exactly, RNG draw count included.
-
-   .. note::
-      The inline pybind11 docstring for this method still claims a
-      default of 0.05. A freshly constructed ``Integrator`` reports
-      0.0.
 
 .. py:method:: Integrator.pivot_rama_probability() -> float
 

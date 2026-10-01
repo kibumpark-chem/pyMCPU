@@ -82,6 +82,12 @@ parameter files, and registers the five physics potentials.
 
       The registered potentials, in registration order.
 
+      .. note::
+         pybind11 renders the element type of this method and of
+         ``add_potential`` using the raw C++ name ``mcpu::Potential``
+         rather than ``pymcpu.mcpu_core.Potential``. The objects
+         themselves are ordinary ``Potential`` instances.
+
    .. py:method:: energy_terms() -> dict[int, str]
 
       The energy terms as ``{group: name}``, sorted by group -- for MCPU
@@ -92,12 +98,6 @@ parameter files, and registers the five physics potentials.
 
       ``add_potential`` raises ``ValueError`` if a potential would give one
       group two names, or use one name for two groups.
-
-      .. note::
-         pybind11 renders the element type of this method and of
-         ``add_potential`` using the raw C++ name ``mcpu::Potential``
-         rather than ``pymcpu.mcpu_core.Potential``. The objects
-         themselves are ordinary ``Potential`` instances.
 
    .. rubric:: Residue chemistry
 
