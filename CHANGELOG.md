@@ -67,6 +67,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Mu checks that every atom of a type has one radius. The engine keeps one
+  hard-core distance, contact distance and energy per pair of atom types,
+  filled in atom order, so a parameter set that gave one type two radii
+  would have made Mu depend on atom order. Reading such an atom-type file
+  now raises `ValueError`, and so does handing `MuPotential` such matrices.
+  mcpu08 is unaffected.
 - **Collective variables work with `KORPForceField`.** Every CV finds its
   atoms through `build_contact_atom_index`, which read MCPU's per-atom
   list, so an `EngineSession` with KORP and any CV stopped with an

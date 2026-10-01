@@ -544,6 +544,7 @@ struct CpTimer {
         n_types_ = max_t + 1;
         const size_t NT = static_cast<size_t>(std::max(n_types_, 0));
         type_params_.assign(NT * NT, TypePairParams{});
+        std::vector<uint8_t> filled(NT * NT, 0);
 
         for (size_t i = 0; i < N; ++i) {
             for (size_t j = i + 1; j < N; ++j) {
@@ -559,16 +560,37 @@ struct CpTimer {
                 // ADDED: precompute hard_r = sqrt(hard_r2) for 3-decimal clash guard
                 const float hr = (tp.hard_r2 > 0.f) ? std::sqrt(tp.hard_r2) : 0.f;
                 tp.hard_tol_r2 = hard_tol_r2_from(hr);
-
-                const size_t key =
-                    static_cast<size_t>(ti) * NT + static_cast<size_t>(tj);
-                const size_t key_sym =
-                    static_cast<size_t>(tj) * NT + static_cast<size_t>(ti);
-                type_params_[key] = tp;
-                type_params_[key_sym] = tp;
+                store_type_pair_params(filled, static_cast<int>(i), static_cast<int>(j), tp);
             }
         }
         apply_mu_denselist_cutoff();
+    }
+
+    void MuPotential::store_type_pair_params(
+        std::vector<uint8_t>& filled, int i, int j, const TypePairParams& tp)
+    {
+        const size_t NT = static_cast<size_t>(n_types_);
+        const int ti = atom_types[static_cast<size_t>(i)];
+        const int tj = atom_types[static_cast<size_t>(j)];
+        const size_t key = static_cast<size_t>(ti) * NT + static_cast<size_t>(tj);
+        const size_t key_sym = static_cast<size_t>(tj) * NT + static_cast<size_t>(ti);
+        if (filled[key]) {
+            const TypePairParams& have = type_params_[key];
+            if (have.hard_r2 != tp.hard_r2 || have.contact_r2 != tp.contact_r2 ||
+                have.energy != tp.energy) {
+                throw std::invalid_argument(
+                    "MuPotential: atoms " + std::to_string(i) + " and " +
+                    std::to_string(j) + " (types " + std::to_string(ti) + " and " +
+                    std::to_string(tj) + ") have a different hard-core distance, "
+                    "contact distance or energy from an earlier pair of the same "
+                    "types. Mu stores one entry per type pair, so every atom of a "
+                    "type must have the same radius.");
+            }
+            return;
+        }
+        filled[key] = filled[key_sym] = 1;
+        type_params_[key] = tp;
+        type_params_[key_sym] = tp;
     }
 
     void MuPotential::bench_eval_pair_only(int n_iter) const {
@@ -710,6 +732,7 @@ struct CpTimer {
         n_types_ = max_t + 1;
         const size_t NT = static_cast<size_t>(std::max(n_types_, 0));
         type_params_.assign(NT * NT, TypePairParams{});
+        std::vector<uint8_t> filled(NT * NT, 0);
 #endif
 
 #if !MCPU_FAST_MU_DELTA
@@ -761,10 +784,6 @@ struct CpTimer {
                 const int ti = atom_types[static_cast<size_t>(i)];
                 const int tj = atom_types[static_cast<size_t>(j)];
                 if (ti >= 0 && tj >= 0 && NT > 0) {
-                    const size_t key =
-                        static_cast<size_t>(ti) * NT + static_cast<size_t>(tj);
-                    const size_t key_sym =
-                        static_cast<size_t>(tj) * NT + static_cast<size_t>(ti);
                     TypePairParams tp;
                     tp.hard_r2 = hc;
                     tp.contact_r2 = cd;
@@ -772,8 +791,7 @@ struct CpTimer {
                     // ADDED: precompute hard_r for 3-decimal MM clash guard
                     const float hr = (hc > 0.f) ? std::sqrt(hc) : 0.f;
                     tp.hard_tol_r2 = hard_tol_r2_from(hr);
-                    type_params_[key] = tp;
-                    type_params_[key_sym] = tp;
+                    store_type_pair_params(filled, i, j, tp);
                 }
 #else
                 ContactData& cd = contact_cache[static_cast<size_t>(matrix_idx)];

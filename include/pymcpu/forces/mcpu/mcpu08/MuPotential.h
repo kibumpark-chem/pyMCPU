@@ -293,6 +293,13 @@ namespace mcpu::forces::mcpu08 {
         void build_clash_exceptions();
         /// Rebuild type_params_ from contact matrices (after atom permute). O(N²).
         void rebuild_type_params_from_matrices();
+        /// Stores atom pair (i, j)'s parameters as its type pair's entry.
+        /// type_params_ keeps one entry per type pair and is filled in atom
+        /// order, so every pair of the same two types must agree; a pair that
+        /// disagrees with an earlier one throws, instead of the last pair in
+        /// atom order silently winning.
+        void store_type_pair_params(std::vector<uint8_t>& filled, int i, int j,
+                                    const TypePairParams& tp);
 
         /// Shared hard-core test for both the incremental ΔE and the full
         /// O(N²) recalculation, so the two can never disagree.

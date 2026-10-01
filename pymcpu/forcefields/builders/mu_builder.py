@@ -61,6 +61,18 @@ class MuPotentialBuilder:
             (row.residue, row.atom): (int(row.type), float(row.radius))
             for row in atom_type_df.itertuples(index=False)
         }
+        # The engine keeps one Mu entry per pair of atom types, so a type
+        # whose atoms had different radii would get whichever pair it saw
+        # last, depending on atom order.
+        first_with_type: dict[int, tuple[str, str, float]] = {}
+        for (residue, atom), (atom_type, radius) in lookup.items():
+            seen = first_with_type.setdefault(atom_type, (residue, atom, radius))
+            if seen[2] != radius:
+                raise ValueError(
+                    f"{filepath}: atom type {atom_type} has radius {seen[2]} for "
+                    f"{seen[0]} {seen[1]} but {radius} for {residue} {atom}; every "
+                    "atom of a type must have the same radius"
+                )
         return lookup
 
     @classmethod
