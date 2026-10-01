@@ -83,6 +83,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   of an unexported class). The `set_sidechain_move_mode` and
   `set_pivot_rama_probability` docstrings gave `continuous` and `0.05` as
   defaults; the defaults are `rotamer_library` and `0.0`.
+- **A move slot with zero weight could still be chosen.** `set_move_weights`
+  normalizes in float32, so weights such as `(0.4, 0.2, 0.0)` -- the
+  backbone-only setup KORP needs -- leave the pivot and KIC weights summing to
+  just under 1, and about one roll in 10^7 fell through to the sidechain slot.
+  That wasted the step; with per-kind CSV columns it also made the next
+  `run()` raise. A zero-weight slot is now unreachable. The same single roll
+  is used, so the RNG stream and every run with nonzero weights are unchanged.
 - **Move counters survive a checkpoint resume.** Checkpoints saved only the
   RNG state, so a resumed run restarted every accept/attempt counter at 0
   while its energy CSV kept appending, and the cumulative move columns dropped

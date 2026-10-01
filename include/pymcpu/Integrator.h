@@ -591,7 +591,11 @@ private:
     /// literals and could drift apart without anything noticing.
     [[nodiscard]] int select_move_slot(float roll) const noexcept {
         if (roll < move_w_pivot_) return 0;
-        if (roll < move_w_pivot_ + move_w_kic_) return 1;
+        // A zero-weight sidechain slot must stay unreachable. In float32 the
+        // normalized pivot + kic can sum to just under 1 (0.4/0.2/0 gives
+        // 0.99999994f), and the [0,1) roll can land exactly there, about once
+        // per 1e7 steps. Same single roll, so the RNG stream is unchanged.
+        if (roll < move_w_pivot_ + move_w_kic_ || move_w_sc_ <= 0.0f) return 1;
         return 2;
     }
 
