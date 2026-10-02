@@ -110,11 +110,12 @@ EnergyChangeResult CalphaExcludedVolumePotential::calculateEnergyChange(
     // No CA moved, so no CA-CA distance changed. A sidechain move lands here.
     if (moved_residues_.empty()) return EnergyChangeResult::finite(0.f);
 
-    // A rigid move preserves every distance among the atoms it carries, so a
-    // pair with both partners moved cannot newly clash. Same argument the Mu
-    // term uses for its own moved-moved elision.
-    const bool skip_moved_moved = patch.is_rigid;
-
+    // Moved-moved pairs are checked even for a rigid move. A rigid move keeps
+    // their distances only in real arithmetic: the pivot is applied in
+    // float32, so a pair sitting on the floor can be rounded under it, and
+    // calculateEnergy would then find a clash in a state this accepted. This
+    // term holds no energy, so skipping the pair would save only this check.
+    // Mu re-checks its skipped rigid pairs for the same reason.
     const auto clashes = [&](int a, int b) {
         const Eigen::Vector3f pa =
             proposed_state.atom_pos(ca_atom_[static_cast<std::size_t>(a)]);
@@ -127,10 +128,8 @@ EnergyChangeResult CalphaExcludedVolumePotential::calculateEnergyChange(
         const int a = moved_residues_[ia];
         for (int j = 0; j < n; ++j) {
             if (j == a) continue;
-            if (moved_[static_cast<std::size_t>(j)]) {
-                if (skip_moved_moved) continue;
-                if (j < a) continue;  // unordered pair, visit once
-            }
+            // Unordered moved-moved pair: visit once.
+            if (moved_[static_cast<std::size_t>(j)] && j < a) continue;
             if (!pair_is_checked(a, j)) continue;
             if (clashes(a, j)) {
                 return EnergyChangeResult::rejected(

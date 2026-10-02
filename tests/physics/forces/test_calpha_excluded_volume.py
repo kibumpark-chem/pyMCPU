@@ -177,3 +177,52 @@ def test_the_guard_hard_rejects_a_clashing_move():
     )
     # Whatever survived must still be clash-free.
     assert context.energy_breakdown(weighted=False)["by_group"][GUARD_GROUP] == 0.0
+
+
+def _rotation(axis, theta):
+    k = axis / np.linalg.norm(axis)
+    kx = np.array([[0, -k[2], k[1]], [k[2], 0, -k[0]], [-k[1], k[0], 0]])
+    return np.eye(3) + np.sin(theta) * kx + (1 - np.cos(theta)) * kx @ kx
+
+
+def test_a_rigid_move_cannot_round_a_pair_under_the_floor():
+    """A rigid pivot keeps CA-CA distances only in real arithmetic. It is
+    applied in float32, so a pair it carries that sits exactly on the floor
+    can be rounded under it. The guard used to skip such moved-moved pairs for
+    a rigid move, and so accepted a state its own full energy calls a clash."""
+    n_res = 12
+    floor = float(np.float32(3.2))
+    coords = _chain(n_res, rise=6.0)
+    coords[10] += coords[6, 1] + (0.0, floor, 0.0) - coords[10, 1]  # CA(10) on the floor from CA(6)
+    system, context = build_backbone_system(coords)
+    _, ca_atom, _ = residue_atom_indices(n_res)
+    guard = KorpPotentialBuilder.build_steric_guard(
+        ca_atom=ca_atom, res_seq=list(range(n_res)), chain_ids=["A"] * n_res, min_distance=floor,
+    )
+    guard.set_energy_group(GUARD_GROUP)
+    system.add_potential(guard)
+    assert context.energy_breakdown(weighted=False)["by_group"][GUARD_GROUP] == 0.0
+
+    # Residues 6..11 (their N, CA, C and O) turn rigidly about N(6) -> CA(6).
+    moved = [3 * r + k for r in range(6, n_res) for k in range(3)] + [3 * n_res + r for r in range(6, n_res)]
+    pos = np.asarray(context.get_state().coords, dtype=np.float32)
+    origin = pos[:, 3 * 6]
+    axis = (pos[:, 3 * 6 + 1] - origin).astype(np.float64)
+    old_state = context.get_state()
+    crossings = 0
+    for theta in np.linspace(1e-3, 1.0, 200):
+        rot = _rotation(axis, theta).astype(np.float32)
+        new = pos.copy()
+        new[:, moved] = (rot @ (pos[:, moved] - origin[:, None])) + origin[:, None]
+        new_state = mcpu_core.State(old_state)
+        new_state.coords = new
+        patch = mcpu_core.ProposalPatch(pos.shape[1])
+        for atom in moved:
+            patch.mark_moved(int(atom))
+        patch.is_valid = True
+        patch.is_rigid = True
+        check = mcpu_core.PhysicsVerifier.verify_potential_delta(
+            context, old_state, new_state, patch, GUARD_GROUP, 1e-3)
+        crossings += check.delta_direct >= CLASH_SENTINEL / 2
+        assert check.passed, (theta, check.message)
+    assert crossings > 0  # the construction really rounds the pair under the floor

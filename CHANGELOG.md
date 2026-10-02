@@ -67,6 +67,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The KORP CA-CA steric guard re-checks the pairs a rigid pivot carries. It
+  skipped them because a rigid move keeps their distances, but the pivot is
+  applied in float32, so a pair sitting exactly on the floor could be rounded
+  under it and accepted with a clash the full energy then reports.
 - **KORP keeps chain IDs and residue numbers.** Its backbone slice goes through
   mdtraj's `Topology.subset`, which drops every chain ID and renumbers a
   residue numbered 0. Multi-chain inputs were therefore numbering-checked,
