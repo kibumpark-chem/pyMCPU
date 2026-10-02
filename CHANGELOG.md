@@ -67,6 +67,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Masked runs no longer accept a clash carried by a large rigid move.** A
+  rigid pivot keeps the distances inside the moved segment, so Mu re-checks
+  those pairs for a hard-core clash instead of scoring them. In the delta
+  paths every run with a residue energy mask takes, that check looked for
+  each atom's moved partners around its new position in a grid of old
+  positions, and lost them once the segment travelled about a cell (6 A or
+  more), so the move could be accepted with a clash in it. The check now
+  runs around each atom's old position, where every such partner is. The
+  `MCPU_PIVOT_MU_BREAKDOWN` diagnostic path, which had no such check, gets
+  it too. Runs without a mask take a different path and are bit-identical.
 - Writing `Context.coords` after the `init_only` atom reorder now discards
   Mu's live contact list, as `set_positions` does, so a run after such a
   reset matches a fresh start. Under `set_output_internal_order(True)` it

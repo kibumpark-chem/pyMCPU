@@ -1251,6 +1251,14 @@ struct CpTimer {
                     if (is_moved[static_cast<size_t>(j)]) {
                         if (skip_rigid_mm) {
                             ++nstats.elided_rigid_mm;
+                            // Rigid-MM clash guard (see the per-atom path):
+                            // checked around i's OLD position, where the grid
+                            // keeps every moved partner. This path had none,
+                            // because moved_grid is not built when
+                            // skip_rigid_mm is on.
+                            if (i < j && !clash &&
+                                rigid_mm_pair_clashes(i, j, cnew.dist2(i, j)))
+                                clash = true;
                             return;
                         }
                         if (i > j) return;
@@ -1260,6 +1268,7 @@ struct CpTimer {
                 });
                 auto tw1 = Clock::now();
                 ns_walk += to_ns(tw0, tw1);
+                if (clash) break;
 
                 incut.clear();
                 auto tr0 = Clock::now();
@@ -1714,8 +1723,17 @@ struct CpTimer {
                                     // can push a near-boundary MM pair under hard_r).
                                     // FIXED: 3-decimal rounding — PDB precision MM clash guard
                                     // (optional margin / double-boundary remain additive).
+                                    //
+                                    // FIXED: run it on the OLD side. The grid holds
+                                    // accepted coordinates, so a moved partner j sits
+                                    // in the grid at old_j. A rigid move keeps |i-j|,
+                                    // so any j that can clash with i is within the
+                                    // hard-core radius of old_i: inside this (old-cell)
+                                    // stencil however far the segment travels. The
+                                    // NEW-side stencil is centred on new_i and could
+                                    // lose such a j once the segment moved about a cell.
                                     const bool check_mm_clash =
-                                        is_new_side && skip_rigid_mm;
+                                        !is_new_side && skip_rigid_mm;
                                     if (check_mm_clash) {
                                         CP_SCOPE(nstats.cp_mmguard_ns, cp_on);
                                         for (int m = 0;
@@ -1957,6 +1975,7 @@ struct CpTimer {
                             const float* __restrict__ cx,
                             const float* __restrict__ cy,
                             const float* __restrict__ cz, int count) {
+                            if (clash) return;  // move is rejected; skip the rest
                             std::uint64_t skip_mask = 0ull;
                             for (int m = 0; m < count; ++m) {
                                 const int j = cids[m];
@@ -1968,6 +1987,22 @@ struct CpTimer {
                                     if (skip_rigid_mm) {
                                         ++nstats.elided_rigid_mm;
                                         skip_mask |= (1ull << m);
+                                        // FIXED: rigid-MM clash guard, moved here
+                                        // from the new-position walk below. The
+                                        // grid holds accepted coordinates and a
+                                        // rigid move keeps |i-j|, so every moved
+                                        // j that can clash with i lies within the
+                                        // hard-core radius of old_i -- in THIS
+                                        // stencil, however far the segment moved.
+                                        // The new-position stencil missed them
+                                        // once the segment travelled ~a cell.
+                                        // Use cnew.dist2: cx/cy/cz are pre-move.
+                                        if (i < j &&
+                                            rigid_mm_pair_clashes(
+                                                i, j, cnew.dist2(i, j))) {
+                                            clash = true;
+                                            return;
+                                        }
                                     } else if (i > j) {
                                         skip_mask |= (1ull << m);
                                     }
@@ -1991,6 +2026,7 @@ struct CpTimer {
                             }
                         },
                         &nstats.neighbor_num_cell_visits);
+                    if (clash) break;
 
                     const bool ok_fixed =
                         mu_grid_ref.for_each_neighbor_cell_span_while(
@@ -2000,14 +2036,11 @@ struct CpTimer {
                                 const float* __restrict__ cy,
                                 const float* __restrict__ cz, int count) {
                                 std::uint64_t skip_mask = 0ull;
-                                std::uint64_t moved_bits = 0ull;
                                 for (int m = 0; m < count; ++m) {
                                     const int j = cids[m];
                                     if (j == i ||
                                         is_moved[static_cast<size_t>(j)])
                                         skip_mask |= (1ull << m);
-                                    if (is_moved[static_cast<size_t>(j)])
-                                        moved_bits |= (1ull << m);
                                 }
                                 float r2_buf[OpenCellGrid::CELL_CAPACITY];
 #pragma GCC ivdep
@@ -2017,20 +2050,8 @@ struct CpTimer {
                                     const float dz = nz - cz[m];
                                     r2_buf[m] = dx * dx + dy * dy + dz * dz;
                                 }
-                                // FIXED: 3-decimal rounding — PDB precision MM clash guard
-                                // Use cnew.dist2 — cell pack coords are pre-move.
-                                if (skip_rigid_mm && moved_bits != 0ull) {
-                                    for (int m = 0; m < count; ++m) {
-                                        if (!(moved_bits & (1ull << m))) continue;
-                                        const int j = cids[m];
-                                        if (j == i || i > j) continue;
-                                        if (rigid_mm_pair_clashes(
-                                                i, j, cnew.dist2(i, j))) {
-                                            clash = true;
-                                            return false;
-                                        }
-                                    }
-                                }
+                                // Rigid-MM clash guard: done in the old-position
+                                // walk above (see the comment there).
                                 for (int m = 0; m < count; ++m) {
                                     if (skip_mask & (1ull << m)) continue;
                                     const float r2 = r2_buf[m];
