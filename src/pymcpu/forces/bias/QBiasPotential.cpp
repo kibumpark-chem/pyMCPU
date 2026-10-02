@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <stdexcept>
+#include <string>
 
 #include "pymcpu/Context.h"
 #include "pymcpu/ProposalPatch.h"
@@ -47,8 +48,15 @@ void QBiasPotential::rebuild_atom_to_pairs() {
 
 void QBiasPotential::permute_atom_indices(const AtomPermutation& perm) {
     if (perm.is_identity()) return;
-    // Map into copies: to_internal() throws on an id outside the permutation,
-    // and a half-remapped pair list would be worse than the original.
+    for (int p = 0; p < n_pairs_; ++p) {
+        if (pairs_i_[p] >= perm.n_atoms() || pairs_j_[p] >= perm.n_atoms()) {
+            throw std::invalid_argument(
+                "QBiasPotential: pair atom index " +
+                std::to_string(std::max(pairs_i_[p], pairs_j_[p])) +
+                " is outside the system's " + std::to_string(perm.n_atoms()) + " atoms");
+        }
+    }
+    // Map into copies, so nothing is half-remapped if a lookup fails.
     std::vector<int> new_i(pairs_i_.size());
     std::vector<int> new_j(pairs_j_.size());
     for (size_t p = 0; p < pairs_i_.size(); ++p) {

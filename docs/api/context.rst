@@ -225,9 +225,11 @@ Atom ordering
 
    Atom locality reorder: ``"off"`` (default) or ``"init_only"``.
    ``init_only`` renumbers the System's atoms in place and remaps its
-   energy terms, so a System can be reordered by one Context only: a
-   second ``init_only`` Context on the same System raises
-   ``RuntimeError``. Build a separate System for each one.
+   energy terms. A Context created on that System afterwards (REMD
+   replicas share one) adopts the same order and still takes build-order
+   coordinates. A Context created *before* the reorder holds coordinates
+   in the old order and raises ``RuntimeError`` when used; create it
+   again.
 
 .. py:method:: Context.get_atom_reorder_mode() -> str
 

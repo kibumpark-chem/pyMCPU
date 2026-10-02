@@ -3,9 +3,9 @@
 The reorder renumbers atoms into storage order and asks every energy term to
 remap the atom ids it holds. The bias did not, so after the reorder it
 measured distances between unrelated atoms (a native bias of 289560 instead
-of 8). It now remaps its pairs, a term added after the reorder is remapped
-when it is added, and a System that one Context has reordered cannot be
-reordered again by another (REMD replicas share one System).
+of 8). It now remaps its pairs, and a term added after the reorder is remapped
+when it is added. Contexts sharing the reordered System (REMD replicas
+share one) adopt its order, or refuse if they predate the reorder.
 
 Actin, because init_only cannot place 1UAO's terminal OXT.
 """
@@ -77,18 +77,29 @@ def test_the_bias_counts_native_contacts_after_the_reorder(heavy, ff, attach: st
 
 
 @pytest.mark.slow
-def test_a_second_reorder_of_one_system_is_refused(heavy, ff) -> None:
+def test_contexts_sharing_a_reordered_system(heavy, ff) -> None:
+    """REMD replicas share one System. A Context created after another one
+    reordered it adopts the same atom order; one created before it holds
+    coordinates in the old order and must refuse to be used."""
     system = ff.create_system(heavy.topology)
     start = (ff.coords[0] * 10.0).T.astype(np.float32)
+    earlier = mcpu_core.Context(system)
+    earlier.set_positions(start)
     first = mcpu_core.Context(system)
     first.set_atom_reorder_mode("init_only")
     first.set_positions(start)
     energy = first.calculate_total_energy(-1)
 
-    second = mcpu_core.Context(system)
-    with pytest.raises(RuntimeError, match="already reordered"):
-        second.set_atom_reorder_mode("init_only")
-    assert first.calculate_total_energy(-1) == energy
+    later = mcpu_core.Context(system)  # mode left at its default
+    later.set_positions(start)
+    assert later.atom_permutation_info()["enabled"]
+    assert later.calculate_total_energy(-1) == energy
+    assert np.array_equal(later.coords, first.coords)
+
+    with pytest.raises(RuntimeError, match="created before"):
+        earlier.calculate_total_energy(-1)
+    with pytest.raises(RuntimeError, match="created before"):
+        mcpu_core.Integrator(temperature=0.6, step_size_rad=0.1).run(earlier, 1, 0)
 
 
 @pytest.mark.skipif(not os.environ.get("KORP_MAP_PATH"), reason="set KORP_MAP_PATH")

@@ -20,7 +20,24 @@ Context::Context(std::shared_ptr<System> sys)
     , state(system->getNumAtoms(), system->getNumResidues())
     , atom_perm_(AtomPermutation::identity(system->getNumAtoms()))
 {
+    // A System another Context reordered (REMD replicas share one) is in
+    // storage order: take its permutation, so coordinates given in build
+    // order are mapped like that Context's.
+    if (system->atoms_reordered()) {
+        atom_perm_ = system->applied_atom_permutation();
+        atom_reorder_mode_ = AtomReorderMode::InitOnly;
+        reorder_applied_ = true;
+    }
     neighbors_.init(*system);
+}
+
+void Context::require_current_atom_order() const {
+    if (system->atoms_reordered() && !reorder_applied_) {
+        throw std::runtime_error(
+            "this Context was created before another Context reordered its "
+            "System's atoms (init_only), so its coordinates are in the old "
+            "order; create the Context again.");
+    }
 }
 
 void Context::set_atom_reorder_mode(AtomReorderMode mode) {
@@ -29,19 +46,9 @@ void Context::set_atom_reorder_mode(AtomReorderMode mode) {
         // Keep identity; do not undo an already-applied permutation in this PR.
         return;
     }
-    if (!reorder_applied_) refuse_reordered_system_();
+    require_current_atom_order();
     if (positions_set_ && !reorder_applied_) {
         maybe_apply_init_only_reorder_();
-    }
-}
-
-void Context::refuse_reordered_system_() const {
-    // The reorder rewrites the System, which REMD replicas share, while the
-    // permutation lives on this Context; reordering it twice corrupts both.
-    if (system->atoms_reordered()) {
-        throw std::runtime_error(
-            "init_only atom reorder: this System was already reordered by another "
-            "Context; build a separate System for each init_only Context.");
     }
 }
 
@@ -53,7 +60,7 @@ void Context::maybe_apply_init_only_reorder_() {
     if (atom_reorder_mode_ != AtomReorderMode::InitOnly) return;
     if (reorder_applied_) return;
     if (!positions_set_) return;
-    refuse_reordered_system_();
+    require_current_atom_order();
 
     std::vector<BlockIndices> new_blocks;
     const NeighborConfig& ncfg = neighbors_.config();
@@ -108,6 +115,7 @@ void require_atom_count(const Eigen::Matrix3Xf& coords, int expected) {
 
 void Context::set_coords_from_python(const Eigen::Matrix3Xf& coords) {
     require_atom_count(coords, system->getNumAtoms());
+    require_current_atom_order();
     if (atom_perm_.is_identity()) {
         setPositions(coords);
         return;
@@ -154,6 +162,7 @@ void Context::setQBias(float k_bias, float n_target) {
 // --- INITIALIZATION ---
 void Context::setPositions(const Eigen::Matrix3Xf& new_coords) {
     require_atom_count(new_coords, system->getNumAtoms());
+    require_current_atom_order();
     // Coordinates are being replaced wholesale (load, REMD swap, restart), so
     // the live contact list describes a conformation that no longer exists.
     state.mu_contact_invalidate();
@@ -412,6 +421,7 @@ void Context::commit_accepted_move(const State& proposed_state, const ProposalPa
 
 // --- PHYSICS EVALUATION ---
 float Context::calculate_total_energy(int target_group) {
+    require_current_atom_order();
     // Asks the System to loop through all its Potentials and calculate baseline energy
     // (legacy-weighted by default via energy_weights_).
     const TotalEnergyResult result =
@@ -438,6 +448,7 @@ float Context::calculate_total_energy(int target_group) {
 }
 
 float Context::calculate_total_energy_raw(int target_group) const {
+    require_current_atom_order();
     return system->getTotalEnergyRaw(*this, state, target_group);
 }
 
@@ -448,6 +459,7 @@ float Context::calculate_delta_energy(const State& proposed_state, const Proposa
 }
 
 EnergyBreakdown Context::energy_breakdown() const {
+    require_current_atom_order();
     return system->energyBreakdown(*this, state);
 }
 

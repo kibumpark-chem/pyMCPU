@@ -239,8 +239,6 @@ private:
     RejectReason last_total_reject_reason_ = RejectReason::None;
 
     void maybe_apply_init_only_reorder_();
-    /// Throws if another Context already reordered this System's atoms.
-    void refuse_reordered_system_() const;
 
 public:
     float contactCutoffA() const noexcept { return neighbors_.mu_cutoff_A(); }
@@ -248,6 +246,10 @@ public:
 
     explicit Context(std::shared_ptr<System> sys);
     void setPositions(const Eigen::Matrix3Xf& new_coords);
+    /// Throws if another Context reordered this System's atoms after this one
+    /// was created: this one's coordinates are then in the wrong order. A
+    /// Context created on an already reordered System adopts its permutation.
+    void require_current_atom_order() const;
     void commit_accepted_move(const State& proposed_state, const ProposalPatch& patch,
                               MoveKind move_kind = MoveKind::Other);
     float calculate_total_energy(int target_group = -1);

@@ -270,7 +270,7 @@ class NativeContactsCV:
             self.native_contact_pairs = None
 
     def atom_pair_indices(self) -> tuple[np.ndarray, np.ndarray]:
-        """Engine-internal contact-atom index pairs used by the C++ bias potential."""
+        """Contact-atom index pairs, in engine build order, for the C++ bias potential."""
         return (
             self.ca_internal_idx[self.pairs_i].astype(np.int32),
             self.ca_internal_idx[self.pairs_j].astype(np.int32),
@@ -325,6 +325,12 @@ def attach_native_contacts_bias_potential(system, cv: NativeContactsCV):
             f"got NativeContactsCV(mode={cv.mode!r})."
         )
     atom_i, atom_j = cv.atom_pair_indices()
+    n_atoms = system.get_num_atoms()
+    if min(atom_i.min(), atom_j.min()) < 0 or max(atom_i.max(), atom_j.max()) >= n_atoms:
+        raise ValueError(
+            f"native contact pairs use atom indices outside 0..{n_atoms - 1}, "
+            "the system's atoms"
+        )
     potential = mcpu_core.NativeContactsBiasPotential(atom_i, atom_j, float(cv.q_cutoff))
     potential.set_energy_group(6)
     potential.set_name("native_contacts_bias")

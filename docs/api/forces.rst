@@ -181,7 +181,9 @@ Bias term
    registered potential can serve a whole replica ladder.
 
    :param ca_atom_i: ``Sequence[int]`` -- first atom of each reference
-      contact pair (engine-internal indices).
+      contact pair, as engine indices in build order (what
+      ``forcefield.blocks`` gives). After an ``init_only`` reorder the
+      System maps them to storage order when the potential is added.
    :param ca_atom_j: ``Sequence[int]`` -- second atom of each pair.
    :param q_cutoff: ``float`` -- contact distance cutoff in Å. A pair
       counts towards ``N`` when it is closer than this.
