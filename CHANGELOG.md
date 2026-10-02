@@ -82,7 +82,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   scored and steric-guarded as one chain: a homo-oligomer numbered from 1 in
   each chain was refused, chains with distinct numbers were scored as one, and
   the CA-CA guard excused cross-chain contacts as bonded neighbours. Both are
-  now put back, also on `output_topology`. Single-chain inputs are unchanged.
+  now put back, also on `output_topology`, and the inter-chain energy of the
+  bundle's two-chain structures matches korpe. Single-chain inputs are
+  unchanged. The moves still treat all chains as one bonded backbone, so
+  KORPForceField warns on multi-chain input: use it for scoring, or sample
+  one chain.
 - **The native-contacts bias follows the `init_only` atom reorder.** The
   reorder renumbers atoms and asks each energy term to remap the atom ids it
   holds; the bias kept its pairs in the old numbering and so measured

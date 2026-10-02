@@ -255,6 +255,18 @@ class KORPForceField(BaseForceField):
             raise ValueError(
                 f"need at least 3 scorable residues, found {len(self.res_names)}"
             )
+        chains = list(dict.fromkeys(self.chain_ids))
+        if len(chains) > 1:
+            # The energy terms read chain identity, but the moves do not: the
+            # engine has one continuous backbone, so a pivot carries every later
+            # chain with it and KIC keeps the gap between chains as a bond.
+            logger.warning(
+                "KORPForceField: %d chains (%s). Energies treat them as separate "
+                "chains, but the moves treat them as one bonded backbone, so the "
+                "chains cannot move independently. Use multi-chain input for "
+                "scoring, or sample one chain.",
+                len(chains), ", ".join(repr(c) for c in chains),
+            )
 
     def _validate_residue_numbering(self) -> None:
         """KORP takes sequence separation from PDB numbering, not array order.

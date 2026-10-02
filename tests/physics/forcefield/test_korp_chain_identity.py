@@ -24,12 +24,18 @@ from pymcpu.forcefields.korp import KORPForceField
 from pymcpu.runners import default_example_pdb
 
 
-def _two_chains(tmp_path: Path, b_first: int, shift_z: float = 9.0) -> md.Trajectory:
-    """1UAO as chain A, and a copy shifted along z as chain B numbered from ``b_first``."""
+def _two_chains(tmp_path: Path, b_first: int, shift_z: float = 12.0) -> md.Trajectory:
+    """1UAO as chain A, and as chain B a copy turned 1 rad about z and moved
+    along z, numbered from ``b_first``. The turn keeps every inter-chain pair
+    off KORP's bin edges, where a pure translation would put them."""
     atoms = [ln for ln in default_example_pdb().read_text().splitlines() if ln.startswith("ATOM")]
+    xyz = np.array([[float(ln[30:38]), float(ln[38:46]), float(ln[46:54])] for ln in atoms])
+    centre = xyz.mean(axis=0)
+    c, s = np.cos(1.0), np.sin(1.0)
+    turn = np.array([[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]])
     lines = atoms + ["TER"]
-    for ln in atoms:
-        x, y, z = float(ln[30:38]), float(ln[38:46]), float(ln[46:54]) + shift_z
+    for ln, pos in zip(atoms, xyz):
+        x, y, z = turn @ (pos - centre) + centre + (0.0, 0.0, shift_z)
         seq = int(ln[22:26]) - 1 + b_first
         lines.append(ln[:21] + "B" + f"{seq:4d}" + ln[26:30] + f"{x:8.3f}{y:8.3f}{z:8.3f}" + ln[54:])
     path = tmp_path / "two_chains.pdb"
@@ -83,3 +89,9 @@ def test_a_cross_chain_overlap_is_not_excused(tmp_path) -> None:
     traj.xyz[0, b11] += target - traj.xyz[0, ca_b11]
     with pytest.raises(ValueError, match="already violates"):
         _layout(traj)
+
+
+def test_a_multi_chain_input_warns_that_the_moves_join_the_chains(tmp_path, caplog) -> None:
+    with caplog.at_level("WARNING", logger="pymcpu.forcefields.korp"):
+        _layout(_two_chains(tmp_path, b_first=11))
+    assert any("one bonded backbone" in record.getMessage() for record in caplog.records)

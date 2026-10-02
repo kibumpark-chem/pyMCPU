@@ -237,3 +237,22 @@ def test_renumbering_another_chain_does_not_change_the_energy(tmp_path):
     _, from_one = _two_chain_energy(tmp_path, b_first=1)
     _, from_eleven = _two_chain_energy(tmp_path, b_first=11)
     assert from_one == from_eleven
+
+
+@pytest.mark.parametrize(("rel", "inter_chain"), [
+    ("rcd6/1M4J.pdb", 78.266785),
+    ("rcd6/1DOS.pdb", -295.255619),
+])
+def test_the_inter_chain_energy_matches_korpe(rel, inter_chain):
+    """E(AB) - E(A) - E(B) from the reference korpe binary, on real
+    two-chain structures from the KORP bundle. (The per-chain totals are
+    not compared: chain A differs from korpe by a pre-existing amount that
+    has nothing to do with chains.)"""
+    traj = _load(rel)
+
+    def energy(t):
+        ff = KORPForceField(t, map_path=_map_path())
+        return _simulate(ff, t).context.energy_breakdown(weighted=False)["by_group"][7]
+
+    chains = [traj.atom_slice(traj.topology.select(f"chainid {i}")) for i in range(2)]
+    assert energy(traj) - energy(chains[0]) - energy(chains[1]) == pytest.approx(inter_chain, abs=1e-2)
