@@ -62,8 +62,6 @@ Context.hbond_uses_fallback
 Context.invalidate_verlet_on_pivot_accept
 Context.invalidate_verlet_pivot_accept
 Context.maybe_rebuild_verlet
-Context.mm_clash_margin
-Context.mm_double_boundary
 Context.mu_backend_name
 Context.mu_cell_size_A
 Context.mu_cell_size_angstrom
@@ -88,8 +86,6 @@ Context.set_clash_first_min_moved
 Context.set_coords_from_python
 Context.set_energy_weight
 Context.set_invalidate_verlet_on_pivot_accept
-Context.set_mm_clash_margin
-Context.set_mm_double_boundary
 Context.set_mu_cell_size_angstrom
 Context.set_mu_cell_size_min_angstrom
 Context.set_mu_cell_size_scale
@@ -195,8 +191,6 @@ MuPotential.clash_exception_count
 MuPotential.get_energy_group
 MuPotential.get_name
 MuPotential.is_enabled
-MuPotential.mm_clash_margin
-MuPotential.mm_double_boundary
 MuPotential.mu_cutoff_sq
 MuPotential.mu_exact_cutoff
 MuPotential.set_enabled

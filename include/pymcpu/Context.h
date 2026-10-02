@@ -392,12 +392,6 @@ public:
     /// First MuPotential (nullptr if none). For diagnostics / verify.
     [[nodiscard]] forces::mcpu08::MuPotential* mu_potential();
     [[nodiscard]] const forces::mcpu08::MuPotential* mu_potential() const;
-    /// ADDED: MM clash margin for rigid elision path
-    void set_mm_clash_margin(float margin_r2);
-    [[nodiscard]] float mm_clash_margin() const;
-    /// ADDED: double MM boundary clash check
-    void set_mm_double_boundary(bool on);
-    [[nodiscard]] bool mm_double_boundary() const;
     /// Legacy opt-in: restore unconditional pivot→Verlet invalidate (default off).
     void set_invalidate_verlet_on_pivot_accept(bool on) noexcept {
         neighbors_.config().invalidate_verlet_on_pivot_accept = on;

@@ -14,14 +14,13 @@ does.
    extension.
 
 .. note::
-   ``Context`` exposes 71 public members. This page documents the
+   ``Context`` exposes 67 public members. This page documents the
    user-facing subset. The remainder -- neighbour-list cell sizing and
    Verlet skin knobs (``mu_cell_size_angstrom``, ``mu_skin``,
    ``mu_verlet_enabled``, ``verlet_moved_threshold``,
    ``verlet_partial_threshold``, ``use_cell_pair``,
    ``cell_pair_min_moved``, ``clash_first_min_moved``,
-   ``skip_rigid_mm``, ``mm_clash_margin``, ``mm_double_boundary`` and
-   their setters), rebuild counters (``neighbor_aabb_rebuilds``,
+   ``skip_rigid_mm`` and their setters), rebuild counters (``neighbor_aabb_rebuilds``,
    ``neighbor_dense_cap_fallbacks``, ``neighbor_proxy_stats``,
    ``print_neighbor_audit``) and the atom-permutation internals -- are
    **performance and diagnostic knobs and are not part of the stable

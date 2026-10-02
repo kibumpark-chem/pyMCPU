@@ -121,16 +121,6 @@ supplying your own tables.
 
       Read-only ``int``. Number of hard-core overlaps seen.
 
-   .. py:attribute:: mm_clash_margin
-
-      Read/write moved-moved clash margin in Å². Also settable through
-      the ``MCPU_MM_CLASH_MARGIN`` environment variable.
-
-   .. py:attribute:: mm_double_boundary
-
-      Read/write ``bool``: double moved-moved boundary clash check.
-      Also ``MCPU_MM_DOUBLE_BOUNDARY``.
-
    .. rubric:: Internals and benchmarking
 
    These are development hooks, not part of the stable API:

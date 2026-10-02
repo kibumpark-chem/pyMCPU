@@ -385,12 +385,6 @@ PYBIND11_MODULE(mcpu_core, m) {
             [](Context& c) -> m08::MuPotential* { return c.mu_potential(); },
             py::return_value_policy::reference_internal,
             "First MuPotential, or None.")
-        .def("set_mm_clash_margin", &Context::set_mm_clash_margin, py::arg("margin_r2"),
-             "ADDED: MM clash margin (Å²). Also: MCPU_MM_CLASH_MARGIN.")
-        .def("mm_clash_margin", &Context::mm_clash_margin)
-        .def("set_mm_double_boundary", &Context::set_mm_double_boundary, py::arg("on"),
-             "ADDED: double MM boundary clash check. Also: MCPU_MM_DOUBLE_BOUNDARY=1.")
-        .def("mm_double_boundary", &Context::mm_double_boundary)
         .def("set_verlet_moved_threshold", &Context::set_verlet_moved_threshold,
              py::arg("n"),
              "Force CellOnly when n_moved > n (0 ⇒ always CellOnly).")
@@ -1455,16 +1449,6 @@ PYBIND11_MODULE(mcpu_core, m) {
         .def_property_readonly(
             "mu_cutoff_sq", &m08::MuPotential::mu_cutoff_sq,
             "mu_exact_cutoff² used in denselist r² prefilter.")
-        .def_property(
-            "mm_clash_margin",
-            &m08::MuPotential::mm_clash_margin,
-            &m08::MuPotential::set_mm_clash_margin,
-            "ADDED: MM clash margin Å² (MCPU_MM_CLASH_MARGIN).")
-        .def_property(
-            "mm_double_boundary",
-            &m08::MuPotential::mm_double_boundary,
-            &m08::MuPotential::set_mm_double_boundary,
-            "ADDED: double MM boundary check (MCPU_MM_DOUBLE_BOUNDARY).")
         .def("calculate_energy_change",
              [](const m08::MuPotential& mu, const Context& context,
                 const State& old_state, const State& new_state,

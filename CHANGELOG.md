@@ -370,6 +370,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- `Context.set_mm_clash_margin` / `mm_clash_margin`,
+  `Context.set_mm_double_boundary` / `mm_double_boundary`, the matching
+  `MuPotential` properties and the `MCPU_MM_CLASH_MARGIN` and
+  `MCPU_MM_DOUBLE_BOUNDARY` environment variables. They were experiments for
+  the rigid-move clash problem that the shared hard-core threshold has since
+  solved, and only the cell-pair path read them. The double-boundary check had
+  become the default check without its prefilter, so it changed only speed.
+  The margin rejected rigid moves that have no clash, on that one path only,
+  so a masked run's trajectory depended on which path a move took. Runs that
+  did not set them are bit-identical.
 - `MCPUAtom.to_write` and `MCPUAtom.is_sidechain`. They existed to tell
   glycine's second CA slot (see Changed) apart from real atoms. `to_write`
   was then false only for explicit amide hydrogens, exactly when

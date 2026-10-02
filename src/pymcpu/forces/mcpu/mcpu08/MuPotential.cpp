@@ -336,16 +336,6 @@ struct CpTimer {
         // Exact denselist cutoff from parameter matrices (refined after
         // type_params_ in cache_necessary_data). Default ON.
         apply_mu_denselist_cutoff();
-        // ADDED: MM clash margin for rigid elision path
-        if (const char* e = std::getenv("MCPU_MM_CLASH_MARGIN")) {
-            char* end = nullptr;
-            const float v = std::strtof(e, &end);
-            if (end != e) mm_clash_margin_ = v;
-        }
-        // ADDED: double MM boundary clash check
-        if (const char* e = std::getenv("MCPU_MM_DOUBLE_BOUNDARY")) {
-            mm_double_boundary_ = (e[0] == '1');
-        }
         // ADDED: three-layer eval — layered path is always active.
         // ADDED: topo_flag_ path (layered v2). Default on; =0 forces v1 branches.
         if (const char* e = std::getenv("MCPU_TOPO_FLAGS")) {
@@ -1721,8 +1711,6 @@ struct CpTimer {
                                     // When skip_rigid_mm, energy MM is elided but
                                     // clash must still be detected (float32 rotation
                                     // can push a near-boundary MM pair under hard_r).
-                                    // FIXED: 3-decimal rounding — PDB precision MM clash guard
-                                    // (optional margin / double-boundary remain additive).
                                     //
                                     // FIXED: run it on the OLD side. The grid holds
                                     // accepted coordinates, so a moved partner j sits
@@ -1742,77 +1730,11 @@ struct CpTimer {
                                                 continue;
                                             const int j = cids[m];
                                             if (j == i || i > j) continue;
-                                            if (mm_double_boundary_) {
-                                                // ADDED: double MM boundary
-                                                const float r2_old =
-                                                    cold.dist2(i, j);
-                                                const size_t pidx =
-                                                    static_cast<size_t>(i) *
-                                                        static_cast<size_t>(
-                                                            num_atoms_cached_) +
-                                                    static_cast<size_t>(j);
-                                                const uint8_t flag =
-                                                    topo_flag_[pidx];
-                                                if (!(flag & 1u)) continue;
-                                                if (mask_ignores_pair(i, j)) continue;
-                                                const int ti =
-                                                    atom_types[static_cast<
-                                                        size_t>(i)];
-                                                const int tj =
-                                                    atom_types[static_cast<
-                                                        size_t>(j)];
-                                                if (ti < 0 || tj < 0 ||
-                                                    n_types_ <= 0)
-                                                    continue;
-                                                const auto& g =
-                                                    type_params_
-                                                        [static_cast<size_t>(ti) *
-                                                             static_cast<size_t>(
-                                                                 n_types_) +
-                                                         static_cast<size_t>(
-                                                             tj)];
-                                                const float hard = g.hard_r2;
-                                                const bool near =
-                                                    r2_old >=
-                                                        hard -
-                                                            mm_double_boundary_sq_ &&
-                                                    r2_old <=
-                                                        hard +
-                                                            mm_double_boundary_sq_;
-                                                const float r2_new =
-                                                    cnew.dist2(i, j);
-                                                if (near) {
-                                                    if (rigid_mm_clash_3decimal(
-                                                            r2_new, g.hard_tol_r2)) {
-                                                        clash = true;
-                                                    }
-                                                } else if (rigid_mm_clash_3decimal(
-                                                               r2_new,
-                                                               g.hard_tol_r2)) {
-                                                    clash = true;
-                                                }
-                                            } else if (mm_clash_margin_ > 0.f) {
-                                                // ADDED: MM clash margin on NEW MM
-                                                const float r2_new =
-                                                    cnew.dist2(i, j);
-                                                const float r2_adj =
-                                                    r2_new - mm_clash_margin_;
-                                                bool lc = false;
-                                                (void)eval_pair(
-                                                    i, j,
-                                                    r2_adj > 0.f ? r2_adj : 0.f,
-                                                    &lc);
-                                                if (lc) clash = true;
-                                            } else {
-                                                // Default: 3-decimal hard_r guard
-                                                // FIXED: use cnew.dist2 — r2_buf is
-                                                // new_i vs old_j and false-positives.
-                                                const float r2_new =
-                                                    cnew.dist2(i, j);
-                                                if (rigid_mm_pair_clashes(
-                                                        i, j, r2_new)) {
-                                                    clash = true;
-                                                }
+                                            // cnew.dist2: the cell pack holds
+                                            // pre-move coordinates.
+                                            if (rigid_mm_pair_clashes(
+                                                    i, j, cnew.dist2(i, j))) {
+                                                clash = true;
                                             }
                                         }
                                         if (clash) break;

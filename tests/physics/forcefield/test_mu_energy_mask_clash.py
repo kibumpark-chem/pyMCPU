@@ -59,7 +59,7 @@ def overlap(heavy):
     return _make_overlap(heavy)
 
 
-def _sim(heavy, coords, mask_mode=None, *, skip_rigid_mm=True, double_boundary=False):
+def _sim(heavy, coords, mask_mode=None, *, skip_rigid_mm=True):
     ff = MCPUForceField(heavy)
     system = ff.create_system(heavy.topology)
     if mask_mode is not None:
@@ -70,7 +70,6 @@ def _sim(heavy, coords, mask_mode=None, *, skip_rigid_mm=True, double_boundary=F
     integ.set_seed(1234)
     sim = mc.Simulation(heavy.topology, system, integ)
     sim.context.set_skip_rigid_mm(skip_rigid_mm)
-    sim.context.set_mm_double_boundary(double_boundary)
     sim.context.set_positions(coords)
     sim.context.calculate_total_energy(-1)
     return sim
@@ -92,13 +91,9 @@ def test_the_overlap_is_a_real_clash_without_a_mask(heavy, overlap) -> None:
 
 
 @pytest.mark.parametrize("skip_rigid_mm", [True, False])
-@pytest.mark.parametrize("double_boundary", [False, True])
-def test_ignore_all_lets_a_rigid_move_carry_a_masked_overlap(
-    heavy, overlap, skip_rigid_mm: bool, double_boundary: bool
-) -> None:
+def test_ignore_all_lets_a_rigid_move_carry_a_masked_overlap(heavy, overlap, skip_rigid_mm: bool) -> None:
     coords, pair = overlap
-    sim = _sim(heavy, coords, "ignore_all", skip_rigid_mm=skip_rigid_mm,
-               double_boundary=double_boundary)
+    sim = _sim(heavy, coords, "ignore_all", skip_rigid_mm=skip_rigid_mm)
     assert not sim.context.has_steric_clash()
     assert abs(_forced_rigid_pivot(sim, pair)) < CLASH
 
@@ -138,24 +133,46 @@ def _moved_set(sim) -> list[int]:
     return list(sim.integrator.last_moved_indices())
 
 
+def _psi_rotation(heavy, coords, moved, angle: float = 0.05):
+    """``coords`` with ``moved`` rotated rigidly about the psi axis, CA(5) -> C(5)."""
+    ff = MCPUForceField(heavy)
+    a = coords[:, ff.blocks[PIVOT].bb_start + 1].astype(np.float64)
+    b = coords[:, ff.blocks[PIVOT].c_start].astype(np.float64)
+    k = (b - a) / np.linalg.norm(b - a)
+    kx = np.array([[0, -k[2], k[1]], [k[2], 0, -k[0]], [-k[1], k[0], 0]])
+    rot = np.eye(3) + np.sin(angle) * kx + (1 - np.cos(angle)) * kx @ kx
+    new_coords = coords.copy()
+    new_coords[:, moved] = (rot @ (coords[:, moved] - a[:, None]) + a[:, None]).astype(np.float32)
+    return new_coords
+
+
 def test_ignore_all_delta_matches_the_full_recompute(heavy, overlap) -> None:
     """The incremental Mu change of a rigid move equals the change in the
     full energy, as PhysicsVerifier measures it."""
     coords, pair = overlap
     sim = _sim(heavy, coords, "ignore_all")
     moved = _moved_set(sim)
+    check = _check_rigid(sim.context, _psi_rotation(heavy, coords, moved), moved)
+    assert check.passed, check.message
+    assert abs(check.delta_incremental) < CLASH
 
-    # Rotate the same moved set rigidly about the psi axis, CA(5) -> C(5).
+
+@pytest.mark.parametrize(
+    ("mask_mode", "use_cell_pair"),
+    [(None, True), ("ignore_all", True), ("ignore_all", False)],
+    ids=["contact-list", "cell-pair", "per-atom"],
+)
+def test_every_path_scores_a_clash_free_rigid_move_alike(heavy, mask_mode, use_cell_pair: bool) -> None:
+    """At the native structure a small rigid pivot clashes nowhere, and every
+    Mu path must give the full-energy change for it. (A since-removed clash
+    margin padded the hard core on the cell-pair path only.)"""
     ff = MCPUForceField(heavy)
-    a = coords[:, ff.blocks[PIVOT].bb_start + 1].astype(np.float64)
-    b = coords[:, ff.blocks[PIVOT].c_start].astype(np.float64)
-    k = (b - a) / np.linalg.norm(b - a)
-    kx = np.array([[0, -k[2], k[1]], [k[2], 0, -k[0]], [-k[1], k[0], 0]])
-    rot = np.eye(3) + np.sin(0.05) * kx + (1 - np.cos(0.05)) * kx @ kx
-    new_coords = coords.copy()
-    new_coords[:, moved] = (rot @ (coords[:, moved] - a[:, None]) + a[:, None]).astype(np.float32)
-
-    check = _check_rigid(sim.context, new_coords, moved)
+    coords = np.ascontiguousarray((ff.coords[0] * 10.0).T.astype(np.float32))
+    sim = _sim(heavy, coords, mask_mode)
+    sim.context.set_use_cell_pair(use_cell_pair)
+    sim.context.set_cell_pair_min_moved(1)
+    moved = _moved_set(sim)
+    check = _check_rigid(sim.context, _psi_rotation(heavy, coords, moved), moved)
     assert check.passed, check.message
     assert abs(check.delta_incremental) < CLASH
 

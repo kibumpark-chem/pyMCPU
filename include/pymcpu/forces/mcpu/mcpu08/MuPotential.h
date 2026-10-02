@@ -111,15 +111,6 @@ namespace mcpu::forces::mcpu08 {
         float mm_guard_prefilter_r2_ = std::numeric_limits<float>::infinity();
         int n_types_ = 0;
 
-        /// ADDED: MM clash margin (Å² added to hard_r2) when skip_rigid_mm.
-        /// 0 = off (default). Env ``MCPU_MM_CLASH_MARGIN`` (e.g. 0.01).
-        float mm_clash_margin_ = 0.f;
-        /// ADDED: double-r² MM boundary clash check when skip_rigid_mm.
-        /// Env ``MCPU_MM_DOUBLE_BOUNDARY=1``.
-        bool mm_double_boundary_ = false;
-        /// Half-width (Å²) around hard_r2 for double-boundary MM checks.
-        float mm_double_boundary_sq_ = 0.1f;
-
         // ── Three-layer eval (opt-in; default off until validated) ───────────
         // Layer 1: O(N) topology metadata — on-the-fly clash/contact enable.
         // Layer 2: type_params_ (always built) — hard_r2 / contact_r2 / energy.
@@ -670,19 +661,6 @@ namespace mcpu::forces::mcpu08 {
         [[nodiscard]] double type_params_size_kb() const noexcept {
             return static_cast<double>(type_params_.size() * sizeof(TypePairParams))
                 / 1024.0;
-        }
-
-        /// ADDED: double r² comparison path
-        void set_mm_clash_margin(float margin_r2) noexcept {
-            mm_clash_margin_ = margin_r2;
-        }
-        [[nodiscard]] float mm_clash_margin() const noexcept {
-            return mm_clash_margin_;
-        }
-        /// ADDED: double MM boundary clash check
-        void set_mm_double_boundary(bool on) noexcept { mm_double_boundary_ = on; }
-        [[nodiscard]] bool mm_double_boundary() const noexcept {
-            return mm_double_boundary_;
         }
 
         /// Use precomputed topo_flag_ (v2) vs on-the-fly Layer 1 decode (v1).
