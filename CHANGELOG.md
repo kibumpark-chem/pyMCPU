@@ -92,7 +92,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `last_move_kind()`, `last_moved_indices()`, `last_delta_energy()` and
   `last_log_jacobian_weight()` then describe it. `debug_force_sc`,
   `debug_force_rotamer` and `debug_force_rama_pivot` used to leave the
-  previous move's values in place.
+  previous move's values in place. A forced move also no longer leaves its
+  queued changes behind: with the native-contacts bias attached, the next
+  accepted step of `run()` used to commit the forced move's pair flips too.
+  Like `run()`, the hooks now refuse a fixed residue.
 - **Coordinates of the wrong size are rejected.** `Context.set_positions`,
   `Context.coords` and `State.coords` used to resize the engine state to
   whatever array they were given, so a checkpoint or restart file written

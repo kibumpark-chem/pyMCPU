@@ -663,9 +663,9 @@ PYBIND11_MODULE(mcpu_core, m) {
              py::return_value_policy::copy,
              "Atom indices moved by the last proposed move.")
         .def("last_delta_energy", &mcpu::MCIntegrator::last_delta_energy,
-             "After run(): the last step's energy change if it was accepted, "
-             "else 0. After a debug_force_* call: the forced proposal's "
-             "energy change (the move is not committed).")
+             "After run(): the energy change of the last step that moved "
+             "atoms if it was accepted, else 0. After a debug_force_* call: "
+             "the forced proposal's energy change (the move is not committed).")
         .def("last_log_jacobian_weight", &mcpu::MCIntegrator::last_log_jacobian_weight,
              "Metropolis-Hastings correction term of the last forced proposal "
              "from a debug_force_* call (0 for a symmetric move).")

@@ -281,7 +281,8 @@ public:
     long long get_steric_rejected() const noexcept { return steric_rejected_; }
 
     /// Test helpers: force a pivot/SC choice. Returns whether a move was proposed.
-    /// Proline φ / proline SC increments the resample counters and returns false.
+    /// Proline φ / proline SC increments the resample counters and returns false;
+    /// a fixed residue counts as fixed-rejected and returns false, as in run().
     /// A forced move is never committed. When one of these debug_force_*
     /// calls returns true, last_move_kind(), last_move_is_rigid(),
     /// last_moved_indices(), last_delta_energy() and
@@ -474,8 +475,8 @@ public:
 
     [[nodiscard]] bool use_sparse_proposal() const noexcept { return use_sparse_proposal_; }
 
-    /// Last proposed move context: updated each MC step in ``run``, and by
-    /// every debug_force_* call that proposes a move.
+    /// Last proposed move context: updated by each step of ``run`` that moves
+    /// atoms, and by every debug_force_* call that proposes a move.
     [[nodiscard]] const std::string& last_move_kind() const noexcept {
         return last_move_kind_str_;
     }
@@ -483,8 +484,9 @@ public:
     [[nodiscard]] const std::vector<int>& last_moved_indices() const noexcept {
         return last_moved_indices_;
     }
-    /// After run(): the last step's energy change if it was accepted, else 0.
-    /// After a debug_force_* call: the forced proposal's energy change.
+    /// After run(): the energy change of the last step that moved atoms if
+    /// it was accepted, else 0. After a debug_force_* call: the forced
+    /// proposal's energy change.
     [[nodiscard]] float last_delta_energy() const noexcept { return last_delta_e_; }
     /// The Metropolis-Hastings correction term of the most recent forced
     /// proposal from a debug_force_* call (0 for a move with a symmetric

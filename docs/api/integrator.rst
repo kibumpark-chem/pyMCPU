@@ -326,9 +326,10 @@ These describe the most recent proposal and are what the
 
 .. py:method:: Integrator.last_delta_energy() -> float
 
-   After :py:meth:`Integrator.run`, the last step's energy change if it
-   was accepted, else 0. After a ``debug_force_*`` call (see Test-only
-   hooks below), the forced proposal's energy change.
+   After :py:meth:`Integrator.run`, the energy change of the last step
+   that moved atoms if it was accepted, else 0; a step that moves no atoms
+   leaves the previous value. After a ``debug_force_*`` call (see
+   Test-only hooks below), the forced proposal's energy change.
 
 .. py:method:: Integrator.last_accept_bits() -> list[int]
 
@@ -372,7 +373,8 @@ move mix, so a run that uses them is not a valid sample:
 ``debug_force_sc(context, residue) -> bool`` and
 ``verify_physics_consistency(context, num_steps, atol=0.001)``.
 
-A ``debug_force_*`` hook never commits its move. When it returns
+A ``debug_force_*`` hook never commits its move, and, like ``run()``,
+refuses a fixed residue (counting it in ``get_fixed_rejected()``). When it returns
 ``True``, ``last_move_kind()``, ``last_move_is_rigid()``,
 ``last_moved_indices()``, ``last_delta_energy()`` and
 ``last_log_jacobian_weight()`` describe the move it proposed.

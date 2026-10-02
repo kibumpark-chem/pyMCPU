@@ -153,6 +153,8 @@ def _pivot_cases(n_res: int, residues):
         if not 1 <= r <= n_res - 2:
             continue
         for fixed in ([], [1], [n_res - 1]):
+            if r in fixed:  # a fixed residue's own torsions never move
+                continue
             c_ok = not any(r + 1 <= f < n_res for f in fixed)
             n_ok = not any(1 <= f < r for f in fixed)
             if not (c_ok or n_ok):

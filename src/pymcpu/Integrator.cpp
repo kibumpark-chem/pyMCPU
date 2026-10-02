@@ -2264,6 +2264,10 @@ bool MCIntegrator::debug_force_pivot(Context& context, int residue, bool is_phi)
         ++num_pivot_resample_pro_phi_;
         return false;
     }
+    if (hasFixedResidues() && isResidueFixed(residue)) {
+        ++fixed_rejected_;
+        return false;
+    }
     ensure_proposal_buffers(context);
     State& proposal = *proposal_;
     ProposalPatch& move_patch = patch_;
@@ -2281,6 +2285,13 @@ bool MCIntegrator::record_forced_proposal(Context& context, const char* kind) {
     // inspected.
     const EnergyChangeResult energy_change =
         context.getSystem().evaluateDeltaEnergy(context, context.getState(), *proposal_, patch_);
+    // The energy terms queue the changes this move would commit (contact
+    // flips, native-pair flips) in the workspaces. run() clears them after
+    // every step; a forced move is never committed, so clear them here, or
+    // the next accepted step of run() would commit them too.
+    context.getWorkspace().clear();
+    context.getQBiasWorkspace().clear();
+    context.getHBondWorkspace().clear();
     last_delta_e_ = energy_change.delta_energy;
     last_log_jacobian_weight_ = patch_.log_jacobian_weight;
     last_move_kind_str_ = kind;
@@ -2294,6 +2305,10 @@ bool MCIntegrator::debug_force_sc(Context& context, int residue) {
     if (residue < 0 || residue >= system.getNumResidues()) return false;
     if (system.is_proline(residue)) {
         ++num_sc_resample_pro_;
+        return false;
+    }
+    if (hasFixedResidues() && isResidueFixed(residue)) {
+        ++fixed_rejected_;
         return false;
     }
     ensure_proposal_buffers(context);
@@ -2310,6 +2325,10 @@ bool MCIntegrator::debug_force_rotamer(Context& context, int residue) {
     if (residue < 0 || residue >= system.getNumResidues()) return false;
     if (system.is_proline(residue)) {
         ++num_sc_resample_pro_;
+        return false;
+    }
+    if (hasFixedResidues() && isResidueFixed(residue)) {
+        ++fixed_rejected_;
         return false;
     }
     ensure_proposal_buffers(context);
