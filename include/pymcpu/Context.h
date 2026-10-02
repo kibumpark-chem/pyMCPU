@@ -403,7 +403,8 @@ public:
     }
 
 
-    /// Mu denselist cell size = scale * (r_cut + skin), clamped. Default 1.0.
+    /// Mu denselist cell size = scale * (r_cut + skin), never below the Mu
+    /// cutoff (so scale < 1 acts as 1). Default 1.0.
     /// Rebuilds the Mu denselist when positions are already set (scale must be
     /// set before ``setPositions`` / init_only reorder for matching locality).
     void set_mu_cell_size_scale(float scale) noexcept {
@@ -416,7 +417,8 @@ public:
     float mu_cell_size_scale() const noexcept {
         return neighbors_.config().mu_cell_size_scale;
     }
-    /// Absolute Mu denselist cell size (Å). &lt;=0 clears absolute override.
+    /// Absolute Mu denselist cell size (Å), raised to the Mu cutoff if smaller.
+    /// &lt;=0 clears absolute override.
     void set_mu_cell_size_angstrom(float angstrom) noexcept {
         neighbors_.config().mu_cell_size_angstrom = angstrom;
         if (positions_set_) {

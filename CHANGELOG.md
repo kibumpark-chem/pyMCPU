@@ -67,6 +67,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `Context.set_mu_cell_size_scale` below 1, or `set_mu_cell_size_angstrom`
+  below the Mu cutoff, crashed the interpreter in `set_positions`: the
+  neighbour grid only supports a one-cell stencil, and a smaller cell
+  overflowed its buffers (the cell-pair path also silently dropped cells).
+  Such a cell is now raised to the cutoff. Larger cells are unchanged.
 - The KORP CA-CA steric guard re-checks the pairs a rigid pivot carries. It
   skipped them because a rigid move keeps their distances, but the pivot is
   applied in float32, so a pair sitting exactly on the floor could be rounded

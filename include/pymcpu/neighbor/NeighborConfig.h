@@ -131,11 +131,11 @@ inline void apply_neighbor_env_overrides(NeighborConfig& cfg) noexcept {
     }
 }
 
-/// Effective Mu denselist cell size (Å): scale*(r_cut+skin) or absolute, with
-/// lower clamp only. Cell may exceed ``r_cut`` (scale>1): stencil radius stays
-/// ``ceil(query/cell)`` (=1 when cell≥cutoff) and still finds all pairs within
-/// cutoff. Upper clamp to ``list`` was removed so ``mu_cell_size_scale>1`` and
-/// absolute sizes > cutoff are usable for occupancy / AVX tuning.
+/// Effective Mu denselist cell size (Å): scale*(r_cut+skin) or absolute, never
+/// below ``r_cut``. Cell may exceed ``r_cut`` (scale>1): stencil radius stays
+/// ``ceil(query/cell)`` = 1 and still finds all pairs within cutoff. Upper
+/// clamp to ``list`` was removed so ``mu_cell_size_scale>1`` and absolute sizes
+/// > cutoff are usable for occupancy / AVX tuning.
 inline float effective_mu_cell_size_A(float r_cut, float skin,
                                      const NeighborConfig& cfg) noexcept {
     const float sk = skin > 0.f ? skin : 0.f;
@@ -144,8 +144,12 @@ inline float effective_mu_cell_size_A(float r_cut, float skin,
                      ? cfg.mu_cell_size_angstrom
                      : list * (cfg.mu_cell_size_scale > 0.f ? cfg.mu_cell_size_scale
                                                            : 1.f);
-    const float mn =
-        cfg.mu_cell_size_min_angstrom > 0.f ? cfg.mu_cell_size_min_angstrom : 1.5f;
+    // FIXED: never below the cutoff. The Mu grid code walks a one-cell stencil
+    // (27 cells, NeighborCellList::kCap); a smaller cell needs a wider stencil,
+    // which overflowed those buffers: set_positions crashed, and the cell-pair
+    // path silently dropped cells.
+    float mn = cfg.mu_cell_size_min_angstrom > 0.f ? cfg.mu_cell_size_min_angstrom : 0.f;
+    if (mn < r_cut) mn = r_cut;
     if (cell < mn) cell = mn;
     // CHANGED: allow cell > list (scale>1 / absolute > cutoff). Correctness:
     // OpenCellGrid uses R=ceil(query_radius/cell_size); query stays at r_cut.
