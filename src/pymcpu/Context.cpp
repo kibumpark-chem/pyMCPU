@@ -96,13 +96,22 @@ void require_atom_count(const Eigen::Matrix3Xf& coords, int expected) {
 }
 }  // namespace
 
-void Context::set_coords_from_python(const Eigen::Matrix3Xf& coords_external) {
-    require_atom_count(coords_external, system->getNumAtoms());
-    if (output_internal_order_ || atom_perm_.is_identity()) {
-        setPositions(coords_external);
+void Context::set_coords_from_python(const Eigen::Matrix3Xf& coords) {
+    require_atom_count(coords, system->getNumAtoms());
+    if (atom_perm_.is_identity()) {
+        setPositions(coords);
         return;
     }
-    gather_external_to_internal(coords_external, atom_perm_, state.coords_soa);
+    // The array is in whatever order coords_for_python() returns: storage
+    // order under set_output_internal_order(true), build order otherwise.
+    // setPositions always assumes build order, so it cannot be used here.
+    // As in setPositions, the live contact list describes the old coordinates.
+    state.mu_contact_invalidate();
+    if (output_internal_order_) {
+        state.coords_soa.load_from_eigen(coords);
+    } else {
+        gather_external_to_internal(coords, atom_perm_, state.coords_soa);
+    }
     sync_geometry();
     computeTorsions();
     if (q_bias_k_ > 0.0f) {

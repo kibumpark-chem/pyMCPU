@@ -300,7 +300,7 @@ public:
 
     /// Python/IO: coords in external order unless output_internal_order.
     [[nodiscard]] Eigen::Matrix3Xf coords_for_python() const;
-    void set_coords_from_python(const Eigen::Matrix3Xf& coords_external);
+    void set_coords_from_python(const Eigen::Matrix3Xf& coords);
 
     float getQBiasK() const noexcept { return q_bias_k_; }
     float getQBiasTarget() const noexcept { return q_bias_target_; }

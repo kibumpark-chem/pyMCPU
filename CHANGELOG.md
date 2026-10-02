@@ -67,6 +67,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Writing `Context.coords` after the `init_only` atom reorder now discards
+  Mu's live contact list, as `set_positions` does, so a run after such a
+  reset matches a fresh start. Under `set_output_internal_order(True)` it
+  also takes the array in storage order, the order the getter returns; it
+  used to treat it as build order and scramble the atoms.
 - **Rigid moves no longer stick on overlaps that an `ignore_all` mask
   allows.** With `ignore_all`, a pair involving a masked residue (a linker,
   for example) neither clashes nor makes a contact, and the full energy and
