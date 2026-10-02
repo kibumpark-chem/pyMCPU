@@ -50,7 +50,9 @@ def _sim(heavy, coords, mask_mode=None, *, skip_rigid_mm=True, double_boundary=F
     system = ff.create_system(heavy.topology)
     if mask_mode is not None:
         system.set_energy_ignored_residues([MASKED], mask_mode)
-    integ = mcpu_core.Integrator(temperature=0.6, step_size_rad=0.1)
+    # Small pivots: the forced move must not rotate far enough to make a real,
+    # unmasked clash, whatever angle the seed draws.
+    integ = mcpu_core.Integrator(temperature=0.6, step_size_rad=0.01)
     integ.set_seed(1234)
     sim = mc.Simulation(heavy.topology, system, integ)
     sim.context.set_skip_rigid_mm(skip_rigid_mm)
@@ -91,6 +93,17 @@ def test_clash_only_still_rejects_the_move(heavy, overlap) -> None:
     coords, pair = overlap
     sim = _sim(heavy, coords, "clash_only")
     assert _forced_rigid_pivot(sim, pair) > CLASH
+
+
+def test_clearing_a_clash_only_mask_brings_clashes_back(heavy, overlap) -> None:
+    """The full energy drops clashes while a clash_only mask is set. Once the
+    mask is cleared it must report them again, as the delta path does."""
+    coords, pair = overlap
+    sim = _sim(heavy, coords, "clash_only")
+    assert not sim.context.has_steric_clash()
+    sim.system.clear_energy_ignored_residues()
+    sim.context.calculate_total_energy(-1)
+    assert sim.context.has_steric_clash()
 
 
 def test_ignore_all_delta_matches_the_full_recompute(heavy, overlap) -> None:

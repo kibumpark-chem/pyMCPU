@@ -56,7 +56,11 @@ namespace mcpu::forces::mcpu08 {
                 energy_mask_ptr_ = sys.energy_ignored_mask().data();
                 energy_mask_mode_cached_ = sys.energy_mask_mode();
             } else {
+                // Reset the mode too: the full energy reads it on its own to
+                // drop clashes under ClashOnly, so a mode left over from a
+                // cleared mask would keep hiding every clash.
                 energy_mask_ptr_ = nullptr;
+                energy_mask_mode_cached_ = EnergyMaskMode::IgnoreAll;
             }
         }
 

@@ -74,7 +74,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   moved-moved pairs of a rigid move did not, so a rigid move carrying such an
   overlap was rejected as a steric clash, and masked residues that overlapped
   could get stuck. `clash_only` is unchanged: moves are still rejected on a
-  clash. Runs without a mask are bit-identical.
+  clash. Runs without a mask are bit-identical. Clearing a `clash_only` mask
+  also brings back clash reporting in the full energy, which used to keep
+  dropping every clash.
 - Mu checks that every atom of a type has one radius. The engine keeps one
   hard-core distance, contact distance and energy per pair of atom types,
   filled in atom order, so a parameter set that gave one type two radii
