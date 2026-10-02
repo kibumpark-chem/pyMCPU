@@ -77,12 +77,13 @@ struct NeighborConfig {
     /// Partial Verlet CSR rebuild on SC/KIC accept when n_moved ≤ this.
     int verlet_partial_threshold = 50;
 
-    /// Mu denselist cell size relative to (r_mu + skin). Default 1.0.
+    /// Mu denselist cell size relative to the Mu cutoff. Default 1.0.
     float mu_cell_size_scale = 1.f;
     /// Absolute Mu cell size (Å). If &gt; 0, overrides scale.
     float mu_cell_size_angstrom = -1.f;
-    /// Lower clamp (Å) to avoid huge stencils.
-    float mu_cell_size_min_angstrom = 1.5f;
+    /// Extra lower bound (Å) on the cell; the cell is never below the Mu
+    /// cutoff anyway, so only a value above it does anything. 0 = none.
+    float mu_cell_size_min_angstrom = 0.f;
     /// Denselist query/cell cutoff (Å). Filled by Context::sync_geometry from
     /// MuPotential::mu_exact_cutoff(). &lt;0 → NeighborSystem falls back to 6.0.
     float mu_denselist_cutoff_A = -1.f;
