@@ -655,16 +655,20 @@ PYBIND11_MODULE(mcpu_core, m) {
         .def("set_use_sparse_proposal", &mcpu::MCIntegrator::set_use_sparse_proposal,
              py::arg("on"))
         .def("last_move_kind", &mcpu::MCIntegrator::last_move_kind,
-             "ADDED: last proposed move kind string (Pivot/KIC/Sidechain/Other).")
+             "Kind of the last proposed move (Pivot/KIC/Sidechain/Other), from "
+             "run() or the last debug_force_* call that proposed a move.")
         .def("last_move_is_rigid", &mcpu::MCIntegrator::last_move_is_rigid,
-             "ADDED: whether the last proposal was a rigid body move.")
+             "Whether the last proposed move was a rigid body move.")
         .def("last_moved_indices", &mcpu::MCIntegrator::last_moved_indices,
              py::return_value_policy::copy,
-             "ADDED: atom indices moved in the last proposal.")
+             "Atom indices moved by the last proposed move.")
         .def("last_delta_energy", &mcpu::MCIntegrator::last_delta_energy,
-             "ADDED: ΔE of last accepted move (0 if rejected/invalid).")
+             "After run(): the energy change of the last step that moved "
+             "atoms if it was accepted, else 0. After a debug_force_* call: "
+             "the forced proposal's energy change (the move is not committed).")
         .def("last_log_jacobian_weight", &mcpu::MCIntegrator::last_log_jacobian_weight,
-             "MH correction term from the most recent debug_force_rama_pivot_to call.")
+             "Metropolis-Hastings correction term of the last forced proposal "
+             "from a debug_force_* call (0 for a symmetric move).")
         .def("reject_restore_enabled", &mcpu::MCIntegrator::reject_restore_enabled)
         .def("proposal_is_dynamic_only", &mcpu::MCIntegrator::proposal_is_dynamic_only)
         .def("proposal_lifecycle_info",
@@ -1312,8 +1316,9 @@ PYBIND11_MODULE(mcpu_core, m) {
         "backbone/oxygen/sidechain segments, and the five knowledge-based\n"
         "potentials are a fitted set only meaningful together, so\n"
         "create_system registers all of them.\n\n"
-        "get_num_atoms() can exceed the input heavy-atom count: each\n"
-        "glycine carries one extra bookkeeping slot.")
+        "For MCPUForceField, get_num_atoms() is the input heavy-atom\n"
+        "count, plus one slot per explicit amide hydrogen when\n"
+        "virtual_amide_h=False.")
         .def(py::init<int, int>())
         .def("add_potential",             &System::addPotential)
         .def("get_num_atoms",         &System::getNumAtoms)

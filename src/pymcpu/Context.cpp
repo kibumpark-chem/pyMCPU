@@ -1,4 +1,6 @@
 #include "pymcpu/Context.h"
+#include <stdexcept>
+#include <string>
 #include "pymcpu/forces/bias/QBiasPotential.h"
 #include "pymcpu/forces/mcpu/mcpu08/MuPotential.h"
 #include "pymcpu/AtomReorder.h"
@@ -78,12 +80,38 @@ Eigen::Matrix3Xf Context::coords_for_python() const {
     return scatter_internal_to_external(state.coords_soa, atom_perm_);
 }
 
-void Context::set_coords_from_python(const Eigen::Matrix3Xf& coords_external) {
-    if (output_internal_order_ || atom_perm_.is_identity()) {
-        setPositions(coords_external);
+namespace {
+// Coordinates must cover every atom slot. load_from_eigen would otherwise
+// resize the state silently, and a file written with a different atom layout
+// would load with every atom after the first difference shifted.
+void require_atom_count(const Eigen::Matrix3Xf& coords, int expected) {
+    if (coords.cols() != expected) {
+        throw std::invalid_argument(
+            "got coordinates for " + std::to_string(coords.cols()) +
+            " atoms, but the system has " + std::to_string(expected) +
+            ". A checkpoint or restart file written with a different atom "
+            "layout (for example by an older pyMCPU) cannot be loaded into "
+            "this system.");
+    }
+}
+}  // namespace
+
+void Context::set_coords_from_python(const Eigen::Matrix3Xf& coords) {
+    require_atom_count(coords, system->getNumAtoms());
+    if (atom_perm_.is_identity()) {
+        setPositions(coords);
         return;
     }
-    gather_external_to_internal(coords_external, atom_perm_, state.coords_soa);
+    // The array is in whatever order coords_for_python() returns: storage
+    // order under set_output_internal_order(true), build order otherwise.
+    // setPositions always assumes build order, so it cannot be used here.
+    // As in setPositions, the live contact list describes the old coordinates.
+    state.mu_contact_invalidate();
+    if (output_internal_order_) {
+        state.coords_soa.load_from_eigen(coords);
+    } else {
+        gather_external_to_internal(coords, atom_perm_, state.coords_soa);
+    }
     sync_geometry();
     computeTorsions();
     if (q_bias_k_ > 0.0f) {
@@ -115,6 +143,7 @@ void Context::setQBias(float k_bias, float n_target) {
 
 // --- INITIALIZATION ---
 void Context::setPositions(const Eigen::Matrix3Xf& new_coords) {
+    require_atom_count(new_coords, system->getNumAtoms());
     // Coordinates are being replaced wholesale (load, REMD swap, restart), so
     // the live contact list describes a conformation that no longer exists.
     state.mu_contact_invalidate();

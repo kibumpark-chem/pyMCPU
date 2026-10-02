@@ -103,7 +103,7 @@ _PROXY_KEYS = (
 
 #: (label, pdb-relative-path, seed, steps). Actin carries the most weight: a
 #: threshold straddle needs a dense neighbourhood to be likely, and
-#: chignolin at 80 atoms is thin by comparison.
+#: chignolin at 77 atoms is thin by comparison.
 DEFAULT_CASES = (
     ("chignolin-s42", "pymcpu/data/1uao.pdb", 42, 2000),
     ("chignolin-s1337", "pymcpu/data/1uao.pdb", 1337, 2000),

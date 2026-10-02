@@ -58,7 +58,9 @@ Core state
 
    Replace the coordinates. ``coords`` is a ``float32`` array of shape
    ``(3, n)`` -- **atom-major columns**, i.e. the transpose of MDTraj's
-   ``(n, 3)`` frame -- in Ångström. The argument is positional-only.
+   ``(n, 3)`` frame -- in Ångström, with ``n`` equal to
+   ``System.get_num_atoms()``; any other ``n`` raises ``ValueError``. The
+   argument is positional-only.
 
    .. important::
       ``set_positions()`` does not seed the running total energy.
@@ -69,7 +71,8 @@ Core state
 
 .. py:attribute:: Context.coords
 
-   Read/write ``float32`` ``(3, n)`` array.
+   Read/write ``float32`` ``(3, n)`` array. Writing an array with a
+   different ``n`` raises ``ValueError``, as for :py:meth:`Context.set_positions`.
 
    Coordinates in external (build) order by default;
    ``set_output_internal_order(True)`` for storage order.

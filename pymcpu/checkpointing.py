@@ -23,7 +23,10 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
-CHECKPOINT_FORMAT_VERSION = 1
+# 2: the MCPU layout stores each glycine CA once. Version 1 files from a
+# protein with glycine have one extra atom per glycine and are rejected on
+# resume by checkpoint_layout_error.
+CHECKPOINT_FORMAT_VERSION = 2
 DEFAULT_FILENAME = "last.chk"
 _CYCLE_NAME_RE = re.compile(r"^checkpoint_cycle_(\d+)\.chk$")
 
@@ -447,6 +450,35 @@ def set_integrator_rng_states(replicas: list[Any], states: list[Any]) -> None:
                     "Rebuild with C++20 toolchain to activate exact RNG restore."
                 )
                 warned = True
+
+
+def checkpoint_layout_error(
+    replica_coords: list[Any], n_atoms: int, source: Any = None
+) -> str | None:
+    """Why ``replica_coords`` cannot be loaded into a system of ``n_atoms``, or None.
+
+    Coordinates are stored per atom slot in the engine's layout. A checkpoint
+    from a version with a different layout has the wrong number of columns,
+    and loading it would shift every atom after the first difference. For
+    example, format version 1 gave every glycine CA a second slot.
+    """
+    for i, coords in enumerate(replica_coords or []):
+        if coords is None:
+            continue
+        arr = np.asarray(coords)
+        if arr.ndim != 2:
+            continue
+        found = arr.shape[1] if arr.shape[0] == 3 else arr.shape[0]
+        if found != n_atoms:
+            label = f"checkpoint {source}" if source else "the checkpoint"
+            return (
+                f"{label} holds coordinates for {found} atoms "
+                f"(replica {i}), but this system has {n_atoms}. It was written "
+                "with a different atom layout, for example by an older pyMCPU, "
+                "and cannot be resumed; start the run again from its input "
+                "structure."
+            )
+    return None
 
 
 def get_integrator_move_counters(replicas: list[Any]) -> list[dict[str, int]]:

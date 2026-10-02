@@ -144,7 +144,10 @@ transposed array is not an error, it is a silently wrong structure.
 
 `session.fingerprint` hashes what the engine was built from, so a restart
 state loaded against a different system fails loudly instead of producing
-nonsense. Record it with your state and check it on load.
+nonsense. Record it with your state and check it on load. The hash includes
+the engine's atom count, so it changed for every protein with glycine when
+glycine's CA went from two engine slots to one; `set_coords` also rejects
+coordinates of the wrong size.
 
 ## 6. Ship it as your own distribution
 

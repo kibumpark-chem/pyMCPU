@@ -17,6 +17,7 @@ from pymcpu.checkpointing import (
     CHECKPOINT_FORMAT_VERSION,
     CheckpointConfig,
     checkpoint_cycle_filename,
+    checkpoint_layout_error,
     find_latest_checkpoint,
     get_integrator_move_counters,
     get_integrator_rng_states,
@@ -404,6 +405,11 @@ class ReplicaExchange:
       kind = checkpoint.get("kind", "replica_exchange")
       if kind != "replica_exchange":
         raise ValueError(f"Unsupported checkpoint kind: {kind!r}")
+      layout_error = checkpoint_layout_error(
+        checkpoint.get("replica_coords"), self.system.get_num_atoms()
+      )
+      if layout_error:
+        raise ValueError(layout_error)
 
       n_replicas = int(checkpoint.get("n_replicas", len(checkpoint.get("replica_coords", []))))
       if n_replicas != self.n_replicas:

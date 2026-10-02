@@ -4,6 +4,8 @@
 #include <vector>
 #include "pymcpu/utils/numbers_compat.h"
 #include <cstdint>
+#include <stdexcept>
+#include <string>
 
 #include "pymcpu/utils/CoordsSoA.h"
 #include "pymcpu/utils/CoordSyncStats.h"
@@ -128,6 +130,11 @@ public:
     }
 
     void set_coords_from_eigen(const Eigen::Matrix3Xf& m) {
+        if (m.cols() != coords_soa.n) {
+            throw std::invalid_argument(
+                "State.coords: got coordinates for " + std::to_string(m.cols()) +
+                " atoms, but this state has " + std::to_string(coords_soa.n));
+        }
         note_coords_eigen_write_back();
         coords_soa.load_from_eigen(m);
     }

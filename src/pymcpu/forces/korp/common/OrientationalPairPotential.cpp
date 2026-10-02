@@ -74,8 +74,8 @@ void OrientationalPairPotential::rebuild_atom_lookup() {
         const std::uint8_t bit[3] = {kBitN, kBitCA, kBitC};
         for (int k = 0; k < 3; ++k) {
             const std::size_t a = static_cast<std::size_t>(atoms[k]);
-            // Glycine aside, a backbone atom belongs to exactly one residue, so
-            // a collision here means the caller handed us overlapping indices.
+            // A backbone atom belongs to exactly one residue, so a collision
+            // here means the caller handed us overlapping indices.
             if (frame_residue_of_atom_[a] >= 0) {
                 throw std::invalid_argument(
                     "OrientationalPairPotential: atom " + std::to_string(atoms[k]) +

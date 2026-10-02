@@ -18,7 +18,8 @@ and register it in one call, or by constructing it yourself and calling
 .. code-block:: python
 
    sim.add_energy_reporter("energies.csv", interval=100)
-   sim.add_xtc_reporter("traj.xtc", interval=1000)
+   sim.add_xtc_reporter("traj.xtc", interval=1000,
+                        inverse_mapping=forcefield.inverse_mapping)
 
    # equivalent, if you want to keep a handle on the object
    reporter = mc.EnergyReporter("energies.csv", 100)
@@ -105,7 +106,10 @@ XtcReporter
    :param inverse_mapping: Permutation mapping the engine's internal atom order
       back to the input topology order, so the trajectory is readable against
       the original PDB. Pass ``MCPUForceField.inverse_mapping``. An empty
-      sequence writes internal order.
+      sequence writes internal order. With the default virtual amide
+      hydrogens that has the topology's atom count but not its atom order,
+      so MDTraj loads it against the topology without complaint and the
+      structure comes out scrambled.
    :param bool append: Append to an existing trajectory, for resume.
 
    .. py:attribute:: filename

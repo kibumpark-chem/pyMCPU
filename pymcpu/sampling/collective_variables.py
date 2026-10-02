@@ -19,7 +19,7 @@ import mdtraj as md
 from pymcpu.config import ContactAtomMode, VALID_CONTACT_ATOM_MODES
 
 if TYPE_CHECKING:  # avoid importing the engine just to use this module
-    from pymcpu.forcefields.mcpu import MCPUForceField
+    from pymcpu.forcefields.base import BaseForceField
 
 
 def normalize_contact_atom_mode(mode: str | None) -> ContactAtomMode:
@@ -333,43 +333,39 @@ def attach_native_contacts_bias_potential(system, cv: NativeContactsCV):
 
 
 def build_contact_atom_index(
-    forcefield: "MCPUForceField",
+    forcefield: "BaseForceField",
     mode: str = "ca",
 ) -> np.ndarray:
-    """Return engine-internal contact-atom indices, ordered by residue.
+    """Return engine-internal contact-atom indices, one per residue.
 
-    * ``ca`` — backbone CA (excludes the GLY sidechain CA duplicate).
-    * ``cb`` — CB when present; otherwise backbone CA (GLY and any residue
-      without CB). Never uses the GLY SC-slot CA duplicate.
+    * ``ca`` — backbone CA.
+    * ``cb`` — CB, or the backbone CA for a residue without one (glycine, or
+      a CB missing from the input), as :func:`reference_contact_from_pdb`
+      does. A force field with no sidechain atoms at all cannot be used in
+      this mode: KORP keeps only the backbone.
+
+    Works for any force field that provides ``blocks``, the per-residue
+    ``BlockIndices``.
     """
     mode_n = normalize_contact_atom_mode(mode)
-    n_bb = forcefield.total_bb_atoms
-    atoms = forcefield.ordered_atom_list
-
-    if mode_n == "ca":
-        ca = [
-            (atom.residue_index, idx)
-            for idx, atom in enumerate(atoms)
-            if atom.name == "CA" and idx < n_bb
-        ]
-        ca.sort(key=lambda t: t[0])
-        return np.array([idx for _, idx in ca], dtype=np.int64)
-
-    # cb mode: one index per residue via BlockIndices
-    n_res = int(forcefield.n_res)
-    out = np.empty(n_res, dtype=np.int64)
-    for r in range(n_res):
-        block = forcefield.blocks[r]
-        bb_ca = block.bb_start + 1  # N, CA, C layout
-        sc = int(block.sc_start)
-        if sc >= 0 and sc < len(atoms) and atoms[sc].name == "CB":
-            out[r] = sc
+    if mode_n == "cb" and forcefield.total_sc_atoms == 0:
+        names = {residue.name for residue in forcefield.output_topology.residues}
+        if names - {"GLY"}:
+            raise ValueError(
+                f"contact_atom_mode='cb' needs CB atoms, and "
+                f"{type(forcefield).__name__} has no sidechain atoms; use "
+                "contact_atom_mode='ca'"
+            )
+    out = np.empty(len(forcefield.blocks), dtype=np.int64)
+    for r, block in enumerate(forcefield.blocks):
+        if mode_n == "cb" and block.sc_start >= 0:
+            out[r] = block.sc_start  # MCPUForceField starts each sidechain at its CB
         else:
-            out[r] = bb_ca
+            out[r] = block.bb_start + 1  # N, CA, C layout
     return out
 
 
-def build_ca_index(forcefield: "MCPUForceField") -> np.ndarray:
+def build_ca_index(forcefield: "BaseForceField") -> np.ndarray:
     """Return engine-internal indices of the backbone CA atoms, ordered by residue.
 
     Thin wrapper around :func:`build_contact_atom_index` with ``mode="ca"``.
@@ -383,40 +379,28 @@ def reference_contact_from_pdb(
 ) -> np.ndarray:
     """Load contact-atom coordinates (Angstroms), ordered by residue.
 
-    * ``ca`` — all CA atoms.
+    * ``ca`` — the CA of every residue.
     * ``cb`` — CB when present on the residue, else CA (GLY fallback).
+
+    Only residues with a backbone N, CA and C count, which are the ones a
+    force field turns into engine residues. Ions, ligands and water are left
+    out, even one whose atom is named CA (a calcium ion, for example).
     """
     mode_n = normalize_contact_atom_mode(mode)
     ref = md.load(reference_pdb)
-    top = ref.topology
     xyz_nm = ref.xyz[0]
 
+    picked: list[int] = []
+    for residue in ref.topology.residues:
+        atoms = {atom.name: atom.index for atom in residue.atoms}
+        if not {"N", "CA", "C"} <= atoms.keys():
+            continue
+        picked.append(atoms["CB"] if mode_n == "cb" and "CB" in atoms else atoms["CA"])
+    if not picked:
+        raise ValueError(f"No amino-acid residues found in reference structure: {reference_pdb}")
     if mode_n == "ca":
-        ca_sel = top.select("name CA")
-        if ca_sel.size == 0:
-            raise ValueError(f"No CA atoms found in reference structure: {reference_pdb}")
-        return xyz_nm[ca_sel, :] * 10.0
-
-    coords: list[np.ndarray] = []
-    for residue in top.residues:
-        cb_idx = None
-        ca_idx = None
-        for atom in residue.atoms:
-            if atom.name == "CB":
-                cb_idx = atom.index
-            elif atom.name == "CA":
-                ca_idx = atom.index
-        if cb_idx is not None:
-            coords.append(xyz_nm[cb_idx])
-        elif ca_idx is not None:
-            coords.append(xyz_nm[ca_idx])
-        else:
-            raise ValueError(
-                f"Residue {residue} in {reference_pdb} has neither CB nor CA"
-            )
-    if not coords:
-        raise ValueError(f"No contact atoms found in reference structure: {reference_pdb}")
-    return np.asarray(coords, dtype=np.float64) * 10.0
+        return xyz_nm[picked, :] * 10.0
+    return np.asarray(xyz_nm[picked, :], dtype=np.float64) * 10.0
 
 
 def reference_ca_from_pdb(reference_pdb: str) -> np.ndarray:

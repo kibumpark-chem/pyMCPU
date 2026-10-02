@@ -24,6 +24,7 @@ from pymcpu.checkpointing import (
     CheckpointConfig,
     CheckpointState,
     checkpoint_cycle_filename,
+    checkpoint_layout_error,
     load_checkpoint,
     save_checkpoint,
 )
@@ -707,8 +708,19 @@ class MPIReplicaExchange:
                     "[MPI RE rank 0] No checkpoint found — starting fresh."
                 )
 
+        # A layout mismatch is decided on rank 0 and broadcast, so every rank
+        # raises at the same point. A per-rank raise during the restore below
+        # would leave the other ranks waiting in the next collective.
+        layout_error = None
+        if rank == 0 and state is not None:
+            layout_error = checkpoint_layout_error(
+                state.get("replica_coords"), self.system.get_num_atoms(), last_chk
+            )
+
         # ── Step 2: broadcast to all ranks ────────────────────────
-        state = comm.bcast(state, root=0)
+        state, layout_error = comm.bcast((state, layout_error), root=0)
+        if layout_error:
+            raise ValueError(layout_error)
 
         if state is None:
             return None

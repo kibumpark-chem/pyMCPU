@@ -30,40 +30,37 @@ evaluation time instead.
 The `BlockIndices` record per residue (`include/pymcpu/System.h`) indexes
 into that layout. Python fills `bb_start`, `c_start`, `o_start`,
 `sc_start`, `h_start`, `sc_count` and `amide_donor`, and `-1` means
-"absent". As `MCPUForceField` builds it, `bb_start`, `c_start`,
-`o_start` and `sc_start` are always assigned — every residue gets a
-sidechain start, either its CB or, for GLY, the duplicated CA described
-below — so with the default virtual hydrogens the only `-1` field is
-`h_start`. `res_begin` and `res_end` are **not** set by Python — they
+"absent". As `MCPUForceField` builds it, `bb_start`, `c_start` and
+`o_start` are always assigned. `sc_start` is the residue's CB, or `-1`
+for GLY, which has no sidechain atoms (its `sc_count` is 0). With the
+default virtual hydrogens `h_start` is `-1` everywhere, so GLY's
+`sc_start` is the only other `-1`. `res_begin` and `res_end` are **not** set by Python — they
 stay `-1` unless the optional
 `Context.set_atom_reorder_mode("init_only")` residue-contiguous
 permutation is applied in C++, which is off by default.
 
 `DownstreamCache` (`first_sc_of_residue`, `first_o_of_residue`,
 `first_h_of_residue`) is precomputed in Python so the hot path never has
-to scan forward for the next residue that has a given segment.
+to scan forward for the next residue that has a given segment. For GLY,
+`first_sc_of_residue` is the next residue's sidechain start, or the end
+of the sidechain segment if no later residue has one.
 
 ### The engine index space is not the topology index space
 
-Two things make the engine's atom count differ from the input topology's:
-
-- GLY has no CB, so `_order_atoms()` duplicates its CA into the
-  sidechain segment. This gives the sidechain move a valid index range
-  for every residue. The duplicate carries `to_write=False`.
-- Explicit amide hydrogens, when requested, have no counterpart in a
-  heavy-atom input topology at all (`original_index=-1`).
+Every heavy atom has exactly one engine slot, so the engine index is a
+permutation of the topology index: for 1uao (chignolin, 10 residues)
+both have 77 atoms, and for `examples/actin` (377 residues) both have
+2943. The only extra slots are explicit amide hydrogens, when requested
+with `virtual_amide_h=False`; a heavy-atom input topology has no
+counterpart for them (`original_index=-1`).
 
 `MCPUForceField.inverse_mapping` maps engine index to topology index and
-returns `-1` for any slot with no counterpart, which is what the XTC
-reporter uses to skip those slots. For 1uao (chignolin, 10 residues, 3
-of them GLY) the input heavy-atom topology has 77 atoms while the engine
-layout has 80 slots, 3 of which map to `-1`; for `examples/actin`
-(377 residues, 28 GLY) it is 2943 atoms against 2971 slots.
+returns `-1` for those hydrogen slots, which is what the XTC reporter
+uses to skip them.
 
-The GLY CA duplicate is a storage-layout artifact, not a chemical claim:
-`MuPotentialBuilder` treats backbone-named atoms as backbone for
-clash/contact eligibility regardless of which segment they sit in, so
-only the sidechain-segment copy contributes Mu energy.
+Earlier versions gave GLY's CA a second slot in the sidechain segment, and
+the Mu potential scored only that copy. Checkpoints from those versions
+have one extra column per glycine and are rejected on resume.
 
 ## Build sequence
 

@@ -179,7 +179,7 @@ def _case(label: str = "chignolin-s1337", **overrides: Any) -> dict[str, Any]:
     case = {
         "label": label,
         "steps": 10,
-        "n_atoms": 80,
+        "n_atoms": 77,
         "n_residues": 10,
         "n_accepts": 4,
         "accept_bits": "0101010101",

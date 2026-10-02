@@ -24,7 +24,7 @@ enum class EnergyMaskMode : std::uint8_t {
 
 // ---------------------------------------------------------------
 // Per-residue atom block descriptor.
-// sc_start == -1  →  GLY or ALA  (no rotatable sidechain)
+// sc_start == -1  →  no sidechain atoms: GLY (MCPU), or every residue (KORP)
 // h_start  == -1  →  PRO         (no amide hydrogen)
 // o_start  == -1  →  reserved for future use
 // bb_start is ALWAYS valid for every residue.

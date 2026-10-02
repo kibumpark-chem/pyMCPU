@@ -16,6 +16,7 @@ from pymcpu.checkpointing import (
     CheckpointConfig,
     FoldingCheckpointState,
     checkpoint_cycle_filename,
+    checkpoint_layout_error,
     get_integrator_move_counters,
     get_integrator_rng_states,
     load_checkpoint as _load_checkpoint,
@@ -371,8 +372,8 @@ class FoldingRunner:
         Build native CA–CA contact pairs from the reference structure.
 
         Uses engine CA indices (via ``_get_engine_ca_indices``) and residue
-        lookup through ``self.mapping`` (inverse_mapping), skipping ``-1``
-        GLY duplicate slots. Caches in ``self._native_contacts``. Returns
+        lookup through ``self.mapping`` (inverse_mapping). Caches in
+        ``self._native_contacts``. Returns
         ``[]`` (never ``None``) when unavailable.
         """
         if self._native_contacts is not None:
@@ -460,12 +461,10 @@ class FoldingRunner:
                     for idx in ca_top_idx
                 ]
                 mapping = list(getattr(self, "mapping", []) or [])
-                top_to_engine: dict[int, int] = {}
-                if mapping:
-                    for eng_i, top_i in enumerate(mapping):
-                        if int(top_i) < 0:
-                            continue  # GLY CA duplicate slot
-                        top_to_engine[int(top_i)] = int(eng_i)
+                # -1 marks an explicit amide H, which has no topology atom.
+                top_to_engine = {
+                    int(top_i): eng_i for eng_i, top_i in enumerate(mapping) if top_i >= 0
+                }
 
                 ref_xyz_nm = ref.xyz[0]
                 cutoff_nm = self.contact_cutoff_ang / 10.0
@@ -815,6 +814,11 @@ class FoldingRunner:
             )
 
         # Restore coordinates / step / RNG
+        layout_error = checkpoint_layout_error(
+            state.replica_coords, self.system.get_num_atoms(), checkpoint_path
+        )
+        if layout_error:
+            raise ValueError(layout_error)
         if state.replica_coords:
             coords = np.asarray(state.replica_coords[0], dtype=np.float64)
             if coords.ndim == 2 and coords.shape[0] == 3:

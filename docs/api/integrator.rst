@@ -326,7 +326,10 @@ These describe the most recent proposal and are what the
 
 .. py:method:: Integrator.last_delta_energy() -> float
 
-   ΔE of last accepted move (0 if rejected/invalid).
+   After :py:meth:`Integrator.run`, the energy change of the last step
+   that moved atoms if it was accepted, else 0; a step that moves no atoms
+   leaves the previous value. After a ``debug_force_*`` call (see
+   Test-only hooks below), the forced proposal's energy change.
 
 .. py:method:: Integrator.last_accept_bits() -> list[int]
 
@@ -337,8 +340,8 @@ These describe the most recent proposal and are what the
 
 .. py:method:: Integrator.last_log_jacobian_weight() -> float
 
-   MH correction term from the most recent
-   :py:meth:`Integrator.debug_force_rama_pivot_to` call. See
+   Metropolis-Hastings correction term of the most recent forced
+   proposal from a ``debug_force_*`` call (0 for a symmetric move). See
    :doc:`../physics_notes/kic_jacobian` for why a torsion-space
    proposal needs one.
 
@@ -369,6 +372,12 @@ move mix, so a run that uses them is not a valid sample:
 ``debug_force_rotamer(context, residue) -> bool``,
 ``debug_force_sc(context, residue) -> bool`` and
 ``verify_physics_consistency(context, num_steps, atol=0.001)``.
+
+A ``debug_force_*`` hook never commits its move, and, like ``run()``,
+refuses a fixed residue (counting it in ``get_fixed_rejected()``). When it returns
+``True``, ``last_move_kind()``, ``last_move_is_rigid()``,
+``last_moved_indices()``, ``last_delta_energy()`` and
+``last_log_jacobian_weight()`` describe the move it proposed.
 
 .. seealso::
    :doc:`../physics_notes/mc_acceptance` for the acceptance rule,

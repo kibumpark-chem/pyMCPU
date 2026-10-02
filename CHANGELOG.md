@@ -67,6 +67,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Writing `Context.coords` after the `init_only` atom reorder now discards
+  Mu's live contact list, as `set_positions` does, so a run after such a
+  reset matches a fresh start. Under `set_output_internal_order(True)` it
+  also takes the array in storage order, the order the getter returns; it
+  used to treat it as build order and scramble the atoms.
+- **Rigid moves no longer stick on overlaps that an `ignore_all` mask
+  allows.** With `ignore_all`, a pair involving a masked residue (a linker,
+  for example) neither clashes nor makes a contact, and the full energy and
+  the ordinary delta paths respected that. The guard that re-checks the
+  moved-moved pairs of a rigid move did not, so a rigid move carrying such an
+  overlap was rejected as a steric clash, and masked residues that overlapped
+  could get stuck. `clash_only` is unchanged: moves are still rejected on a
+  clash. Runs without a mask are bit-identical. Clearing a `clash_only` mask
+  also brings back clash reporting in the full energy, which used to keep
+  dropping every clash.
+- Mu checks that every atom of a type has one radius. The engine keeps one
+  hard-core distance, contact distance and energy per pair of atom types,
+  filled in atom order, so a parameter set that gave one type two radii
+  would have made Mu depend on atom order. Reading such an atom-type file
+  now raises `ValueError`, and so does an asymmetric or non-finite
+  `mu_potentials.bin`, or handing `MuPotential` such matrices. mcpu08 is
+  unaffected.
+- **Collective variables work with `KORPForceField`.** Every CV finds its
+  atoms through `build_contact_atom_index`, which read MCPU's per-atom
+  list, so an `EngineSession` with KORP and any CV stopped with an
+  `AttributeError`. It now reads the per-residue blocks every force field
+  provides. `contact_atom_mode="cb"` raises a `ValueError` for a force field
+  with no sidechain atoms, such as KORP, instead of quietly using the CA
+  against a CB reference. A reference structure now contributes only
+  residues with a backbone N, CA and C, so a calcium ion (atom name CA), a
+  ligand or a water in it no longer breaks the CV.
+- Every `Integrator.debug_force_*` test hook records the move it proposes:
+  `last_move_kind()`, `last_moved_indices()`, `last_delta_energy()` and
+  `last_log_jacobian_weight()` then describe it. `debug_force_sc`,
+  `debug_force_rotamer` and `debug_force_rama_pivot` used to leave the
+  previous move's values in place. A forced move also no longer leaves its
+  queued changes behind: with the native-contacts bias attached, the next
+  accepted step of `run()` used to commit the forced move's pair flips too.
+  Like `run()`, the hooks now refuse a fixed residue.
+- **Coordinates of the wrong size are rejected.** `Context.set_positions`,
+  `Context.coords` and `State.coords` used to resize the engine state to
+  whatever array they were given, so a checkpoint or restart file written
+  with a different atom layout loaded with every atom after the first
+  difference shifted. Only replica exchange noticed, by accident, through a
+  steric clash. They now raise `ValueError` naming both counts, and the
+  folding, serial and MPI replica-exchange resume paths check the stored
+  coordinates before restoring anything; under MPI every rank raises
+  together.
+- `EngineSession.coords_from_auxref` built an `MCPUForceField` for a `.pdb`
+  starting state even in a KORP session, so the coordinates had MCPU's
+  layout. It now builds the session's own force field.
+- The two copies of each glycine CA (see Changed) drifted apart, by about
+  1e-5 Å over 10^5-2x10^5 steps, because moves updated them separately.
 - **Replica exchange ignored every move setting.** Each replica's integrator
   was built from its temperature alone, so `move_weights`,
   `sidechain_move_mode`, `pivot_rama_probability`/`pivot_rama_schedule` and
@@ -248,6 +301,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Glycine's CA has one engine slot.** `MCPUForceField` stored each glycine
+  CA twice, in the backbone segment and again as the residue's sidechain,
+  and the Mu potential muted the backbone copy so the atom was scored once.
+  The engine now has one slot per heavy atom, plus the explicit amide
+  hydrogens when `virtual_amide_h=False`: 77 atoms for `1uao.pdb` instead of
+  80, and 2943 for actin instead of 2971. `forcefield.coords`, `n_atoms`,
+  `System.get_num_atoms()` and its `repr`, and checkpoint coordinates change
+  to match, and `inverse_mapping` now holds `-1` only for explicit
+  hydrogens. Written trajectories already had one CA per glycine and are
+  unchanged. Energies agree to float rounding (Mu within 1e-4, the other
+  terms bit for bit), and on the parity cases and three 50,000-step
+  chignolin runs a given seed reproduces the old trajectory bit for bit; a
+  much longer run can eventually diverge, because the old copy drifted.
+  **Checkpoints and `EngineSession` restart states of a protein with glycine
+  from earlier versions cannot be resumed**: they stop with an error naming
+  both atom counts. The checkpoint `format_version` is now 2, and
+  `EngineSession.fingerprint` changes for proteins with glycine.
 - **`Integrator` requires a temperature.** Its Python constructor defaulted to
   `temperature=300.0`, a physical-units value about 500x the top of the
   useful reduced range (0.3-0.6), so `Integrator()` silently ran a
@@ -290,6 +360,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- `MCPUAtom.to_write` and `MCPUAtom.is_sidechain`. They existed to tell
+  glycine's second CA slot (see Changed) apart from real atoms. `to_write`
+  was then false only for explicit amide hydrogens, exactly when
+  `original_index` is -1, and nothing read `is_sidechain`.
+  `MCPUForceField.inverse_mapping` is now each atom's `original_index`.
 - `mcpu_core.EnergyComponents`. It held the fixed MCPU column set the energy
   reporter used to write; nothing exported or used it.
 

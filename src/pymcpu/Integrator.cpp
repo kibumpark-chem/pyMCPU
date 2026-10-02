@@ -2264,13 +2264,40 @@ bool MCIntegrator::debug_force_pivot(Context& context, int residue, bool is_phi)
         ++num_pivot_resample_pro_phi_;
         return false;
     }
+    if (hasFixedResidues() && isResidueFixed(residue)) {
+        ++fixed_rejected_;
+        return false;
+    }
     ensure_proposal_buffers(context);
     State& proposal = *proposal_;
     ProposalPatch& move_patch = patch_;
     proposal.copy_dynamic_from(context.getState());
     move_patch.reset_for_step();
     apply_pivot_at(context, proposal, move_patch, residue, is_phi);
-    return move_patch.is_valid;
+    return record_forced_proposal(context, "Pivot");
+}
+
+bool MCIntegrator::record_forced_proposal(Context& context, const char* kind) {
+    if (!patch_.is_valid) return false;
+    // The energy change is computed the way run() computes it
+    // (System::evaluateDeltaEnergy against the just-built proposal), but
+    // there is no accept/reject and no commit: the forced move is only
+    // inspected.
+    const EnergyChangeResult energy_change =
+        context.getSystem().evaluateDeltaEnergy(context, context.getState(), *proposal_, patch_);
+    // The energy terms queue the changes this move would commit (contact
+    // flips, native-pair flips) in the workspaces. run() clears them after
+    // every step; a forced move is never committed, so clear them here, or
+    // the next accepted step of run() would commit them too.
+    context.getWorkspace().clear();
+    context.getQBiasWorkspace().clear();
+    context.getHBondWorkspace().clear();
+    last_delta_e_ = energy_change.delta_energy;
+    last_log_jacobian_weight_ = patch_.log_jacobian_weight;
+    last_move_kind_str_ = kind;
+    last_is_rigid_ = patch_.is_rigid;
+    last_moved_indices_ = patch_.moved_indices;
+    return true;
 }
 
 bool MCIntegrator::debug_force_sc(Context& context, int residue) {
@@ -2280,13 +2307,17 @@ bool MCIntegrator::debug_force_sc(Context& context, int residue) {
         ++num_sc_resample_pro_;
         return false;
     }
+    if (hasFixedResidues() && isResidueFixed(residue)) {
+        ++fixed_rejected_;
+        return false;
+    }
     ensure_proposal_buffers(context);
     State& proposal = *proposal_;
     ProposalPatch& move_patch = patch_;
     proposal.copy_dynamic_from(context.getState());
     move_patch.reset_for_step();
     apply_sidechain_at(context, proposal, move_patch, residue);
-    return move_patch.is_valid;
+    return record_forced_proposal(context, "Sidechain");
 }
 
 bool MCIntegrator::debug_force_rotamer(Context& context, int residue) {
@@ -2296,13 +2327,17 @@ bool MCIntegrator::debug_force_rotamer(Context& context, int residue) {
         ++num_sc_resample_pro_;
         return false;
     }
+    if (hasFixedResidues() && isResidueFixed(residue)) {
+        ++fixed_rejected_;
+        return false;
+    }
     ensure_proposal_buffers(context);
     State& proposal = *proposal_;
     ProposalPatch& move_patch = patch_;
     proposal.copy_dynamic_from(context.getState());
     move_patch.reset_for_step();
     apply_rotamer_at(context, proposal, move_patch, residue);
-    return move_patch.is_valid;
+    return record_forced_proposal(context, "Sidechain");
 }
 
 bool MCIntegrator::debug_force_rama_pivot(Context& context, int residue) {
@@ -2322,7 +2357,7 @@ bool MCIntegrator::debug_force_rama_pivot(Context& context, int residue) {
     proposal.copy_dynamic_from(context.getState());
     move_patch.reset_for_step();
     apply_rama_pivot_at(context, proposal, move_patch, residue);
-    return move_patch.is_valid;
+    return record_forced_proposal(context, "Pivot");
 }
 
 bool MCIntegrator::debug_force_rama_pivot_to(Context& context, int residue, float phi, float psi) {
@@ -2343,19 +2378,5 @@ bool MCIntegrator::debug_force_rama_pivot_to(Context& context, int residue, floa
     move_patch.reset_for_step();
     const std::array<float, 2> target{wrap_angle_to_pi(phi), wrap_angle_to_pi(psi)};
     apply_rama_pivot_to_target(context, proposal, move_patch, residue, category, target);
-    if (!move_patch.is_valid) return false;
-
-    // Capture the exact energy/correction terms a direct numerical
-    // detailed-balance test needs -- computed the identical way run()
-    // does (System::evaluateDeltaEnergy against the just-mutated
-    // proposal), but WITHOUT any accept/reject or commit, since this is a
-    // forced/inspection-only call.
-    const EnergyChangeResult energy_change =
-        context.getSystem().evaluateDeltaEnergy(context, context.getState(), proposal, move_patch);
-    last_delta_e_ = energy_change.delta_energy;
-    last_log_jacobian_weight_ = move_patch.log_jacobian_weight;
-    last_move_kind_str_ = "Pivot";
-    last_is_rigid_ = move_patch.is_rigid;
-    last_moved_indices_ = move_patch.moved_indices;
-    return true;
+    return record_forced_proposal(context, "Pivot");
 }

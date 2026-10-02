@@ -281,7 +281,12 @@ public:
     long long get_steric_rejected() const noexcept { return steric_rejected_; }
 
     /// Test helpers: force a pivot/SC choice. Returns whether a move was proposed.
-    /// Proline φ / proline SC increments the resample counters and returns false.
+    /// Proline φ / proline SC increments the resample counters and returns false;
+    /// a fixed residue counts as fixed-rejected and returns false, as in run().
+    /// A forced move is never committed. When one of these debug_force_*
+    /// calls returns true, last_move_kind(), last_move_is_rigid(),
+    /// last_moved_indices(), last_delta_energy() and
+    /// last_log_jacobian_weight() describe the proposal it made.
     bool debug_force_pivot(Context& context, int residue, bool is_phi);
     bool debug_force_sc(Context& context, int residue);
     /// Forces the rotamer-library sidechain move at `residue` regardless of
@@ -470,7 +475,8 @@ public:
 
     [[nodiscard]] bool use_sparse_proposal() const noexcept { return use_sparse_proposal_; }
 
-    /// Last proposed move context (updated each MC step in ``run``).
+    /// Last proposed move context: updated by each step of ``run`` that moves
+    /// atoms, and by every debug_force_* call that proposes a move.
     [[nodiscard]] const std::string& last_move_kind() const noexcept {
         return last_move_kind_str_;
     }
@@ -478,9 +484,12 @@ public:
     [[nodiscard]] const std::vector<int>& last_moved_indices() const noexcept {
         return last_moved_indices_;
     }
+    /// After run(): the energy change of the last step that moved atoms if
+    /// it was accepted, else 0. After a debug_force_* call: the forced
+    /// proposal's energy change.
     [[nodiscard]] float last_delta_energy() const noexcept { return last_delta_e_; }
-    /// The Metropolis-Hastings correction term from the most recent
-    /// debug_force_rama_pivot_to call (0 for a move with a symmetric
+    /// The Metropolis-Hastings correction term of the most recent forced
+    /// proposal from a debug_force_* call (0 for a move with a symmetric
     /// proposal, or if no such call has happened yet). NOT updated by
     /// run() -- for that path, log_jacobian_weight is consumed directly
     /// inside the acceptance formula (see total_beta_E in run()) and never
@@ -672,6 +681,10 @@ private:
     }
 
     void ensure_proposal_buffers(const Context& context);
+    /// Shared tail of the debug_force_* hooks: if the proposal just built in
+    /// proposal_/patch_ is valid, evaluate its energy change and record it in
+    /// the last_* fields. Returns patch_.is_valid.
+    bool record_forced_proposal(Context& context, const char* kind);
 
     void apply_pivot_move(Context& context, State& proposal, ProposalPatch& patch);
     /// Apply pivot at fixed residue / φ|ψ (used by production + debug_force_pivot).

@@ -1,10 +1,8 @@
 """CA/CB "contact atom mode" index and reference-coordinate construction.
 
 Covers mode-string normalization/validation, building per-residue
-contact-atom index arrays (CA vs. CB, with GLY correctly falling back to
-backbone CA rather than its sidechain-segment CA duplicate -- see
-``tests/physics/forcefield/test_mu_builder_gly_eligibility.py`` for the
-underlying eligibility bug this depends on), loading matching reference
+contact-atom index arrays (CA vs. CB, with GLY falling back to its backbone
+CA), loading matching reference
 coordinates from a PDB, and constructing/attaching a NativeContactsCV+bias
 potential in CB mode. Pure physics_internal: every assertion checks
 pyMCPU's own forcefield-derived indices/coordinates against pyMCPU's
@@ -15,10 +13,13 @@ the original combined file lives separately in
 
 from __future__ import annotations
 
+import os
+
 import mdtraj as md
 import numpy as np
 import pytest
 
+from pymcpu import mcpu_core
 from pymcpu.sampling.collective_variables import (
     NativeContactsCV,
     attach_native_contacts_bias_potential,
@@ -56,7 +57,6 @@ def test_cb_mode_uses_cb_or_falls_back_to_bb_ca() -> None:
     cb_idx = build_contact_atom_index(ff, mode="cb")
     assert cb_idx.shape == ca_idx.shape
     atoms = ff.ordered_atom_list
-    n_bb = ff.total_bb_atoms
     n_diff = 0
     for r in range(ff.n_res):
         atom = atoms[int(cb_idx[r])]
@@ -66,15 +66,102 @@ def test_cb_mode_uses_cb_or_falls_back_to_bb_ca() -> None:
             assert int(cb_idx[r]) != int(ca_idx[r])
         else:
             assert atom.name == "CA"
-            assert int(cb_idx[r]) < n_bb
             assert int(cb_idx[r]) == int(ca_idx[r])
     assert n_diff > 0, "test PDB should contain at least one residue with a real CB"
 
 
-def test_gly_cb_mode_uses_backbone_ca_not_sidechain_duplicate() -> None:
+class _BackboneOnlyForceField:
+    """Stands in for KORPForceField, which needs its 316 MiB map to build:
+    per-residue N, CA, C blocks and no sidechain atoms. ``total_sc_atoms``
+    can pretend there are sidechains elsewhere, as for an MCPU input that
+    lacks some residue's CB."""
+
+    def __init__(self, residue_names: list[str], total_sc_atoms: int = 0) -> None:
+        self.total_sc_atoms = total_sc_atoms
+        self.blocks = []
+        for r in range(len(residue_names)):
+            block = mcpu_core.BlockIndices()
+            block.bb_start = 3 * r
+            block.c_start = 3 * r + 2
+            self.blocks.append(block)  # sc_start stays -1
+        self.n_res = len(residue_names)
+        self.output_topology = md.Topology()
+        chain = self.output_topology.add_chain()
+        for name in residue_names:
+            self.output_topology.add_residue(name, chain)
+
+
+def test_ca_mode_needs_only_the_residue_blocks() -> None:
+    ff = _BackboneOnlyForceField(["ALA", "GLY", "LEU"])
+    assert build_contact_atom_index(ff, mode="ca").tolist() == [1, 4, 7]
+
+
+def test_cb_mode_refuses_a_force_field_without_sidechains() -> None:
+    """Returning the CA instead would be compared against the reference's
+    CB coordinates, so the native contacts would be wrong without any error."""
+    ff = _BackboneOnlyForceField(["GLY", "ALA"])
+    with pytest.raises(ValueError, match="has no sidechain atoms; use contact_atom_mode='ca'"):
+        build_contact_atom_index(ff, mode="cb")
+
+
+def test_cb_mode_uses_the_ca_of_a_glycine() -> None:
+    ff = _BackboneOnlyForceField(["GLY", "GLY"])
+    assert build_contact_atom_index(ff, mode="cb").tolist() == [1, 4]
+
+
+def test_cb_mode_uses_the_ca_of_a_residue_missing_its_cb() -> None:
+    """MCPU accepts an alanine whose CB is missing from the input. Its contact
+    atom is then the CA, as in the reference built from the same file."""
+    ff = _BackboneOnlyForceField(["ALA", "GLY"], total_sc_atoms=5)
+    assert build_contact_atom_index(ff, mode="cb").tolist() == [1, 4]
+
+
+@pytest.mark.parametrize("mode", ["ca", "cb"])
+def test_the_reference_skips_residues_without_a_backbone(tmp_path, mode: str) -> None:
+    """A calcium ion (atom name CA) and a water are not engine residues."""
+    from pymcpu.runners import default_example_pdb
+
+    pdb = default_example_pdb()
+    lines = [ln for ln in pdb.read_text().splitlines() if not ln.startswith("END")]
+    lines += [
+        "HETATM  901 CA    CA A 101      10.000  10.000  10.000  1.00  0.00          CA",
+        "HETATM  902  O   HOH A 102      12.000  10.000  10.000  1.00  0.00           O",
+        "END",
+    ]
+    with_hetero = tmp_path / "with_ion.pdb"
+    with_hetero.write_text("\n".join(lines) + "\n")
+    expected = reference_contact_from_pdb(str(pdb), mode=mode)
+    got = reference_contact_from_pdb(str(with_hetero), mode=mode)
+    assert got.shape == expected.shape == (10, 3)
+    assert np.array_equal(got, expected)
+
+
+@pytest.mark.skipif(not os.environ.get("KORP_MAP_PATH"), reason="set KORP_MAP_PATH")
+def test_a_korp_session_computes_native_contacts(engine_spec_factory) -> None:
+    """At its own native structure every native contact is formed."""
+    from pymcpu.sampling import EngineSession
+
+    native_q = engine_spec_factory().cv[0]
+
+    def session(contact_atom_mode: str) -> EngineSession:
+        return EngineSession(engine_spec_factory(
+            forcefield="korp",
+            forcefield_options={"map_path": os.environ["KORP_MAP_PATH"]},
+            move_weights=(0.5, 0.5, 0.0),
+            cv=(dict(native_q, contact_atom_mode=contact_atom_mode),),
+        ))
+
+    korp = session("ca")
+    native = korp.coords_from_auxref(korp.spec.pdb)
+    assert korp.compute_cv(native).tolist() == [1.0]
+    cb = session("cb")
+    with pytest.raises(ValueError, match="contact_atom_mode='ca'"):
+        cb.compute_cv(native)
+
+
+def test_gly_cb_mode_uses_backbone_ca() -> None:
     _, ff = build_test_context(with_qbias=False)
     cb_idx = build_contact_atom_index(ff, mode="cb")
-    n_bb = ff.total_bb_atoms
     gly_found = False
     for r in range(ff.n_res):
         res_name = next(a.residue_name for a in ff.ordered_atom_list if a.residue_index == r)
@@ -83,10 +170,7 @@ def test_gly_cb_mode_uses_backbone_ca_not_sidechain_duplicate() -> None:
         gly_found = True
         idx = int(cb_idx[r])
         assert ff.ordered_atom_list[idx].name == "CA"
-        assert idx < n_bb  # must resolve to the backbone segment, not sc_start
-        sc = int(ff.blocks[r].sc_start)
-        if sc >= 0:
-            assert idx != sc
+        assert idx == ff.blocks[r].bb_start + 1
     assert gly_found, "test PDB should contain GLY"
 
 
@@ -128,12 +212,8 @@ def test_cb_vs_ca_cv_pair_atoms() -> None:
     assert cb_cv.contact_atom_mode == "cb"
     ai, aj = cb_cv.atom_pair_indices()
     atoms = ff.ordered_atom_list
-    n_bb = ff.total_bb_atoms
     for a in np.concatenate([ai, aj]):
-        name = atoms[int(a)].name
-        assert name in ("CB", "CA")
-        if name == "CA":
-            assert int(a) < n_bb
+        assert atoms[int(a)].name in ("CB", "CA")
 
 
 def test_cb_mode_bias_potential_attaches_and_evaluates_finite() -> None:
@@ -180,11 +260,10 @@ def test_cb_mode_explicit_pairs_bias_potential_attaches_and_evaluates_finite() -
 
 
 def test_cb_mode_explicit_pair_referencing_gly_resolves_to_backbone_ca() -> None:
-    """Regression guard: an explicit pair that names a GLY residue must
-    resolve to that residue's backbone CA under ``contact_atom_mode="cb"``,
-    not the sidechain-segment CA duplicate -- same underlying behavior as
-    :func:`test_gly_cb_mode_uses_backbone_ca_not_sidechain_duplicate`, now
-    exercised through the explicit-pairs path (no new resolution logic)."""
+    """An explicit pair that names a GLY residue resolves to that residue's
+    backbone CA under ``contact_atom_mode="cb"`` -- same behavior as
+    :func:`test_gly_cb_mode_uses_backbone_ca`, exercised through the
+    explicit-pairs path (no new resolution logic)."""
     _, ff = build_test_context(with_qbias=False)
     pdb = str(resolve_test_pdb())
     idx = build_contact_atom_index(ff, "cb")
@@ -208,9 +287,5 @@ def test_cb_mode_explicit_pair_referencing_gly_resolves_to_backbone_ca() -> None
     )
     ai, aj = cv.atom_pair_indices()
     gly_atom_idx = int(ai[0])  # pairs_i[0] == gly_res, so ai[0] is its resolved atom
-    n_bb = ff.total_bb_atoms
     assert ff.ordered_atom_list[gly_atom_idx].name == "CA"
-    assert gly_atom_idx < n_bb  # must resolve to the backbone segment, not sc_start
-    sc = int(ff.blocks[gly_res].sc_start)
-    if sc >= 0:
-        assert gly_atom_idx != sc
+    assert gly_atom_idx == ff.blocks[gly_res].bb_start + 1

@@ -72,6 +72,8 @@ def _make_minimal_folding_runner(
     runner.simulation = mock_sim
     runner.replicas = [mock_sim]
     runner.forcefield = None
+    runner.system = MagicMock()
+    runner.system.get_num_atoms.return_value = n_atoms
     runner.pdb_path = Path(pdb_path) if pdb_path is not None else None
     runner.reference_pdb = str(reference_pdb) if reference_pdb is not None else None
     runner.contact_cutoff_ang = _INIT_DEFAULTS["contact_cutoff_ang"].default

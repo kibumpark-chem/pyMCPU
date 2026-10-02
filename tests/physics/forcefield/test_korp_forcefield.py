@@ -104,9 +104,8 @@ def test_inverse_mapping_is_a_dense_permutation(chain_traj):
     assert sorted(mapping) == list(range(ff.output_topology.n_atoms))
 
 
-def test_no_glycine_atom_is_duplicated(chain_traj):
-    """MCPUForceField duplicates GLY's CA into its sidechain segment; with no
-    sidechain segment that hack is unnecessary and must not be carried over."""
+def test_every_atom_has_one_slot(chain_traj):
+    """Every atom has one slot, glycine's CA included."""
     ff = KORPForceField(chain_traj)
     assert "GLY" in ff.res_names          # the fixture must actually test this
     assert len(set(ff.ordered_indices)) == len(ff.ordered_indices)

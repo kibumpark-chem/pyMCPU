@@ -1,27 +1,17 @@
-"""GLY-CA clash/contact ELIGIBILITY regression test.
+"""What the Mu potential gets for glycine's CA.
 
-``MCPUForceField._order_atoms`` duplicates GLY's CA into the sidechain
-segment purely so the sidechain block-rotation move has a valid index range
-for every residue (an array-layout fact -- see
-``MCPUForceField._initialize_attributes``'s comment on GLY handling). Legacy
-MCPU keeps that separate from clash/contact ELIGIBILITY: ``IsSidechainAtom
-("CA")`` is always false there, regardless of residue -- GLY's CA only gets a
-distinct Mu-potential *type* value, never a different eligibility
-classification.
+Glycine's CA has one engine slot, in the backbone segment. For Mu it must be
+ordinary backbone for clash/contact eligibility -- legacy MCPU's
+``IsSidechainAtom("CA")`` is false for every residue -- with the ``CA`` role
+and the glycine-specific Mu *type*.
 
-``MuPotentialBuilder`` used to read the array-position ``is_sidechain`` flag
-directly for eligibility too, which meant the GLY-CA sidechain-segment
-duplicate was treated as a real sidechain atom for clash/contact rules --
-notably escaping the "both atoms backbone" exclusion from the long-range mu
-contact term that every other residue's CA correctly gets. This test locks in
-the fix (``MuPotentialBuilder._is_sidechain_for_eligibility``, name-based,
-matching legacy) so it can't silently regress.
+Earlier versions stored the CA twice and muted the backbone copy, so only the
+sidechain-segment copy was scored. These tests pin the three inputs Mu reads
+for the single slot (eligibility masks, Layer-1 role, atom type), so that a
+leftover mute, which would silently drop glycine's Mu energy, cannot pass.
 
-This is an internal-consistency regression test: every assertion compares
-pyMCPU's own ``MuPotentialBuilder``/``layer1_atom_meta``/
-``build_topology_masks`` against its own array-position flags on a real actin
-PDB -- no legacy MCPU binary, log, or hardcoded legacy numeric output is read
-anywhere, even though the *rationale* is legacy-motivated design intent.
+Internal consistency only: every assertion checks pyMCPU's own builder
+output. No legacy MCPU binary, log or number is read.
 """
 
 from __future__ import annotations
@@ -31,88 +21,121 @@ import pytest
 
 from pymcpu.forcefields.builders.mu_builder import MuPotentialBuilder
 from pymcpu.forcefields.mcpu import MCPUForceField
+from pymcpu.runners import default_example_pdb
 from tests.fixtures.context_builders import resolve_test_pdb
 
+LONG_RANGE = 4  # build_topology_masks' default skip_local_contact_range
 
-@pytest.fixture(scope="module")
-def acta_forcefield() -> MCPUForceField:
-    pdb = resolve_test_pdb()  # actin (acta.pdb) is the suite default
-    traj = md.load(str(pdb))
+
+def _forcefield(path) -> MCPUForceField:
+    traj = md.load(str(path))
     heavy = traj.atom_slice(traj.topology.select("not element H"))
     return MCPUForceField(heavy, param_set="mcpu08")
 
 
-def _gly_ca_atoms(ordered_atom_list) -> list[tuple[int, object]]:
+@pytest.fixture(scope="module")
+def acta_forcefield() -> MCPUForceField:
+    return _forcefield(resolve_test_pdb())  # actin, the suite default
+
+
+@pytest.fixture(scope="module")
+def acta_masks(acta_forcefield: MCPUForceField):
+    return MuPotentialBuilder.build_topology_masks(
+        acta_forcefield.ordered_atom_list, acta_forcefield.n_atoms
+    )
+
+
+def _gly_cas(ordered_atom_list) -> list[int]:
     return [
-        (idx, a)
-        for idx, a in enumerate(ordered_atom_list)
-        if a.residue_name == "GLY" and a.name == "CA"
+        i for i, a in enumerate(ordered_atom_list) if a.residue_name == "GLY" and a.name == "CA"
     ]
 
 
-def test_gly_ca_is_never_eligibility_sidechain(acta_forcefield: MCPUForceField) -> None:
-    """Both the backbone-segment and sidechain-segment GLY-CA copies must be
-    backbone for eligibility purposes, regardless of which array segment
-    (``atom.is_sidechain``) they live in."""
-    gly_cas = _gly_ca_atoms(acta_forcefield.ordered_atom_list)
-    assert len(gly_cas) > 0, "test PDB must contain GLY residues for this test to be meaningful"
-    for _, atom in gly_cas:
-        assert MuPotentialBuilder._is_sidechain_for_eligibility(atom) is False
+def test_each_glycine_ca_has_one_backbone_slot(acta_forcefield: MCPUForceField) -> None:
+    ff = acta_forcefield
+    gly_cas = _gly_cas(ff.ordered_atom_list)
+    gly_residues = {ff.ordered_atom_list[i].residue_index for i in gly_cas}
+    assert gly_cas, "test PDB must contain GLY residues for this test to be meaningful"
+    assert len(gly_cas) == len(gly_residues)
+    assert all(i < ff.total_bb_atoms for i in gly_cas)
 
 
-def test_gly_ca_array_position_flag_unaffected(acta_forcefield: MCPUForceField) -> None:
-    """The array-position ``is_sidechain`` flag (used for sc_start/sc_count
-    block-rotation bookkeeping, NOT eligibility) must still distinguish the
-    two duplicate copies -- the fix must not touch this."""
-    gly_cas = _gly_ca_atoms(acta_forcefield.ordered_atom_list)
-    backbone_copies = [a for _, a in gly_cas if not a.is_sidechain]
-    sidechain_copies = [a for _, a in gly_cas if a.is_sidechain]
-    assert len(backbone_copies) == len(sidechain_copies) > 0
-
-
-def test_layer1_atom_meta_is_sidechain_matches_eligibility(
-    acta_forcefield: MCPUForceField,
-) -> None:
-    """layer1_atom_meta's returned is_sidechain array (fed to the C++ Layer-1
-    eligibility machinery) must read 0 for GLY's CA, in both segments."""
+def test_glycine_ca_is_backbone_for_eligibility(acta_forcefield: MCPUForceField) -> None:
     ordered = acta_forcefield.ordered_atom_list
     _, is_sidechain, _, _ = MuPotentialBuilder.layer1_atom_meta(ordered)
-    for idx, _ in _gly_ca_atoms(ordered):
-        assert is_sidechain[idx] == 0
+    for i in _gly_cas(ordered):
+        assert MuPotentialBuilder._is_sidechain_for_eligibility(ordered[i]) is False
+        assert is_sidechain[i] == 0
 
 
-def test_gly_ca_long_range_backbone_pair_excludes_contact(
-    acta_forcefield: MCPUForceField,
-) -> None:
-    """The long-range (res_diff >= skip_local_contact_range) mu-contact term
-    excludes BB-BB pairs. A GLY-CA (sidechain-segment duplicate) paired with
-    another residue's backbone atom, far away in sequence, must be excluded
-    from contact eligibility just like any other backbone-backbone pair --
-    this is exactly the case the conflation bug broke."""
+def test_glycine_ca_has_the_ca_role(acta_forcefield: MCPUForceField) -> None:
+    """The C++ side mutes every atom with the H role (Rule 0), so only H may have it."""
+    ordered = acta_forcefield.ordered_atom_list
+    _, _, role, _ = MuPotentialBuilder.layer1_atom_meta(ordered)
+    assert all((r == MuPotentialBuilder._ROLE_H) == (a.name == "H") for r, a in zip(role, ordered))
+    assert {role[i] for i in _gly_cas(ordered)} == {MuPotentialBuilder._ROLE_CA}
+
+
+class _RecordingLookup(dict):
+    def __init__(self, base) -> None:
+        super().__init__(base)
+        self.keys_read: list[tuple[str, str]] = []
+
+    def __getitem__(self, key):
+        self.keys_read.append(key)
+        return super().__getitem__(key)
+
+
+def test_glycine_ca_gets_the_glycine_mu_type() -> None:
+    ff = _forcefield(default_example_pdb())  # small: build() fills an N x N matrix
+    lookup = _RecordingLookup(ff.atom_type_lookup)
+    MuPotentialBuilder.build(
+        atom_list=ff.ordered_atom_list,
+        atom_to_residue=ff.atom_to_res,
+        mu_potential_matrix=ff.mu_energies,
+        atom_type_lookup=lookup,
+    )
+    assert len(lookup.keys_read) == ff.n_atoms  # one read per atom, no H here
+    gly_cas = _gly_cas(ff.ordered_atom_list)
+    assert gly_cas
+    assert {lookup.keys_read[i] for i in gly_cas} == {("GLY", "CA")}
+    assert ff.atom_type_lookup[("GLY", "CA")][0] != ff.atom_type_lookup[("XXX", "CA")][0]
+
+
+def test_glycine_ca_is_scored_against_distant_atoms(acta_forcefield: MCPUForceField, acta_masks) -> None:
+    """A muted atom has every mask entry zero. Glycine's CA must be able to
+    clash with distant atoms and make Mu contacts with distant sidechains."""
     ordered = acta_forcefield.ordered_atom_list
     n = acta_forcefield.n_atoms
-    contact_flat, _clash_flat = MuPotentialBuilder.build_topology_masks(ordered, n)
+    contact, clash = acta_masks
+    for i in _gly_cas(ordered):
+        res = ordered[i].residue_index
+        far = [j for j, a in enumerate(ordered) if abs(a.residue_index - res) > LONG_RANGE]
+        far_sc = [j for j in far if MuPotentialBuilder._is_sidechain_for_eligibility(ordered[j])]
+        assert all(clash[i * n + j] == 1 for j in far)
+        assert far_sc and all(contact[i * n + j] == 1 for j in far_sc)
 
-    # Canonical eligibility-backbone name set, imported rather than
-    # re-hardcoded, so this test can't silently drift from the source it's
-    # regression-testing.
+
+def test_glycine_ca_long_range_backbone_pair_excludes_contact(
+    acta_forcefield: MCPUForceField, acta_masks
+) -> None:
+    """Long-range backbone-backbone pairs are excluded from Mu contacts, and
+    glycine's CA is no exception."""
+    ordered = acta_forcefield.ordered_atom_list
+    n = acta_forcefield.n_atoms
+    contact, _ = acta_masks
     backbone_names = MuPotentialBuilder._ELIGIBILITY_BACKBONE_NAMES
-    gly_ca_sc = [
-        (idx, a)
-        for idx, a in enumerate(ordered)
-        if a.residue_name == "GLY" and a.name == "CA" and a.is_sidechain
-    ]
-    assert gly_ca_sc, "expected at least one sidechain-segment GLY-CA duplicate"
-    gly_idx, gly_atom = gly_ca_sc[0]
+    gly_idx = _gly_cas(ordered)[0]
+    gly_atom = ordered[gly_idx]
 
     found_long_range_backbone_pair = False
     for j, other in enumerate(ordered):
         if other.name not in backbone_names:
             continue
-        if abs(other.residue_index - gly_atom.residue_index) < 4:
+        if abs(other.residue_index - gly_atom.residue_index) < LONG_RANGE:
             continue
         found_long_range_backbone_pair = True
-        assert contact_flat[gly_idx * n + j] == 0, (
+        assert contact[gly_idx * n + j] == 0, (
             f"{gly_atom.residue_name}{gly_atom.residue_index}.CA vs "
             f"{other.residue_name}{other.residue_index}.{other.name} "
             "should be contact-excluded (BB-BB long range)"

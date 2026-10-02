@@ -56,7 +56,11 @@ namespace mcpu::forces::mcpu08 {
                 energy_mask_ptr_ = sys.energy_ignored_mask().data();
                 energy_mask_mode_cached_ = sys.energy_mask_mode();
             } else {
+                // Reset the mode too: the full energy reads it on its own to
+                // drop clashes under ClashOnly, so a mode left over from a
+                // cleared mask would keep hiding every clash.
                 energy_mask_ptr_ = nullptr;
+                energy_mask_mode_cached_ = EnergyMaskMode::IgnoreAll;
             }
         }
 
@@ -133,15 +137,13 @@ namespace mcpu::forces::mcpu08 {
             CB = 6,
             CD = 7,
             SG = 8,
-            Gx = 9,      ///< name.startswith('G') — CG*, OG*, …
-            GlyCaBb = 10 ///< GLY CA in BB segment (Rule 0 mute)
+            Gx = 9       ///< name.startswith('G') — CG*, OG*, …
         };
         /// Residue class for Layer 1 PRO / CYS specials.
         enum class MuResClass : uint8_t {
             Other = 0,
             PRO = 1,
-            CYS = 2,
-            GLY = 3
+            CYS = 2
         };
 
         std::vector<int32_t> res_index_;   ///< residue index per atom; size N
@@ -196,9 +198,8 @@ namespace mcpu::forces::mcpu08 {
             contact_on = false;
             const auto ri = static_cast<MuAtomRole>(atom_role_[static_cast<size_t>(i)]);
             const auto rj = static_cast<MuAtomRole>(atom_role_[static_cast<size_t>(j)]);
-            // Rule 0: mute H and GLY-CA-BB for all pairs
-            if (ri == MuAtomRole::H || rj == MuAtomRole::H ||
-                ri == MuAtomRole::GlyCaBb || rj == MuAtomRole::GlyCaBb) {
+            // Rule 0: mute H for all pairs
+            if (ri == MuAtomRole::H || rj == MuAtomRole::H) {
                 return;
             }
             const int sep = std::abs(
@@ -296,6 +297,14 @@ namespace mcpu::forces::mcpu08 {
         void build_clash_exceptions();
         /// Rebuild type_params_ from contact matrices (after atom permute). O(N²).
         void rebuild_type_params_from_matrices();
+        /// Stores atom pair (i, j)'s parameters as its type pair's entry.
+        /// type_params_ keeps one entry per unordered type pair and is filled
+        /// in atom order, so every pair of the same two types must agree; a
+        /// pair that disagrees with an earlier one (two radii for one type,
+        /// or an asymmetric or NaN energy) throws, instead of the last pair
+        /// in atom order silently winning.
+        void store_type_pair_params(std::vector<uint8_t>& filled, int i, int j,
+                                    const TypePairParams& tp);
 
         /// Shared hard-core test for both the incremental ΔE and the full
         /// O(N²) recalculation, so the two can never disagree.
@@ -352,6 +361,20 @@ namespace mcpu::forces::mcpu08 {
             return (r2 > 0.f && std::isfinite(r2)) ? std::sqrt(r2) : 0.f;
         }
 
+        /// True when the residue energy mask switches pair (i, j) off entirely
+        /// (IgnoreAll with either residue masked), as eval_pair does: such a
+        /// pair can neither clash nor make a contact. ClashOnly keeps clashes,
+        /// so it never switches a pair off here.
+        [[nodiscard]] inline bool mask_ignores_pair(int i, int j) const noexcept {
+            if (!energy_mask_ptr_ || energy_mask_mode_cached_ != EnergyMaskMode::IgnoreAll) {
+                return false;
+            }
+            const auto ri = atom_to_residue[static_cast<size_t>(i)];
+            const auto rj = atom_to_residue[static_cast<size_t>(j)];
+            return (energy_mask_ptr_[static_cast<size_t>(ri)] |
+                    energy_mask_ptr_[static_cast<size_t>(rj)]) != 0;
+        }
+
         /// Clash-check one MM pair under skip_rigid_mm using topo clash bit +
         /// 3-decimal hard_r comparison (not soft eval_pair energy).
         [[nodiscard]] inline bool rigid_mm_pair_clashes(
@@ -362,6 +385,7 @@ namespace mcpu::forces::mcpu08 {
             // here cannot change a decision. Avoids a random byte load into the
             // N²-byte topo_flag_ table plus a type_params_ load per MM pair.
             if (!(r2_new < mm_guard_prefilter_r2_)) return false;
+            if (mask_ignores_pair(i, j)) return false;
             const size_t N = static_cast<size_t>(num_atoms_cached_);
             if (!topo_flag_.empty()) {
                 const uint8_t flag =
