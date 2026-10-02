@@ -72,9 +72,12 @@ def test_cb_mode_uses_cb_or_falls_back_to_bb_ca() -> None:
 
 class _BackboneOnlyForceField:
     """Stands in for KORPForceField, which needs its 316 MiB map to build:
-    per-residue N, CA, C blocks and no sidechain atoms."""
+    per-residue N, CA, C blocks and no sidechain atoms. ``total_sc_atoms``
+    can pretend there are sidechains elsewhere, as for an MCPU input that
+    lacks some residue's CB."""
 
-    def __init__(self, residue_names: list[str]) -> None:
+    def __init__(self, residue_names: list[str], total_sc_atoms: int = 0) -> None:
+        self.total_sc_atoms = total_sc_atoms
         self.blocks = []
         for r in range(len(residue_names)):
             block = mcpu_core.BlockIndices()
@@ -93,17 +96,44 @@ def test_ca_mode_needs_only_the_residue_blocks() -> None:
     assert build_contact_atom_index(ff, mode="ca").tolist() == [1, 4, 7]
 
 
-def test_cb_mode_refuses_a_force_field_without_cbs() -> None:
+def test_cb_mode_refuses_a_force_field_without_sidechains() -> None:
     """Returning the CA instead would be compared against the reference's
     CB coordinates, so the native contacts would be wrong without any error."""
     ff = _BackboneOnlyForceField(["GLY", "ALA"])
-    with pytest.raises(ValueError, match=r"residue 1 \(ALA\).*contact_atom_mode='ca'"):
+    with pytest.raises(ValueError, match="has no sidechain atoms; use contact_atom_mode='ca'"):
         build_contact_atom_index(ff, mode="cb")
 
 
 def test_cb_mode_uses_the_ca_of_a_glycine() -> None:
     ff = _BackboneOnlyForceField(["GLY", "GLY"])
     assert build_contact_atom_index(ff, mode="cb").tolist() == [1, 4]
+
+
+def test_cb_mode_uses_the_ca_of_a_residue_missing_its_cb() -> None:
+    """MCPU accepts an alanine whose CB is missing from the input. Its contact
+    atom is then the CA, as in the reference built from the same file."""
+    ff = _BackboneOnlyForceField(["ALA", "GLY"], total_sc_atoms=5)
+    assert build_contact_atom_index(ff, mode="cb").tolist() == [1, 4]
+
+
+@pytest.mark.parametrize("mode", ["ca", "cb"])
+def test_the_reference_skips_residues_without_a_backbone(tmp_path, mode: str) -> None:
+    """A calcium ion (atom name CA) and a water are not engine residues."""
+    from pymcpu.runners import default_example_pdb
+
+    pdb = default_example_pdb()
+    lines = [ln for ln in pdb.read_text().splitlines() if not ln.startswith("END")]
+    lines += [
+        "HETATM  901 CA    CA A 101      10.000  10.000  10.000  1.00  0.00          CA",
+        "HETATM  902  O   HOH A 102      12.000  10.000  10.000  1.00  0.00           O",
+        "END",
+    ]
+    with_hetero = tmp_path / "with_ion.pdb"
+    with_hetero.write_text("\n".join(lines) + "\n")
+    expected = reference_contact_from_pdb(str(pdb), mode=mode)
+    got = reference_contact_from_pdb(str(with_hetero), mode=mode)
+    assert got.shape == expected.shape == (10, 3)
+    assert np.array_equal(got, expected)
 
 
 @pytest.mark.skipif(not os.environ.get("KORP_MAP_PATH"), reason="set KORP_MAP_PATH")
