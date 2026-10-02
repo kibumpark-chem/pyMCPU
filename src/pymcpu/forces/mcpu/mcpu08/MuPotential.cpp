@@ -583,8 +583,9 @@ struct CpTimer {
                     std::to_string(j) + " (types " + std::to_string(ti) + " and " +
                     std::to_string(tj) + ") have a different hard-core distance, "
                     "contact distance or energy from an earlier pair of the same "
-                    "types. Mu stores one entry per type pair, so every atom of a "
-                    "type must have the same radius.");
+                    "types. Mu stores one entry per unordered type pair, so every "
+                    "atom of a type must have the same radius, and the energy "
+                    "matrix must be symmetric and finite.");
             }
             return;
         }

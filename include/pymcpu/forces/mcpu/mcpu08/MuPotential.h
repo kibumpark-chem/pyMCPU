@@ -294,10 +294,11 @@ namespace mcpu::forces::mcpu08 {
         /// Rebuild type_params_ from contact matrices (after atom permute). O(N²).
         void rebuild_type_params_from_matrices();
         /// Stores atom pair (i, j)'s parameters as its type pair's entry.
-        /// type_params_ keeps one entry per type pair and is filled in atom
-        /// order, so every pair of the same two types must agree; a pair that
-        /// disagrees with an earlier one throws, instead of the last pair in
-        /// atom order silently winning.
+        /// type_params_ keeps one entry per unordered type pair and is filled
+        /// in atom order, so every pair of the same two types must agree; a
+        /// pair that disagrees with an earlier one (two radii for one type,
+        /// or an asymmetric or NaN energy) throws, instead of the last pair
+        /// in atom order silently winning.
         void store_type_pair_params(std::vector<uint8_t>& filled, int i, int j,
                                     const TypePairParams& tp);
 

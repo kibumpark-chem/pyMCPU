@@ -33,6 +33,21 @@ def test_one_radius_per_type_loads(tmp_path: Path) -> None:
     assert MuPotentialBuilder.load_atom_types(str(csv))[("ARG", "CB")] == (0, 1.88)
 
 
+@pytest.mark.parametrize("bad", ["asymmetric", "nan"])
+def test_an_unusable_energy_matrix_is_refused(tmp_path: Path, bad: str) -> None:
+    from pymcpu.forcefields.builders.mu_builder import N_ATOM_TYPES
+
+    matrix = np.zeros((N_ATOM_TYPES, N_ATOM_TYPES), dtype=np.float32)
+    if bad == "asymmetric":
+        matrix[0, 1], matrix[1, 0] = -0.5, -0.7
+    else:
+        matrix[2, 3] = matrix[3, 2] = np.nan
+    path = tmp_path / "mu_potentials.bin"
+    matrix.tofile(path)
+    with pytest.raises(ValueError, match="not symmetric" if bad == "asymmetric" else "non-finite"):
+        MuPotentialBuilder.load_parameters(str(path))
+
+
 def _three_atom_mu(radii: list[float]) -> mcpu_core.MuPotential:
     """Three far-apart CB atoms of types 0, 0, 1 with the given radii."""
     atoms = [MCPUAtom(original_index=i, name="CB", residue_name=res, residue_index=i)

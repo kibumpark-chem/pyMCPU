@@ -87,7 +87,18 @@ class MuPotentialBuilder:
                 f"mu_potentials.bin: expected {expected} floats "
                 f"({N_ATOM_TYPES}x{N_ATOM_TYPES}), got {raw_params.size}"
             )
-        return raw_params.reshape((N_ATOM_TYPES, N_ATOM_TYPES))
+        matrix = raw_params.reshape((N_ATOM_TYPES, N_ATOM_TYPES))
+        # One energy per unordered type pair: the engine stores (a, b) and
+        # (b, a) as the same entry.
+        if not np.all(np.isfinite(matrix)):
+            raise ValueError(f"mu_potentials.bin: {filepath} contains a non-finite energy")
+        if not np.array_equal(matrix, matrix.T):
+            a, b = np.argwhere(matrix != matrix.T)[0]
+            raise ValueError(
+                f"mu_potentials.bin: {filepath} is not symmetric: energy({a}, {b}) = "
+                f"{matrix[a, b]} but energy({b}, {a}) = {matrix[b, a]}"
+            )
+        return matrix
 
     @classmethod
     def build_topology_masks(
