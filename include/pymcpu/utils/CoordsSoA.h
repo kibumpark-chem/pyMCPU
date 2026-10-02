@@ -97,11 +97,18 @@ struct CoordsSoA {
         }
     }
 
-    void rotate_atoms(int start, int end, const Eigen::Matrix3f& R, const Eigen::Vector3f& pivot) {
+    /// Rotate atoms [start, end) by R about pivot.
+    ///
+    /// The arithmetic is done in double and each coordinate is rounded to float
+    /// once, when it is stored. In float32 it rounded twice, once relative to the
+    /// pivot and again in lab coordinates, and that shrinks every distance the
+    /// rotation should keep: about -1e-8 A per move, steadily. Over 5M
+    /// pivot-only chignolin steps CA-C bonds shrank by 3e-3 A. Rounded once,
+    /// what remains is unbiased float noise (+6e-6 A on average there).
+    void rotate_atoms(int start, int end, const Eigen::Matrix3d& R, const Eigen::Vector3d& pivot) {
         for (int i = start; i < end; ++i) {
-            Eigen::Vector3f p = atom(i) - pivot;
-            p = R * p + pivot;
-            set_atom(i, p);
+            const Eigen::Vector3d p = R * (atom(i).cast<double>() - pivot) + pivot;
+            set_atom(i, p.cast<float>());
         }
     }
 

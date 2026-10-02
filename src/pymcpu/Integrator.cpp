@@ -171,9 +171,11 @@ bool apply_chi_cascade(State& proposal, const System& system, int r, int ntorsio
         const auto& atoms4 = chi_idx_table[ks];  // {i1, i2, i3, i4}; axis = i2->i3 bond
         const Eigen::Vector3f pos_i2 = proposal.atom_pos(atoms4[1]);
         const Eigen::Vector3f pos_i3 = proposal.atom_pos(atoms4[2]);
-        const Eigen::Vector3f axis = (pos_i3 - pos_i2).normalized();
-        const Eigen::Matrix3f R = Eigen::AngleAxisf(delta[ks], axis).toRotationMatrix();
-        proposal.rotate_atoms(lo, hi, R, pos_i2);
+        const Eigen::Vector3d pivot = pos_i2.cast<double>();
+        const Eigen::Vector3d axis = (pos_i3.cast<double>() - pivot).normalized();
+        const Eigen::Matrix3d R =
+            Eigen::AngleAxisd(static_cast<double>(delta[ks]), axis).toRotationMatrix();
+        proposal.rotate_atoms(lo, hi, R, pivot);
 
         if (overall_lo < 0 || lo < overall_lo) overall_lo = lo;
         if (hi > overall_hi) overall_hi = hi;
@@ -255,7 +257,7 @@ std::vector<std::pair<int, int>> compute_pivot_c_term_ranges(
 // WITHOUT touching `patch` -- callers must mark the union of all rotated
 // ranges themselves via mark_ranges, exactly once.
 void rotate_ranges(State& proposal, const std::vector<std::pair<int, int>>& ranges,
-                   const Eigen::Matrix3f& R, const Eigen::Vector3f& pivot) {
+                   const Eigen::Matrix3d& R, const Eigen::Vector3d& pivot) {
     for (const auto& span : ranges) {
         if (span.first < span.second) {
             proposal.rotate_atoms(span.first, span.second, R, pivot);
@@ -598,12 +600,14 @@ void MCIntegrator::apply_pivot_at(Context& context, State& proposal, ProposalPat
     if (rotate_n_term) {
         delta_theta = -delta_theta;
     }
-    Eigen::Vector3f axis = (pos_B - pos_A).normalized();
-    Eigen::Matrix3f R = Eigen::AngleAxisf(delta_theta, axis).toRotationMatrix();
+    const Eigen::Vector3d pivot_A = pos_A.cast<double>();
+    const Eigen::Vector3d axis = (pos_B.cast<double>() - pivot_A).normalized();
+    const Eigen::Matrix3d R =
+        Eigen::AngleAxisd(static_cast<double>(delta_theta), axis).toRotationMatrix();
 
     auto rotate_range = [&](int start, int end, std::vector<uint8_t>& moved_flags) {
         if (start < 0 || end <= start) return;
-        proposal.rotate_atoms(start, end, R, pos_A);
+        proposal.rotate_atoms(start, end, R, pivot_A);
         for (int i = start; i < end; ++i) {
             moved_flags[static_cast<size_t>(i)] = 1;
             patch.mark_moved(i);
@@ -626,7 +630,7 @@ void MCIntegrator::apply_pivot_at(Context& context, State& proposal, ProposalPat
 
     auto rotate_and_mark = [&](int start, int end) {
         if (start < 0 || end <= start) return;
-        proposal.rotate_atoms(start, end, R, pos_A);
+        proposal.rotate_atoms(start, end, R, pivot_A);
         for (int i = start; i < end; ++i) mark_atom(i);
     };
 
@@ -916,12 +920,15 @@ bool MCIntegrator::apply_rama_pivot_to_target(Context& context, State& proposal,
     const int idx_C = blocks[static_cast<size_t>(r)].c_atom();
     const Eigen::Vector3f pos_N = proposal.atom_pos(idx_N);
     const Eigen::Vector3f pos_CA = proposal.atom_pos(idx_CA);
-    const Eigen::Matrix3f R_phi =
-        Eigen::AngleAxisf(delta_phi, (pos_CA - pos_N).normalized()).toRotationMatrix();
+    const Eigen::Vector3d pivot_N = pos_N.cast<double>();
+    const Eigen::Matrix3d R_phi =
+        Eigen::AngleAxisd(static_cast<double>(delta_phi),
+                          (pos_CA.cast<double>() - pivot_N).normalized())
+            .toRotationMatrix();
 
     auto phi_ranges = compute_pivot_c_term_ranges(system, context, r, /*is_phi=*/true);
     if (phi_ranges.empty()) return false;  // scattered atom layout: unsupported in v1
-    rotate_ranges(proposal, phi_ranges, R_phi, pos_N);
+    rotate_ranges(proposal, phi_ranges, R_phi, pivot_N);
 
     // Re-read Ca(r)/C(r) fresh from the now-phi-rotated coordinates
     // (Ca(r) is unchanged by the phi rotation; C(r) just moved) to build
@@ -929,11 +936,14 @@ bool MCIntegrator::apply_rama_pivot_to_target(Context& context, State& proposal,
     // ordering realizes the target (phi',psi') pair correctly.
     const Eigen::Vector3f pos_CA2 = proposal.atom_pos(idx_CA);
     const Eigen::Vector3f pos_C2 = proposal.atom_pos(idx_C);
-    const Eigen::Matrix3f R_psi =
-        Eigen::AngleAxisf(delta_psi, (pos_C2 - pos_CA2).normalized()).toRotationMatrix();
+    const Eigen::Vector3d pivot_CA = pos_CA2.cast<double>();
+    const Eigen::Matrix3d R_psi =
+        Eigen::AngleAxisd(static_cast<double>(delta_psi),
+                          (pos_C2.cast<double>() - pivot_CA).normalized())
+            .toRotationMatrix();
 
     auto psi_ranges = compute_pivot_c_term_ranges(system, context, r, /*is_phi=*/false);
-    rotate_ranges(proposal, psi_ranges, R_psi, pos_CA2);
+    rotate_ranges(proposal, psi_ranges, R_psi, pivot_CA);
 
     // Mark the UNION of both rotations' touched ranges exactly once (see
     // this function's header comment).

@@ -119,6 +119,10 @@ pytestmark = pytest.mark.slow
 # 7.6e-6 A apart (float32 rounding of the new closure arithmetic), after which
 # the runs separate chaotically. Captured by re-running the recipe above via
 # `run_hotpath` on the fixed engine.
+#
+# A GCC 8.5 build gave ACCEPT 271 and E_HBOND -180.06430053710938 here until
+# the rotation fix of 2026-10-02 (rigid rotations done in double and rounded
+# once), and gives exactly these values since.
 BASELINE_ACCEPT = 264
 BASELINE_E_HBOND = -177.14263916015625
 

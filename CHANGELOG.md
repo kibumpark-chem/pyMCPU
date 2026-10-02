@@ -276,6 +276,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `test_rama_pivot_move.py`'s p = 0 check (92 → 79). The old values still
   come out of the unfixed engine.
 
+- **Pivots no longer shrink the protein.** The pivot, rama-pivot and
+  continuous sidechain moves turn groups of atoms rigidly, and did so in
+  float32, rounding each coordinate twice: relative to the pivot atom, then
+  in lab coordinates. That left every distance a rotation should keep
+  slightly shorter on average, and the losses added up. Over 5M pivot-only
+  chignolin steps, CA-C bonds shrank by 3e-3 Å and the distances inside the
+  rigid pieces by 3e-3 Å on average, up to 2.6e-2 Å; the default move mix
+  lost about 6e-5 Å per million steps. The rotation is now done in double and
+  each coordinate rounded to float once, which leaves unbiased noise (+6e-6 Å
+  on bonds over the same 5M steps), at no measurable cost. **This changes
+  every trajectory that uses these moves**, under both force fields:
+  `test_rama_pivot_move.py`'s p = 0 check was re-captured (79 → 81), and
+  `test_coords_soa.py`'s frozen baseline, which a GCC 8.5 build missed
+  (271 accepted moves for 264), now comes out of it exactly.
+  `tests/physics/moves/test_rotation_keeps_distances.py` fails on the float32
+  build.
+
 - **KORP's rigid-pivot moved-moved elision is now off by default** — it gave
   Metropolis a wrong delta-E. `OrientationalPairPotential` skipped every pair of
   residues carried by the same rigid pivot, on the grounds that their six pair

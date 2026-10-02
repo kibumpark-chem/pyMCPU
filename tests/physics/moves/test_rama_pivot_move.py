@@ -234,7 +234,14 @@ def test_p_zero_is_bit_identical_to_genuine_legacy_code() -> None:
     moves the same 15 atoms in both, 12 of which land up to 7.6e-6 A apart
     (float32 rounding of the new closure arithmetic); the runs then separate.
     So the no-extra-draw property was established against the pre-feature
-    engine and is now pinned on the fixed one."""
+    engine and is now pinned on the fixed one.
+
+    RE-CAPTURED 2026-10-02 after the rotation fix (CHANGELOG [Unreleased] ->
+    Fixed, "Pivots no longer shrink the protein"): rigid rotations are now
+    done in double and rounded to float once. Same head, sum 81 instead of
+    79. Replayed one step at a time, the coordinates first differ at step 7,
+    an accepted sidechain move whose chi rotation lands one float step
+    (4.8e-7 A) away, and the accept bits first differ at step 106."""
     ctx, _ = build_raw_context(virtual_amide_h=True)
     integ = mcpu_core.Integrator(temperature=300.0, step_size_rad=0.1)
     integ.set_pivot_rama_probability(0.0)
@@ -242,7 +249,7 @@ def test_p_zero_is_bit_identical_to_genuine_legacy_code() -> None:
     integ.run(ctx, 300)
 
     legacy_accept_bits_head = [0, 0, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 1, 1, 1, 0, 1, 0, 1, 1]
-    legacy_accept_bits_sum = 79  # 92 before the KIC fix; see the docstring
+    legacy_accept_bits_sum = 81  # 92 before the KIC fix, 79 before the rotation fix
 
     bits = list(integ.last_accept_bits())
     assert bits[:20] == legacy_accept_bits_head

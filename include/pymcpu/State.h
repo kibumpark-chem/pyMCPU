@@ -143,7 +143,7 @@ public:
         return coords_soa.as_eigen();
     }
 
-    void rotate_atoms(int start, int end, const Eigen::Matrix3f& R, const Eigen::Vector3f& pivot) {
+    void rotate_atoms(int start, int end, const Eigen::Matrix3d& R, const Eigen::Vector3d& pivot) {
         coords_soa.rotate_atoms(start, end, R, pivot);
     }
 
