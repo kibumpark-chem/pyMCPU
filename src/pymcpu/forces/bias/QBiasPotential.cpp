@@ -25,6 +25,15 @@ QBiasPotential::QBiasPotential(
         throw std::invalid_argument("QBiasPotential: native pair list is empty");
     }
 
+    for (int p = 0; p < n_pairs_; ++p) {
+        if (pairs_i_[p] < 0 || pairs_j_[p] < 0) {
+            throw std::invalid_argument("QBiasPotential: negative atom index in pair list");
+        }
+    }
+    rebuild_atom_to_pairs();
+}
+
+void QBiasPotential::rebuild_atom_to_pairs() {
     int max_atom = 0;
     for (int p = 0; p < n_pairs_; ++p) {
         max_atom = std::max({max_atom, pairs_i_[p], pairs_j_[p]});
@@ -34,6 +43,21 @@ QBiasPotential::QBiasPotential(
         atom_to_pairs_[static_cast<size_t>(pairs_i_[p])].push_back(p);
         atom_to_pairs_[static_cast<size_t>(pairs_j_[p])].push_back(p);
     }
+}
+
+void QBiasPotential::permute_atom_indices(const AtomPermutation& perm) {
+    if (perm.is_identity()) return;
+    // Map into copies: to_internal() throws on an id outside the permutation,
+    // and a half-remapped pair list would be worse than the original.
+    std::vector<int> new_i(pairs_i_.size());
+    std::vector<int> new_j(pairs_j_.size());
+    for (size_t p = 0; p < pairs_i_.size(); ++p) {
+        new_i[p] = perm.to_internal(pairs_i_[p]);
+        new_j[p] = perm.to_internal(pairs_j_[p]);
+    }
+    pairs_i_.swap(new_i);
+    pairs_j_.swap(new_j);
+    rebuild_atom_to_pairs();
 }
 
 bool QBiasPotential::pairFormed(const State& state, int pair_idx) const noexcept {

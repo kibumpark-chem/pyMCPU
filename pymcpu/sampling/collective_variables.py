@@ -336,7 +336,7 @@ def build_contact_atom_index(
     forcefield: "BaseForceField",
     mode: str = "ca",
 ) -> np.ndarray:
-    """Return engine-internal contact-atom indices, one per residue.
+    """Return contact-atom indices in engine build order, one per residue.
 
     * ``ca`` — backbone CA.
     * ``cb`` — CB, or the backbone CA for a residue without one (glycine, or
@@ -366,7 +366,7 @@ def build_contact_atom_index(
 
 
 def build_ca_index(forcefield: "BaseForceField") -> np.ndarray:
-    """Return engine-internal indices of the backbone CA atoms, ordered by residue.
+    """Return backbone CA indices in engine build order, ordered by residue.
 
     Thin wrapper around :func:`build_contact_atom_index` with ``mode="ca"``.
     """

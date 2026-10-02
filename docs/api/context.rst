@@ -224,6 +224,10 @@ Atom ordering
 .. py:method:: Context.set_atom_reorder_mode(mode) -> None
 
    Atom locality reorder: ``"off"`` (default) or ``"init_only"``.
+   ``init_only`` renumbers the System's atoms in place and remaps its
+   energy terms, so a System can be reordered by one Context only: a
+   second ``init_only`` Context on the same System raises
+   ``RuntimeError``. Build a separate System for each one.
 
 .. py:method:: Context.get_atom_reorder_mode() -> str
 

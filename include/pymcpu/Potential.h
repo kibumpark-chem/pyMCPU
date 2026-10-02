@@ -65,8 +65,11 @@ public:
     void setEnabled(bool on) noexcept { enabled_ = on; }
     bool isEnabled() const noexcept { return enabled_; }
 
-    /// Optional: remap any stored atom indices after init-only locality permutation.
-    virtual void permute_atom_indices(const AtomPermutation& /*perm*/) {}
+    /// Remap every stored atom id from build order to storage order after the
+    /// init_only locality permutation. Pure virtual so a new term cannot skip
+    /// it silently; a term that stores no atom ids overrides it with an empty
+    /// body and says so.
+    virtual void permute_atom_indices(const AtomPermutation& perm) = 0;
 
     virtual float calculateEnergy(
         const Context& context,

@@ -67,6 +67,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The native-contacts bias follows the `init_only` atom reorder.** The
+  reorder renumbers atoms and asks each energy term to remap the atom ids it
+  holds; the bias kept its pairs in the old numbering and so measured
+  unrelated atoms (a native bias of 289560 instead of 8 on actin). It now
+  remaps them, and a term added after the reorder is remapped when it is
+  added. Reordering a System that another Context has already reordered now
+  raises instead of corrupting both Contexts. Runs without the reorder (every
+  shipped runner) are unchanged.
 - **Masked runs no longer accept a clash carried by a large rigid move.** A
   rigid pivot keeps the distances inside the moved segment, so Mu re-checks
   those pairs for a hard-core clash instead of scoring them. In the delta

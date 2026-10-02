@@ -116,6 +116,9 @@ void System::apply_atom_permutation(const AtomPermutation& perm) {
         throw std::runtime_error("System::apply_atom_permutation: atom count mismatch");
     }
     if (perm.is_identity()) return;
+    if (atoms_reordered_) {
+        throw std::runtime_error("System::apply_atom_permutation: this System's atoms are already reordered");
+    }
     perm.validate_inverses();
 
     auto map_id = [&](int ext) -> int {
@@ -206,6 +209,7 @@ void System::apply_atom_permutation(const AtomPermutation& perm) {
             range[1] = hi;
         }
     }
+    permute_potentials(perm);
 
 #if !defined(NDEBUG)
     for (const auto& b : block_indices) {
@@ -232,6 +236,9 @@ void System::apply_residue_contiguous_blocks(std::vector<BlockIndices> blocks,
     }
     if (perm.n_atoms() != num_atoms) {
         throw std::runtime_error("apply_residue_contiguous_blocks: atom count mismatch");
+    }
+    if (atoms_reordered_) {
+        throw std::runtime_error("apply_residue_contiguous_blocks: this System's atoms are already reordered");
     }
     block_indices = std::move(blocks);
     residue_contiguous_layout_ = true;
@@ -281,6 +288,7 @@ void System::apply_residue_contiguous_blocks(std::vector<BlockIndices> blocks,
         downstream.first_h_of_residue[static_cast<size_t>(r)] =
             b.h_start >= 0 ? b.h_start : num_atoms;
     }
+    permute_potentials(perm);
 
 #if !defined(NDEBUG)
     for (const auto& b : block_indices) {
@@ -292,6 +300,12 @@ void System::apply_residue_contiguous_blocks(std::vector<BlockIndices> blocks,
         }
     }
 #endif
+}
+
+void System::permute_potentials(const AtomPermutation& perm) {
+    for (auto& potential : potentials) potential->permute_atom_indices(perm);
+    applied_perm_ = perm;
+    atoms_reordered_ = true;
 }
 
 bool System::is_amide_h_atom(int atom_id) const noexcept {
@@ -341,6 +355,9 @@ int System::addPotential(std::shared_ptr<Potential> potential) {
     potentials.push_back(std::move(potential));
     try {
         collect_energy_terms(potentials);
+        // Callers build potentials from build-order ids (forcefield.blocks,
+        // ordered_atom_list); after a reorder those are not storage ids.
+        if (atoms_reordered_) potentials.back()->permute_atom_indices(applied_perm_);
     } catch (...) {
         potentials.pop_back();
         throw;

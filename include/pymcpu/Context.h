@@ -239,6 +239,8 @@ private:
     RejectReason last_total_reject_reason_ = RejectReason::None;
 
     void maybe_apply_init_only_reorder_();
+    /// Throws if another Context already reordered this System's atoms.
+    void refuse_reordered_system_() const;
 
 public:
     float contactCutoffA() const noexcept { return neighbors_.mu_cutoff_A(); }

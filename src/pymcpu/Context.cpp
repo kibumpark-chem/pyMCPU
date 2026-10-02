@@ -29,8 +29,19 @@ void Context::set_atom_reorder_mode(AtomReorderMode mode) {
         // Keep identity; do not undo an already-applied permutation in this PR.
         return;
     }
+    if (!reorder_applied_) refuse_reordered_system_();
     if (positions_set_ && !reorder_applied_) {
         maybe_apply_init_only_reorder_();
+    }
+}
+
+void Context::refuse_reordered_system_() const {
+    // The reorder rewrites the System, which REMD replicas share, while the
+    // permutation lives on this Context; reordering it twice corrupts both.
+    if (system->atoms_reordered()) {
+        throw std::runtime_error(
+            "init_only atom reorder: this System was already reordered by another "
+            "Context; build a separate System for each init_only Context.");
     }
 }
 
@@ -42,6 +53,7 @@ void Context::maybe_apply_init_only_reorder_() {
     if (atom_reorder_mode_ != AtomReorderMode::InitOnly) return;
     if (reorder_applied_) return;
     if (!positions_set_) return;
+    refuse_reordered_system_();
 
     std::vector<BlockIndices> new_blocks;
     const NeighborConfig& ncfg = neighbors_.config();
@@ -55,10 +67,8 @@ void Context::maybe_apply_init_only_reorder_() {
     }
 
     permute_coords_soa(state.coords_soa, atom_perm_);
+    // Also remaps every potential and records the permutation on the System.
     system->apply_residue_contiguous_blocks(std::move(new_blocks), atom_perm_);
-    for (auto& potential : system->getPotentials()) {
-        potential->permute_atom_indices(atom_perm_);
-    }
     // Contact cache is indexed by atom pairs in storage order — invalidate.
     state.is_contact_cache.clear();
     // Pair indices change meaning under a permutation -- drop the list too.
