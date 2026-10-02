@@ -69,6 +69,27 @@ _RESIDUE_ALIASES = {
 }
 
 
+def _keep_source_identity(source: md.Topology, kept, target: md.Topology) -> None:
+    """Put back the chain IDs and residue numbers ``Topology.subset`` loses.
+
+    ``target`` is ``source.subset(kept)`` or the topology of
+    ``atom_slice(kept)``. mdtraj (1.10.3 at least) rebuilds every chain with
+    no ID and replaces a residue number of 0 with the residue's index. KORP
+    keys sequence separation on both: without the IDs every chain reads as
+    ``' '``, so two chains are numbering-checked and scored as one, and the
+    steric guard excuses cross-chain contacts as bonded neighbours.
+
+    ``subset`` keeps atoms in ``source`` order and drops only empty residues
+    and chains, so target atom k is source atom ``unique(kept)[k]``, and the
+    first atom of each target chain or residue names its source.
+    """
+    src = np.unique(np.asarray(kept, dtype=int))
+    for chain in target.chains:
+        chain.chain_id = source.atom(int(src[next(chain.atoms).index])).residue.chain.chain_id
+    for residue in target.residues:
+        residue.resSeq = source.atom(int(src[next(residue.atoms).index])).residue.resSeq
+
+
 class KORPForceField(BaseForceField):
     """Backbone-only KORP force field.
 
@@ -185,7 +206,9 @@ class KORPForceField(BaseForceField):
                 "no backbone atoms found; KORPForceField needs protein "
                 "residues with N, CA and C"
             )
-        return trajectory.atom_slice(selection)
+        sliced = trajectory.atom_slice(selection)
+        _keep_source_identity(trajectory.topology, selection, sliced.topology)
+        return sliced
 
     def _collect_residues(self, sliced: md.Trajectory) -> None:
         """Gather per-residue identity and check every frame can be built."""
@@ -328,10 +351,12 @@ class KORPForceField(BaseForceField):
         which is not monotonic, so engine order is carried by `_output_index`
         -- never by the subset itself. Subsetting on `ordered_indices` directly
         would silently return a sorted topology and a fresh mismatch.
+        ``subset`` also drops chain IDs, which are put back.
         """
         used = sorted(self.ordered_indices)
         remap = {old: new for new, old in enumerate(used)}
         self.output_topology = sliced.topology.subset(used)
+        _keep_source_identity(sliced.topology, used, self.output_topology)
         self._output_index = [remap[i] for i in self.ordered_indices]
 
     def _check_initial_sterics(self) -> None:

@@ -67,6 +67,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **KORP keeps chain IDs and residue numbers.** Its backbone slice goes through
+  mdtraj's `Topology.subset`, which drops every chain ID and renumbers a
+  residue numbered 0. Multi-chain inputs were therefore numbering-checked,
+  scored and steric-guarded as one chain: a homo-oligomer numbered from 1 in
+  each chain was refused, chains with distinct numbers were scored as one, and
+  the CA-CA guard excused cross-chain contacts as bonded neighbours. Both are
+  now put back, also on `output_topology`. Single-chain inputs are unchanged.
 - **The native-contacts bias follows the `init_only` atom reorder.** The
   reorder renumbers atoms and asks each energy term to remap the atom ids it
   holds; the bias kept its pairs in the old numbering and so measured

@@ -209,3 +209,31 @@ def test_a_missing_map_says_how_to_get_one(chain_traj, monkeypatch, tmp_path):
     assert "chaconlab.org" in message
     assert "331777205" in message
     assert "KORP_MAP_PATH" in message
+
+
+def _two_chain_energy(tmp_path, b_first):
+    from tests.physics.forcefield.test_korp_chain_identity import _two_chains
+
+    traj = _two_chains(tmp_path, b_first=b_first)
+    ff = KORPForceField(traj, map_path=_map_path())
+    energy = _simulate(ff, traj).context.energy_breakdown(weighted=False)["by_group"][7]
+    return ff, energy
+
+
+def test_two_chains_are_scored_as_two_chains(tmp_path):
+    """Pairs on different chains are non-bonded. The slice used to drop the
+    chain IDs, so the copy was scored as a continuation of chain A."""
+    from pymcpu.forcefields.korp_map import score_structure
+
+    ff, energy = _two_chain_energy(tmp_path, b_first=11)
+    frames = (ff.coords[0, : 3 * ff.n_res] * 10.0).reshape(ff.n_res, 3, 3)
+    two = score_structure(ff.korp_map, frames, ff.res_names, ff.res_seq, ff.chain_ids)
+    one = score_structure(ff.korp_map, frames, ff.res_names, ff.res_seq, [" "] * ff.n_res)
+    assert energy == pytest.approx(two, rel=1e-6)
+    assert abs(two - one) > 1.0
+
+
+def test_renumbering_another_chain_does_not_change_the_energy(tmp_path):
+    _, from_one = _two_chain_energy(tmp_path, b_first=1)
+    _, from_eleven = _two_chain_energy(tmp_path, b_first=11)
+    assert from_one == from_eleven
