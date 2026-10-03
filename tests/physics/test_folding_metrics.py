@@ -67,6 +67,7 @@ def _make_minimal_folding_runner(
     mock_sim.get_coords.return_value = np.random.rand(n_atoms, 3).astype(np.float32)
     mock_sim.current_step = 0
     mock_sim.context = MagicMock()
+    mock_sim.context.has_steric_clash.return_value = False  # a MagicMock is truthy
 
     runner = FoldingRunner.__new__(FoldingRunner)
     runner.simulation = mock_sim

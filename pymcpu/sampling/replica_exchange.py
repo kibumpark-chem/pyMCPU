@@ -12,7 +12,7 @@ from typing import Any, Sequence, TextIO
 import numpy as np
 
 from pymcpu import mcpu_core
-from pymcpu.simulation import StericClashError
+from pymcpu.simulation import check_state_clash
 from pymcpu.checkpointing import (
     CHECKPOINT_FORMAT_VERSION,
     CheckpointConfig,
@@ -442,12 +442,7 @@ class ReplicaExchange:
         rep.simulation.context.set_positions(coords)
         rep.simulation.context.set_native_contacts_bias(self.k_bias, float(rep.n_target))
         rep.simulation.context.calculate_total_energy(-1)
-        if rep.simulation.context.has_steric_clash():
-            raise StericClashError(
-                f"steric clash in replica {i} restored from checkpoint: "
-                "a pair is more than 0.001 A under its hard-core cutoff, "
-                "which no move can produce."
-            )
+        check_state_clash(rep.simulation.context, f"replica {i} restored from checkpoint")
         rep.simulation.current_step = int(steps[i])
 
       set_integrator_rng_states(self.replicas, list(rng_states))

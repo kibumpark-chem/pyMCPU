@@ -35,7 +35,7 @@ from pymcpu.sampling.collective_variables import (
 )
 from pymcpu.sampling.folding_bias import BasinTracker, FoldingBias
 from pymcpu.sampling.replica_exchange import get_coords
-from pymcpu.simulation import Simulation
+from pymcpu.simulation import Simulation, check_state_clash
 from pymcpu.trajectory_utils import truncate_all_trajectories_on_resume
 
 logger = logging.getLogger(__name__)
@@ -826,6 +826,7 @@ class FoldingRunner:
             else:
                 self.simulation.context.set_positions(coords.T.astype(np.float32))
             self.simulation.context.calculate_total_energy(-1)
+            check_state_clash(self.simulation.context, f"checkpoint restore from {checkpoint_path}")
 
         if state.current_steps:
             self.simulation.current_step = int(state.current_steps[0])

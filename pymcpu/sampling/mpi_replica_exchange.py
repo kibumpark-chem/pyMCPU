@@ -18,7 +18,7 @@ from typing import Any, TextIO
 import numpy as np
 
 from pymcpu import mcpu_core
-from pymcpu.simulation import StericClashError
+from pymcpu.simulation import check_state_clash
 from pymcpu.checkpointing import (
     CHECKPOINT_FORMAT_VERSION,
     CheckpointConfig,
@@ -111,25 +111,6 @@ def _slot_for_index(
     temp_index = replica_index // n_q
     q_index = replica_index % n_q
     return temp_index, q_index, float(temperatures[temp_index]), float(n_targets[q_index])
-
-
-def _assert_no_steric_clash(ctx, where: str) -> None:
-    """Fail loudly if an accepted/received state contains a hard-core overlap.
-
-    The check uses the state cutoff, STATE_CLASH_BUFFER_A (0.001 A) looser
-    than the one moves are tested against, so no move can produce a clash it
-    reports (see StericClashError). One here means the coordinates came in
-    that way (a received or restored state) or a delta path missed a pair --
-    and, before this guard, weight*99999 was silently used as that replica's
-    energy in the exchange Metropolis criterion.
-    """
-    if ctx.has_steric_clash():
-        raise StericClashError(
-            f"steric clash in the accepted state at {where}: the full recompute "
-            "finds a pair more than 0.001 A under its hard-core cutoff. No move "
-            "can do that, so the coordinates came in that way or a delta path "
-            "missed the pair."
-        )
 
 
 class MPIReplicaExchange:
@@ -754,7 +735,7 @@ class MPIReplicaExchange:
             else:
                 slot.simulation.context.set_positions(coords.T.astype(np.float32))
             slot.simulation.context.calculate_total_energy(-1)
-            _assert_no_steric_clash(
+            check_state_clash(
                 slot.simulation.context, "checkpoint restore"
             )
             if rid < len(steps_list) and steps_list[rid] is not None:
@@ -1026,7 +1007,7 @@ class MPIReplicaExchange:
                 )
                 rep.simulation.context.set_positions(new_coords)
                 rep.simulation.context.calculate_total_energy(-1)
-                _assert_no_steric_clash(
+                check_state_clash(
                     rep.simulation.context, "post-exchange coordinate swap"
                 )
 
@@ -1069,7 +1050,7 @@ class MPIReplicaExchange:
                 )
                 rep.simulation.context.set_positions(new_coords)
                 rep.simulation.context.calculate_total_energy(-1)
-                _assert_no_steric_clash(
+                check_state_clash(
                     rep.simulation.context, "post-exchange coordinate swap"
                 )
 

@@ -137,7 +137,8 @@ from a move, or a pair a delta path missed. `Simulation` checks
 `Context.has_steric_clash()` on its periodic full-energy recompute and raises
 `StericClashError` by default. Setting `MCPU_CLASH_FATAL=0` downgrades this to
 a counted warning; continuing costs one exchange attempt made with a slightly
-stale energy.
+stale energy. Checkpoint restores, replica swaps and `EngineSession.set_coords`
+check the state they set in the same way (`check_state_clash`).
 
 Overlaps in the structure a force field is built from are handled up front:
 Mu exempts those pairs for the whole run (native-structure exceptions), and

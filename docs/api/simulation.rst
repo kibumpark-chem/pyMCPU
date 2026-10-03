@@ -156,6 +156,13 @@ the exception to a counted warning, which is the right choice for a long
 production run; the default is fatal so that reproduction runs and CI
 stop at the first occurrence.
 
+Coordinates set from outside the moves are checked the same way, by
+:func:`pymcpu.simulation.check_state_clash`, as soon as they are set: a
+folding or replica-exchange checkpoint restore, a replica swap, and
+``EngineSession.set_coords``.
+
+.. autofunction:: pymcpu.simulation.check_state_clash
+
 Inspecting the last move
 ------------------------
 

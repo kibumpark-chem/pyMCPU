@@ -31,7 +31,7 @@ from pymcpu.sampling.collective_variables import (
     build_contact_atom_index,
     reference_contact_from_pdb,
 )
-from pymcpu.simulation import Simulation
+from pymcpu.simulation import Simulation, check_state_clash
 
 
 @dataclass
@@ -294,6 +294,8 @@ def swap_context_coordinates(
     context_b.set_positions(coords_a)
     context_a.calculate_total_energy(-1)
     context_b.calculate_total_energy(-1)
+    check_state_clash(context_a, "replica swap")
+    check_state_clash(context_b, "replica swap")
 
 
 def replica_index(temp_index: int, q_index: int, n_q_windows: int) -> int:

@@ -67,6 +67,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Restores and replica swaps check the state they set for clashes, and
+  honour `MCPU_CLASH_FATAL=0`.** A hard-core overlap that no move can make
+  is reported by `Simulation.step` (fatal by default, a warning under
+  `MCPU_CLASH_FATAL=0`). The serial and MPI replica-exchange checkpoint
+  restores and the MPI cross-rank swap checked too, but raised even under
+  `MCPU_CLASH_FATAL=0`; folding resume, `EngineSession.set_coords` and
+  same-rank replica swaps did not check, and since the recompute keeps the
+  previous energy when it finds a clash, they carried on with a stale
+  energy until the next step reported it. All of them now go through
+  `pymcpu.simulation.check_state_clash`.
 - **Mu no longer exempts a native pair that does not clash.** A pair already
   under its hard-core distance in the structure a force field is built from
   is exempt from the clash test for the whole run. The test used the exact
