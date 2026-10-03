@@ -481,7 +481,8 @@ EnergyChangeResult System::evaluateDeltaEnergy(
 TotalEnergyResult System::evaluateTotalEnergy(
     const Context& ctx,
     const State& state,
-    int target_group) const
+    int target_group,
+    bool resync) const
 {
     const EnergyWeights& weights = ctx.energyWeights();
     TotalEnergyResult out;
@@ -490,7 +491,8 @@ TotalEnergyResult System::evaluateTotalEnergy(
         if (target_group != -1 && potential->getEnergyGroup() != target_group) {
             continue;
         }
-        const float raw = potential->calculateEnergy(ctx, state);
+        const float raw = resync ? potential->resyncEnergy(ctx, state)
+                                 : potential->calculateEnergy(ctx, state);
         const float w = weights.weight_for_group(potential->getEnergyGroup());
         out.energy += w * raw;
         if (potential->canHardReject()) {

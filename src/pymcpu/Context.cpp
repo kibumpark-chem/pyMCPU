@@ -424,8 +424,10 @@ float Context::calculate_total_energy(int target_group) {
     require_current_atom_order();
     // Asks the System to loop through all its Potentials and calculate baseline energy
     // (legacy-weighted by default via energy_weights_).
-    const TotalEnergyResult result =
-        system->evaluateTotalEnergy(*this, state, target_group);
+    // The whole energy is what current_energy gets reset to, so it is a
+    // resync: terms rebuild their incremental bookkeeping in the same pass.
+    const TotalEnergyResult result = system->evaluateTotalEnergy(
+        *this, state, target_group, /*resync=*/target_group == -1);
     const float e = result.energy;
 
     if (target_group == -1) {

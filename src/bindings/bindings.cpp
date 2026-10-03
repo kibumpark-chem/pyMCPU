@@ -184,7 +184,12 @@ PYBIND11_MODULE(mcpu_core, m) {
         .def_property(
             "coords",
             [](const State& s) { return s.coords_as_eigen(); },
-            [](State& s, const Eigen::Matrix3Xf& m) { s.set_coords_from_eigen(m); })
+            [](State& s, const Eigen::Matrix3Xf& m) { s.set_coords_from_eigen(m); },
+            "Coordinates, shape (3, n_atoms), in Angstrom, in storage order "
+            "(Context.coords uses build order by default). Writing them discards "
+            "this State's Mu contact list. To move a Context, use "
+            "Context.set_positions or Context.coords, which also refresh its "
+            "neighbour grids; writing ctx.get_state().coords does not.")
         .def_property_readonly("current_energy", &State::getEnergy)
         .def_readwrite("backbone_torsions",  &State::backbone_torsions)
         .def_readwrite("sidechain_torsions", &State::sidechain_torsions);

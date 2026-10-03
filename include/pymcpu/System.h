@@ -357,10 +357,12 @@ public:
         const ProposalPatch& patch) const;
 
     /// Weighted total energy with optional hard-rejection reason (baseline).
+    /// With resync, each term is evaluated through Potential::resyncEnergy.
     TotalEnergyResult evaluateTotalEnergy(
         const Context& ctx,
         const State&   state,
-        int            target_group = -1) const;
+        int            target_group = -1,
+        bool           resync = false) const;
 
     EnergyBreakdown energyBreakdown(const Context& ctx, const State& state) const;
 };

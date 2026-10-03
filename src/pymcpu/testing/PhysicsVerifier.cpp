@@ -57,14 +57,16 @@ PotentialDeltaCheck PhysicsVerifier::verify_potential_delta(
     State old_copy = old_state;
     State proposed_copy = proposed_state;
 
-    // Pooled MC proposals are DynamicOnly (empty N² caches). Total-energy
-    // verification writes Mu contact flags into is_contact_cache — size it.
+#if !MCPU_FAST_MU_DELTA
+    // Pooled MC proposals are DynamicOnly (empty N² caches). The legacy Mu
+    // energy writes contact flags into is_contact_cache — size it.
     const int num_atoms = ctx.getSystem().getNumAtoms();
     const size_t n2 =
         static_cast<size_t>(num_atoms) * static_cast<size_t>(num_atoms);
     if (proposed_copy.is_contact_cache.size() != n2) {
         proposed_copy.is_contact_cache.assign(n2, false);
     }
+#endif
 
     auto& mutable_ctx = const_cast<Context&>(ctx);
     clear_workspaces(mutable_ctx);

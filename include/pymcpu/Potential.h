@@ -91,6 +91,15 @@ public:
         const State& state
     ) const = 0;
 
+    /// The full energy of a context's accepted state when
+    /// Context::calculate_total_energy(-1) resets the running energy to it. A
+    /// term that keeps incremental bookkeeping on the state rebuilds it from
+    /// the same pass here, so the two are reset together; calculateEnergy
+    /// leaves that bookkeeping alone.
+    virtual float resyncEnergy(const Context& context, const State& state) const {
+        return calculateEnergy(context, state);
+    }
+
     /// CHANGED: return EnergyChangeResult to carry hard-rejection reason.
     virtual EnergyChangeResult calculateEnergyChange(
         const Context& context,

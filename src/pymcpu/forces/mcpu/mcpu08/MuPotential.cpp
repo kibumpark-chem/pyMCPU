@@ -818,44 +818,6 @@ struct CpTimer {
 #endif
     }
 
-    float MuPotential::calculateEnergyBrute(const Context& context, const State& state) const {
-        setup_mask_cache(context.getSystem());
-        float total_energy = 0.0f;
-        const int num_atoms = context.getSystem().getNumAtoms();
-        const CoordView cv(state.coord_view());
-
-        for (int i = 0; i < num_atoms; ++i) {
-            for (int j = i + 1; j < num_atoms; ++j) {
-#if MCPU_FAST_MU_DELTA
-                const float dist_sq = cv.dist2(i, j);
-                bool clash = false;
-                const float e = eval_pair<ClashCutoff::State>(i, j, dist_sq, &clash);
-                if (clash) {
-                    if (energy_mask_mode_cached_ == EnergyMaskMode::ClashOnly) {
-                        continue;
-                    }
-                    return kHardCorePenalty;
-                }
-                total_energy += e;
-#else
-                const int matrix_idx = i * num_atoms + j;
-                const auto& contact_info = contact_cache[static_cast<size_t>(matrix_idx)];
-                if (!contact_info.check_contact && !contact_info.check_clash) continue;
-
-                const float dist_sq = cv.dist2(i, j);
-                if (contact_info.check_clash &&
-                    is_hard_clash(dist_sq, contact_info.hard_core_sq)) {
-                    return kHardCorePenalty;
-                }
-                if (contact_info.check_contact && dist_sq <= contact_info.contact_dist_sq) {
-                    total_energy += contact_info.energy;
-                }
-#endif
-            }
-        }
-        return total_energy;
-    }
-
     // ---------------------------------------------------------
     // Dispatch
     // ---------------------------------------------------------
@@ -2001,7 +1963,7 @@ struct CpTimer {
     // ---------------------------------------------------------
 
     // ================================================================
-    // LIVE CONTACT LIST  (MCPU_CONTACT_LIST=1)
+    // LIVE CONTACT LIST  (default; MCPU_CONTACT_LIST=0 turns it off)
     // ================================================================
     // See the header for why this exists. In short: a move's energy change is
     //     dE = (contact energy at the new positions)
@@ -2353,6 +2315,16 @@ struct CpTimer {
 
 
     float MuPotential::calculateEnergy(const Context& context, const State& state) const {
+        return full_energy(context, state, /*resync=*/false);
+    }
+
+    float MuPotential::resyncEnergy(const Context& context, const State& state) const {
+        return full_energy(context, state, /*resync=*/true);
+    }
+
+    float MuPotential::full_energy(
+        const Context& context, const State& state, bool resync
+    ) const {
         // Full energy for an arbitrary State must use that state's coordinates.
         // NeighborSystem Mu index reflects accepted coords only — do not query it here
         // for proposed/trial states (PhysicsVerifier). Production total energy is
@@ -2362,6 +2334,27 @@ struct CpTimer {
         float total_energy = 0.0f;
         const int num_atoms = sys.getNumAtoms();
 
+#if MCPU_FAST_MU_DELTA
+        // A resync (Potential::resyncEnergy) also rewrites the state's live
+        // contact list from this pass, so the list and the running energy are
+        // reset together. A rigid pivot does not re-decide the pairs it
+        // carries, and rounding can carry one across its contact cutoff with
+        // neither noticing; resetting only the energy left the stale entry for
+        // the next move that separated the pair to subtract. Under an energy
+        // mask, masked pairs score 0 here and moves do not use the list, so it
+        // is dropped instead and rebuilt by the first move that needs it.
+        // Clearing in place keeps each atom's allocation.
+        bool refill_contacts = false;
+        if (resync && state.mu_contact_list_ready) {
+            if (sys.has_energy_mask()) {
+                state.mu_contact_invalidate();
+            } else {
+                refill_contacts = true;
+                state.mu_contact_list.resize(static_cast<size_t>(num_atoms));
+                for (auto& partners : state.mu_contact_list) partners.clear();
+            }
+        }
+#endif
         const CoordView cv(state.coord_view());
         for (int i = 0; i < num_atoms; ++i) {
             if (sys.is_amide_h_atom(i)) continue;
@@ -2424,19 +2417,14 @@ struct CpTimer {
                             int(topo_clash_mask_[static_cast<size_t>(matrix_idx)]),
                             int(topo_contact_mask_[static_cast<size_t>(matrix_idx)]));
                     }
+                    // A clashing state's list is half rewritten; drop it, and
+                    // the next move rebuilds it.
+                    if (refill_contacts) state.mu_contact_invalidate();
                     return kHardCorePenalty;
                 }
                 if (e != 0.0f) {
                     total_energy += e;
-                    if (state.has_contact_cache()) {
-                        state.is_contact_cache[static_cast<size_t>(matrix_idx)] = true;
-                        state.is_contact_cache[static_cast<size_t>(j * num_atoms + i)] = true;
-                    }
-                } else if (topo_contact_mask_[static_cast<size_t>(matrix_idx)]) {
-                    if (state.has_contact_cache()) {
-                        state.is_contact_cache[static_cast<size_t>(matrix_idx)] = false;
-                        state.is_contact_cache[static_cast<size_t>(j * num_atoms + i)] = false;
-                    }
+                    if (refill_contacts) state.mu_contact_add(i, j, e);
                 }
 #else
                 const auto& contact_info = contact_cache[static_cast<size_t>(matrix_idx)];
@@ -2501,13 +2489,6 @@ struct CpTimer {
             }
         }
         return false;
-    }
-
-    float MuPotential::calculateEnergy(
-        const Context& context, const State& state, bool /*update_cache*/
-    ) const {
-        // Delegate to the 2-arg override explicitly (avoid overload ambiguity)
-        return static_cast<const Potential*>(this)->calculateEnergy(context, state);
     }
 
 } // namespace mcpu::forces::mcpu08

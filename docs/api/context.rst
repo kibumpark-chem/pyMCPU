@@ -302,7 +302,13 @@ State
 
    .. py:attribute:: coords
 
-      ``float32`` ``(3, n)`` coordinate array.
+      ``float32`` ``(3, n)`` coordinate array, in storage order
+      (:py:attr:`pymcpu.Context.coords` uses build order by default; they
+      differ after an ``init_only`` atom reorder). Writing it discards this
+      state's Mu contact list. To move a ``Context``, use
+      :py:meth:`pymcpu.Context.set_positions` or
+      :py:attr:`pymcpu.Context.coords`, which also refresh its neighbour
+      grids; writing ``ctx.get_state().coords`` does not.
 
    .. py:attribute:: current_energy
 

@@ -254,6 +254,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `test_rama_pivot_move.py`'s p = 0 check (92 → 79). The old values still
   come out of the unfixed engine.
 
+- **A full energy recompute also refreshes Mu's contact list.** A move's Mu
+  energy change reads the old contacts off a live list of the accepted
+  state's contacts. A rigid pivot does not re-decide the pairs it carries,
+  and its rounding can carry one across its contact cutoff by about 1e-6 Å,
+  so neither the running energy nor the list sees the change.
+  `calculate_total_energy(-1)`, which `Simulation` runs after every `step()`
+  by default, corrected the energy but kept the stale entry, and the next
+  move that separated the pair was scored one contact energy wrong: on
+  actin, energy-drift warnings came in pairs of opposite sign, up to a few
+  per million steps. That recompute now rewrites the list from the same pass
+  (through the new `Potential::resyncEnergy`), so only the carry itself
+  still shows, as one warning; read-only evaluations such as
+  `energy_breakdown` leave the list alone. The pass also stopped writing a
+  pair-flag cache that only the legacy (`MCPU_FAST_MU_DELTA=0`) build reads,
+  and the default build no longer allocates it (N^2 bits per state), which
+  makes the actin recompute about a quarter faster (45 to 34 ms). Writing
+  `State.coords` now discards that state's contact list too.
+  `docs/physics_notes/mc_acceptance.md` described a periodic contact-list
+  rebuild (`contact_rebuild_interval`) the engine never had; it now
+  describes the list as it is. `MuPotential::calculateEnergyBrute` and a
+  three-argument `calculateEnergy` overload, which nothing called, are gone.
+
 - **Pivots no longer shrink the protein.** The pivot, rama-pivot and
   continuous sidechain moves turn groups of atoms rigidly, and did so in
   float32, rounding each coordinate twice: relative to the pivot atom, then

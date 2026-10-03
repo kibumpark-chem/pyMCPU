@@ -94,18 +94,26 @@ This is required for detailed balance. RMSD-based selection
 exists in the legacy code but is overridden by this random
 selection (legacy `loop.h:685`).
 
-### Periodic contact cache rebuild
+### The Mu contact list
 
-To prevent floating-point drift in the contact CSR over
-long simulations, the full contact list is recomputed
-from geometry every N steps:
+A move's Mu energy change is the contact energy at the new positions minus
+the contact energy at the old ones. By default the second term is read off a
+live list of the accepted state's contacts rather than measured again (under
+a residue energy mask, or with `MCPU_CONTACT_LIST=0`, it is measured again).
+The list is built from the coordinates on the first move that needs it,
+updated by each accepted move, and rewritten from the coordinates whenever
+`calculate_total_energy(-1)` resets the running energy (`Simulation` does so
+after every `step()` by default; see `full_energy_every`). It is discarded
+whenever the coordinates are replaced wholesale (`set_positions`,
+`Context.coords`, `State.coords`, a restore or replica swap), by a move that
+cannot use it (one outside the neighbour grid), and by a reset under a mask.
+Other full evaluations, such as `energy_breakdown`, leave it alone.
 
-```
-contact_rebuild_interval = 1,000,000  (default)
-```
-
-This matches the legacy `fold.h` hygiene step and is
-set through the `Integrator` constructor.
+A rigid pivot does not re-decide the pairs it carries, and its rounding can
+carry one across its contact cutoff by about 1e-6 Å. The running energy is
+then one contact energy off until the next reset corrects it, and
+`Simulation` logs an energy-drift warning. On actin this happens up to a few
+times per million steps.
 
 ### Hard-core clashes
 

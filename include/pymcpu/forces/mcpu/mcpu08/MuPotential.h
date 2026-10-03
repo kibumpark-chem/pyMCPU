@@ -554,12 +554,12 @@ namespace mcpu::forces::mcpu08 {
             const ProposalPatch& patch
         ) const;
 
-        // ── Live contact list (MCPU_CONTACT_LIST=1) ─────────────────────
+        // ── Live contact list (default; MCPU_CONTACT_LIST=0 turns it off) ──
         // A running list, per atom, of the atoms it is CURRENTLY in contact
         // with, together with that contact's energy. It answers one question
         // cheaply: "what is this atom's contact energy right now?"
         //
-        // The default path answers that by re-walking the atom's old
+        // Without the list, the delta answers that by re-walking the atom's old
         // neighbourhood and re-measuring every distance -- roughly 3500
         // distance checks per actin pivot to rediscover about 50 contacts it
         // already knew about last step. Reading them off a list instead is
@@ -581,10 +581,14 @@ namespace mcpu::forces::mcpu08 {
         /// Count of moves that could not use the list (diagnostic only).
         mutable std::uint64_t clist_fallbacks_ = 0;
 
-        /// Rebuild a state's list from its coordinates. O(N x neighbours).
+        /// Rebuild a state's list from its coordinates. O(N^2).
         void rebuild_contact_list(const Context& context, const State& state) const;
 
-        /// Delta using the live contact list. Enabled with MCPU_CONTACT_LIST=1.
+        /// calculateEnergy and resyncEnergy: the O(N^2) full energy; with
+        /// resync, also rewrites the state's live contact list.
+        float full_energy(const Context& context, const State& state, bool resync) const;
+
+        /// Delta using the live contact list (default; MCPU_CONTACT_LIST=0 turns it off).
         float calculateEnergyChange_clist(
             const Context& context,
             const State& old_state,
@@ -625,13 +629,8 @@ namespace mcpu::forces::mcpu08 {
 
 
         float calculateEnergy(const Context& context, const State& state) const override;
-        float calculateEnergy(
-            const Context& context, const State& state,
-            bool update_cache = false
-        ) const;
-        float calculateEnergyBrute(
-            const Context& context, const State& state
-        ) const;
+        /// Also rewrites the state's live contact list from the same pass.
+        float resyncEnergy(const Context& context, const State& state) const override;
         bool canHardReject() const noexcept override { return true; }
         RejectReason rejectionForEnergy(float energy) const noexcept override {
             return energy >= 99999.0f * 0.5f
