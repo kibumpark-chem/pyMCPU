@@ -67,6 +67,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Replica exchange and folding read coordinates in the order they write
+  them.** `pymcpu.sampling.get_coords`, which exchanges, checkpoints and the
+  folding CVs use, read `State.coords` (storage order) while
+  `set_positions` takes build order. The two differ after an `init_only`
+  atom reorder, so a swap or a checkpoint round trip scrambled the atoms and
+  the CVs read the wrong ones. It now reads `Context.coords`. No shipped
+  runner enables the reorder, so their runs are unchanged.
 - **Restores and replica swaps check the state they set for clashes, and
   honour `MCPU_CLASH_FATAL=0`.** A hard-core overlap that no move can make
   is reported by `Simulation.step` (fatal by default, a warning under

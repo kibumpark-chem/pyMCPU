@@ -281,7 +281,10 @@ def evaluate_exchange_acceptance(
 
 
 def get_coords(context: mcpu_core.Context) -> np.ndarray:
-    return np.asarray(context.get_state().coords, dtype=np.float32)
+    """The context's coordinates in build (topology) order, the order
+    ``set_positions`` takes them in. ``get_state().coords`` is storage
+    order, which differs after an ``init_only`` atom reorder."""
+    return np.asarray(context.coords, dtype=np.float32)
 
 
 def swap_context_coordinates(
