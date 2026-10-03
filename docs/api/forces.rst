@@ -109,8 +109,15 @@ supplying your own tables.
 
    .. py:attribute:: mu_exact_cutoff
 
-      Read-only. Denselist query cutoff (Å) from
-      ``max(type_params_ contact/hard)``.
+      Read-only. Neighbour query cutoff (Å): the largest contact cutoff
+      widened by the contact list's 0.05 Å near-miss band, or the largest
+      hard-core cutoff if that is larger, times 1.0001.
+
+   .. py:attribute:: contact_list_rebuilds
+
+      Read-only ``int``. Times a state's contact list was rebuilt from its
+      coordinates. Diagnostic; replicas that share the potential share the
+      count.
 
    .. py:attribute:: mu_cutoff_sq
 
@@ -119,7 +126,9 @@ supplying your own tables.
 
    .. py:attribute:: clash_exception_count
 
-      Read-only ``int``. Number of hard-core overlaps seen.
+      Read-only ``int``. Number of native-structure clash exceptions: pairs
+      already under their move cutoff in the structure the force field was
+      built from, exempt from the clash test for the whole run.
 
    .. rubric:: Internals and benchmarking
 

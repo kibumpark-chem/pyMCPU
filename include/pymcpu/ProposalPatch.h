@@ -21,6 +21,11 @@ struct ProposalPatch {
     /// Dense list of atom indices with moving_atoms[i]==1.
     /// Filled when the move is applied; stable for the proposal lifetime.
     std::vector<int> moved_indices;
+    /// Every moved atom gets the same rotation, applied in double to the
+    /// accepted float coordinates and rounded to float once
+    /// (CoordsSoA::rotate_atoms). Mu relies on that to bound how far the
+    /// distances such a move carries can change (MuPotential::carry_bound_A).
+    /// Only the pivot sets it.
     bool is_rigid = false;
 
     // Internal distortions (for torsion)

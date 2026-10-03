@@ -25,17 +25,11 @@ class MuPotential;
 }
 
 struct MuWorkspace {
-    struct ContactUpdate {
-        int index;
-        bool new_value;
-    };
-    std::vector<ContactUpdate> pending_updates;
-
-    /// Contacts that begin / end if the pending move is accepted. Lives here,
-    /// on the per-Context workspace, so replicas sharing one System (and hence
-    /// one MuPotential) cannot tread on each other. Applied by
-    /// Context::commit_accepted_move; simply discarded on rejection, because
-    /// the next delta call clears them.
+    /// Contact-list entries that go / come if the pending move is accepted
+    /// (energy 0 is a listed near miss). Lives here, on the per-Context
+    /// workspace, so replicas sharing one System (and hence one MuPotential)
+    /// cannot tread on each other. Applied by Context::commit_accepted_move;
+    /// simply discarded on rejection, because the next delta call clears them.
     struct PendingContact {
         std::int32_t i;
         std::int32_t j;
@@ -43,9 +37,12 @@ struct MuWorkspace {
     };
     std::vector<PendingContact> pending_contact_drop;
     std::vector<PendingContact> pending_contact_add;
-
-    std::vector<uint32_t> seen_stamp;
-    uint32_t cur_stamp = 0;
+    /// The pending rigid move's bound on carried-distance change, added to
+    /// State::mu_list_drift if it is accepted.
+    float pending_list_drift = 0.f;
+    /// The pending move could not use the contact list, so the list is
+    /// dropped if the move is accepted.
+    bool pending_list_invalidate = false;
 
     std::unique_ptr<CellListMC> moved_new_grid;
     std::vector<int> moved_grid_atoms;
@@ -84,7 +81,7 @@ struct MuWorkspace {
             int moved_ids[OpenCellGrid::CELL_CAPACITY]{};
             int count = 0;
         };
-        // 512: exact denselist (~5.08 Å cells) can exceed 256 unique moved
+        // 512: exact denselist (~5.1 Å cells) can exceed 256 unique moved
         // cells on large pivots; 256 was sized for 6 Å cells.
         static constexpr int MAX_GROUPS = 512;
         CellGroup groups[MAX_GROUPS]{};
@@ -96,24 +93,10 @@ struct MuWorkspace {
     std::vector<int> cell_to_group_scratch;
 
     void clear() {
-        pending_updates.clear();
         pending_contact_drop.clear();
         pending_contact_add.clear();
-    }
-
-    void ensure_stamp_capacity(int num_atoms) {
-        if (static_cast<int>(seen_stamp.size()) < num_atoms) {
-            seen_stamp.assign(static_cast<size_t>(num_atoms), 0u);
-            cur_stamp = 0;
-        }
-    }
-
-    uint32_t next_stamp() {
-        if (++cur_stamp == 0) {
-            std::fill(seen_stamp.begin(), seen_stamp.end(), 0u);
-            cur_stamp = 1;
-        }
-        return cur_stamp;
+        pending_list_drift = 0.f;
+        pending_list_invalidate = false;
     }
 
 

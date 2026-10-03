@@ -71,15 +71,14 @@ def check_xtc_reporter():
         return False
 
 
-def check_build_flags():
+def check_build_info():
     try:
         import pymcpu
-        flags = pymcpu.mcpu_core.build_flags()
-        print(f"[OK] Build flags: FAST_MU_DELTA={flags.get('MCPU_FAST_MU_DELTA')}, "
-              f"POOLED_PROPOSAL={flags.get('MCPU_USE_POOLED_PROPOSAL')}")
+        features = pymcpu.mcpu_core.build_info()["features"]
+        print(f"[OK] Build flags: POOLED_PROPOSAL={features['MCPU_USE_POOLED_PROPOSAL']}")
         return True
     except Exception as e:
-        print(f"[FAIL] build_flags: {e}")
+        print(f"[FAIL] build_info: {e}")
         return False
 
 
@@ -92,7 +91,7 @@ if __name__ == "__main__":
         check_energy_reporter,
         check_simulation_reporter,
         check_xtc_reporter,
-        check_build_flags,
+        check_build_info,
     ]
     results = [c() for c in checks]
     print("=" * 50)

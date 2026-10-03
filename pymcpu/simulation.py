@@ -40,6 +40,31 @@ class StericClashError(RuntimeError):
     """
 
 
+def check_state_clash(context: mcpu_core.Context, where: str) -> bool:
+    """Check coordinates that did not come from a move for a hard-core overlap.
+
+    For a state just set with ``set_positions`` and recomputed with
+    ``calculate_total_energy(-1)`` (it reads that recompute's verdict): a
+    checkpoint restore, a replica swap, coordinates a caller supplies. Raises
+    :class:`StericClashError`; with ``MCPU_CLASH_FATAL=0`` it logs a warning
+    and returns True instead. The recompute keeps the previous energy when it
+    finds a clash, so ``current_energy`` stays stale until the overlap is
+    gone. Returns False for a clean state.
+    """
+    if not context.has_steric_clash():
+        return False
+    detail = (
+        f"steric clash at {where}: a pair is more than 0.001 A "
+        "(STATE_CLASH_BUFFER_A) under its hard-core cutoff. No move can do "
+        "that, so the coordinates came in that way, or a delta path missed "
+        "the pair where they were produced."
+    )
+    if _clash_is_fatal():
+        raise StericClashError(detail)
+    logger.warning("%s (MCPU_CLASH_FATAL=0: continuing on the previous energy)", detail)
+    return True
+
+
 class Simulation:
     """Bind topology + system + integrator and drive MC steps with reporters.
 
@@ -240,9 +265,11 @@ class Simulation:
                     f"  steric_rejected so far: {self.integrator.get_steric_rejected()}\n"
                     "No move can do that: moves are tested against the cutoff itself, "
                     "and rounding moves a pair a rigid pivot carries by a few 1e-6 A at "
-                    "most. Either the coordinates came in that way (set_positions, a "
-                    "restore, a start structure other than the force field's) or a "
-                    "delta path missed the pair."
+                    "most near the origin. Either the coordinates came in that way "
+                    "(set_positions, a restore, a start structure other than the force "
+                    "field's), they lie thousands of A from the origin, where that "
+                    "rounding is far larger (centre the structure), or a delta path "
+                    "missed the pair."
                 )
                 if _clash_is_fatal():
                     raise StericClashError(_detail)

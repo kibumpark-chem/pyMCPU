@@ -76,9 +76,7 @@ void Context::maybe_apply_init_only_reorder_() {
     permute_coords_soa(state.coords_soa, atom_perm_);
     // Also remaps every potential and records the permutation on the System.
     system->apply_residue_contiguous_blocks(std::move(new_blocks), atom_perm_);
-    // Contact cache is indexed by atom pairs in storage order — invalidate.
-    state.is_contact_cache.clear();
-    // Pair indices change meaning under a permutation -- drop the list too.
+    // Pair indices change meaning under a permutation -- drop the contact list.
     state.mu_contact_invalidate();
     // NeighborSystem caches donor bb_starts from System — re-init + rebuild.
     neighbors_.init(*system, neighbors_.config());
@@ -254,9 +252,6 @@ void Context::sync_geometry() {
 void Context::commit_accepted_move(const State& proposed_state, const ProposalPatch& patch,
                                    MoveKind move_kind) {
     auto& mu_ws = mu_workspace_;
-    for (const auto& update : mu_ws.pending_updates) {
-        state.is_contact_cache[update.index] = static_cast<uint8_t>(update.new_value);
-    }
 
     auto& q_ws = q_bias_workspace_;
     for (const auto& update : q_ws.pending_updates) {
@@ -268,14 +263,16 @@ void Context::commit_accepted_move(const State& proposed_state, const ProposalPa
 
     // Fold this accepted move into the live Mu contact list. The pending
     // entries carry their own energies, so this needs nothing from the potential.
-    if (state.mu_contact_list_ready) {
+    if (mu_ws.pending_list_invalidate) {
+        state.mu_contact_invalidate();
+    } else if (state.mu_contact_list_ready) {
         for (const auto& p : mu_ws.pending_contact_drop)
             state.mu_contact_remove(p.i, p.j);
         for (const auto& p : mu_ws.pending_contact_add)
             state.mu_contact_add(p.i, p.j, p.energy);
+        state.mu_list_drift += mu_ws.pending_list_drift;
     }
-    mu_ws.pending_contact_drop.clear();
-    mu_ws.pending_contact_add.clear();
+    mu_ws.clear();
 
     // CHANGED: sparse — Verlet (skin>0) needs old xyz for moved atoms only.
     // NeighborSystem::commit_accepted_move ignores coords_old. Default skin=0

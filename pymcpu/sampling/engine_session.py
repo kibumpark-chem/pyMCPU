@@ -37,7 +37,7 @@ from pymcpu.forcefields import get_forcefield
 from pymcpu.forcefields.base import BaseForceField
 from pymcpu.forcefields.mcpu import MCPUForceField
 from pymcpu.sampling.cv_factory import build_cv
-from pymcpu.simulation import Simulation
+from pymcpu.simulation import Simulation, check_state_clash
 
 __all__ = ["EngineSession", "build_forcefield", "compute_fingerprint"]
 
@@ -177,6 +177,7 @@ class EngineSession:
         sim = self._ensure_sim()
         sim.context.set_positions(np.asarray(coords_3xn, dtype=np.float32))
         sim.context.calculate_total_energy(-1)
+        check_state_clash(sim.context, "EngineSession.set_coords")
 
     def set_seed(self, seed: int) -> None:
         self._ensure_sim().integrator.set_seed(int(seed))

@@ -375,10 +375,11 @@ PYBIND11_MODULE(mcpu_core, m) {
         .def("set_mu_verlet_enabled", &Context::set_mu_verlet_enabled, py::arg("on"),
              "Enable/disable Mu Verlet without changing skin (denselist geometry).")
         .def("set_skip_rigid_mm", &Context::set_skip_rigid_mm, py::arg("on"),
-             "Skip the pairs a rigid pivot carries (both atoms moved): their "
-             "distances do not change, so Mu neither scores nor re-checks them, "
-             "nor does the KORP CA-CA guard. Default True; False evaluates "
-             "them exactly, as a reference.")
+             "Skip re-measuring the pairs a rigid pivot carries (both atoms "
+             "moved): their distances change only by rounding, so Mu re-decides "
+             "just the carried pairs on its contact list and the KORP CA-CA "
+             "guard skips them. Default True; False evaluates them all exactly, "
+             "as a reference.")
         .def("skip_rigid_mm", &Context::skip_rigid_mm)
         .def("set_use_cell_pair", &Context::set_use_cell_pair, py::arg("on"),
              "Cell-pair denselist Mu (default true). False = per-atom walks.")
@@ -650,8 +651,8 @@ PYBIND11_MODULE(mcpu_core, m) {
         .def("set_use_pooled_proposal", &mcpu::MCIntegrator::set_use_pooled_proposal,
              py::arg("on"),
              "If True (default when compiled with MCPU_USE_POOLED_PROPOSAL=1): "
-             "DynamicOnly pooled proposal + sparse patch reset. "
-             "If False: emulate vanilla Full State copy + per-step patch alloc + reject restore.")
+             "pooled proposal buffer + sparse patch reset. "
+             "If False: emulate vanilla whole-State copy + per-step patch alloc + reject restore.")
         .def("use_pooled_proposal", &mcpu::MCIntegrator::use_pooled_proposal)
         .def_property(
             "use_sparse_proposal",
@@ -676,14 +677,12 @@ PYBIND11_MODULE(mcpu_core, m) {
              "Metropolis-Hastings correction term of the last forced proposal "
              "from a debug_force_* call (0 for a symmetric move).")
         .def("reject_restore_enabled", &mcpu::MCIntegrator::reject_restore_enabled)
-        .def("proposal_is_dynamic_only", &mcpu::MCIntegrator::proposal_is_dynamic_only)
         .def("proposal_lifecycle_info",
              [](const mcpu::MCIntegrator& integ) {
                  const auto info = integ.proposal_lifecycle_info();
                  py::dict d;
                  d["pooled_proposal_compiled_in"] = info.pooled_proposal_compiled_in;
                  d["use_pooled_proposal"] = info.use_pooled_proposal;
-                 d["proposal_dynamic_only"] = info.proposal_dynamic_only;
                  d["reject_restore_enabled"] = info.reject_restore_enabled;
                  return d;
              })
@@ -1073,16 +1072,10 @@ PYBIND11_MODULE(mcpu_core, m) {
     // generated BuildConfig.h, which CMake fills from the same variables that
     // produced the flags. There are deliberately NO fallback literals: a
     // missing define is a #error, not a plausible-looking default.
-    //
-    // This replaces build_flags(), which returned six of its eight keys as
-    // hardcoded C++ literals -- `d["MCPU_UNSAFE_MATH"] = false;` ignored the
-    // actual define, so it would have reported "safe" even after someone
-    // enabled fast math. It also exposed no -march, compiler or LTO state,
-    // which is exactly what a cross-build comparison needs.
 #if !defined(MCPU_BUILD_ARCH_TIER) || !defined(MCPU_BUILD_LTO)
 #error "BuildConfig.h was not generated; configure through CMake."
 #endif
-#if !defined(MCPU_FAST_MU_DELTA) || !defined(MCPU_USE_POOLED_PROPOSAL)
+#if !defined(MCPU_USE_POOLED_PROPOSAL)
 #error "Feature-flag defines missing; configure through CMake."
 #endif
     m.def(
@@ -1207,7 +1200,6 @@ PYBIND11_MODULE(mcpu_core, m) {
 #endif
 
             py::dict features;
-            features["MCPU_FAST_MU_DELTA"] = (MCPU_FAST_MU_DELTA != 0);
             features["MCPU_USE_POOLED_PROPOSAL"] = (MCPU_USE_POOLED_PROPOSAL != 0);
 #if defined(EIGEN_NO_DEBUG)
             features["EIGEN_NO_DEBUG"] = true;
@@ -1236,31 +1228,6 @@ PYBIND11_MODULE(mcpu_core, m) {
         "type, LTO, FP policy and feature flags. Every value derives from a "
         "real macro -- see build_info() in src/bindings/bindings.cpp.");
 
-    m.def(
-        "build_flags",
-        []() {
-            // Deprecated alias, kept for one release because
-            // scripts/install_check.py calls it. Crucially it now reports the
-            // REAL values: a deprecated function that lies is worse than a
-            // removed one.
-            py::module_::import("warnings").attr("warn")(
-                "mcpu_core.build_flags() is deprecated; use build_info(). The "
-                "unsafe_math_* keys were previously hardcoded literals.",
-                py::module_::import("builtins").attr("DeprecationWarning"), 2);
-            py::dict d;
-            d["MCPU_USE_POOLED_PROPOSAL"] = (MCPU_USE_POOLED_PROPOSAL != 0);
-            d["MCPU_FAST_MU_DELTA"] = (MCPU_FAST_MU_DELTA != 0);
-#if defined(__FAST_MATH__)
-            d["unsafe_math_enabled"] = true;
-#else
-            d["unsafe_math_enabled"] = false;
-#endif
-            d["MCPU_UNSAFE_MATH"] = d["unsafe_math_enabled"];
-            d["fp_contract"] = MCPU_BUILD_FP_CONTRACT;
-            d["arch_march"] = MCPU_BUILD_ARCH_MARCH;
-            return d;
-        },
-        "DEPRECATED: use build_info().");
     m.def("reset_coord_sync_stats", []() { mcpu::coord_sync_stats().reset(); });
     m.def("coord_sync_stats", []() {
         const auto& s = mcpu::coord_sync_stats();
@@ -1456,7 +1423,13 @@ PYBIND11_MODULE(mcpu_core, m) {
         .def_property_readonly("type_params_size_kb", &m08::MuPotential::type_params_size_kb)
         .def_property_readonly(
             "mu_exact_cutoff", &m08::MuPotential::mu_exact_cutoff,
-            "Denselist query cutoff (Å) from max(type_params_ contact/hard).")
+            "Neighbour query cutoff (Å): the largest contact cutoff widened by "
+            "the contact list's 0.05 Å near-miss band, or the largest hard-core "
+            "cutoff if larger, times 1.0001.")
+        .def_property_readonly(
+            "contact_list_rebuilds", &m08::MuPotential::contact_list_rebuilds,
+            "Times a state's contact list was rebuilt from its coordinates "
+            "(diagnostic; shared by the replicas that share this potential).")
         .def_property_readonly(
             "mu_cutoff_sq", &m08::MuPotential::mu_cutoff_sq,
             "mu_exact_cutoff² used in denselist r² prefilter.")

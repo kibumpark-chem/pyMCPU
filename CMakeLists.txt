@@ -68,12 +68,10 @@ else()
 endif()
 
 # ---------------------------------------------------------------------------
-# Feature flags (physics toggles — do not change without reason)
+# Feature flags
 # ---------------------------------------------------------------------------
-option(MCPU_FAST_MU_DELTA
-    "Compute-on-the-fly cell-list Mu delta (no ContactData N^2 cache)" ON)
 option(MCPU_USE_POOLED_PROPOSAL
-    "Pooled DynamicOnly proposal + sparse ProposalPatch" ON)
+    "Reused proposal State + sparse ProposalPatch" ON)
 option(MCPU_EIGEN_HOT_FLAGS
     "Define EIGEN_NO_DEBUG + EIGEN_DONT_PARALLELIZE" OFF)
 
@@ -361,16 +359,6 @@ endif()
 # ---------------------------------------------------------------------------
 # Feature-flag compile definitions
 # ---------------------------------------------------------------------------
-if(MCPU_FAST_MU_DELTA)
-    target_compile_definitions(MCPU_lib  PUBLIC MCPU_FAST_MU_DELTA=1)
-    target_compile_definitions(mcpu_core PUBLIC MCPU_FAST_MU_DELTA=1)
-    message(STATUS "MCPU_FAST_MU_DELTA=1  (compute-on-the-fly Mu delta)")
-else()
-    target_compile_definitions(MCPU_lib  PUBLIC MCPU_FAST_MU_DELTA=0)
-    target_compile_definitions(mcpu_core PUBLIC MCPU_FAST_MU_DELTA=0)
-    message(STATUS "MCPU_FAST_MU_DELTA=0  (legacy ContactData cache path)")
-endif()
-
 if(MCPU_USE_POOLED_PROPOSAL)
     target_compile_definitions(MCPU_lib  PUBLIC MCPU_USE_POOLED_PROPOSAL=1)
     target_compile_definitions(mcpu_core PUBLIC MCPU_USE_POOLED_PROPOSAL=1)

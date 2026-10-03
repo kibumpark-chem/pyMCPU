@@ -228,15 +228,14 @@ def _run_case_in_child(pdb: str, seed: int, steps: int) -> dict[str, Any]:
     proxy = dict(ctx.neighbor_proxy_stats())
 
     # `eval_pair_nonzero` counts the epsilon-free `r2 <= g.contact_r2` compare
-    # at MuPotential.h:419-421, so a +/-1 delta would be the signature of a
+    # in eval_pair_layered_v2, so a +/-1 delta would be the signature of a
     # single contact-membership flip.
     #
     # IMPORTANT -- it reads 0 in the shipped configuration, so do NOT rely on
-    # it. `MCPU_FAST_MU_DELTA=ON` plus the default-enabled contact list routes
-    # the delta through `calculateEnergyChange_clist`, while the flush that
-    # publishes these counters lives in `calculateEnergyChange_fast`
-    # (MuPotential.cpp:928-940), now only a fallback for moves that leave the
-    # dense grid. Measured on chignolin/300 steps: `eval_pair_calls`,
+    # it. The default-enabled contact list routes the delta through
+    # `calculateEnergyChange_clist`, while the flush that publishes these
+    # counters lives in `calculateEnergyChange_fast`, now only a fallback for
+    # moves that leave the dense grid or run under an energy mask. Measured on chignolin/300 steps: `eval_pair_calls`,
     # `pair_distance_checks`, `pairs_within_rcut` and `eval_pair_nonzero` are
     # all 0 by default, and become [3206, 223, 856] per move kind under
     # `MCPU_CONTACT_LIST=0`. Accept counts match across the two paths (64 both
@@ -323,8 +322,7 @@ def _build_identity() -> dict[str, Any]:
     except OSError:
         identity["so_sha256"] = None
     # The emitted ISA, read from the binary rather than trusted from CMake.
-    # -march is silently dropped for Debug builds, and build_flags() would
-    # never tell you. Zero zmm/kmask means AVX-512 is genuinely absent.
+    # -march is silently dropped for Debug builds. Zero zmm/kmask means AVX-512 is genuinely absent.
     try:
         dis = subprocess.run(
             ["objdump", "-d", mcpu_core.__file__],
@@ -338,15 +336,13 @@ def _build_identity() -> dict[str, Any]:
         }
     except (OSError, subprocess.SubprocessError):
         identity["isa_counts"] = None
-    for name in ("build_info", "build_flags"):
-        fn = getattr(mcpu_core, name, None)
-        if fn is not None:
-            try:
-                identity[name] = {k: v for k, v in dict(fn()).items()}
-            except Exception as exc:  # noqa: BLE001 -- diagnostic only
-                identity[name] = f"<raised {type(exc).__name__}: {exc}>"
-    if "build_info" not in identity:
-        identity["build_info"] = None  # predates 6b; recorded explicitly
+    fn = getattr(mcpu_core, "build_info", None)
+    identity["build_info"] = None  # an extension that predates build_info()
+    if fn is not None:
+        try:
+            identity["build_info"] = {k: v for k, v in dict(fn()).items()}
+        except Exception as exc:  # noqa: BLE001 -- diagnostic only
+            identity["build_info"] = f"<raised {type(exc).__name__}: {exc}>"
     return identity
 
 

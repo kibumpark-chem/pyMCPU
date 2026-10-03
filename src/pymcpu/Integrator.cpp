@@ -455,7 +455,7 @@ void MCIntegrator::set_use_pooled_proposal(bool on) {
 #if MCPU_USE_POOLED_PROPOSAL
     if (use_pooled_proposal_ == on) return;
     use_pooled_proposal_ = on;
-    // Force buffer recreate on next run (Full vs DynamicOnly).
+    // Recreate the proposal buffer, and so fully resync it, on the next run.
     pooled_num_atoms_ = -1;
     pooled_num_residues_ = -1;
     proposal_.reset();
@@ -468,19 +468,14 @@ void MCIntegrator::set_use_pooled_proposal(bool on) {
 void MCIntegrator::ensure_proposal_buffers(const Context& context) {
     const int num_atoms = context.getSystem().getNumAtoms();
     const int num_residues = context.getSystem().getNumResidues();
-    const bool want_full = !use_pooled_proposal_;
     if (proposal_ && pooled_num_atoms_ == num_atoms &&
-        pooled_num_residues_ == num_residues &&
-        proposal_buffer_is_full_ == want_full) {
+        pooled_num_residues_ == num_residues) {
         return;
     }
-    proposal_ = std::make_unique<State>(
-        num_atoms, num_residues,
-        want_full ? StateCacheMode::Full : StateCacheMode::DynamicOnly);
+    proposal_ = std::make_unique<State>(num_atoms, num_residues);
     patch_.ensure_capacity(num_atoms);
     pooled_num_atoms_ = num_atoms;
     pooled_num_residues_ = num_residues;
-    proposal_buffer_is_full_ = want_full;
     proposal_synced_ = false; // CHANGED: sparse — new buffer needs a full sync
 }
 
@@ -1859,7 +1854,7 @@ void MCIntegrator::run(Context& context, int num_steps, int step_offset)
                 if (use_pooled_proposal_) {
                     proposal.copy_dynamic_from(context.state);
                 } else {
-                    // Vanilla cost model: full State copy including N² caches.
+                    // Vanilla cost model: a whole State copy, contact list included.
                     proposal = context.state;
                 }
                 proposal_synced_ = true;

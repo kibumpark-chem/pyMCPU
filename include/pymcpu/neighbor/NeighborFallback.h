@@ -14,8 +14,10 @@ struct NeighborFallback {
     /// Pair rules (no double count):
     ///   - moved–fixed: once per (i,j)
     ///   - moved–moved: only when i < j (skipped entirely if is_rigid)
+    /// Always inlined, as are the callbacks Mu passes: left to the (LTO)
+    /// inliner, the scan's speed moved by up to 1.7x with unrelated edits.
     template <typename Func>
-    static void for_each_moved_neighbor(
+    [[gnu::always_inline]] static inline void for_each_moved_neighbor(
         const CoordsSoA& coords_i_source,
         const CoordsSoA& coords_j_source,
         const std::vector<int>& moved_indices,

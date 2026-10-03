@@ -51,10 +51,11 @@ struct NeighborConfig {
     bool mu_verlet_enabled = true;
 
     /// If true (default), the pairs a rigid pivot (``patch.is_rigid``) carries
-    /// -- both atoms moved -- are not looked at: a rigid rotation keeps their
-    /// distances, so their energy does not change and they cannot start to
-    /// overlap. Mu neither scores nor re-checks them, nor does the KORP CA-CA
-    /// guard. False evaluates them exactly, as a reference.
+    /// -- both atoms moved -- are not re-measured: a rigid rotation keeps their
+    /// distances, so they cannot start to overlap and only a pair on its
+    /// contact cutoff can change energy, by rounding. Mu re-decides just the
+    /// carried pairs on its contact list (see MuPotential), and the KORP CA-CA
+    /// guard skips them. False evaluates them all exactly, as a reference.
     bool skip_rigid_mm = true;
 
     /// If true (default), denselist Mu uses cell-pair inversion (group moved by

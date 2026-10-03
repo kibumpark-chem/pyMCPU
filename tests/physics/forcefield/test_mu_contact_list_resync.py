@@ -1,18 +1,16 @@
-"""A full energy recompute also brings Mu's live contact list back in line.
+"""Mu's live contact list keeps the running energy equal to the full energy.
 
 A move's Mu energy change reads the old contacts off a live list. A rigid
-pivot does not re-decide the pairs it carries, and its rounding can carry
-one across its contact cutoff by about 1e-6 A, so neither the running energy
-nor the list sees the change. calculate_total_energy(-1) corrected the
-energy but kept the stale entry, and the next move that separated the pair
-subtracted it: the energy went one contact off the other way. The recompute
-now rewrites the list from the same pass.
+pivot does not re-measure the pairs it carries, and its rounding can carry
+one across its contact cutoff by about 1e-6 A. The list also holds the pairs
+just outside their cutoff, and a rigid move re-decides each listed pair it
+carries, so such a crossing is scored when it happens. A full recompute,
+calculate_total_energy(-1), rewrites the list from the same pass; under an
+energy mask it drops the list instead.
 
 Construction: TYR1 CD2 and GLY6 CA, a contact pair, placed exactly on their
 contact distance; residue 9 fixed, so every pivot turns the N-terminal side
-and pivots at residues 7 and 8 carry the pair rigidly. After each step the
-energy is recomputed (as Simulation does), and a move that pulls GLY6 CA
-0.05 A away from the pair is checked against the full energy.
+and pivots at residues 7 and 8 carry the pair rigidly.
 """
 
 from __future__ import annotations
@@ -38,7 +36,10 @@ def _radius(ff, atom: int) -> float:
     return ff.atom_type_lookup[(residue, a.name)][1]
 
 
-def test_a_recompute_refreshes_the_contact_list() -> None:
+def test_rigid_carries_across_the_contact_cutoff_are_scored() -> None:
+    """No recompute between steps: after every step the running energy must
+    equal a read-only full evaluation, and a move that pulls GLY6 CA 0.05 A
+    away from the pair must score like the full energy."""
     traj = md.load(str(default_example_pdb()))
     heavy = traj.atom_slice(traj.topology.select("not element H"))
     ff = MCPUForceField(heavy)
@@ -58,15 +59,19 @@ def test_a_recompute_refreshes_the_contact_list() -> None:
     ctx.set_positions(on_cutoff)
     ctx.calculate_total_energy(-1)
 
-    crossings = 0
+    carried_on_cutoff = 0
     for step in range(2000):
         integ.run(ctx, 1, step)
         running = float(ctx.get_state().current_energy)
-        crossings += abs(running - ctx.calculate_total_energy(-1)) > 1e-3
+        full = float(ctx.energy_breakdown(True)["weighted_total"])
+        assert abs(running - full) < 1e-3, (step, running, full)
 
         coords = np.asarray(ctx.coords, dtype=np.float32)
         d = coords[:, j].astype(np.float64) - coords[:, i]
         r = np.linalg.norm(d)
+        moved = set(integ.last_moved_indices())
+        carried_on_cutoff += (integ.last_move_is_rigid() and i in moved and j in moved
+                              and abs(r - CONTACT_R) < 1e-5)
         pulled = coords.copy()
         pulled[:, j] = (coords[:, i] + (r + 0.05) * d / r).astype(np.float32)
         old = ctx.get_state()
@@ -81,9 +86,7 @@ def test_a_recompute_refreshes_the_contact_list() -> None:
         if abs(r - CONTACT_R) > 1e-4:  # a move separated the pair: put it back on the cutoff
             ctx.set_positions(on_cutoff)
             ctx.calculate_total_energy(-1)
-        if crossings >= 3:
-            break
-    assert crossings >= 3  # rigid carries really did round the pair across its cutoff
+    assert carried_on_cutoff >= 20  # rigid moves really did carry the pair on its cutoff
 
 
 def test_a_recompute_under_a_mask_leaves_no_masked_list_behind() -> None:

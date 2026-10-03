@@ -200,7 +200,7 @@ wheel.exclude = [
 #
 # The six entries that used to live in cmake.args are gone for these reasons:
 #   -DBUILD_TESTING=OFF          the option no longer exists (dead block removed)
-#   -DMCPU_FAST_MU_DELTA=ON      kept below: it selects a PHYSICS path
+#   -DMCPU_FAST_MU_DELTA=ON      the option no longer exists (legacy Mu removed)
 #   -DMCPU_ARCH=skylake-avx512   replaced by the env-backed define below
 #   -DCMAKE_CXX_STANDARD=20      INERT, not merely redundant: CMakeLists.txt:4
 #   -DCMAKE_CXX_STANDARD_REQUIRED  uses plain set(), which SHADOWS the cache
@@ -222,11 +222,6 @@ wheel.exclude = [
 # Accepted values: v2 | v3 (default) | v4 | native | none | a raw -march
 # string. See the tier table in CMakeLists.txt.
 MCPU_ARCH = { env = "MCPU_ARCH", default = "v3" }
-
-# Explicit because it selects which Mu delta-energy implementation compiles,
-# i.e. a physics path, not a convenience. A published artifact should pin that
-# rather than inherit a default that could later flip.
-MCPU_FAST_MU_DELTA = "ON"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
