@@ -734,10 +734,18 @@ struct CpTimer {
                 bool check_clash = topo_clash_mask[static_cast<size_t>(matrix_idx)] != 0;
                 bool check_contact = topo_contact_mask[static_cast<size_t>(matrix_idx)] != 0;
 
+                // Native-structure exceptions: a pair already under its move
+                // cutoff in the structure the force field is built from is
+                // exempt for the whole run, since every move that re-decided
+                // it would be rejected. The test is the move cutoff, not the
+                // exact hard core: a pair between the two clashes under
+                // neither, and exempting it would drop its protection for good.
                 if (check_clash) {
                     const float dist_sq = cv.dist2(i, j);
 #if MCPU_FAST_MU_DELTA
-                    if (dist_sq < hard_core_sq(i, j)) {
+                    const float hc = hard_core_sq(i, j);
+                    if (is_hard_clash(dist_sq,
+                                      hard_tol_r2_from(hc > 0.f ? std::sqrt(hc) : 0.f))) {
 #else
                     if (dist_sq < hard_core_sq(matrix_idx)) {
 #endif

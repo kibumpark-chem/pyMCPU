@@ -67,6 +67,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Mu no longer exempts a native pair that does not clash.** A pair already
+  under its hard-core distance in the structure a force field is built from
+  is exempt from the clash test for the whole run. The test used the exact
+  hard-core radius, which lies 0.0015 Å or more above the cutoff moves are
+  tested against, so a pair in between -- no clash under either cutoff --
+  lost its protection for good and could later overlap to any depth. A
+  structure written by one run and used as the input of the next can hold
+  such pairs. Only pairs under the move cutoff are exempt now; 1UAO and actin
+  have none in between, so their runs are unchanged.
 - `Context.set_mu_cell_size_scale` below 1, or `set_mu_cell_size_angstrom`
   below the Mu cutoff, crashed the interpreter in `set_positions`: the
   neighbour grid only supports a one-cell stencil, and a smaller cell
