@@ -50,6 +50,10 @@ PYBIND11_MODULE(mcpu_core, m) {
     m.doc() = "PyMCPU: A fast Monte Carlo protein folding engine. "
               "C++ physics core with Python interface.";
 
+    // How far under a hard-core cutoff a whole state may hold a pair (A); a
+    // move is tested against the cutoff itself. See Potential.h.
+    m.attr("STATE_CLASH_BUFFER_A") = mcpu::kStateClashBufferA;
+
     // Reporters (bindings match current reporter headers only)
     py::class_<mcpu::Reporter, std::shared_ptr<mcpu::Reporter>>(m, "Reporter",
         "Base class of the output reporters. Exposed so that\n"
@@ -366,7 +370,10 @@ PYBIND11_MODULE(mcpu_core, m) {
         .def("set_mu_verlet_enabled", &Context::set_mu_verlet_enabled, py::arg("on"),
              "Enable/disable Mu Verlet without changing skin (denselist geometry).")
         .def("set_skip_rigid_mm", &Context::set_skip_rigid_mm, py::arg("on"),
-             "Skip moved-moved Mu pairs for rigid pivots (ΔE_mm=0).")
+             "Skip the pairs a rigid pivot carries (both atoms moved): their "
+             "distances do not change, so Mu neither scores nor re-checks them, "
+             "nor does the KORP CA-CA guard. Default True; False evaluates "
+             "them exactly, as a reference.")
         .def("skip_rigid_mm", &Context::skip_rigid_mm)
         .def("set_use_cell_pair", &Context::set_use_cell_pair, py::arg("on"),
              "Cell-pair denselist Mu (default true). False = per-atom walks.")
@@ -860,7 +867,6 @@ PYBIND11_MODULE(mcpu_core, m) {
                      cpb["old_walk_ns"] = b.old_walk_ns;
                      cpb["old_r2_ns"] = b.old_r2_ns;
                      cpb["old_eval_ns"] = b.old_eval_ns;
-                     cpb["mmguard_ns"] = b.mmguard_ns;
                     cpb["movedbits_ns"] = b.movedbits_ns;
                     cpb["skipmask_ns"] = b.skipmask_ns;
                     cpb["clash_aborts"] = b.clash_aborts;

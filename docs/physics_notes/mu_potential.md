@@ -70,6 +70,14 @@ Default parameter values (`_MU_ALPHA_DEFAULT` / `_MU_LAMBDA_DEFAULT` in
 
 These are configurable at System creation time.
 
+A move is rejected if it brings a pair under `r_hard` rounded to 0.001 Å,
+less 0.0015 Å (so PDB-precision noise cannot decide it). A whole state --
+`calculate_total_energy`, `has_steric_clash` -- is judged against a cutoff
+0.001 Å looser, `mcpu_core.STATE_CLASH_BUFFER_A`, because a rigid pivot
+carries pairs without re-checking them and its rounding can leave one a few
+1e-6 Å under the move cutoff; see the hard-core section of the MC acceptance
+notes.
+
 ### Neighbour enumeration
 
 Candidate pairs come from a cell grid rather than an all-pairs sweep. The Mu

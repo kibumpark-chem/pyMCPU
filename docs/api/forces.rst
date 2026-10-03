@@ -318,7 +318,10 @@ and nothing else. See :doc:`/physics_notes/korp_6d`.
 
    The 3.2 A floor is measured rather than assumed -- see
    :doc:`/physics_notes/korp_6d`. Pairs on different chains are never
-   exempt, whatever their residue numbering.
+   exempt, whatever their residue numbering. Moves are tested against the
+   floor; a whole state against a floor 0.001 A lower
+   (``mcpu_core.STATE_CLASH_BUFFER_A``), which leaves room for the rounding
+   of pairs a rigid pivot carries without re-checking them.
 
 Steric clashes
 --------------
@@ -340,8 +343,9 @@ Both :py:meth:`Context.has_steric_clash` and
 :py:meth:`Context.has_hard_constraint_violation` describe the *most
 recent* total-energy evaluation, so call
 :py:meth:`Context.calculate_total_energy` first. During sampling the
-integrator applies the same test itself and rejects the move; see
-:py:meth:`Integrator.get_steric_rejected`.
+integrator tests each move against a cutoff 0.001 A stricter
+(``mcpu_core.STATE_CLASH_BUFFER_A``) and rejects it; see
+:py:meth:`Integrator.get_steric_rejected` and :doc:`/physics_notes/mc_acceptance`.
 
 .. seealso::
    To immobilize part of a structure, use

@@ -155,6 +155,9 @@ MC with KORP alone lets a chain collapse through itself.
 {class}`~pymcpu.CalphaExcludedVolumePotential` (energy group 8) supplies the
 floor as a pure filter — exactly zero in every accepted state, the clash
 sentinel otherwise — so it deletes configurations without shifting the ensemble.
+As with Mu, moves are tested against the floor and a whole state against a
+floor 0.001 Å lower, for the rounding of pairs a rigid pivot carries without
+re-checking them (see the hard-core section of the MC acceptance notes).
 
 Its 3.2 Å default is measured, not assumed: across 1CEO, 1DOS, T0860D1, actin
 and chignolin the closest CA-CA contact at three or more apart in sequence is

@@ -82,7 +82,6 @@ struct CellPairBreakdown {
     std::uint64_t old_walk_ns = 0;
     std::uint64_t old_r2_ns = 0;
     std::uint64_t old_eval_ns = 0;
-    std::uint64_t mmguard_ns = 0;
     std::uint64_t movedbits_ns = 0;
     std::uint64_t skipmask_ns = 0;
     std::uint64_t clash_aborts = 0;

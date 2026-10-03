@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Parity: skip_rigid_mm on vs off — accept bits must be identical."""
+"""Parity: skip_rigid_mm on vs off -- accept bits should match over a short run.
+
+They can differ when a pair a rigid pivot carries sits within rounding of a
+cutoff: with the skip on it is carried, with it off it is evaluated exactly.
+"""
 from __future__ import annotations
 
 import argparse

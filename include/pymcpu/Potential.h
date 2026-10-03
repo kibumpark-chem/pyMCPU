@@ -9,6 +9,21 @@
 namespace mcpu {
 class Context;
 
+/// How much looser a hard-core cutoff is when a whole state is judged from its
+/// coordinates than when a move is tested, in Angstrom.
+///
+/// A rigid pivot carries the distances inside the moved segment without
+/// measuring them again: the rotation keeps them. It rounds each carried
+/// coordinate to float, though, so a pair a move left exactly on a cutoff can
+/// drift a few 1e-6 A under it while carried. Moves are tested against the
+/// cutoff itself; a full recompute (Simulation's clash check,
+/// has_steric_clash) allows this much under it, so such a drift is not taken
+/// for a clash. A pair deeper than that cannot come from a move and is still
+/// reported. Measured with nothing re-checking carried pairs: at most 1.8e-6 A
+/// under over 5M-step actin and 20M-step chignolin runs. (The legacy
+/// MCPU_FAST_MU_DELTA=OFF build of Mu has one exact cutoff for both.)
+inline constexpr float kStateClashBufferA = 1e-3f;
+
 class Potential {
 protected:
     int energy_group = 0;
@@ -86,6 +101,20 @@ public:
 
     /// Override when this potential can hard-reject via a clash energy sentinel.
     virtual bool canHardReject() const noexcept { return false; }
+
+    /// Whether the proposal puts a pair that the move re-evaluates (at least
+    /// one atom moved, and not carried by a rigid move) under the cutoff a
+    /// move is tested against. calculateEnergy judges with a cutoff
+    /// kStateClashBufferA looser, so a move can be rejected for a pair the
+    /// resulting state would still allow; PhysicsVerifier uses this to tell
+    /// such a rejection from a clash the delta path invented.
+    virtual bool clashesAtMoveCutoff(
+        const Context& /*context*/,
+        const State& /*proposed_state*/,
+        const ProposalPatch& /*patch*/
+    ) const {
+        return false;
+    }
 
     /// Map a total-energy sentinel to a RejectReason (used by evaluateTotalEnergy).
     virtual RejectReason rejectionForEnergy(float /*energy*/) const noexcept {

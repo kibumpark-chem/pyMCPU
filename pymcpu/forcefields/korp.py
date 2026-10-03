@@ -375,10 +375,9 @@ class KORPForceField(BaseForceField):
         """Fail at construction if the input already violates the guard.
 
         Without this the run starts, the guard returns its sentinel on the
-        very first full energy evaluation, and the user gets a mid-run error
-        about a "detection gap in the delta path" -- which is true of the
-        symptom and useless about the cause. The structure was already
-        clashing before a single move was made.
+        very first full energy evaluation, and the user gets a mid-run
+        StericClashError instead of a clear statement that the structure was
+        already clashing before a single move was made.
         """
         ca = self.coords[0][self.ca_atom_index] * 10.0   # nm -> Angstrom
         seq = np.asarray(self.res_seq)
@@ -390,7 +389,10 @@ class KORPForceField(BaseForceField):
         checked = (~same_chain) | (separation >= self.min_separation)
         np.fill_diagonal(checked, False)
 
-        violations = checked & (distances < self.min_distance)
+        # The engine judges a whole state against a floor STATE_CLASH_BUFFER_A
+        # (0.001 A) below min_distance; moves are tested against min_distance.
+        floor = self.min_distance - mcpu_core.STATE_CLASH_BUFFER_A
+        violations = checked & (distances < floor)
         if not violations.any():
             return
         i, j = np.argwhere(violations)[0]
@@ -398,7 +400,7 @@ class KORPForceField(BaseForceField):
         raise ValueError(
             f"the input structure already violates the CA-CA steric guard: "
             f"{int(violations.sum()) // 2} pair(s) closer than "
-            f"{self.min_distance} A, the closest at {worst:.2f} A "
+            f"{floor:.3f} A, the closest at {worst:.3f} A "
             f"(e.g. {self.res_names[i]}{self.res_seq[i]} and "
             f"{self.res_names[j]}{self.res_seq[j]}). Monte Carlo cannot start "
             f"from a state the guard rejects. Either fix the structure, lower "

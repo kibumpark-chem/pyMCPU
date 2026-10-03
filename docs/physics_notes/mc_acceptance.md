@@ -109,22 +109,36 @@ set through the `Integrator` constructor.
 
 ### Hard-core clashes
 
-A proposal whose delta-energy path detects a hard-core overlap is rejected
-before the Metropolis test runs, so a clashing structure can never be
-*introduced* by an accepted move.
+A proposal that puts a pair under its hard-core cutoff is rejected before the
+Metropolis test runs, so no accepted move introduces an overlap.
 
-That makes a clash in an already-accepted state an invariant violation rather
-than a condition to tolerate: it means the incremental path failed to detect
-something the full recompute does see. `Simulation` therefore checks
+A rigid pivot does not re-check the pairs it carries (both atoms moved): the
+rotation keeps their distances, which is what makes the move cheap. It rounds
+each carried coordinate to float, though, so a pair a move left exactly on its
+cutoff can drift a few 1e-6 Å under it. A whole state is therefore judged --
+by the full recompute, `Context.has_steric_clash()` and the check below --
+against cutoffs 0.001 Å looser (`mcpu_core.STATE_CLASH_BUFFER_A`), and a pair
+inside that margin scores as any pair at its distance. With nothing
+re-checking carried pairs, none went more than 1.8e-6 Å under its cutoff in
+5M-step actin and 20M-step chignolin runs. The KORP CA-CA guard works the
+same way. (The legacy `MCPU_FAST_MU_DELTA=OFF` build of Mu has one exact
+cutoff for both.)
+
+A clash in an accepted state therefore means coordinates that did not come
+from a move, or a pair a delta path missed. `Simulation` checks
 `Context.has_steric_clash()` on its periodic full-energy recompute and raises
 `StericClashError` by default. Setting `MCPU_CLASH_FATAL=0` downgrades this to
-a counted warning, which is what long production runs use -- the event is rare
-(order one per 10^7-10^8 steps) and halting a multi-day run costs more than
-one exchange attempt made with a slightly stale energy.
+a counted warning; continuing costs one exchange attempt made with a slightly
+stale energy.
 
-There is no separate "freeze pre-existing clashes" step. A starting structure
-with overlapping atoms will simply reject most proposals until the overlap
-relaxes; relax or repair the structure before sampling if that happens.
+Overlaps in the structure a force field is built from are handled up front:
+Mu exempts those pairs for the whole run (native-structure exceptions), and
+`KORPForceField` refuses such a structure. Coordinates set later with an
+overlap (`set_positions`, a restore) fail the check above; with
+`MCPU_CLASH_FATAL=0` the run goes on, but every move that moves one atom of
+an overlapping pair and leaves it overlapping is rejected (moves that leave the
+pair alone, or carry both atoms rigidly, are not), so relax or repair the
+structure before sampling.
 
 ### Q-bias native contacts
 

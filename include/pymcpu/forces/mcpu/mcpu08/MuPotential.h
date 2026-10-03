@@ -83,32 +83,18 @@ namespace mcpu::forces::mcpu08 {
             float hard_r2    = 0.f;
             float contact_r2 = 0.f;
             float energy     = 0.f;
-            // FIXED: ONE tolerant hard-core threshold, squared, shared by BOTH
-            // the full recompute and the rigid-MM delta guard.
-            //
-            // These two paths previously used DIFFERENT thresholds: the
-            // recompute an exact `r2 < hard_r2`, the guard a 3-decimal rounded
-            // `round(r*1e3) < round(hard_r*1e3) - 1`. That left a 0.001 A window
-            // where the delta path accepted a move and the recompute then
-            // reported StericClash on the ACCEPTED state. Since skip_rigid_mm
-            // elides moved-moved evaluation entirely, only the permissive guard
-            // covered intra-segment pairs, so ~1e-6 A of float32 per-rotation
-            // drift sufficed to cross it -- 38-41% of top-rung REMD cycles on
-            // p19.14.2/p19.14.3 carried a sentinel energy as a result.
-            // Sharing one number makes the paths agree by construction.
+            // The move cutoff, squared: a move that puts the pair closer is
+            // rejected. See hard_tol_r2_from() and ClashCutoff.
             float hard_tol_r2 = 0.f;
         };
         std::vector<TypePairParams> type_params_;  ///< size n_types_ * n_types_
 
-        /// Conservative r² bound above which ``rigid_mm_clash_3decimal`` provably
-        /// cannot return true, so the rigid-MM clash guard can be skipped without
-        /// changing any outcome. Derivation: the predicate is
-        ///   round(sqrt(r2)*1000) < round(hard_r*1000)
-        /// which requires sqrt(r2) < hard_r + 0.001. Using the GLOBAL maximum
-        /// hard_r over all type pairs makes the bound valid for every pair.
-        /// A further +0.001 Å is added for float rounding slack.
+        /// r² beyond which no pair can overlap: the largest hard-core radius
+        /// over all type pairs, plus 0.002 A of slack. overlaps_at_move_cutoff()
+        /// rejects anything farther without touching the pair tables, and
+        /// clash_query_radius() sizes the clash-first stencil from it.
         /// Set in apply_mu_denselist_cutoff(); +inf default = never skip (safe).
-        float mm_guard_prefilter_r2_ = std::numeric_limits<float>::infinity();
+        float clash_prefilter_r2_ = std::numeric_limits<float>::infinity();
         int n_types_ = 0;
 
         // ── Three-layer eval (opt-in; default off until validated) ───────────
@@ -297,26 +283,12 @@ namespace mcpu::forces::mcpu08 {
         void store_type_pair_params(std::vector<uint8_t>& filled, int i, int j,
                                     const TypePairParams& tp);
 
-        /// Shared hard-core test for both the incremental ΔE and the full
-        /// O(N²) recalculation, so the two can never disagree.
-        ///
-        /// NOTE: this previously added a `kHardClashEpsSq = 1e-8f` slack term
-        /// "for float noise near hard_r2". That term was provably a no-op and
-        /// has been removed: real hard_r2 values are 4.6–8.0 Å², where the
-        /// float32 ULP is 4.77e-7, so `r2 + 1e-8f == r2` exactly for every
-        /// type pair in the parameter set. Dropping it is bit-identical and
-        /// removes a comment that claimed a tolerance the code did not have.
-        /// If a genuine tolerance is ever wanted it must be scaled to hard_r2
-        /// (e.g. a relative epsilon), not an absolute 1e-8.
-        /// Tolerant hard-core threshold (squared) for one type pair.
-        ///
+        /// The move cutoff (squared) for one type pair: the hard-core radius
+        /// rounded to 0.001 A, less 0.0015 A. In 3-decimal terms,
         ///     round(r*1000) < round(hard_r*1000) - 1
-        /// is equivalent to
-        ///     r < (round(hard_r*1000) - 1.5) / 1000
-        /// so the whole 3-decimal predicate collapses to a single r2 compare
-        /// once this bound is squared at setup -- no sqrt and no round in the
-        /// hot loop, making the delta guard CHEAPER than the version it
-        /// replaces while removing the threshold mismatch.
+        /// which is r < (round(hard_r*1000) - 1.5) / 1000, so PDB-precision
+        /// noise cannot decide a clash. Squared at setup, so the hot loop
+        /// compares r2 only.
         [[nodiscard]] static inline float hard_tol_r2_from(float hard_r) noexcept {
             if (hard_r <= 0.f) return 0.f;
             const float t = (std::round(hard_r * 1000.f) - 1.5f) / 1000.f;
@@ -328,27 +300,39 @@ namespace mcpu::forces::mcpu08 {
             return r2 < hard_tol_r2;
         }
 
-        /// FIXED: 3-decimal distance rounding for rigid MM clash guard.
-        /// PDB coords have 0.001 Å precision — differences below that must not
-        /// decide clash. ``hard_r`` is precomputed at setup (free in hot path).
-        /// Rigid-MM clash test. Now IDENTICAL to is_hard_clash by construction:
-        /// both take the same precomputed tolerant threshold, so the delta path
-        /// and the full recompute can no longer disagree about any pair. The
-        /// sqrt + round this used to perform per MM pair are gone -- the whole
-        /// predicate was folded into hard_tol_r2_from() at setup.
-        [[nodiscard]] static inline bool rigid_mm_clash_3decimal(
-            float r2_new, float hard_tol_r2) noexcept
-        {
-            return is_hard_clash(r2_new, hard_tol_r2);
+        /// Which hard-core cutoff a pair evaluation applies.
+        ///
+        /// Move: the cutoff a move is tested against (hard_tol_r2), on the new
+        ///   side of every delta path, so no move can put a pair under it.
+        /// State: kStateClashBufferA looser, for judging a state that exists:
+        ///   calculateEnergy, rebuild_contact_list and the old side of every
+        ///   delta path, so all of them score a pair alike. An accepted
+        ///   state can hold a pair that a rigid pivot carried a few 1e-6 A
+        ///   under the move cutoff by rounding (see kStateClashBufferA). Under
+        ///   the state cutoff such a pair is no clash, and it scores what any
+        ///   pair at its distance scores, which is also what the running
+        ///   energy holds for it.
+        enum class ClashCutoff : uint8_t { Move, State };
+
+        /// The state cutoff (squared) for a pair whose move cutoff is
+        /// hard_tol_r2. Only called for a pair already under the move cutoff.
+        [[nodiscard]] static inline float state_clash_r2_from(float hard_tol_r2) noexcept {
+            const float t = std::sqrt(hard_tol_r2) - kStateClashBufferA;
+            return t > 0.f ? t * t : 0.f;
+        }
+
+        template <ClashCutoff C>
+        [[nodiscard]] static inline bool clashes_at(float r2, float hard_tol_r2) noexcept {
+            if (!is_hard_clash(r2, hard_tol_r2)) return false;
+            if constexpr (C == ClashCutoff::Move) return true;
+            return r2 < state_clash_r2_from(hard_tol_r2);
         }
 
         /// Largest hard-core radius over all type pairs, plus float slack.
-        /// Beyond this distance NO pair can be a hard-core overlap, so it is the
-        /// correct query radius for a clash-only neighbour search. Derived from
-        /// mm_guard_prefilter_r2_, which apply_mu_denselist_cutoff() already sets
-        /// from the global max hard_r.
+        /// Beyond this distance no pair can overlap, so it is the query radius
+        /// of the clash-first neighbour search.
         [[nodiscard]] inline float clash_query_radius() const noexcept {
-            const float r2 = mm_guard_prefilter_r2_;
+            const float r2 = clash_prefilter_r2_;
             return (r2 > 0.f && std::isfinite(r2)) ? std::sqrt(r2) : 0.f;
         }
 
@@ -366,16 +350,16 @@ namespace mcpu::forces::mcpu08 {
                     energy_mask_ptr_[static_cast<size_t>(rj)]) != 0;
         }
 
-        /// Clash-check one MM pair under skip_rigid_mm using topo clash bit +
-        /// 3-decimal hard_r comparison (not soft eval_pair energy).
-        [[nodiscard]] inline bool rigid_mm_pair_clashes(
-            int i, int j, float r2_new) const noexcept
+        /// Whether pair (i, j) at distance² r2 overlaps under the move cutoff:
+        /// the clash half of eval_pair, without the contact energy. Used by the
+        /// clash-first pass, which tests moved atoms against fixed ones.
+        [[nodiscard]] inline bool overlaps_at_move_cutoff(
+            int i, int j, float r2) const noexcept
         {
-            // Cheap scalar reject before ANY memory traffic. Provably conservative:
-            // beyond this radius rigid_mm_clash_3decimal cannot fire, so skipping
-            // here cannot change a decision. Avoids a random byte load into the
-            // N²-byte topo_flag_ table plus a type_params_ load per MM pair.
-            if (!(r2_new < mm_guard_prefilter_r2_)) return false;
+            // Cheap scalar reject before ANY memory traffic: no pair overlaps
+            // beyond this radius. Avoids a random byte load into the N²-byte
+            // topo_flag_ table plus a type_params_ load per pair.
+            if (!(r2 < clash_prefilter_r2_)) return false;
             if (mask_ignores_pair(i, j)) return false;
             const size_t N = static_cast<size_t>(num_atoms_cached_);
             if (!topo_flag_.empty()) {
@@ -394,10 +378,11 @@ namespace mcpu::forces::mcpu08 {
                                            static_cast<size_t>(tj)]
                                   .hard_tol_r2;
             }
-            return rigid_mm_clash_3decimal(r2_new, hard_tol_r2);
+            return is_hard_clash(r2, hard_tol_r2);
         }
 
         /// Layered v2: single-byte topo_flag_ + type_params_. O(1).
+        template <ClashCutoff C = ClashCutoff::Move>
         [[gnu::always_inline]] inline float eval_pair_layered_v2(
             int i, int j, float r2, bool* clash_out) const noexcept
         {
@@ -423,7 +408,7 @@ namespace mcpu::forces::mcpu08 {
                 if (energy_mask_ptr_[static_cast<size_t>(ri)] |
                     energy_mask_ptr_[static_cast<size_t>(rj)]) {
                     if (energy_mask_mode_cached_ == EnergyMaskMode::ClashOnly) {
-                        if ((flag & 1u) && is_hard_clash(r2, g.hard_tol_r2)) {
+                        if ((flag & 1u) && clashes_at<C>(r2, g.hard_tol_r2)) {
                             if (clash_out) *clash_out = true;
                         }
                         return 0.0f;
@@ -432,7 +417,7 @@ namespace mcpu::forces::mcpu08 {
                 }
             }
 
-            if ((flag & 1u) && is_hard_clash(r2, g.hard_tol_r2)) {
+            if ((flag & 1u) && clashes_at<C>(r2, g.hard_tol_r2)) {
                 if (clash_out) *clash_out = true;
                 return 0.0f;
             }
@@ -444,6 +429,7 @@ namespace mcpu::forces::mcpu08 {
         }
 
         /// Layered v1: on-the-fly topology decode + CSR exceptions. O(1) amortized.
+        template <ClashCutoff C = ClashCutoff::Move>
         [[gnu::always_inline]] inline float eval_pair_layered_v1(
             int i, int j, float r2, bool* clash_out) const noexcept
         {
@@ -472,7 +458,7 @@ namespace mcpu::forces::mcpu08 {
                 if (energy_mask_ptr_[static_cast<size_t>(ri)] |
                     energy_mask_ptr_[static_cast<size_t>(rj)]) {
                     if (energy_mask_mode_cached_ == EnergyMaskMode::ClashOnly) {
-                        if (clash_on && is_hard_clash(r2, g.hard_tol_r2)) {
+                        if (clash_on && clashes_at<C>(r2, g.hard_tol_r2)) {
                             if (clash_out) *clash_out = true;
                         }
                         return 0.0f;
@@ -481,7 +467,7 @@ namespace mcpu::forces::mcpu08 {
                 }
             }
 
-            if (clash_on && is_hard_clash(r2, g.hard_tol_r2)) {
+            if (clash_on && clashes_at<C>(r2, g.hard_tol_r2)) {
                 if (clash_out) *clash_out = true;
                 return 0.0f;
             }
@@ -493,12 +479,13 @@ namespace mcpu::forces::mcpu08 {
         }
 
         /// Dispatch layered v1 (branches) or v2 (topo_flag_).
+        template <ClashCutoff C = ClashCutoff::Move>
         [[gnu::always_inline]] inline float eval_pair_layered(
             int i, int j, float r2, bool* clash_out) const noexcept
         {
             if (use_topo_flags_ && !topo_flag_.empty())
-                return eval_pair_layered_v2(i, j, r2, clash_out);
-            return eval_pair_layered_v1(i, j, r2, clash_out);
+                return eval_pair_layered_v2<C>(i, j, r2, clash_out);
+            return eval_pair_layered_v1<C>(i, j, r2, clash_out);
         }
 
 #endif
@@ -509,13 +496,15 @@ namespace mcpu::forces::mcpu08 {
 
 
         /// Hot pair energy for known r2. Uses flat tables (FAST) / ContactData (legacy).
-        /// Returns contact energy or 0; sets *clash_out on hard-core violation.
+        /// Returns contact energy or 0; sets *clash_out on a hard-core overlap
+        /// under cutoff C. The legacy build has one exact cutoff and ignores C.
+        template <ClashCutoff C = ClashCutoff::Move>
         [[gnu::always_inline]] inline float eval_pair(
             int i, int j, float r2, bool* clash_out
         ) const {
             ++eval_pair_calls_local_;
 #if MCPU_FAST_MU_DELTA
-            return eval_pair_layered(i, j, r2, clash_out);
+            return eval_pair_layered<C>(i, j, r2, clash_out);
 #else
             // Residue energy masking (legacy path)
             const size_t idx = static_cast<size_t>(i) * static_cast<size_t>(num_atoms_cached_)
@@ -649,6 +638,13 @@ namespace mcpu::forces::mcpu08 {
                 ? RejectReason::StericClash
                 : RejectReason::None;
         }
+        /// O(n_moved x N) scan of the pairs the move re-evaluates, at the
+        /// move cutoff. For PhysicsVerifier, not the hot path.
+        bool clashesAtMoveCutoff(
+            const Context& context,
+            const State& proposed_state,
+            const ProposalPatch& patch
+        ) const override;
         EnergyChangeResult calculateEnergyChange(
             const Context& context,
             const State& old_state,

@@ -50,8 +50,11 @@ struct NeighborConfig {
     /// Runtime Verlet enable (skin value may stay >0 while gate disables use).
     bool mu_verlet_enabled = true;
 
-    /// If true (default), skip moved–moved Mu pairs for ``patch.is_rigid`` pivots.
-    /// Physics: rigid rotation preserves pairwise distances → ΔE_mm = 0.
+    /// If true (default), the pairs a rigid pivot (``patch.is_rigid``) carries
+    /// -- both atoms moved -- are not looked at: a rigid rotation keeps their
+    /// distances, so their energy does not change and they cannot start to
+    /// overlap. Mu neither scores nor re-checks them, nor does the KORP CA-CA
+    /// guard. False evaluates them exactly, as a reference.
     bool skip_rigid_mm = true;
 
     /// If true (default), denselist Mu uses cell-pair inversion (group moved by
@@ -269,9 +272,8 @@ struct NeighborStats {
     std::uint64_t cp_old_walk_ns = 0;
     std::uint64_t cp_old_r2_ns = 0;
     std::uint64_t cp_old_eval_ns = 0;
-    std::uint64_t cp_mmguard_ns = 0;
     std::uint64_t cp_movedbits_ns = 0;  ///< per-cell moved mask (random is_moved[] loads)
-    std::uint64_t cp_skipmask_ns = 0;   ///< per-(moved atom, cell) skip mask  ///< rigid-MM clash guard (diag build)
+    std::uint64_t cp_skipmask_ns = 0;   ///< per-(moved atom, cell) skip mask
     std::uint64_t cp_clash_aborts = 0;
     std::uint64_t cp_full_evals = 0;
     std::uint64_t cp_new_r2_checks = 0;

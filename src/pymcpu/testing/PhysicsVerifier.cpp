@@ -104,12 +104,21 @@ PotentialDeltaCheck PhysicsVerifier::verify_potential_delta(
                 ctx.getSystem().has_energy_mask() &&
                 ctx.getSystem().energy_mask_mode() == EnergyMaskMode::ClashOnly &&
                 std::isfinite(e_new) && !proposed_clash;
-            result.passed = proposed_clash || clash_only_contact;
+            // A move is tested against a cutoff kStateClashBufferA tighter
+            // than the one calculateEnergy judges a state by, so it can be
+            // rejected for a pair the proposed state would still allow.
+            const bool move_cutoff_only =
+                !proposed_clash && !clash_only_contact &&
+                target->clashesAtMoveCutoff(ctx, proposed_copy, patch);
+            result.passed = proposed_clash || clash_only_contact || move_cutoff_only;
             result.message = proposed_clash
                 ? "clash: incremental sentinel matches proposed clash energy"
                 : (clash_only_contact
                        ? "clash: incremental sentinel with ClashOnly contact-only energy"
-                       : "clash: incremental sentinel but proposed energy is finite");
+                       : (move_cutoff_only
+                              ? "clash: incremental sentinel; a re-evaluated pair is "
+                                "under the move cutoff but not the state cutoff"
+                              : "clash: incremental sentinel but proposed energy is finite"));
             return result;
         }
 

@@ -445,8 +445,8 @@ class ReplicaExchange:
         if rep.simulation.context.has_steric_clash():
             raise StericClashError(
                 f"steric clash in replica {i} restored from checkpoint: "
-                "the structure contains overlapping atoms that the "
-                "incremental delta-E path does not detect."
+                "a pair is more than 0.001 A under its hard-core cutoff, "
+                "which no move can produce."
             )
         rep.simulation.current_step = int(steps[i])
 

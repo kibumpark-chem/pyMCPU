@@ -72,10 +72,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   neighbour grid only supports a one-cell stencil, and a smaller cell
   overflowed its buffers (the cell-pair path also silently dropped cells).
   Such a cell is now raised to the cutoff. Larger cells are unchanged.
-- The KORP CA-CA steric guard re-checks the pairs a rigid pivot carries. It
-  skipped them because a rigid move keeps their distances, but the pivot is
-  applied in float32, so a pair sitting exactly on the floor could be rounded
-  under it and accepted with a clash the full energy then reports.
 - **KORP keeps chain IDs and residue numbers.** Its backbone slice goes through
   mdtraj's `Topology.subset`, which drops every chain ID and renumbers a
   residue numbered 0. Multi-chain inputs were therefore numbering-checked,
@@ -96,31 +92,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Context created on it afterwards now adopts the same atom order, and one
   created before it raises instead of scoring garbage (40778 instead of -551
   on actin). Runs without the reorder (every shipped runner) are unchanged.
-- **Masked runs no longer accept a clash carried by a large rigid move.** A
-  rigid pivot keeps the distances inside the moved segment, so Mu re-checks
-  those pairs for a hard-core clash instead of scoring them. In the delta
-  paths every run with a residue energy mask takes, that check looked for
-  each atom's moved partners around its new position in a grid of old
-  positions, and lost them once the segment travelled about a cell (6 A or
-  more), so the move could be accepted with a clash in it. The check now
-  runs around each atom's old position, where every such partner is. The
-  `MCPU_PIVOT_MU_BREAKDOWN` diagnostic path, which had no such check, gets
-  it too. Runs without a mask take a different path and are bit-identical.
 - Writing `Context.coords` after the `init_only` atom reorder now discards
   Mu's live contact list, as `set_positions` does, so a run after such a
   reset matches a fresh start. Under `set_output_internal_order(True)` it
   also takes the array in storage order, the order the getter returns; it
   used to treat it as build order and scramble the atoms.
-- **Rigid moves no longer stick on overlaps that an `ignore_all` mask
-  allows.** With `ignore_all`, a pair involving a masked residue (a linker,
-  for example) neither clashes nor makes a contact, and the full energy and
-  the ordinary delta paths respected that. The guard that re-checks the
-  moved-moved pairs of a rigid move did not, so a rigid move carrying such an
-  overlap was rejected as a steric clash, and masked residues that overlapped
-  could get stuck. `clash_only` is unchanged: moves are still rejected on a
-  clash. Runs without a mask are bit-identical. Clearing a `clash_only` mask
-  also brings back clash reporting in the full energy, which used to keep
-  dropping every clash.
+- Clearing a `clash_only` residue mask brings back clash reporting in the
+  full energy, which used to keep dropping every clash.
 - Mu checks that every atom of a type has one radius. The engine keeps one
   hard-core distance, contact distance and energy per pair of atom types,
   filled in atom order, so a parameter set that gave one type two radii
@@ -357,6 +335,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Rigid pivots no longer re-check the pairs they carry, which makes actin
+  1.5x faster on the default move mix and 1.9x pivot-only.** A rigid pivot
+  keeps every distance inside the segment it turns, so Mu does not score
+  those pairs (`skip_rigid_mm`). It, and the KORP CA-CA guard, still
+  re-checked them for a hard-core clash, because the pivot rounds each
+  carried coordinate to float and a pair a move had left exactly on its
+  cutoff could land just under it; the full energy then found a clash in a
+  state the move had accepted. That re-check cost a third of the actin step
+  (half of it pivot-only), and it is gone. Moves are still tested against
+  the cutoff; a whole state (`calculate_total_energy`, `has_steric_clash`,
+  `Simulation`'s clash check, `KORPForceField`'s construction check) is now
+  judged against one 0.001 Å looser, `mcpu_core.STATE_CLASH_BUFFER_A`, as is
+  the old side of every move's energy change, and a pair inside that margin
+  scores as any pair at its distance. With nothing re-checking carried
+  pairs, none went more than 1.8e-6 Å under its cutoff in 20M-step chignolin
+  and 5M-step actin runs (three seeds each, with the rotation fix above).
+  Trajectories are unchanged up to the first move the re-check would have
+  rejected; on actin the accepted moves of 2000 steps match bit for bit. Two
+  behaviours change:
+
+  * A pivot that carries an overlap the state already holds (coordinates
+    from `set_positions`, a `clash_only` run, whose full energy ignores
+    clashes, or a pair an `ignore_all` mask allows) is accepted. In 0.1.0 the
+    re-check also ignored `ignore_all`, so masked (linker) residues that
+    overlapped could get stuck. A move that re-decides an overlapping pair,
+    with one atom moved, is still rejected, under `clash_only` too.
+  * `PhysicsVerifier` passes a move rejected for a pair that is under the
+    move cutoff but not the state cutoff. It asks the potential, through the
+    new `Potential::clashesAtMoveCutoff`.
+
 - **Glycine's CA has one engine slot.** `MCPUForceField` stored each glycine
   CA twice, in the backbone segment and again as the residue's sidechain,
   and the Mu potential muted the backbone copy so the atom was scored once.
@@ -416,16 +424,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- `MCPU_MM_GUARD_N2`, and the always-zero `mmguard_ns` field of the cell-pair
+  breakdown in `Integrator.step_stats()`, with the rigid-move re-check they
+  belonged to (see Changed).
 - `Context.set_mm_clash_margin` / `mm_clash_margin`,
   `Context.set_mm_double_boundary` / `mm_double_boundary`, the matching
   `MuPotential` properties and the `MCPU_MM_CLASH_MARGIN` and
   `MCPU_MM_DOUBLE_BOUNDARY` environment variables. They were experiments for
-  the rigid-move clash problem that the shared hard-core threshold has since
-  solved, and only the cell-pair path read them. The double-boundary check had
-  become the default check without its prefilter, so it changed only speed.
-  The margin rejected rigid moves that have no clash, on that one path only,
-  so a masked run's trajectory depended on which path a move took. Runs that
-  did not set them are bit-identical.
+  the rigid-move clash problem (see Changed), and only the cell-pair path
+  read them. The double-boundary check had become the default check without
+  its prefilter, so it changed only speed. The margin rejected rigid moves
+  that have no clash, on that one path only, so a masked run's trajectory
+  depended on which path a move took. Runs that did not set them are
+  bit-identical.
 - `MCPUAtom.to_write` and `MCPUAtom.is_sidechain`. They existed to tell
   glycine's second CA slot (see Changed) apart from real atoms. `to_write`
   was then false only for explicit amide hydrogens, exactly when

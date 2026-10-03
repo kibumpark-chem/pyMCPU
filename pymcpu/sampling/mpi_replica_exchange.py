@@ -116,17 +116,19 @@ def _slot_for_index(
 def _assert_no_steric_clash(ctx, where: str) -> None:
     """Fail loudly if an accepted/received state contains a hard-core overlap.
 
-    Integrator.cpp rejects any proposal whose incremental delta-E reports
-    StericClash before it is committed, so no accepted move can introduce a
-    clash. A clash reaching here means the delta path missed one the full
-    recompute sees -- and, before this guard, weight*99999 was silently used as
-    that replica's energy in the exchange Metropolis criterion.
+    The check uses the state cutoff, STATE_CLASH_BUFFER_A (0.001 A) looser
+    than the one moves are tested against, so no move can produce a clash it
+    reports (see StericClashError). One here means the coordinates came in
+    that way (a received or restored state) or a delta path missed a pair --
+    and, before this guard, weight*99999 was silently used as that replica's
+    energy in the exchange Metropolis criterion.
     """
     if ctx.has_steric_clash():
         raise StericClashError(
-            f"steric clash in the accepted state at {where}: the incremental "
-            "delta-E path did not reject it, but the full recompute reports a "
-            "hard-core violation. The structure contains overlapping atoms."
+            f"steric clash in the accepted state at {where}: the full recompute "
+            "finds a pair more than 0.001 A under its hard-core cutoff. No move "
+            "can do that, so the coordinates came in that way or a delta path "
+            "missed the pair."
         )
 
 

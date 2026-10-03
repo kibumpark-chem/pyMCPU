@@ -138,10 +138,14 @@ The one-time seeding is why the recipe above does not call
 Steric clashes in accepted states
 ---------------------------------
 
-The integrator rejects any proposal whose incremental delta reports a
-steric clash, so an accepted state cannot contain one. If the periodic
-full recompute nevertheless finds a hard-core overlap, that is a
-detection gap in the delta path, and
+The integrator rejects any proposal that puts a pair under its hard-core
+cutoff. A rigid pivot carries the pairs inside its segment without
+re-checking them, and float rounding can leave such a pair a few 1e-6 Å
+under its cutoff, so the full recompute judges a state against cutoffs
+0.001 Å looser (``mcpu_core.STATE_CLASH_BUFFER_A``). A hard-core overlap it
+finds anyway came from outside the moves (``set_positions``, a restore, a
+start structure other than the one the force field was built from) or from
+a pair a delta path missed, and
 :meth:`~pymcpu.Simulation.step` raises:
 
 .. autoexception:: pymcpu.simulation.StericClashError

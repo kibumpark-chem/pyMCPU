@@ -102,11 +102,11 @@ struct CpTimer {
             if (hard_core_sq.size() > 0)
                 max_hard_r2 = hard_core_sq.maxCoeff();
         }
-        // Bound for the rigid-MM clash-guard prefilter (see MuPotential.h).
-        // Global max hard_r + 0.001 (rounding resolution) + 0.001 (float slack).
+        // No pair overlaps beyond the largest hard-core radius (see
+        // clash_prefilter_r2_): + 0.001 (rounding resolution) + 0.001 (float slack).
         if (max_hard_r2 > 0.f) {
-            const float mm_r = std::sqrt(max_hard_r2) + 0.002f;
-            mm_guard_prefilter_r2_ = mm_r * mm_r;
+            const float clash_r = std::sqrt(max_hard_r2) + 0.002f;
+            clash_prefilter_r2_ = clash_r * clash_r;
         }
         const float max_r2 = std::max(max_contact_r2, max_hard_r2);
         float exact = kMuCutoffFallbackA;
@@ -167,10 +167,7 @@ struct CpTimer {
                   "moved_bits/skip_mask are 64-bit; CELL_CAPACITY must fit");
 
     /// Report the atom pair that trips the hard-core sentinel in the full
-    /// recompute (MCPU_CLASH_REPORT=1). Diagnostic for the delta-path detection
-    /// gap: Integrator.cpp rejects any proposal whose delta path reports
-    /// StericClash, so a clash surviving into an accepted state means the
-    /// grid-based delta enumeration never examined this pair.
+    /// recompute (MCPU_CLASH_REPORT=1); see the call site in calculateEnergy.
     static bool clash_report_enabled() {
         static const bool on = [] {
             const char* e = std::getenv("MCPU_CLASH_REPORT");
@@ -547,7 +544,6 @@ struct CpTimer {
                 tp.contact_r2 =
                     contact_dist_sq(static_cast<int>(i), static_cast<int>(j));
                 tp.energy = contact_energies(static_cast<int>(i), static_cast<int>(j));
-                // ADDED: precompute hard_r = sqrt(hard_r2) for 3-decimal clash guard
                 const float hr = (tp.hard_r2 > 0.f) ? std::sqrt(tp.hard_r2) : 0.f;
                 tp.hard_tol_r2 = hard_tol_r2_from(hr);
                 store_type_pair_params(filled, static_cast<int>(i), static_cast<int>(j), tp);
@@ -779,7 +775,6 @@ struct CpTimer {
                     tp.hard_r2 = hc;
                     tp.contact_r2 = cd;
                     tp.energy = e_ij;
-                    // ADDED: precompute hard_r for 3-decimal MM clash guard
                     const float hr = (hc > 0.f) ? std::sqrt(hc) : 0.f;
                     tp.hard_tol_r2 = hard_tol_r2_from(hr);
                     store_type_pair_params(filled, i, j, tp);
@@ -834,7 +829,7 @@ struct CpTimer {
 #if MCPU_FAST_MU_DELTA
                 const float dist_sq = cv.dist2(i, j);
                 bool clash = false;
-                const float e = eval_pair(i, j, dist_sq, &clash);
+                const float e = eval_pair<ClashCutoff::State>(i, j, dist_sq, &clash);
                 if (clash) {
                     if (energy_mask_mode_cached_ == EnergyMaskMode::ClashOnly) {
                         continue;
@@ -998,7 +993,7 @@ struct CpTimer {
                 [&](int i, int j, float r2) {
                     if (skip_fixed_h(j)) return;
                     note_mu_pair_r2(nstats, r2, contact_cutoff_sq_);
-                    delta_E -= eval_pair(i, j, r2, nullptr);
+                    delta_E -= eval_pair<ClashCutoff::State>(i, j, r2, nullptr);
                 });
             // New energy: moved at new pos vs fixed(old); MM skipped when rigid.
             NeighborFallback::for_each_moved_neighbor(
@@ -1025,22 +1020,11 @@ struct CpTimer {
                     }
                 }
             } else if (skip_rigid_mm) {
-                // Energy MM elided (ΔE≈0); still clash-check new MM geometry.
-                // FIXED: 3-decimal rounding — PDB precision MM clash guard
+                // A rigid move keeps every moved-moved distance: no energy
+                // change and no new overlap (see ClashCutoff on rounding).
                 const std::uint64_t n =
                     static_cast<std::uint64_t>(moved_indices.size());
                 nstats.elided_rigid_mm += (n * (n > 0 ? n - 1 : 0)) / 2ull;
-                const CoordView cnew_mm(new_state.coord_view());
-                for (size_t a = 0; a < moved_indices.size() && !clash; ++a) {
-                    const int i = moved_indices[a];
-                    for (size_t b = a + 1; b < moved_indices.size(); ++b) {
-                        const int j = moved_indices[b];
-                        if (rigid_mm_pair_clashes(i, j, cnew_mm.dist2(i, j))) {
-                            clash = true;
-                            break;
-                        }
-                    }
-                }
             }
             if (clash) {
                 ws.clear();
@@ -1114,7 +1098,7 @@ struct CpTimer {
                         note_mu_pair_r2(nstats, r2, contact_cutoff_sq_);
                         // CHANGED: gate like denselist — hard_core/contact ≤ 6 Å.
                         if (r2 <= contact_cutoff_sq_)
-                            delta_E -= eval_pair(i, j, r2, nullptr);
+                            delta_E -= eval_pair<ClashCutoff::State>(i, j, r2, nullptr);
                     }
                 }
                 {
@@ -1126,12 +1110,6 @@ struct CpTimer {
                         if (is_moved[static_cast<size_t>(j)]) {
                             if (skip_rigid_mm) {
                                 ++nstats.elided_rigid_mm;
-                                // FIXED: 3-decimal rounding — PDB precision MM clash guard
-                                if (i < j &&
-                                    rigid_mm_pair_clashes(
-                                        i, j, cnew.dist2(i, j))) {
-                                    clash = true;
-                                }
                                 continue;
                             }
                             if (i > j) continue;
@@ -1183,7 +1161,7 @@ struct CpTimer {
                     const float r2o = cold.dist2(i, j);
                     const float r2n = cnew.dist2(i, j);
                     if (r2o <= contact_cutoff_sq_)
-                        mm -= eval_pair(i, j, r2o, nullptr);
+                        mm -= eval_pair<ClashCutoff::State>(i, j, r2o, nullptr);
                     if (r2n <= contact_cutoff_sq_) {
                         bool lc = false;
                         mm += eval_pair(i, j, r2n, &lc);
@@ -1241,14 +1219,6 @@ struct CpTimer {
                     if (is_moved[static_cast<size_t>(j)]) {
                         if (skip_rigid_mm) {
                             ++nstats.elided_rigid_mm;
-                            // Rigid-MM clash guard (see the per-atom path):
-                            // checked around i's OLD position, where the grid
-                            // keeps every moved partner. This path had none,
-                            // because moved_grid is not built when
-                            // skip_rigid_mm is on.
-                            if (i < j && !clash &&
-                                rigid_mm_pair_clashes(i, j, cnew.dist2(i, j)))
-                                clash = true;
                             return;
                         }
                         if (i > j) return;
@@ -1258,7 +1228,6 @@ struct CpTimer {
                 });
                 auto tw1 = Clock::now();
                 ns_walk += to_ns(tw0, tw1);
-                if (clash) break;
 
                 incut.clear();
                 auto tr0 = Clock::now();
@@ -1277,7 +1246,7 @@ struct CpTimer {
 
                 auto te0 = Clock::now();
                 for (const auto& p : incut) {
-                    delta_E -= eval_pair(p.i, p.j, p.r2, nullptr);
+                    delta_E -= eval_pair<ClashCutoff::State>(p.i, p.j, p.r2, nullptr);
                 }
                 auto te1 = Clock::now();
                 ns_eval += to_ns(te0, te1);
@@ -1658,9 +1627,7 @@ struct CpTimer {
                                     // The eager `#pragma GCC ivdep` loop filled all
                                     // n_static slots, but r2_buf is read ONLY through
                                     // in_cut[], which the collect loop populates from
-                                    // non-skipped slots; the MM clash guard between
-                                    // them deliberately uses cnew.dist2 instead (see
-                                    // its comment). So every skipped slot's r2 was
+                                    // non-skipped slots. So every skipped slot's r2 was
                                     // computed and discarded. Measured share of span
                                     // slots discarded: 6.8% chignolin, 51.5% barnase,
                                     // 63.3% sce -- it grows with the molecule because
@@ -1707,38 +1674,6 @@ struct CpTimer {
                                                 static_cast<std::uint64_t>(n_static);
                                     }
 #endif
-
-                                    // When skip_rigid_mm, energy MM is elided but
-                                    // clash must still be detected (float32 rotation
-                                    // can push a near-boundary MM pair under hard_r).
-                                    //
-                                    // FIXED: run it on the OLD side. The grid holds
-                                    // accepted coordinates, so a moved partner j sits
-                                    // in the grid at old_j. A rigid move keeps |i-j|,
-                                    // so any j that can clash with i is within the
-                                    // hard-core radius of old_i: inside this (old-cell)
-                                    // stencil however far the segment travels. The
-                                    // NEW-side stencil is centred on new_i and could
-                                    // lose such a j once the segment moved about a cell.
-                                    const bool check_mm_clash =
-                                        !is_new_side && skip_rigid_mm;
-                                    if (check_mm_clash) {
-                                        CP_SCOPE(nstats.cp_mmguard_ns, cp_on);
-                                        for (int m = 0;
-                                             m < n_static && !clash; ++m) {
-                                            if (!(moved_bits & (1ull << m)))
-                                                continue;
-                                            const int j = cids[m];
-                                            if (j == i || i > j) continue;
-                                            // cnew.dist2: the cell pack holds
-                                            // pre-move coordinates.
-                                            if (rigid_mm_pair_clashes(
-                                                    i, j, cnew.dist2(i, j))) {
-                                                clash = true;
-                                            }
-                                        }
-                                        if (clash) break;
-                                    }
 
                                     // Collect in-cutoff partners; prefetch layered tables.
                                     CP_SCOPE(is_new_side ? nstats.cp_new_eval_ns
@@ -1818,8 +1753,9 @@ struct CpTimer {
                                                 break;
                                             }
                                         } else {
-                                            acc -= static_cast<double>(eval_pair(
-                                                i, cids[m], r2, nullptr));
+                                            acc -= static_cast<double>(
+                                                eval_pair<ClashCutoff::State>(
+                                                    i, cids[m], r2, nullptr));
                                         }
                                     }
                                 }
@@ -1834,8 +1770,8 @@ struct CpTimer {
                 double cell_pair_acc = 0.0;
                 // NOTE: cp_new_walk_ns / cp_old_walk_ns hold the TOTAL time in
                 // eval_groups for that side. The walk proper (stencil
-                // enumeration, span fetch, moved_bits/skip_mask bookkeeping,
-                // and the rigid-MM clash guard) is therefore
+                // enumeration, span fetch and moved_bits/skip_mask
+                // bookkeeping) is therefore
                 //     walk = total - r2 - eval
                 // computed by the reporter. Bracketing the walk directly would
                 // need timers inside the per-cell loop, tripling the rdtsc
@@ -1897,7 +1833,6 @@ struct CpTimer {
                             const float* __restrict__ cx,
                             const float* __restrict__ cy,
                             const float* __restrict__ cz, int count) {
-                            if (clash) return;  // move is rejected; skip the rest
                             std::uint64_t skip_mask = 0ull;
                             for (int m = 0; m < count; ++m) {
                                 const int j = cids[m];
@@ -1909,22 +1844,6 @@ struct CpTimer {
                                     if (skip_rigid_mm) {
                                         ++nstats.elided_rigid_mm;
                                         skip_mask |= (1ull << m);
-                                        // FIXED: rigid-MM clash guard, moved here
-                                        // from the new-position walk below. The
-                                        // grid holds accepted coordinates and a
-                                        // rigid move keeps |i-j|, so every moved
-                                        // j that can clash with i lies within the
-                                        // hard-core radius of old_i -- in THIS
-                                        // stencil, however far the segment moved.
-                                        // The new-position stencil missed them
-                                        // once the segment travelled ~a cell.
-                                        // Use cnew.dist2: cx/cy/cz are pre-move.
-                                        if (i < j &&
-                                            rigid_mm_pair_clashes(
-                                                i, j, cnew.dist2(i, j))) {
-                                            clash = true;
-                                            return;
-                                        }
                                     } else if (i > j) {
                                         skip_mask |= (1ull << m);
                                     }
@@ -1944,11 +1863,10 @@ struct CpTimer {
                                 note_mu_pair_r2(nstats, r2, contact_cutoff_sq_);
                                 if (r2 <= contact_cutoff_sq_)
                                     delta_E -=
-                                        eval_pair(i, cids[m], r2, nullptr);
+                                        eval_pair<ClashCutoff::State>(i, cids[m], r2, nullptr);
                             }
                         },
                         &nstats.neighbor_num_cell_visits);
-                    if (clash) break;
 
                     const bool ok_fixed =
                         mu_grid_ref.for_each_neighbor_cell_span_while(
@@ -1972,8 +1890,6 @@ struct CpTimer {
                                     const float dz = nz - cz[m];
                                     r2_buf[m] = dx * dx + dy * dy + dz * dz;
                                 }
-                                // Rigid-MM clash guard: done in the old-position
-                                // walk above (see the comment there).
                                 for (int m = 0; m < count; ++m) {
                                     if (skip_mask & (1ull << m)) continue;
                                     const float r2 = r2_buf[m];
@@ -2008,7 +1924,7 @@ struct CpTimer {
                         const float r2 = cold.dist2(i, j);
                         note_mu_pair_r2(nstats, r2, contact_cutoff_sq_);
                         if (r2 <= contact_cutoff_sq_)
-                            delta_E -= eval_pair(i, j, r2, nullptr);
+                            delta_E -= eval_pair<ClashCutoff::State>(i, j, r2, nullptr);
                     });
 
                     {
@@ -2033,17 +1949,6 @@ struct CpTimer {
                         if (!ok_fixed || clash) {
                             clash = true;
                             break;
-                        }
-                        // FIXED: 3-decimal rounding — PDB precision MM clash guard
-                        if (skip_rigid_mm && !clash) {
-                            for (int j : moved_indices) {
-                                if (j <= i) continue;
-                                if (rigid_mm_pair_clashes(
-                                        i, j, cnew.dist2(i, j))) {
-                                    clash = true;
-                                    break;
-                                }
-                            }
                         }
                     }
                 }
@@ -2125,7 +2030,7 @@ struct CpTimer {
                 const float r2 = cv.dist2(i, j);
                 if (r2 > contact_cutoff_sq_) continue;
                 bool lc = false;
-                const float e = eval_pair(i, j, r2, &lc);
+                const float e = eval_pair<ClashCutoff::State>(i, j, r2, &lc);
                 if (e != 0.0f) state.mu_contact_add(i, j, e);
             }
         }
@@ -2143,7 +2048,6 @@ struct CpTimer {
         auto& ws = const_cast<mcpu::MuWorkspace&>(context.getMuWorkspace());
         ws.clear();
 
-        const System& sys = context.getSystem();
         auto& ns = const_cast<NeighborSystem&>(context.neighbors());
         const OpenCellGrid& grid = ns.muGrid().grid();
         const std::vector<uint8_t>& is_moved = patch.moving_atoms;
@@ -2212,7 +2116,7 @@ struct CpTimer {
                                 const float dy = ny - cy[m];
                                 const float dz = nz - cz[m];
                                 const float r2 = dx * dx + dy * dy + dz * dz;
-                                if (rigid_mm_pair_clashes(i, j, r2)) return false;
+                                if (overlaps_at_move_cutoff(i, j, r2)) return false;
                             }
                             return true;
                         };
@@ -2288,89 +2192,23 @@ struct CpTimer {
         }
 
         // ---- moved-moved pairs ----
-        if (!clash && moved.size() > 1) {
-            if (skip_mm) {
-                // Energy is unchanged by construction (a rigid transform cannot
-                // change a moved-moved distance); this only guards against a
-                // float32 rotation nudging a borderline pair under the hard core.
-                //
-                // FIXED: this used to be an O(n_moved^2) double loop -- 725
-                // moved atoms on an actin pivot is 263,000 distance
-                // computations, to catch a ~1e-6 A rounding effect. Two atoms
-                // can only be closer than the hard core if they are within the
-                // clash radius of each other, so the grid can enumerate the
-                // candidates instead. Same predicate, same pairs that can
-                // possibly fire; O(n_moved x few cells).
-                //
-                // MCPU_MM_GUARD_N2=1 restores the quadratic loop so the two can
-                // be interleaved on one node and checked for identical accepts.
-                // DEFAULT ON (the quadratic loop). Counter-intuitive but
-                // measured: 725 moved atoms is 263k pairs, yet they are
-                // contiguous in memory so the loop vectorises and beats a grid
-                // query (actin 80.6 vs 82.5 us/step, chignolin 15.9 vs 18.0).
-                // CAVEAT: it is O(n_moved^2), so for chains much longer than
-                // actin (~377 res) the grid form should eventually win.
-                // MCPU_MM_GUARD_N2=0 selects the grid form.
-                static const bool kN2Guard = [] {
-                    const char* e = std::getenv("MCPU_MM_GUARD_N2");
-                    return !(e && e[0] == '0');
-                }();
-                const float rq = clash_query_radius();
-                if (kN2Guard || rq <= 0.f) {
-                    for (size_t a = 0; a < moved.size() && !clash; ++a) {
-                        const int i = moved[a];
-                        for (size_t b = a + 1; b < moved.size(); ++b) {
-                            const int j = moved[b];
-                            if (rigid_mm_pair_clashes(i, j, cnew.dist2(i, j))) {
-                                clash = true;
-                                break;
-                            }
-                        }
-                    }
-                } else {
-                    for (int i : moved) {
-                        // Query at the OLD position: the grid stores accepted
-                        // coordinates, and a rigid move leaves every
-                        // moved-moved distance unchanged to ~1e-6 A, so the
-                        // candidate set is the same either way -- but only the
-                        // old position agrees with where the grid put things.
-                        const float qx = cold.x(i), qy = cold.y(i), qz = cold.z(i);
-                        const bool ok =
-                            grid.for_each_neighbor_cell_span_while_within(
-                                qx, qy, qz, rq,
-                                [&](const int* __restrict__ cids,
-                                    const float* __restrict__,
-                                    const float* __restrict__,
-                                    const float* __restrict__, int count) {
-                                    for (int m = 0; m < count; ++m) {
-                                        const int j = cids[m];
-                                        if (j <= i) continue;
-                                        if (!is_moved[static_cast<size_t>(j)])
-                                            continue;
-                                        if (rigid_mm_pair_clashes(
-                                                i, j, cnew.dist2(i, j)))
-                                            return false;
-                                    }
-                                    return true;
-                                });
-                        if (!ok) { clash = true; break; }
-                    }
-                }
-            } else {
-                for (size_t a = 0; a < moved.size() && !clash; ++a) {
-                    const int i = moved[a];
-                    for (size_t b = a + 1; b < moved.size(); ++b) {
-                        const int j = moved[b];
-                        const float r2 = cnew.dist2(i, j);
-                        if (r2 > contact_cutoff_sq_) continue;
-                        bool local_clash = false;
-                        const float e = eval_pair(i, j, r2, &local_clash);
-                        if (local_clash) { clash = true; break; }
-                        if (e != 0.0f) {
-                            dE += static_cast<double>(e);
-                            ws.pending_contact_add.push_back(
-                                mcpu::MuWorkspace::PendingContact{i, j, e});
-                        }
+        // A rigid move keeps every moved-moved distance, so it changes neither
+        // their energy nor whether they overlap; they are not looked at (see
+        // ClashCutoff on rounding). A flexible move re-decides them here.
+        if (!clash && moved.size() > 1 && !skip_mm) {
+            for (size_t a = 0; a < moved.size() && !clash; ++a) {
+                const int i = moved[a];
+                for (size_t b = a + 1; b < moved.size(); ++b) {
+                    const int j = moved[b];
+                    const float r2 = cnew.dist2(i, j);
+                    if (r2 > contact_cutoff_sq_) continue;
+                    bool local_clash = false;
+                    const float e = eval_pair(i, j, r2, &local_clash);
+                    if (local_clash) { clash = true; break; }
+                    if (e != 0.0f) {
+                        dE += static_cast<double>(e);
+                        ws.pending_contact_add.push_back(
+                            mcpu::MuWorkspace::PendingContact{i, j, e});
                     }
                 }
             }
@@ -2538,7 +2376,9 @@ struct CpTimer {
                 }
                 const float dist_sq = cv.dist2(i, j);
                 bool local_clash = false;
-                const float e = eval_pair(i, j, dist_sq, &local_clash);
+                // The state cutoff: see ClashCutoff.
+                const float e =
+                    eval_pair<ClashCutoff::State>(i, j, dist_sq, &local_clash);
                 if (local_clash) {
                     // ClashOnly: full energy stays contact-only (legacy
                     // CLASH_WEIGHT=0). Delta path still StericClash-rejects.
@@ -2546,13 +2386,15 @@ struct CpTimer {
                         continue;
                     }
                     // DIAGNOSTIC (MCPU_CLASH_REPORT=1): identify the pair that
-                    // trips the sentinel. Integrator.cpp rejects any proposal
-                    // whose delta path reports StericClash, so reaching here on
-                    // an accepted state means the delta path MISSED this pair.
-                    // Reports the geometry plus the Mu cutoff, so a pair that
-                    // sits outside the cell-grid's enumeration radius (the
-                    // out-of-grid case the ws.use_trial_fallback comment in
-                    // calculateEnergyChange guards against) is identifiable.
+                    // trips the sentinel. No move can put a pair under the
+                    // move cutoff, and rounding carries one at most a few
+                    // 1e-6 A further, so on an accepted state this means the
+                    // coordinates came from outside (set_positions, a restore)
+                    // or a delta path missed the pair. Reports the geometry
+                    // plus the Mu cutoff, so a pair that sits outside the
+                    // cell-grid's enumeration radius (the out-of-grid case the
+                    // ws.use_trial_fallback comment in calculateEnergyChange
+                    // guards against) is identifiable.
                     if (clash_report_enabled()) {
                         const size_t NT = static_cast<size_t>(n_types_);
                         const int ti = atom_types[static_cast<size_t>(i)];
@@ -2623,6 +2465,42 @@ struct CpTimer {
         }
 
         return total_energy;
+    }
+
+    bool MuPotential::clashesAtMoveCutoff(
+        const Context& context, const State& proposed_state,
+        const ProposalPatch& patch
+    ) const {
+        const System& sys = context.getSystem();
+        setup_mask_cache(sys);
+        const int num_atoms = sys.getNumAtoms();
+        const bool skip_carried =
+            patch.is_rigid && context.neighborConfig().skip_rigid_mm;
+        const std::vector<uint8_t>& is_moved = patch.moving_atoms;
+        // Same moved set as the delta path: moved_indices, or a scan of
+        // moving_atoms when a hand-built patch left it empty.
+        std::vector<int> scanned;
+        if (patch.moved_indices.empty()) {
+            for (int a = 0; a < static_cast<int>(is_moved.size()); ++a) {
+                if (is_moved[static_cast<size_t>(a)]) scanned.push_back(a);
+            }
+        }
+        const std::vector<int>& moved =
+            patch.moved_indices.empty() ? scanned : patch.moved_indices;
+        const CoordView cv(proposed_state.coord_view());
+        for (int i : moved) {
+            if (sys.is_amide_h_atom(i)) continue;
+            for (int j = 0; j < num_atoms; ++j) {
+                if (j == i || sys.is_amide_h_atom(j)) continue;
+                if (is_moved[static_cast<size_t>(j)] && (skip_carried || j < i)) {
+                    continue;
+                }
+                bool clash = false;
+                eval_pair(i, j, cv.dist2(i, j), &clash);
+                if (clash) return true;
+            }
+        }
+        return false;
     }
 
     float MuPotential::calculateEnergy(

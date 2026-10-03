@@ -363,7 +363,8 @@ public:
         neighbors_.config().mu_verlet_enabled = on;
         if (!on) neighbors_.muVerlet().invalidate();
     }
-    /// Skip moved–moved Mu pairs on rigid pivots (default true). O(1) flag.
+    /// Skip the pairs a rigid pivot carries (default true); see
+    /// NeighborConfig::skip_rigid_mm. O(1) flag.
     void set_skip_rigid_mm(bool on) noexcept {
         neighbors_.config().skip_rigid_mm = on;
     }
