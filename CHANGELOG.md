@@ -476,11 +476,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   so its code was dead: the CMake option and its pyproject pin, the
   cached-contact delta (`calculateEnergyChange_legacy`, `ContactData`), the
   per-state N^2 pair bitmap (`State::is_contact_cache`, `StateCacheMode`)
-  and the pending flag updates that fed it. `build_info()["features"]` and
-  the deprecated `build_flags()` lose their `MCPU_FAST_MU_DELTA` key.
+  and the pending flag updates that fed it. `build_info()["features"]` loses
+  its `MCPU_FAST_MU_DELTA` key.
   `Integrator.proposal_is_dynamic_only()`, which only repeated
   `use_pooled_proposal()`, and the `proposal_dynamic_only` key of
   `proposal_lifecycle_info()` are gone too. The default build is unchanged.
+- `mcpu_core.build_flags()`, deprecated since `build_info()` replaced it;
+  `scripts/install_check.py` now reads `build_info()`.
 - `MCPU_MM_GUARD_N2`, and the always-zero `mmguard_ns` field of the cell-pair
   breakdown in `Integrator.step_stats()`, with the rigid-move re-check they
   belonged to (see Changed).

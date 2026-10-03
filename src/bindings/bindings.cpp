@@ -1071,12 +1071,6 @@ PYBIND11_MODULE(mcpu_core, m) {
     // generated BuildConfig.h, which CMake fills from the same variables that
     // produced the flags. There are deliberately NO fallback literals: a
     // missing define is a #error, not a plausible-looking default.
-    //
-    // This replaces build_flags(), which returned six of its eight keys as
-    // hardcoded C++ literals -- `d["MCPU_UNSAFE_MATH"] = false;` ignored the
-    // actual define, so it would have reported "safe" even after someone
-    // enabled fast math. It also exposed no -march, compiler or LTO state,
-    // which is exactly what a cross-build comparison needs.
 #if !defined(MCPU_BUILD_ARCH_TIER) || !defined(MCPU_BUILD_LTO)
 #error "BuildConfig.h was not generated; configure through CMake."
 #endif
@@ -1233,30 +1227,6 @@ PYBIND11_MODULE(mcpu_core, m) {
         "type, LTO, FP policy and feature flags. Every value derives from a "
         "real macro -- see build_info() in src/bindings/bindings.cpp.");
 
-    m.def(
-        "build_flags",
-        []() {
-            // Deprecated alias, kept for one release because
-            // scripts/install_check.py calls it. Crucially it now reports the
-            // REAL values: a deprecated function that lies is worse than a
-            // removed one.
-            py::module_::import("warnings").attr("warn")(
-                "mcpu_core.build_flags() is deprecated; use build_info(). The "
-                "unsafe_math_* keys were previously hardcoded literals.",
-                py::module_::import("builtins").attr("DeprecationWarning"), 2);
-            py::dict d;
-            d["MCPU_USE_POOLED_PROPOSAL"] = (MCPU_USE_POOLED_PROPOSAL != 0);
-#if defined(__FAST_MATH__)
-            d["unsafe_math_enabled"] = true;
-#else
-            d["unsafe_math_enabled"] = false;
-#endif
-            d["MCPU_UNSAFE_MATH"] = d["unsafe_math_enabled"];
-            d["fp_contract"] = MCPU_BUILD_FP_CONTRACT;
-            d["arch_march"] = MCPU_BUILD_ARCH_MARCH;
-            return d;
-        },
-        "DEPRECATED: use build_info().");
     m.def("reset_coord_sync_stats", []() { mcpu::coord_sync_stats().reset(); });
     m.def("coord_sync_stats", []() {
         const auto& s = mcpu::coord_sync_stats();

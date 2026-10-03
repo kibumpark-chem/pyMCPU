@@ -322,8 +322,7 @@ def _build_identity() -> dict[str, Any]:
     except OSError:
         identity["so_sha256"] = None
     # The emitted ISA, read from the binary rather than trusted from CMake.
-    # -march is silently dropped for Debug builds, and build_flags() would
-    # never tell you. Zero zmm/kmask means AVX-512 is genuinely absent.
+    # -march is silently dropped for Debug builds. Zero zmm/kmask means AVX-512 is genuinely absent.
     try:
         dis = subprocess.run(
             ["objdump", "-d", mcpu_core.__file__],
@@ -337,15 +336,13 @@ def _build_identity() -> dict[str, Any]:
         }
     except (OSError, subprocess.SubprocessError):
         identity["isa_counts"] = None
-    for name in ("build_info", "build_flags"):
-        fn = getattr(mcpu_core, name, None)
-        if fn is not None:
-            try:
-                identity[name] = {k: v for k, v in dict(fn()).items()}
-            except Exception as exc:  # noqa: BLE001 -- diagnostic only
-                identity[name] = f"<raised {type(exc).__name__}: {exc}>"
-    if "build_info" not in identity:
-        identity["build_info"] = None  # predates 6b; recorded explicitly
+    fn = getattr(mcpu_core, "build_info", None)
+    identity["build_info"] = None  # an extension that predates build_info()
+    if fn is not None:
+        try:
+            identity["build_info"] = {k: v for k, v in dict(fn()).items()}
+        except Exception as exc:  # noqa: BLE001 -- diagnostic only
+            identity["build_info"] = f"<raised {type(exc).__name__}: {exc}>"
     return identity
 
 

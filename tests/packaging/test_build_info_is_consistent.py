@@ -1,10 +1,5 @@
 """``build_info()`` must be internally consistent and truthful.
 
-The function this replaced, ``build_flags()``, returned six of its eight keys
-as hardcoded C++ literals -- ``d["MCPU_UNSAFE_MATH"] = false;`` ignored the
-actual define, so it would have kept reporting "safe math" after someone
-enabled ``-ffast-math``. Its only caller printed two keys and asserted nothing.
-
 The design that prevents a recurrence is that ``build_info()`` has **two
 independent sources**: ``arch.*`` comes from a CMake-generated header, and
 ``isa.*`` comes from the compiler's own predefined macros. They can only agree
@@ -110,19 +105,6 @@ def test_no_value_is_an_empty_placeholder(info) -> None:
 
 def test_feature_flags_are_real_macro_reads(info) -> None:
     assert isinstance(info["features"]["MCPU_USE_POOLED_PROPOSAL"], bool)
-
-
-def test_build_flags_alias_agrees_and_warns(info) -> None:
-    """The deprecated alias must warn AND report the truth.
-
-    It previously returned ``unsafe_math_enabled = False`` as a literal. A
-    deprecated function that lies is worse than a removed one.
-    """
-    with pytest.warns(DeprecationWarning):
-        legacy = mcpu_core.build_flags()
-    assert legacy["unsafe_math_enabled"] == info["fp"]["fast_math"]
-    assert legacy["MCPU_USE_POOLED_PROPOSAL"] == info["features"]["MCPU_USE_POOLED_PROPOSAL"]
-    assert legacy["arch_march"] == info["arch"]["march"]
 
 
 def test_release_builds_actually_get_lto(info) -> None:
