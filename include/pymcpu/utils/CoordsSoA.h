@@ -104,7 +104,9 @@ struct CoordsSoA {
     /// pivot and again in lab coordinates, and that shrinks every distance the
     /// rotation should keep: about -1e-8 A per move, steadily. Over 5M
     /// pivot-only chignolin steps CA-C bonds shrank by 3e-3 A. Rounded once,
-    /// what remains is unbiased float noise (+6e-6 A on average there).
+    /// what remains is unbiased float noise (+6e-6 A on average there), and
+    /// a distance the rotation keeps moves by at most sqrt(3) float steps of
+    /// the larger coordinate, which MuPotential::carry_bound_A relies on.
     void rotate_atoms(int start, int end, const Eigen::Matrix3d& R, const Eigen::Vector3d& pivot) {
         for (int i = start; i < end; ++i) {
             const Eigen::Vector3d p = R * (atom(i).cast<double>() - pivot) + pivot;

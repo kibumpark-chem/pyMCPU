@@ -265,9 +265,11 @@ class Simulation:
                     f"  steric_rejected so far: {self.integrator.get_steric_rejected()}\n"
                     "No move can do that: moves are tested against the cutoff itself, "
                     "and rounding moves a pair a rigid pivot carries by a few 1e-6 A at "
-                    "most. Either the coordinates came in that way (set_positions, a "
-                    "restore, a start structure other than the force field's) or a "
-                    "delta path missed the pair."
+                    "most near the origin. Either the coordinates came in that way "
+                    "(set_positions, a restore, a start structure other than the force "
+                    "field's), they lie thousands of A from the origin, where that "
+                    "rounding is far larger (centre the structure), or a delta path "
+                    "missed the pair."
                 )
                 if _clash_is_fatal():
                     raise StericClashError(_detail)

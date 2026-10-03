@@ -1,8 +1,8 @@
 """Residue energy masks, and the pairs a rigid move carries.
 
-A rigid pivot keeps every distance inside the segment it turns, so Mu
-neither scores nor re-checks those pairs (``skip_rigid_mm``, on by default):
-they cannot start to overlap. The pairs a move does re-decide, with one atom
+A rigid pivot keeps every distance inside the segment it turns, so Mu does
+not re-check those pairs for a clash (``skip_rigid_mm``, on by default): they
+cannot start to overlap. The pairs a move does re-decide, with one atom
 moved and the other not, are clash-tested under every mask but ``ignore_all``:
 
 * ``ignore_all``: a pair involving a masked residue neither clashes nor makes
@@ -197,7 +197,7 @@ def _far_move(heavy, overlap, *, use_cell_pair: bool):
     fixed = np.setdiff1d(np.arange(coords.shape[1]), moved)
     gaps = np.linalg.norm(new_coords[:, moved][:, :, None] - coords[:, fixed][:, None, :], axis=0)
     assert gaps.min() > 3.2
-    margin = 2 * 5.0765 - 0.5
+    margin = 2 * sim.context.mu_potential.mu_exact_cutoff - 0.5
     assert np.all(new_coords.min(axis=1) > coords.min(axis=1) - margin)
     assert np.all(new_coords.max(axis=1) < coords.max(axis=1) + margin)
     return sim, new_coords, moved

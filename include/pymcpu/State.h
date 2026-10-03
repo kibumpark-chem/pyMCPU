@@ -39,6 +39,10 @@ public:
     /// Live Mu contact list: for each atom, who it is CURRENTLY in contact with
     /// and what that contact is worth. The Mu delta reads its "energy before the
     /// move" straight off this instead of re-walking the old neighbourhood.
+    /// It also holds, with energy 0, every contact pair just outside its cutoff
+    /// (within MuPotential::kContactBandA), so that a rigid pivot can re-decide
+    /// each listed pair it carries; mu_list_drift bounds how far the unlisted
+    /// ones can have moved since the list was measured (see MuPotential).
     ///
     /// This lives on State, not on MuPotential, and that placement is load-bearing:
     /// partition_replicas() hands ONE System (hence one MuPotential) to every
@@ -59,8 +63,11 @@ public:
     };
     mutable std::vector<std::vector<MuContactEntry>> mu_contact_list;
     mutable bool mu_contact_list_ready = false;
+    /// Upper bound (A) on how far any pair's distance can have changed through
+    /// accepted rigid carries since the list was last measured from coordinates.
+    mutable float mu_list_drift = 0.f;
 
-    /// Record that i and j are now in contact, worth `e`. O(1) amortized.
+    /// List the pair (i, j), worth `e` (0 for a near miss). O(1) amortized.
     void mu_contact_add(int i, int j, float e) const {
         mu_contact_list[static_cast<size_t>(i)].push_back(
             MuContactEntry{static_cast<std::int32_t>(j), e});
@@ -68,7 +75,7 @@ public:
             MuContactEntry{static_cast<std::int32_t>(i), e});
     }
 
-    /// Record that i and j are no longer in contact. O(degree).
+    /// Unlist the pair (i, j). O(degree).
     void mu_contact_remove(int i, int j) const {
         auto drop = [&](int a, int b) {
             auto& v = mu_contact_list[static_cast<size_t>(a)];
@@ -88,6 +95,7 @@ public:
     void mu_contact_invalidate() const {
         mu_contact_list.clear();
         mu_contact_list_ready = false;
+        mu_list_drift = 0.f;
     }
 
     [[nodiscard]] bool has_mu_contact_list() const noexcept {

@@ -109,11 +109,19 @@ whenever the coordinates are replaced wholesale (`set_positions`,
 cannot use it (one outside the neighbour grid), and by a reset under a mask.
 Other full evaluations, such as `energy_breakdown`, leave it alone.
 
-A rigid pivot does not re-decide the pairs it carries, and its rounding can
-carry one across its contact cutoff by about 1e-6 Å. The running energy is
-then one contact energy off until the next reset corrects it, and
-`Simulation` logs an energy-drift warning. On actin this happens up to a few
-times per million steps.
+A rigid pivot does not re-measure the pairs it carries, but its rounding
+moves each carried distance by up to sqrt(3) float steps of the largest
+coordinate (6.7e-6 Å below 64 Å), enough to carry a pair sitting on its
+contact cutoff across it. So the list also holds, with energy 0, every contact
+pair less than 0.05 Å outside its cutoff, and a rigid pivot re-decides each
+listed pair it carries. The unlisted ones cannot cross: the bound is summed
+over accepted pivots, and the list is rebuilt from the coordinates before the
+sum reaches 0.05 Å. A pivot out of the neighbour grid re-decides the carried
+pairs too: those the list holds, or every one when there is no list. The
+running energy therefore equals the full energy after every move. Under a
+residue energy mask, or with `MCPU_CONTACT_LIST=0`, moves take a path without
+the list, and such a crossing there leaves the running energy one contact
+energy off until the next reset (`Simulation` logs an energy-drift warning).
 
 ### Hard-core clashes
 
@@ -130,6 +138,18 @@ inside that margin scores as any pair at its distance. With nothing
 re-checking carried pairs, none went more than 1.8e-6 Å under its cutoff in
 5M-step actin and 20M-step chignolin runs. The KORP CA-CA guard works the
 same way.
+
+That margin assumes coordinates near the origin. A float step grows with the
+coordinate (3.8e-6 Å at 50 Å, 6.1e-5 Å at 1000 Å, 2.4e-4 Å at 4000 Å), and
+so does the rounding of a carry: with actin moved 4000 Å out, a carried pair
+went through the margin within 200k pivot-only steps, and the full energy
+reported a clash; 1000 Å out, none did in 1M steps. A run does not get there
+by itself (chignolin's centre moved about 10 Å in 5M steps), so this
+concerns structures that start far out, such as some cryo-EM models. Mu
+prints a note, once, when the coordinates reach about 1000 Å from the
+origin; centre such a structure first. The running energy, and the old side
+of every move, keep such a pair's contact energy, so the energy is right
+again once the pair moves apart.
 
 A clash in an accepted state therefore means coordinates that did not come
 from a move, or a pair a delta path missed. `Simulation` checks

@@ -375,10 +375,11 @@ PYBIND11_MODULE(mcpu_core, m) {
         .def("set_mu_verlet_enabled", &Context::set_mu_verlet_enabled, py::arg("on"),
              "Enable/disable Mu Verlet without changing skin (denselist geometry).")
         .def("set_skip_rigid_mm", &Context::set_skip_rigid_mm, py::arg("on"),
-             "Skip the pairs a rigid pivot carries (both atoms moved): their "
-             "distances do not change, so Mu neither scores nor re-checks them, "
-             "nor does the KORP CA-CA guard. Default True; False evaluates "
-             "them exactly, as a reference.")
+             "Skip re-measuring the pairs a rigid pivot carries (both atoms "
+             "moved): their distances change only by rounding, so Mu re-decides "
+             "just the carried pairs on its contact list and the KORP CA-CA "
+             "guard skips them. Default True; False evaluates them all exactly, "
+             "as a reference.")
         .def("skip_rigid_mm", &Context::skip_rigid_mm)
         .def("set_use_cell_pair", &Context::set_use_cell_pair, py::arg("on"),
              "Cell-pair denselist Mu (default true). False = per-atom walks.")
@@ -1422,7 +1423,13 @@ PYBIND11_MODULE(mcpu_core, m) {
         .def_property_readonly("type_params_size_kb", &m08::MuPotential::type_params_size_kb)
         .def_property_readonly(
             "mu_exact_cutoff", &m08::MuPotential::mu_exact_cutoff,
-            "Denselist query cutoff (Å) from max(type_params_ contact/hard).")
+            "Neighbour query cutoff (Å): the largest contact cutoff widened by "
+            "the contact list's 0.05 Å near-miss band, or the largest hard-core "
+            "cutoff if larger, times 1.0001.")
+        .def_property_readonly(
+            "contact_list_rebuilds", &m08::MuPotential::contact_list_rebuilds,
+            "Times a state's contact list was rebuilt from its coordinates "
+            "(diagnostic; shared by the replicas that share this potential).")
         .def_property_readonly(
             "mu_cutoff_sq", &m08::MuPotential::mu_cutoff_sq,
             "mu_exact_cutoff² used in denselist r² prefilter.")

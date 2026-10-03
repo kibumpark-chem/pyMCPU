@@ -108,7 +108,17 @@ struct CpTimer {
             const float clash_r = std::sqrt(max_hard_r2) + 0.002f;
             clash_prefilter_r2_ = clash_r * clash_r;
         }
-        const float max_r2 = std::max(max_contact_r2, max_hard_r2);
+        // The near-miss band (see kContactBandA), widened to the next float so
+        // that contact_r2 + w covers (contact_r + band)^2 for every type pair.
+        if (max_contact_r2 > 0.f) {
+            const double cmax = std::sqrt(static_cast<double>(max_contact_r2));
+            const double band = static_cast<double>(kContactBandA);
+            contact_band_w_r2_ = std::nextafter(
+                static_cast<float>(2.0 * cmax * band + band * band),
+                std::numeric_limits<float>::infinity());
+        }
+        const float max_r2 =
+            std::max(max_contact_r2 + contact_band_w_r2_, max_hard_r2);
         float exact = kMuCutoffFallbackA;
         if (max_r2 <= 0.f) {
             std::fprintf(stderr,
@@ -118,28 +128,14 @@ struct CpTimer {
         } else {
             exact = std::sqrt(max_r2) * 1.0001f;
         }
-        const float computed = exact;
-        if (const char* e = std::getenv("MCPU_MU_CUTOFF_OVERRIDE")) {
-            char* end = nullptr;
-            const float v = std::strtof(e, &end);
-            if (end != e && v > 0.f) {
-                std::fprintf(stderr,
-                    "WARN: MCPU_MU_CUTOFF_OVERRIDE=%.4f overrides "
-                    "computed exact cutoff %.6f Å.\n",
-                    v, computed);
-                exact = v;
-            }
-        }
         mu_exact_cutoff_ = exact;
         contact_cutoff_sq_ = exact * exact;
         // Print once type_params_ is authoritative (skip matrix-only ctor pass).
-        // CHANGED: gated behind MCPU_VERBOSE
         if (!type_params_.empty() && mcpu_verbose_enabled()) {
-            std::fprintf(stderr, // CHANGED: gated behind MCPU_VERBOSE
+            std::fprintf(stderr,
                 "INFO: Mu denselist cutoff=%.6f Å "
-                "(max_contact_r2=%.6f max_hard_r2=%.6f). "
-                "MCPU_MU_CUTOFF_OVERRIDE=6.0 restores legacy denselist.\n",
-                mu_exact_cutoff_, max_contact_r2, max_hard_r2);
+                "(max_contact_r2=%.6f + band %.6f, max_hard_r2=%.6f).\n",
+                mu_exact_cutoff_, max_contact_r2, contact_band_w_r2_, max_hard_r2);
         }
     }
 
@@ -790,39 +786,73 @@ struct CpTimer {
         const State& new_state,
         const ProposalPatch& patch
     ) const {
-        // DEFAULT ON. Measured 1.35-1.45x with bit-identical trajectories on
-        // chignolin/1igd/actin. MCPU_CONTACT_LIST=0 restores the re-measure path.
+        // DEFAULT ON (1.35-1.45x on chignolin/1igd/actin when introduced).
+        // MCPU_CONTACT_LIST=0 restores the re-measure path, which does not
+        // re-decide pairs a rigid pivot carries.
         static const bool kContactList = [] {
             const char* e = std::getenv("MCPU_CONTACT_LIST");
             return !(e && e[0] == '0');
         }();
         float delta;
         if (kContactList) {
+            // A rigid move adds to the drift budget of the pairs it carries
+            // unseen (see the contact-list notes in the header).
+            const bool carries =
+                patch.is_rigid && context.neighborConfig().skip_rigid_mm;
+            const float carry_bound =
+                carries ? carry_bound_A(context, new_state, patch) : 0.f;
+            const float budget = kContactBandA - kContactBandSlackA;
+            if (carry_bound > kFarCarryNoteA && !far_carry_noted_) {
+                far_carry_noted_ = true;
+                std::fprintf(stderr,
+                    "NOTE: Mu: the coordinates are far enough from the origin "
+                    "that rounding moves a distance a rigid pivot carries by "
+                    "up to %.1e A per move. A carried pair is not re-checked "
+                    "for overlap, and that is no longer small next to the "
+                    "0.001 A hard-core margin (STATE_CLASH_BUFFER_A), so over "
+                    "a long run one can end up under its hard-core cutoff and "
+                    "fail the clash check. Centre the structure near the "
+                    "origin.\n",
+                    static_cast<double>(carry_bound));
+            }
             // The live list is only valid where the dense contiguous grid sees
-            // every candidate pair and no residue is energy-masked.
+            // every candidate pair, no residue is energy-masked, and the
+            // carry fits the drift budget.
+            const bool masked = context.getSystem().has_energy_mask();
             const bool usable =
                 context.denseGridsActive() &&
                 context.neighbors().muGrid().grid().use_contiguous() &&
                 context.trial_in_bounds(new_state, patch) &&
-                !context.getSystem().has_energy_mask();
+                !masked &&
+                carry_bound <= budget;
             if (usable) {
-                if (!old_state.mu_contact_list_ready) {
+                if (!old_state.mu_contact_list_ready ||
+                    old_state.mu_list_drift + carry_bound > budget) {
                     rebuild_contact_list(context, old_state);
                 }
                 delta = calculateEnergyChange_clist(
-                    context, old_state, new_state, patch);
+                    context, old_state, new_state, patch, carry_bound);
             } else {
                 // Cannot maintain the list through this move -- rebuild it
                 // from the accepted state afterwards rather than let it drift.
+                // Until then it still says which carried pairs are near
+                // their cutoff.
+                const bool list_exact =
+                    !masked && old_state.mu_contact_list_ready &&
+                    old_state.mu_list_drift + carry_bound <= budget;
                 delta = calculateEnergyChange_fast(
-                    context, old_state, new_state, patch);
+                    context, old_state, new_state, patch, list_exact);
                 old_state.mu_contact_invalidate();
-                ++clist_fallbacks_;
-                if (clist_fallbacks_ == 1 || (clist_fallbacks_ % 1000) == 0) {
-                    std::fprintf(stderr,
-                        "NOTE: contact-list rebuild #%llu (move outside the "
-                        "dense grid). Each rebuild is O(N^2).\n",
-                        static_cast<unsigned long long>(clist_fallbacks_));
+                if (!masked) {
+                    ++clist_fallbacks_;
+                    if (clist_fallbacks_ == 1 || (clist_fallbacks_ % 1000) == 0) {
+                        std::fprintf(stderr,
+                            "NOTE: Mu move #%llu that cannot use the contact "
+                            "list (it leaves the neighbour grid, or there is "
+                            "none). The next move rebuilds the list, "
+                            "O(N^2).\n",
+                            static_cast<unsigned long long>(clist_fallbacks_));
+                    }
                 }
             }
         } else {
@@ -835,11 +865,161 @@ struct CpTimer {
         return EnergyChangeResult::finite(delta);
     }
 
+    float MuPotential::carry_bound_A(const Context& context, const State& new_state,
+                                     const ProposalPatch& patch) {
+        float m = 0.f;
+        const BoxBounds& b = context.neighbors().muGrid().grid().bounds();
+        if (b.valid) {
+            for (int d = 0; d < 3; ++d) {
+                m = std::max({m, std::fabs(b.lo[d]), std::fabs(b.hi[d])});
+            }
+        } else {
+            const CoordView c(new_state.coord_view());
+            for (int i : patch.moved_indices) {
+                m = std::max({m, std::fabs(c.x(i)), std::fabs(c.y(i)), std::fabs(c.z(i))});
+            }
+        }
+        const float ulp = std::nextafter(m, std::numeric_limits<float>::infinity()) - m;
+        return 1.01f * 1.7320508f * ulp;
+    }
+
+    float MuPotential::delta_moved_vs_all(
+        const Context& context,
+        const State& old_state,
+        const State& new_state,
+        const ProposalPatch& patch,
+        const std::vector<int>& moved_indices,
+        bool list_exact
+    ) const {
+        auto& ws = const_cast<mcpu::MuWorkspace&>(context.getMuWorkspace());
+        const std::vector<uint8_t>& is_moved = patch.moving_atoms;
+        // Fallback scans all atoms; skip amide H (not in historical Mu contact set).
+        const auto& sys = context.getSystem();
+        const int h_begin = sys.getTotalBBAtoms() + sys.getTotalOAtoms() + sys.getTotalSCAtoms();
+        auto skip_fixed_h = [&](int j) {
+            if (sys.residueContiguousLayout()) {
+                return sys.is_amide_h_atom(j) && !is_moved[static_cast<size_t>(j)];
+            }
+            return j >= h_begin && !is_moved[static_cast<size_t>(j)];
+        };
+        const bool skip_rigid_mm =
+            patch.is_rigid && context.neighborConfig().skip_rigid_mm;
+        float delta_E = 0.0f;
+        bool clash = false;
+        auto& nstats = const_cast<NeighborStats&>(context.neighborStats());
+        const float cut2 = contact_cutoff_sq_;
+        // A rigid move keeps the distances it carries up to rounding,
+        // which can still take a pair across its contact cutoff. With an
+        // exact contact list, only the carried pairs it lists can cross,
+        // and they are re-decided from the new coordinates as the list
+        // path does; without one, every carried pair within the Mu
+        // cutoff is (carried_pairs_delta).
+        if (skip_rigid_mm) {
+            if (list_exact) {
+                const CoordView cnew_mm(new_state.coord_view());
+                for (int i : moved_indices) {
+                    for (const auto& c : old_state.mu_contact_list[static_cast<size_t>(i)]) {
+                        const int j = c.j;
+                        if (i > j || !is_moved[static_cast<size_t>(j)]) continue;
+                        delta_E += listed_contact_energy(i, j, cnew_mm.dist2(i, j)) - c.energy;
+                    }
+                }
+            } else {
+                delta_E += carried_pairs_delta(old_state, new_state, moved_indices);
+            }
+            const std::uint64_t n = static_cast<std::uint64_t>(moved_indices.size());
+            nstats.elided_rigid_mm += (n * (n > 0 ? n - 1 : 0)) / 2ull;
+        }
+        // Old energy: moved at old pos vs all (accepted coords for partners)
+        NeighborFallback::for_each_moved_neighbor(
+            old_state.coords_soa, old_state.coords_soa, moved_indices, is_moved, cut2,
+            /*is_rigid=*/skip_rigid_mm,
+            [&](int i, int j, float r2) __attribute__((always_inline)) {
+                if (skip_fixed_h(j)) return;
+                note_mu_pair_r2(nstats, r2, contact_cutoff_sq_);
+                // ClashCutoff::None, written as the state cutoff plus a
+                // fix-up for the rare pair under it: with a plain
+                // eval_pair<None> GCC 8 makes this scan 1.15x slower (actin,
+                // 2881 moved atoms).
+                bool lc = false;
+                float e = eval_pair<ClashCutoff::State>(i, j, r2, &lc);
+                if (lc) e = eval_pair<ClashCutoff::None>(i, j, r2, nullptr);
+                delta_E -= e;
+            });
+        // New energy: moved at new pos vs fixed(old); MM skipped when rigid.
+        NeighborFallback::for_each_moved_neighbor(
+            new_state.coords_soa, old_state.coords_soa, moved_indices, is_moved, cut2,
+            /*is_rigid=*/true, // always skip MM here; handled below if needed
+            [&](int i, int j, float r2) __attribute__((always_inline)) {
+                if (is_moved[static_cast<size_t>(j)]) return; // fixed only here
+                if (skip_fixed_h(j)) return;
+                note_mu_pair_r2(nstats, r2, contact_cutoff_sq_);
+                bool local_clash = false;
+                delta_E += eval_pair(i, j, r2, &local_clash);
+                if (local_clash) clash = true;
+            });
+        if (!clash && !skip_rigid_mm) {
+            for (size_t a = 0; a < moved_indices.size() && !clash; ++a) {
+                const int i = moved_indices[a];
+                for (size_t b = a + 1; b < moved_indices.size(); ++b) {
+                    const int j = moved_indices[b];
+                    const float r2 = new_state.coord_view().dist2(i, j);
+                    note_mu_pair_r2(nstats, r2, contact_cutoff_sq_);
+                    bool local_clash = false;
+                    delta_E += eval_pair(i, j, r2, &local_clash);
+                    if (local_clash) { clash = true; break; }
+                }
+            }
+        }
+        if (clash) {
+            ws.clear();
+            return kHardCorePenalty;
+        }
+        return delta_E;
+    }
+
+    float MuPotential::carried_pairs_delta(const State& old_state,
+                                           const State& new_state,
+                                           const std::vector<int>& moved) const {
+        // The old coordinates of the moved atoms, packed, so that each row
+        // of distances is one contiguous loop the compiler can vectorize.
+        const size_t n = moved.size();
+        std::vector<float> x(n), y(n), z(n), r2_row(n);
+        const CoordView cold(old_state.coord_view());
+        const CoordView cnew(new_state.coord_view());
+        for (size_t a = 0; a < n; ++a) {
+            x[a] = cold.x(moved[a]);
+            y[a] = cold.y(moved[a]);
+            z[a] = cold.z(moved[a]);
+        }
+        const float cut2 = contact_cutoff_sq_;
+        double dE = 0.0;
+        for (size_t a = 0; a + 1 < n; ++a) {
+            const float xa = x[a], ya = y[a], za = z[a];
+            for (size_t b = a + 1; b < n; ++b) {
+                const float dx = x[b] - xa, dy = y[b] - ya, dz = z[b] - za;
+                r2_row[b] = dx * dx + dy * dy + dz * dz;
+            }
+            // Beyond the Mu cutoff a pair is out of contact on both sides:
+            // the cutoff includes the contact list's 0.05 A band, and a
+            // carry is far smaller.
+            for (size_t b = a + 1; b < n; ++b) {
+                if (r2_row[b] > cut2) continue;
+                const int i = moved[a], j = moved[b];
+                dE += static_cast<double>(
+                    eval_pair<ClashCutoff::None>(i, j, cnew.dist2(i, j), nullptr) -
+                    eval_pair<ClashCutoff::None>(i, j, r2_row[b], nullptr));
+            }
+        }
+        return static_cast<float>(dE);
+    }
+
     float MuPotential::calculateEnergyChange_fast(
         const Context& context,
         const State& old_state,
         const State& new_state,
-        const ProposalPatch& patch
+        const ProposalPatch& patch,
+        bool list_exact
     ) const {
         setup_mask_cache(context.getSystem());
         auto& ws = const_cast<mcpu::MuWorkspace&>(context.getMuWorkspace());
@@ -901,53 +1081,8 @@ struct CpTimer {
         // Hot pair loop #3: Fallback moved-vs-all (out-of-box / no dense grid).
         // Out-of-bounds trial under AUTO_EXPAND: no dense-grid rebuild; moved-vs-all fallback.
         if (ws.use_trial_fallback || !context.denseGridsActive()) {
-            auto& nstats = const_cast<NeighborStats&>(context.neighborStats());
-            const float cut2 = contact_cutoff_sq_;
-            // Old energy: moved at old pos vs all (accepted coords for partners)
-            NeighborFallback::for_each_moved_neighbor(
-                old_state.coords_soa, old_state.coords_soa, moved_indices, is_moved, cut2,
-                /*is_rigid=*/skip_rigid_mm,
-                [&](int i, int j, float r2) {
-                    if (skip_fixed_h(j)) return;
-                    note_mu_pair_r2(nstats, r2, contact_cutoff_sq_);
-                    delta_E -= eval_pair<ClashCutoff::State>(i, j, r2, nullptr);
-                });
-            // New energy: moved at new pos vs fixed(old); MM skipped when rigid.
-            NeighborFallback::for_each_moved_neighbor(
-                new_state.coords_soa, old_state.coords_soa, moved_indices, is_moved, cut2,
-                /*is_rigid=*/true, // always skip MM here; handled below if needed
-                [&](int i, int j, float r2) {
-                    if (is_moved[static_cast<size_t>(j)]) return; // fixed only here
-                    if (skip_fixed_h(j)) return;
-                    note_mu_pair_r2(nstats, r2, contact_cutoff_sq_);
-                    bool local_clash = false;
-                    delta_E += eval_pair(i, j, r2, &local_clash);
-                    if (local_clash) clash = true;
-                });
-            if (!clash && !skip_rigid_mm) {
-                for (size_t a = 0; a < moved_indices.size() && !clash; ++a) {
-                    const int i = moved_indices[a];
-                    for (size_t b = a + 1; b < moved_indices.size(); ++b) {
-                        const int j = moved_indices[b];
-                        const float r2 = new_state.coord_view().dist2(i, j);
-                        note_mu_pair_r2(nstats, r2, contact_cutoff_sq_);
-                        bool local_clash = false;
-                        delta_E += eval_pair(i, j, r2, &local_clash);
-                        if (local_clash) { clash = true; break; }
-                    }
-                }
-            } else if (skip_rigid_mm) {
-                // A rigid move keeps every moved-moved distance: no energy
-                // change and no new overlap (see ClashCutoff on rounding).
-                const std::uint64_t n =
-                    static_cast<std::uint64_t>(moved_indices.size());
-                nstats.elided_rigid_mm += (n * (n > 0 ? n - 1 : 0)) / 2ull;
-            }
-            if (clash) {
-                ws.clear();
-                return kHardCorePenalty;
-            }
-            return delta_E;
+            return delta_moved_vs_all(context, old_state, new_state, patch,
+                                      moved_indices, list_exact);
         }
 
         // Optional Verlet path for KIC/SC when Integrator marked VerletPreferred and list is usable
@@ -960,7 +1095,8 @@ struct CpTimer {
         if (use_verlet) ++nstats.num_verlet_used();
 
         CellListMC* moved_grid = nullptr;
-        // Rigid pivot: skip moved_new_grid — MM ΔE is identically zero.
+        // Rigid pivot: skip moved_new_grid -- its moved-moved pairs are not
+        // re-measured on this path (see the contact-list notes in the header).
         if (!moved_indices.empty() && !use_verlet && !skip_rigid_mm) {
             ws.ensure_moved_grid(mu_exact_cutoff_, num_atoms);
             moved_grid = ws.moved_new_grid.get();
@@ -1015,7 +1151,7 @@ struct CpTimer {
                         note_mu_pair_r2(nstats, r2, contact_cutoff_sq_);
                         // CHANGED: gate like denselist — hard_core/contact ≤ 6 Å.
                         if (r2 <= contact_cutoff_sq_)
-                            delta_E -= eval_pair<ClashCutoff::State>(i, j, r2, nullptr);
+                            delta_E -= eval_pair<ClashCutoff::None>(i, j, r2, nullptr);
                     }
                 }
                 {
@@ -1078,7 +1214,7 @@ struct CpTimer {
                     const float r2o = cold.dist2(i, j);
                     const float r2n = cnew.dist2(i, j);
                     if (r2o <= contact_cutoff_sq_)
-                        mm -= eval_pair<ClashCutoff::State>(i, j, r2o, nullptr);
+                        mm -= eval_pair<ClashCutoff::None>(i, j, r2o, nullptr);
                     if (r2n <= contact_cutoff_sq_) {
                         bool lc = false;
                         mm += eval_pair(i, j, r2n, &lc);
@@ -1163,7 +1299,7 @@ struct CpTimer {
 
                 auto te0 = Clock::now();
                 for (const auto& p : incut) {
-                    delta_E -= eval_pair<ClashCutoff::State>(p.i, p.j, p.r2, nullptr);
+                    delta_E -= eval_pair<ClashCutoff::None>(p.i, p.j, p.r2, nullptr);
                 }
                 auto te1 = Clock::now();
                 ns_eval += to_ns(te0, te1);
@@ -1671,7 +1807,7 @@ struct CpTimer {
                                             }
                                         } else {
                                             acc -= static_cast<double>(
-                                                eval_pair<ClashCutoff::State>(
+                                                eval_pair<ClashCutoff::None>(
                                                     i, cids[m], r2, nullptr));
                                         }
                                     }
@@ -1780,7 +1916,7 @@ struct CpTimer {
                                 note_mu_pair_r2(nstats, r2, contact_cutoff_sq_);
                                 if (r2 <= contact_cutoff_sq_)
                                     delta_E -=
-                                        eval_pair<ClashCutoff::State>(i, cids[m], r2, nullptr);
+                                        eval_pair<ClashCutoff::None>(i, cids[m], r2, nullptr);
                             }
                         },
                         &nstats.neighbor_num_cell_visits);
@@ -1841,7 +1977,7 @@ struct CpTimer {
                         const float r2 = cold.dist2(i, j);
                         note_mu_pair_r2(nstats, r2, contact_cutoff_sq_);
                         if (r2 <= contact_cutoff_sq_)
-                            delta_E -= eval_pair<ClashCutoff::State>(i, j, r2, nullptr);
+                            delta_E -= eval_pair<ClashCutoff::None>(i, j, r2, nullptr);
                     });
 
                     {
@@ -1935,12 +2071,17 @@ struct CpTimer {
                 if (!topo_contact_mask_[idx]) continue;
                 const float r2 = cv.dist2(i, j);
                 if (r2 > contact_cutoff_sq_) continue;
-                bool lc = false;
-                const float e = eval_pair<ClashCutoff::State>(i, j, r2, &lc);
-                if (e != 0.0f) state.mu_contact_add(i, j, e);
+                // No clash test (ClashCutoff::None): a pair that rounding
+                // carried under its hard-core cutoff is listed with the
+                // contact energy the running energy holds for it.
+                bool near = false;
+                const float e = eval_pair<ClashCutoff::None>(i, j, r2, nullptr, &near);
+                if (e != 0.0f || near) state.mu_contact_add(i, j, e);
             }
         }
         state.mu_contact_list_ready = true;
+        state.mu_list_drift = 0.f;
+        ++contact_list_rebuilds_;
     }
 
     
@@ -1948,7 +2089,8 @@ struct CpTimer {
         const Context& context,
         const State& old_state,
         const State& new_state,
-        const ProposalPatch& patch
+        const ProposalPatch& patch,
+        float carry_bound
     ) const {
         setup_mask_cache(context.getSystem());
         auto& ws = const_cast<mcpu::MuWorkspace&>(context.getMuWorkspace());
@@ -1970,8 +2112,8 @@ struct CpTimer {
         // About a third of the actin step is contact energy computed for pivot
         // moves that are then discarded for a hard-core overlap (measured:
         // 34.5% of the step, results/clash_split_summary.md). The overlap
-        // question needs only r < ~2.8 A, while the contact walk sweeps 5.08 A
-        // cells -- a box ~5.8x larger in volume. Asking it first, with a stencil
+        // question needs only r < ~2.8 A, while the contact walk sweeps ~5.1 A
+        // cells -- a box ~6x larger in volume. Asking it first, with a stencil
         // sized to the question, rejects those moves without doing any contact
         // work at all. Costs one extra tight pass on moves that do NOT overlap.
         // MCPU_CLASH_FIRST=1.
@@ -2042,19 +2184,31 @@ struct CpTimer {
         }
 
         // ---- OLD half: read it off the list. No distances, no cell walk. ----
-        // Every contact a moved atom currently has is a contact that this move
-        // is about to re-decide, so all of them come off the books here; the
-        // NEW half puts back the ones that survive.
+        // Every pair a moved atom has on the list is a pair this move is about
+        // to re-decide, so all of them come off the books here; the NEW half
+        // puts back the ones that are still in contact or in the band.
         for (int i : moved) {
             for (const auto& c : old_state.mu_contact_list[static_cast<size_t>(i)]) {
                 const int j = c.j;
                 if (is_moved[static_cast<size_t>(j)]) {
-                    // A rigid move cannot change a moved-moved distance, so
-                    // those contacts survive untouched and must NOT be
-                    // re-decided. For a flexible move they are re-decided
-                    // once, by the lower-indexed partner.
-                    if (skip_mm) continue;
-                    if (i > j) continue;
+                    if (i > j) continue;  // once per pair, by the lower index
+                    if (skip_mm) {
+                        // A rigid move keeps a carried distance up to
+                        // rounding, which can still take a pair near its
+                        // cutoff across it. Re-decide it here, from the new
+                        // coordinates, and update the entry if it flipped.
+                        const float e =
+                            listed_contact_energy(i, j, cnew.dist2(i, j));
+                        if (e != c.energy) {
+                            dE += static_cast<double>(e) -
+                                  static_cast<double>(c.energy);
+                            ws.pending_contact_drop.push_back(
+                                mcpu::MuWorkspace::PendingContact{i, j, c.energy});
+                            ws.pending_contact_add.push_back(
+                                mcpu::MuWorkspace::PendingContact{i, j, e});
+                        }
+                        continue;
+                    }
                 }
                 dE -= static_cast<double>(c.energy);
                 ws.pending_contact_drop.push_back(
@@ -2083,10 +2237,10 @@ struct CpTimer {
                         const float dz = nz - cz[m];
                         const float r2 = dx * dx + dy * dy + dz * dz;
                         if (r2 > contact_cutoff_sq_) continue;
-                        bool local_clash = false;
-                        const float e = eval_pair(i, j, r2, &local_clash);
+                        bool local_clash = false, near = false;
+                        const float e = eval_pair(i, j, r2, &local_clash, &near);
                         if (local_clash) { clash = true; return false; }
-                        if (e != 0.0f) {
+                        if (e != 0.0f || near) {
                             dE += static_cast<double>(e);
                             ws.pending_contact_add.push_back(
                                 mcpu::MuWorkspace::PendingContact{i, j, e});
@@ -2098,9 +2252,9 @@ struct CpTimer {
         }
 
         // ---- moved-moved pairs ----
-        // A rigid move keeps every moved-moved distance, so it changes neither
-        // their energy nor whether they overlap; they are not looked at (see
-        // ClashCutoff on rounding). A flexible move re-decides them here.
+        // A rigid move keeps every moved-moved distance up to rounding: the
+        // listed ones were re-decided in the OLD half, and the rest cannot
+        // cross (State::mu_list_drift). A flexible move re-decides them here.
         if (!clash && moved.size() > 1 && !skip_mm) {
             for (size_t a = 0; a < moved.size() && !clash; ++a) {
                 const int i = moved[a];
@@ -2108,10 +2262,10 @@ struct CpTimer {
                     const int j = moved[b];
                     const float r2 = cnew.dist2(i, j);
                     if (r2 > contact_cutoff_sq_) continue;
-                    bool local_clash = false;
-                    const float e = eval_pair(i, j, r2, &local_clash);
+                    bool local_clash = false, near = false;
+                    const float e = eval_pair(i, j, r2, &local_clash, &near);
                     if (local_clash) { clash = true; break; }
-                    if (e != 0.0f) {
+                    if (e != 0.0f || near) {
                         dE += static_cast<double>(e);
                         ws.pending_contact_add.push_back(
                             mcpu::MuWorkspace::PendingContact{i, j, e});
@@ -2124,6 +2278,7 @@ struct CpTimer {
             ws.clear();
             return kHardCorePenalty;
         }
+        ws.pending_list_drift = carry_bound;
         return static_cast<float>(dE);
     }
 
@@ -2148,14 +2303,12 @@ struct CpTimer {
         const int num_atoms = sys.getNumAtoms();
 
         // A resync (Potential::resyncEnergy) also rewrites the state's live
-        // contact list from this pass, so the list and the running energy are
-        // reset together. A rigid pivot does not re-decide the pairs it
-        // carries, and rounding can carry one across its contact cutoff with
-        // neither noticing; resetting only the energy left the stale entry for
-        // the next move that separated the pair to subtract. Under an energy
-        // mask, masked pairs score 0 here and moves do not use the list, so it
-        // is dropped instead and rebuilt by the first move that needs it.
-        // Clearing in place keeps each atom's allocation.
+        // contact list, near misses included, from this pass and resets its
+        // drift budget, so the list and the running energy are reset
+        // together. Under an energy mask, masked pairs score 0 here and moves
+        // do not use the list, so it is dropped instead and rebuilt by the
+        // first move that needs it. Clearing in place keeps each atom's
+        // allocation.
         bool refill_contacts = false;
         if (resync && state.mu_contact_list_ready) {
             if (sys.has_energy_mask()) {
@@ -2164,6 +2317,7 @@ struct CpTimer {
                 refill_contacts = true;
                 state.mu_contact_list.resize(static_cast<size_t>(num_atoms));
                 for (auto& partners : state.mu_contact_list) partners.clear();
+                state.mu_list_drift = 0.f;
             }
         }
         const CoordView cv(state.coord_view());
@@ -2178,10 +2332,13 @@ struct CpTimer {
                     continue;
                 }
                 const float dist_sq = cv.dist2(i, j);
-                bool local_clash = false;
+                // No pair clashes, makes a contact or is a near miss beyond
+                // the Mu cutoff (see mu_exact_cutoff_).
+                if (dist_sq > contact_cutoff_sq_) continue;
+                bool local_clash = false, near = false;
                 // The state cutoff: see ClashCutoff.
-                const float e =
-                    eval_pair<ClashCutoff::State>(i, j, dist_sq, &local_clash);
+                const float e = eval_pair<ClashCutoff::State>(
+                    i, j, dist_sq, &local_clash, refill_contacts ? &near : nullptr);
                 if (local_clash) {
                     // ClashOnly: full energy stays contact-only (legacy
                     // CLASH_WEIGHT=0). Delta path still StericClash-rejects.
@@ -2232,10 +2389,8 @@ struct CpTimer {
                     if (refill_contacts) state.mu_contact_invalidate();
                     return kHardCorePenalty;
                 }
-                if (e != 0.0f) {
-                    total_energy += e;
-                    if (refill_contacts) state.mu_contact_add(i, j, e);
-                }
+                if (e != 0.0f) total_energy += e;
+                if (refill_contacts && (e != 0.0f || near)) state.mu_contact_add(i, j, e);
             }
         }
 

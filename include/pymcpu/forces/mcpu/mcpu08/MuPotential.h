@@ -146,9 +146,22 @@ namespace mcpu::forces::mcpu08 {
         bool use_topo_flags_ = true;
         /// Denselist / r² prefilter cutoff² (= mu_exact_cutoff_²).
         float contact_cutoff_sq_ = 36.f;
-        /// Exact Mu query cutoff (Å) from max(type_params_ contact/hard r²)×1.0001.
-        /// Default ON; override with ``MCPU_MU_CUTOFF_OVERRIDE``.
+        /// Mu query cutoff (Å): the largest contact cutoff widened by the
+        /// near-miss band (contact_band_w_r2_), or the largest hard-core
+        /// cutoff if that is larger, ×1.0001. The neighbour grid's cells are
+        /// at least this wide, so a one-cell stencil sees every listed pair.
         float mu_exact_cutoff_ = 6.f;
+
+        /// The contact list's near-miss band, in Å: a contact pair less than
+        /// this far outside its cutoff is listed (with energy 0), so a rigid
+        /// pivot that carries it re-decides it. kContactBandSlackA covers the
+        /// float error of measuring a distance.
+        static constexpr float kContactBandA = 0.05f;
+        static constexpr float kContactBandSlackA = 1e-4f;
+        /// The band in r² terms, one value for all type pairs:
+        /// 2*cmax*band + band² for the largest contact cutoff cmax, so
+        /// contact_r2 + w >= (contact_r + band)² for every type pair.
+        float contact_band_w_r2_ = 0.f;
 
         /// Matches mu_builder skip_local_contact_range default.
         static constexpr int kSkipLocalContactRange = 4;
@@ -290,15 +303,17 @@ namespace mcpu::forces::mcpu08 {
         ///
         /// Move: the cutoff a move is tested against (hard_tol_r2), on the new
         ///   side of every delta path, so no move can put a pair under it.
-        /// State: kStateClashBufferA looser, for judging a state that exists:
-        ///   calculateEnergy, rebuild_contact_list and the old side of every
-        ///   delta path, so all of them score a pair alike. An accepted
-        ///   state can hold a pair that a rigid pivot carried a few 1e-6 A
-        ///   under the move cutoff by rounding (see kStateClashBufferA). Under
-        ///   the state cutoff such a pair is no clash, and it scores what any
-        ///   pair at its distance scores, which is also what the running
-        ///   energy holds for it.
-        enum class ClashCutoff : uint8_t { Move, State };
+        /// State: kStateClashBufferA looser, for judging a state that exists
+        ///   (calculateEnergy). An accepted state can hold a pair that a rigid
+        ///   pivot carried a few 1e-6 A under the move cutoff by rounding (see
+        ///   kStateClashBufferA); that is no clash.
+        /// None: no clash test. The old side of every delta path takes back
+        ///   what the running energy holds for a pair, and the running energy
+        ///   never holds a clash, since a move that makes one is rejected: it
+        ///   holds the pair's contact energy, wherever rounding has carried it
+        ///   since. rebuild_contact_list lists a pair the same way, and a
+        ///   carried pair is re-decided for its contact only.
+        enum class ClashCutoff : uint8_t { Move, State, None };
 
         /// The state cutoff (squared) for a pair whose move cutoff is
         /// hard_tol_r2. Only called for a pair already under the move cutoff.
@@ -309,6 +324,7 @@ namespace mcpu::forces::mcpu08 {
 
         template <ClashCutoff C>
         [[nodiscard]] static inline bool clashes_at(float r2, float hard_tol_r2) noexcept {
+            if constexpr (C == ClashCutoff::None) return false;
             if (!is_hard_clash(r2, hard_tol_r2)) return false;
             if constexpr (C == ClashCutoff::Move) return true;
             return r2 < state_clash_r2_from(hard_tol_r2);
@@ -370,7 +386,8 @@ namespace mcpu::forces::mcpu08 {
         /// Layered v2: single-byte topo_flag_ + type_params_. O(1).
         template <ClashCutoff C = ClashCutoff::Move>
         [[gnu::always_inline]] inline float eval_pair_layered_v2(
-            int i, int j, float r2, bool* clash_out) const noexcept
+            int i, int j, float r2, bool* clash_out,
+            bool* near_out = nullptr) const noexcept
         {
             const size_t N = static_cast<size_t>(num_atoms_cached_);
             const uint8_t flag =
@@ -411,13 +428,18 @@ namespace mcpu::forces::mcpu08 {
                 ++eval_pair_nonzero_local_;
                 return g.energy;
             }
+            if (near_out && (flag & 2u) && g.energy != 0.0f &&
+                r2 < g.contact_r2 + contact_band_w_r2_) {
+                *near_out = true;
+            }
             return 0.0f;
         }
 
         /// Layered v1: on-the-fly topology decode + CSR exceptions. O(1) amortized.
         template <ClashCutoff C = ClashCutoff::Move>
         [[gnu::always_inline]] inline float eval_pair_layered_v1(
-            int i, int j, float r2, bool* clash_out) const noexcept
+            int i, int j, float r2, bool* clash_out,
+            bool* near_out = nullptr) const noexcept
         {
             bool clash_on = false, contact_on = false;
             topology_pair_flags(i, j, clash_on, contact_on);
@@ -461,40 +483,88 @@ namespace mcpu::forces::mcpu08 {
                 ++eval_pair_nonzero_local_;
                 return g.energy;
             }
+            if (near_out && contact_on && g.energy != 0.0f &&
+                r2 < g.contact_r2 + contact_band_w_r2_) {
+                *near_out = true;
+            }
             return 0.0f;
         }
 
         /// Dispatch layered v1 (branches) or v2 (topo_flag_).
         template <ClashCutoff C = ClashCutoff::Move>
         [[gnu::always_inline]] inline float eval_pair_layered(
-            int i, int j, float r2, bool* clash_out) const noexcept
+            int i, int j, float r2, bool* clash_out,
+            bool* near_out = nullptr) const noexcept
         {
             if (use_topo_flags_ && !topo_flag_.empty())
-                return eval_pair_layered_v2<C>(i, j, r2, clash_out);
-            return eval_pair_layered_v1<C>(i, j, r2, clash_out);
+                return eval_pair_layered_v2<C>(i, j, r2, clash_out, near_out);
+            return eval_pair_layered_v1<C>(i, j, r2, clash_out, near_out);
         }
 
         /// Hot pair energy for known r2. Returns contact energy or 0; sets
-        /// *clash_out on a hard-core overlap under cutoff C.
+        /// *clash_out on a hard-core overlap under cutoff C, and *near_out for
+        /// a contact pair outside its cutoff by less than the near-miss band
+        /// (see kContactBandA).
         template <ClashCutoff C = ClashCutoff::Move>
         [[gnu::always_inline]] inline float eval_pair(
-            int i, int j, float r2, bool* clash_out
+            int i, int j, float r2, bool* clash_out, bool* near_out = nullptr
         ) const {
             ++eval_pair_calls_local_;
-            return eval_pair_layered<C>(i, j, r2, clash_out);
+            return eval_pair_layered<C>(i, j, r2, clash_out, near_out);
         }
 
+        /// Contact energy of a pair already on the contact list at distance²
+        /// r2. Being listed proves it contact-eligible and unmasked, so only
+        /// the type cutoff is left to test.
+        [[nodiscard]] inline float listed_contact_energy(
+            int i, int j, float r2) const noexcept
+        {
+            const size_t NT = static_cast<size_t>(n_types_);
+            const TypePairParams& g =
+                type_params_[static_cast<size_t>(atom_types[static_cast<size_t>(i)]) * NT +
+                             static_cast<size_t>(atom_types[static_cast<size_t>(j)])];
+            return r2 <= g.contact_r2 ? g.energy : 0.0f;
+        }
+
+        /// calculateEnergyChange_fast's moved-vs-all scan, for a trial out of
+        /// the neighbour grid (or with none).
+        float delta_moved_vs_all(const Context& context, const State& old_state,
+                                 const State& new_state, const ProposalPatch& patch,
+                                 const std::vector<int>& moved_indices,
+                                 bool list_exact) const;
+
+        /// Contact energy change of every pair a rigid move carries (both
+        /// atoms in moved), re-decided from the new coordinates without a
+        /// clash test (ClashCutoff::None). O(n_moved^2); for moves without
+        /// an exact contact list.
+        float carried_pairs_delta(const State& old_state, const State& new_state,
+                                  const std::vector<int>& moved) const;
+
+        /// The delta without the contact list. list_exact: the old state's
+        /// list is exact for this move (ready, and within its drift budget
+        /// after it), so a rigid move out of the grid re-decides only the
+        /// carried pairs it lists.
         float calculateEnergyChange_fast(
             const Context& context,
             const State& old_state,
             const State& new_state,
-            const ProposalPatch& patch
+            const ProposalPatch& patch,
+            bool list_exact = false
         ) const;
 
         // ── Live contact list (default; MCPU_CONTACT_LIST=0 turns it off) ──
         // A running list, per atom, of the atoms it is CURRENTLY in contact
         // with, together with that contact's energy. It answers one question
         // cheaply: "what is this atom's contact energy right now?"
+        //
+        // It also lists, with energy 0, every contact pair less than
+        // kContactBandA outside its cutoff. A rigid pivot does not re-measure
+        // the pairs it carries -- that is what makes it cheap -- but its
+        // rounding moves them by up to sqrt(3) float steps of the largest
+        // coordinate (carry_bound_A). So it re-decides each listed pair it
+        // carries, and an unlisted one cannot cross: State::mu_list_drift sums
+        // the bound over accepted carries, and the list is rebuilt from the
+        // coordinates before the sum reaches the band.
         //
         // Without the list, the delta answers that by re-walking the atom's old
         // neighbourhood and re-measuring every distance -- roughly 3500
@@ -504,8 +574,8 @@ namespace mcpu::forces::mcpu08 {
         //
         // A pair bitmap (legacy MCPU's data[][]) cannot do this: you can ask
         // a bitmap "is THIS pair in contact" but not "list this atom's
-        // contacts" without scanning a whole row. That distinction is why the list wins on a large protein where
-        // the bitmap loses.
+        // contacts" without scanning a whole row. That distinction is why the
+        // list wins on a large protein where the bitmap loses.
         //
         // THE LIST ITSELF LIVES ON State, NOT HERE. One System (hence one
         // MuPotential) is shared by every replica a rank owns, so potential-owned
@@ -514,8 +584,23 @@ namespace mcpu::forces::mcpu08 {
         // state.mu_contact_list and stages changes in the per-Context
         // MuWorkspace, which Context::commit_accepted_move applies.
 
-        /// Count of moves that could not use the list (diagnostic only).
+        /// Count of moves that could not use the list, energy-masked ones
+        /// aside (diagnostic only).
         mutable std::uint64_t clist_fallbacks_ = 0;
+        /// A rigid pivot's carry bound (carry_bound_A) above which the
+        /// dispatch notes, once, that the coordinates are too far from the
+        /// origin: an eighth of kStateClashBufferA, reached from 1024 A out.
+        static constexpr float kFarCarryNoteA = kStateClashBufferA / 8.f;
+        mutable bool far_carry_noted_ = false;
+        /// Count of rebuild_contact_list calls (diagnostic only).
+        mutable std::uint64_t contact_list_rebuilds_ = 0;
+
+        /// Most a rigid move can change a carried pair's distance, in Å:
+        /// sqrt(3) float steps of the largest coordinate the dense grid holds,
+        /// +1% for the double-precision rotation itself. Every coordinate is
+        /// the double image of a float rounded once (CoordsSoA::rotate_atoms).
+        static float carry_bound_A(const Context& context, const State& new_state,
+                                   const ProposalPatch& patch);
 
         /// Rebuild a state's list from its coordinates. O(N^2).
         void rebuild_contact_list(const Context& context, const State& state) const;
@@ -524,12 +609,14 @@ namespace mcpu::forces::mcpu08 {
         /// resync, also rewrites the state's live contact list.
         float full_energy(const Context& context, const State& state, bool resync) const;
 
-        /// Delta using the live contact list (default; MCPU_CONTACT_LIST=0 turns it off).
+        /// Delta using the live contact list (default; MCPU_CONTACT_LIST=0 turns
+        /// it off). carry_bound is carry_bound_A for a rigid move, else 0.
         float calculateEnergyChange_clist(
             const Context& context,
             const State& old_state,
             const State& new_state,
-            const ProposalPatch& patch
+            const ProposalPatch& patch,
+            float carry_bound
         ) const;
 
     public:
@@ -558,6 +645,10 @@ namespace mcpu::forces::mcpu08 {
 
         void permute_atom_indices(const AtomPermutation& perm) override;
 
+        /// Times a state's contact list was rebuilt from its coordinates.
+        [[nodiscard]] std::uint64_t contact_list_rebuilds() const noexcept {
+            return contact_list_rebuilds_;
+        }
         /// Moves that had to fall back off the live-list path (diagnostic).
         [[nodiscard]] std::uint64_t clist_fallbacks() const noexcept {
             return clist_fallbacks_;
@@ -598,7 +689,7 @@ namespace mcpu::forces::mcpu08 {
         [[nodiscard]] bool use_topo_flags() const noexcept {
             return use_topo_flags_;
         }
-        /// Exact denselist cutoff (Å) from max(type_params_ contact/hard). O(1).
+        /// The Mu query cutoff (Å); see mu_exact_cutoff_. O(1).
         [[nodiscard]] float mu_exact_cutoff() const noexcept {
             return mu_exact_cutoff_;
         }

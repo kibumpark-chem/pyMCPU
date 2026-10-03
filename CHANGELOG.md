@@ -67,6 +67,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Rigid pivots score the carried pairs that rounding takes across their Mu
+  contact cutoff.** A rigid pivot does not re-measure the pairs it carries,
+  but its rounding moves each carried distance by up to sqrt(3) float steps
+  of the largest coordinate (6.7e-6 Å below 64 Å), so a pair sitting on its
+  contact cutoff could cross it unseen and leave the running energy one
+  contact energy off until the next recompute: on actin, energy-drift
+  warnings up to a few times per million steps. The contact list now also
+  holds, with energy 0, every contact pair less than 0.05 Å outside its
+  cutoff, and a rigid pivot re-decides each listed pair it carries. The
+  others cannot cross: the bound is summed over accepted pivots, and the list
+  is rebuilt from the coordinates before the sum reaches 0.05 Å (Simulation's
+  recompute after each `step()` resets it anyway). A pivot out of the
+  neighbour grid re-decides them too: the listed ones, or every carried pair
+  when there is no list. The running energy now equals the full energy after
+  every move, except under a residue energy mask or with
+  `MCPU_CONTACT_LIST=0`, which take a path without the list. The Mu neighbour
+  cutoff grows by the band (5.0765 to 5.1265 Å on actin), and
+  `MuPotential.contact_list_rebuilds` counts rebuilds. The full Mu energy now
+  skips pairs beyond that cutoff, which makes the actin recompute about 40%
+  faster again. Moves inside the neighbour grid take the same time; a pivot
+  out of it with no list to go by (under a mask, say) takes up to 1.3x
+  longer. Trajectories match the previous build until the first such
+  crossing.
+
 - **Replica exchange and folding read coordinates in the order they write
   them.** `pymcpu.sampling.get_coords`, which exchanges, checkpoints and the
   folding CVs use, read `State.coords` (storage order) while
@@ -290,12 +314,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   move that separated the pair was scored one contact energy wrong: on
   actin, energy-drift warnings came in pairs of opposite sign, up to a few
   per million steps. That recompute now rewrites the list from the same pass
-  (through the new `Potential::resyncEnergy`), so only the carry itself
-  still shows, as one warning; read-only evaluations such as
-  `energy_breakdown` leave the list alone. The pass also stopped writing a
-  per-state N^2 pair-flag cache that only the legacy build read (see
-  Removed), which makes the actin recompute about a quarter faster (45 to
-  34 ms). Writing
+  (through the new `Potential::resyncEnergy`); read-only evaluations such as
+  `energy_breakdown` leave the list alone. (The crossing itself is now scored
+  too; see "Rigid pivots score the carried pairs..." above.) The pass also
+  stopped writing a per-state N^2 pair-flag cache that only the legacy build
+  read (see Removed), which makes the actin recompute about a quarter faster
+  (45 to 34 ms). Writing
   `State.coords` now discards that state's contact list too.
   `docs/physics_notes/mc_acceptance.md` described a periodic contact-list
   rebuild (`contact_rebuild_interval`) the engine never had; it now
@@ -394,14 +418,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (half of it pivot-only), and it is gone. Moves are still tested against
   the cutoff; a whole state (`calculate_total_energy`, `has_steric_clash`,
   `Simulation`'s clash check, `KORPForceField`'s construction check) is now
-  judged against one 0.001 Å looser, `mcpu_core.STATE_CLASH_BUFFER_A`, as is
-  the old side of every move's energy change, and a pair inside that margin
-  scores as any pair at its distance. With nothing re-checking carried
+  judged against one 0.001 Å looser, `mcpu_core.STATE_CLASH_BUFFER_A`, and a
+  pair inside that margin scores as any pair at its distance; the old side of
+  a move's energy change takes back the contact energy the running energy
+  holds for a pair, with no clash test. With nothing re-checking carried
   pairs, none went more than 1.8e-6 Å under its cutoff in 20M-step chignolin
   and 5M-step actin runs (three seeds each, with the rotation fix above).
-  Trajectories are unchanged up to the first move the re-check would have
-  rejected; on actin the accepted moves of 2000 steps match bit for bit. Two
-  behaviours change:
+  That holds near the origin: a float step grows with the coordinate, and
+  with actin moved 4000 Å out a carried pair went through the margin within
+  200k pivot-only steps (1000 Å out, none did in 1M). Mu prints a note, once,
+  when the coordinates reach about 1000 Å from the origin; centre such a
+  structure. Trajectories are unchanged up to the first move the re-check
+  would have rejected; on actin the accepted moves of 2000 steps match bit
+  for bit. Two behaviours change:
 
   * A pivot that carries an overlap the state already holds (coordinates
     from `set_positions`, a `clash_only` run, whose full energy ignores
@@ -481,6 +510,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Integrator.proposal_is_dynamic_only()`, which only repeated
   `use_pooled_proposal()`, and the `proposal_dynamic_only` key of
   `proposal_lifecycle_info()` are gone too. The default build is unchanged.
+- The `MCPU_MU_CUTOFF_OVERRIDE` environment variable. It could set the Mu
+  neighbour cutoff below the contact list's near-miss band.
 - `mcpu_core.build_flags()`, deprecated since `build_info()` replaced it;
   `scripts/install_check.py` now reads `build_info()`.
 - `MCPU_MM_GUARD_N2`, and the always-zero `mmguard_ns` field of the cell-pair

@@ -446,7 +446,7 @@ public:
      * cells whose NEAREST POINT lies within `radius` of (x,y,z).
      *
      * Why: a hard-core overlap needs r < ~2.8 A, but the cells are sized for the
-     * 5.08 A contact cutoff. Asking the overlap question over the full 27-cell
+     * ~5.1 A Mu cutoff. Asking the overlap question over the full 27-cell
      * stencil sweeps a box ~5.8x larger in volume than the question needs.
      * Culling by point-to-box distance leaves ~1.3 cells per atom instead of 27
      * (measured on actin) for three comparisons per axis.
@@ -507,7 +507,7 @@ public:
      * Here the surviving offsets are derived directly from where inside its cell
      * the query point sits: along each axis the neighbour at -1 is needed only
      * when the point is within `radius` of the low face, and +1 only when it is
-     * within `radius` of the high face. With radius 2.83 A in 5.08 A cells that
+     * within `radius` of the high face. With radius 2.83 A in ~5.1 A cells that
      * is 1 or 2 cells per axis, so 1-8 cells total (~3.8 on average) with no
      * per-offset rejection test at all.
      */
@@ -528,7 +528,7 @@ public:
         // FIXED: was int[3][2]. When the query radius exceeds HALF a cell, an
         // atom can be within `radius` of BOTH faces along an axis, so all three
         // of {i0-1, i0, i0+1} are needed -- three entries, not two. That is the
-        // case here: radius ~2.83 A against 5.08 A cells, which happens for
+        // case here: radius ~2.83 A against ~5.1 A cells, which happens for
         // 2.24 < offset < 2.83, i.e. 11.6% of positions per axis and ~31% of
         // atoms on at least one axis. The old size wrote the third entry into
         // the next axis's slot (x, y) or past the array entirely (z), so those

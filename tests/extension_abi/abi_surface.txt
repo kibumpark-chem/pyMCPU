@@ -187,6 +187,7 @@ MuPotential.bench_eval_pair_only
 MuPotential.cache_necessary_data
 MuPotential.calculate_energy_change
 MuPotential.clash_exception_count
+MuPotential.contact_list_rebuilds
 MuPotential.get_energy_group
 MuPotential.get_name
 MuPotential.is_enabled

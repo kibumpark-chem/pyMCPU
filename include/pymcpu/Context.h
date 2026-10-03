@@ -25,11 +25,11 @@ class MuPotential;
 }
 
 struct MuWorkspace {
-    /// Contacts that begin / end if the pending move is accepted. Lives here,
-    /// on the per-Context workspace, so replicas sharing one System (and hence
-    /// one MuPotential) cannot tread on each other. Applied by
-    /// Context::commit_accepted_move; simply discarded on rejection, because
-    /// the next delta call clears them.
+    /// Contact-list entries that go / come if the pending move is accepted
+    /// (energy 0 is a listed near miss). Lives here, on the per-Context
+    /// workspace, so replicas sharing one System (and hence one MuPotential)
+    /// cannot tread on each other. Applied by Context::commit_accepted_move;
+    /// simply discarded on rejection, because the next delta call clears them.
     struct PendingContact {
         std::int32_t i;
         std::int32_t j;
@@ -37,6 +37,9 @@ struct MuWorkspace {
     };
     std::vector<PendingContact> pending_contact_drop;
     std::vector<PendingContact> pending_contact_add;
+    /// The pending rigid move's bound on carried-distance change, added to
+    /// State::mu_list_drift if it is accepted.
+    float pending_list_drift = 0.f;
 
     std::unique_ptr<CellListMC> moved_new_grid;
     std::vector<int> moved_grid_atoms;
@@ -75,7 +78,7 @@ struct MuWorkspace {
             int moved_ids[OpenCellGrid::CELL_CAPACITY]{};
             int count = 0;
         };
-        // 512: exact denselist (~5.08 Å cells) can exceed 256 unique moved
+        // 512: exact denselist (~5.1 Å cells) can exceed 256 unique moved
         // cells on large pivots; 256 was sized for 6 Å cells.
         static constexpr int MAX_GROUPS = 512;
         CellGroup groups[MAX_GROUPS]{};
@@ -89,6 +92,7 @@ struct MuWorkspace {
     void clear() {
         pending_contact_drop.clear();
         pending_contact_add.clear();
+        pending_list_drift = 0.f;
     }
 
 
