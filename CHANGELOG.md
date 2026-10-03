@@ -407,6 +407,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **A trial move out of the neighbour grid drops Mu's contact list only if it
+  is accepted.** Such a move cannot use the list, and it used to discard it
+  at once, so the next move rebuilt it from the coordinates (O(N^2), about
+  15 ms on actin), although nearly every such trial is rejected. It is now
+  dropped only when such a move is accepted. A 200k-step actin run on the
+  default move mix takes 53 µs/step instead of 69 (seed 11). Trajectories
+  are unchanged.
+
 - **Rigid pivots no longer re-check the pairs they carry, which makes actin
   1.5x faster on the default move mix and 1.9x pivot-only.** A rigid pivot
   keeps every distance inside the segment it turns, so Mu does not score

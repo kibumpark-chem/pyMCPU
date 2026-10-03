@@ -126,6 +126,56 @@ def test_a_carry_out_of_the_grid_is_scored_too(mask, listed: bool) -> None:
     assert crossings >= 3
 
 
+def test_a_rejected_trial_out_of_the_grid_keeps_the_list() -> None:
+    """A move out of the neighbour grid cannot use the contact list, so the
+    list is dropped if the move is accepted. A rejected trial leaves it, and
+    the next move does not pay an O(N^2) rebuild."""
+    ctx, coords, moved, _, _ = _setup(False)
+    mu = ctx.mu_potential
+    old = ctx.get_state()
+
+    def trial(shift):
+        x = coords[:, moved].astype(np.float64)
+        new = mcpu_core.State(old)
+        moved_coords = coords.copy()
+        moved_coords[:, moved] = (x + np.asarray(shift)[:, None]).astype(np.float32)
+        new.coords = moved_coords
+        patch = mcpu_core.ProposalPatch(coords.shape[1])
+        for atom in moved:
+            patch.mark_moved(atom)
+        patch.is_valid = True
+        patch.is_rigid = True
+        return mu.calculate_energy_change(ctx, old, new, patch)
+
+    trial((0.0, 0.0, 0.5))  # builds the list
+    built = mu.contact_list_rebuilds
+    trial((30.0, 0.0, 0.0))  # out of the grid, never committed
+    trial((0.0, 0.0, 0.5))
+    assert mu.contact_list_rebuilds == built
+
+
+def test_an_accepted_move_out_of_the_grid_drops_the_list() -> None:
+    """Chignolin, hot and with large steps, so that moves out of the
+    neighbour grid are accepted (two in these 10k steps). Each must drop the
+    list, which the next move rebuilds: kept, it would be stale."""
+    traj = md.load(str(default_example_pdb()))
+    heavy = traj.atom_slice(traj.topology.select("not element H"))
+    ff = MCPUForceField(heavy)
+    ctx = mcpu_core.Context(ff.create_system(heavy.topology))
+    ctx.set_positions((ff.coords[0] * 10.0).T.astype(np.float32))
+    ctx.calculate_total_energy(-1)
+    integ = mcpu_core.Integrator(temperature=5.0, step_size_rad=0.5)
+    integ.set_seed(4)
+    mu = ctx.mu_potential
+    rebuilds = mu.contact_list_rebuilds
+    for chunk in range(20):
+        integ.run(ctx, 500, chunk * 500)
+        running = float(ctx.get_state().current_energy)
+        full = float(ctx.energy_breakdown(True)["weighted_total"])
+        assert abs(running - full) < 1e-3, (chunk, running, full)
+    assert mu.contact_list_rebuilds - rebuilds >= 3  # the first, then one per drop
+
+
 @pytest.mark.parametrize("mask", [None, "ignore_all"], ids=["list", "no-list"])
 def test_a_pair_under_its_hard_core_keeps_its_contact_energy(mask) -> None:
     """Carried pairs are not re-checked for overlap, and far from the origin,

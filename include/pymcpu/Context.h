@@ -40,6 +40,9 @@ struct MuWorkspace {
     /// The pending rigid move's bound on carried-distance change, added to
     /// State::mu_list_drift if it is accepted.
     float pending_list_drift = 0.f;
+    /// The pending move could not use the contact list, so the list is
+    /// dropped if the move is accepted.
+    bool pending_list_invalidate = false;
 
     std::unique_ptr<CellListMC> moved_new_grid;
     std::vector<int> moved_grid_atoms;
@@ -93,6 +96,7 @@ struct MuWorkspace {
         pending_contact_drop.clear();
         pending_contact_add.clear();
         pending_list_drift = 0.f;
+        pending_list_invalidate = false;
     }
 
 

@@ -105,9 +105,10 @@ updated by each accepted move, and rewritten from the coordinates whenever
 `calculate_total_energy(-1)` resets the running energy (`Simulation` does so
 after every `step()` by default; see `full_energy_every`). It is discarded
 whenever the coordinates are replaced wholesale (`set_positions`,
-`Context.coords`, `State.coords`, a restore or replica swap), by a move that
-cannot use it (one outside the neighbour grid), and by a reset under a mask.
-Other full evaluations, such as `energy_breakdown`, leave it alone.
+`Context.coords`, `State.coords`, a restore or replica swap), by an accepted
+move that cannot use it (one outside the neighbour grid; a rejected one
+leaves it), and by a reset under a mask. Other full evaluations, such as
+`energy_breakdown`, leave it alone.
 
 A rigid pivot does not re-measure the pairs it carries, but its rounding
 moves each carried distance by up to sqrt(3) float steps of the largest

@@ -833,8 +833,9 @@ struct CpTimer {
                 delta = calculateEnergyChange_clist(
                     context, old_state, new_state, patch, carry_bound);
             } else {
-                // Cannot maintain the list through this move -- rebuild it
-                // from the accepted state afterwards rather than let it drift.
+                // The list cannot follow this move. If the move is accepted,
+                // the list is dropped, and the next move that can use one
+                // rebuilds it (O(N^2)); a rejected trial leaves it as it was.
                 // Until then it still says which carried pairs are near
                 // their cutoff.
                 const bool list_exact =
@@ -842,15 +843,16 @@ struct CpTimer {
                     old_state.mu_list_drift + carry_bound <= budget;
                 delta = calculateEnergyChange_fast(
                     context, old_state, new_state, patch, list_exact);
-                old_state.mu_contact_invalidate();
+                const_cast<mcpu::MuWorkspace&>(context.getMuWorkspace())
+                    .pending_list_invalidate = true;
                 if (!masked) {
                     ++clist_fallbacks_;
                     if (clist_fallbacks_ == 1 || (clist_fallbacks_ % 1000) == 0) {
                         std::fprintf(stderr,
                             "NOTE: Mu move #%llu that cannot use the contact "
                             "list (it leaves the neighbour grid, or there is "
-                            "none). The next move rebuilds the list, "
-                            "O(N^2).\n",
+                            "none). An accepted one costs an O(N^2) list "
+                            "rebuild.\n",
                             static_cast<unsigned long long>(clist_fallbacks_));
                     }
                 }

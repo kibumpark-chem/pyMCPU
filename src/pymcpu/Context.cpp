@@ -263,16 +263,16 @@ void Context::commit_accepted_move(const State& proposed_state, const ProposalPa
 
     // Fold this accepted move into the live Mu contact list. The pending
     // entries carry their own energies, so this needs nothing from the potential.
-    if (state.mu_contact_list_ready) {
+    if (mu_ws.pending_list_invalidate) {
+        state.mu_contact_invalidate();
+    } else if (state.mu_contact_list_ready) {
         for (const auto& p : mu_ws.pending_contact_drop)
             state.mu_contact_remove(p.i, p.j);
         for (const auto& p : mu_ws.pending_contact_add)
             state.mu_contact_add(p.i, p.j, p.energy);
         state.mu_list_drift += mu_ws.pending_list_drift;
     }
-    mu_ws.pending_contact_drop.clear();
-    mu_ws.pending_contact_add.clear();
-    mu_ws.pending_list_drift = 0.f;
+    mu_ws.clear();
 
     // CHANGED: sparse — Verlet (skin>0) needs old xyz for moved atoms only.
     // NeighborSystem::commit_accepted_move ignores coords_old. Default skin=0
