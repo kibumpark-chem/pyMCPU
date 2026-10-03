@@ -74,9 +74,8 @@ def check_xtc_reporter():
 def check_build_flags():
     try:
         import pymcpu
-        flags = pymcpu.mcpu_core.build_flags()
-        print(f"[OK] Build flags: FAST_MU_DELTA={flags.get('MCPU_FAST_MU_DELTA')}, "
-              f"POOLED_PROPOSAL={flags.get('MCPU_USE_POOLED_PROPOSAL')}")
+        features = pymcpu.mcpu_core.build_info()["features"]
+        print(f"[OK] Build flags: POOLED_PROPOSAL={features['MCPU_USE_POOLED_PROPOSAL']}")
         return True
     except Exception as e:
         print(f"[FAIL] build_flags: {e}")

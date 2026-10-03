@@ -129,8 +129,7 @@ against cutoffs 0.001 Å looser (`mcpu_core.STATE_CLASH_BUFFER_A`), and a pair
 inside that margin scores as any pair at its distance. With nothing
 re-checking carried pairs, none went more than 1.8e-6 Å under its cutoff in
 5M-step actin and 20M-step chignolin runs. The KORP CA-CA guard works the
-same way. (The legacy `MCPU_FAST_MU_DELTA=OFF` build of Mu has one exact
-cutoff for both.)
+same way.
 
 A clash in an accepted state therefore means coordinates that did not come
 from a move, or a pair a delta path missed. `Simulation` checks

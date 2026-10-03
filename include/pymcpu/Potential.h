@@ -20,8 +20,7 @@ class Context;
 /// has_steric_clash) allows this much under it, so such a drift is not taken
 /// for a clash. A pair deeper than that cannot come from a move and is still
 /// reported. Measured with nothing re-checking carried pairs: at most 1.8e-6 A
-/// under over 5M-step actin and 20M-step chignolin runs. (The legacy
-/// MCPU_FAST_MU_DELTA=OFF build of Mu has one exact cutoff for both.)
+/// under over 5M-step actin and 20M-step chignolin runs.
 inline constexpr float kStateClashBufferA = 1e-3f;
 
 class Potential {

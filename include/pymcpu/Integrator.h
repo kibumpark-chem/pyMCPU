@@ -36,7 +36,6 @@ enum class SidechainMoveMode : std::uint8_t {
 struct ProposalLifecycleInfo {
     bool pooled_proposal_compiled_in = (MCPU_USE_POOLED_PROPOSAL != 0);
     bool use_pooled_proposal = true;
-    bool proposal_dynamic_only = true;
     bool reject_restore_enabled = false;
 };
 
@@ -436,13 +435,13 @@ public:
     /// Size == num_steps of last run. For determinism regression tests.
     const std::vector<uint8_t>& last_accept_bits() const noexcept { return last_accept_bits_; }
 
-    /// Toggle pooled DynamicOnly proposal path vs vanilla Full-copy cost model.
+    /// Toggle the pooled proposal buffer (sparse sync, reused patch) vs the
+    /// vanilla cost model (whole-State copy and a fresh patch every step).
     /// No-op (stays false) when compiled with ``MCPU_USE_POOLED_PROPOSAL=0``.
     void set_use_pooled_proposal(bool on);
 
     bool use_pooled_proposal() const noexcept { return use_pooled_proposal_; }
     bool reject_restore_enabled() const noexcept { return !use_pooled_proposal_; }
-    bool proposal_is_dynamic_only() const noexcept { return use_pooled_proposal_; }
     static bool pooled_proposal_compiled_in() noexcept {
         return MCPU_USE_POOLED_PROPOSAL != 0;
     }
@@ -451,7 +450,6 @@ public:
         ProposalLifecycleInfo info;
         info.pooled_proposal_compiled_in = pooled_proposal_compiled_in();
         info.use_pooled_proposal = use_pooled_proposal_;
-        info.proposal_dynamic_only = use_pooled_proposal_;
         info.reject_restore_enabled = !use_pooled_proposal_;
         return info;
     }
@@ -640,12 +638,11 @@ private:
     /// treatment as angle_dist -- see get_rng_state/set_rng_state/set_seed.
     std::normal_distribution<float> unit_normal_dist_{0.0f, 1.0f};
 
-    /// Proposal buffer: DynamicOnly when pooled; Full when emulating vanilla.
+    /// Proposal buffer, reused across steps.
     std::unique_ptr<State> proposal_;
     ProposalPatch patch_;
     int pooled_num_atoms_ = -1;
     int pooled_num_residues_ = -1;
-    bool proposal_buffer_is_full_ = false;
     bool use_pooled_proposal_ = (MCPU_USE_POOLED_PROPOSAL != 0);
     /// When true (default): skip per-step full proposal sync; restore on reject. O(n_moved).
     bool use_sparse_proposal_ = true;

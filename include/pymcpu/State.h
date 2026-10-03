@@ -27,14 +27,6 @@ struct SidechainTorsionAngles {
     std::array<float, 4> chi_angles = {-mcpu::PI_F, -mcpu::PI_F, -mcpu::PI_F, -mcpu::PI_F};
 };
 
-/// How State constructs optional N² / pair caches. Only the legacy Mu build
-/// (MCPU_FAST_MU_DELTA=0) has one, is_contact_cache.
-/// DynamicOnly: coords+torsions only (MC proposals — no N² alloc/copy).
-enum class StateCacheMode : std::uint8_t {
-    Full = 0,
-    DynamicOnly = 1
-};
-
 class State {
 public:
     /// Storage-of-record: contiguous x[], y[], z[] (SoA layout).
@@ -43,9 +35,6 @@ public:
     std::vector<BackboneTorsionAngles> backbone_torsions;
     std::vector<SidechainTorsionAngles> sidechain_torsions;
 
-    /// Pair-contact bitmap of the legacy Mu build (MCPU_FAST_MU_DELTA=0). The
-    /// default build never reads or writes it and leaves it empty.
-    mutable std::vector<bool> is_contact_cache;
 
     /// Live Mu contact list: for each atom, who it is CURRENTLY in contact with
     /// and what that contact is worth. The Mu delta reads its "energy before the
@@ -55,7 +44,7 @@ public:
     /// partition_replicas() hands ONE System (hence one MuPotential) to every
     /// replica a rank owns, so a list owned by the potential would be shared between
     /// replicas that have completely different coordinates. It is per-State, like
-    /// is_contact_cache and q_pair_cache, so each replica has its own.
+    /// q_pair_cache, so each replica has its own.
     ///
     /// Only the ACCEPTED state carries one; proposal buffers leave it empty
     /// (copy_dynamic_from does not copy it). Built from the coordinates on the
@@ -109,22 +98,12 @@ public:
 
     float getEnergy() const noexcept { return current_energy; }
 
-    explicit State(int num_atoms, int num_residues,
-                   StateCacheMode cache_mode = StateCacheMode::Full)
+    explicit State(int num_atoms, int num_residues)
         : coords_soa(num_atoms)
         , backbone_torsions(num_residues)
         , sidechain_torsions(num_residues)
         , current_energy(0.0f)
-    {
-#if MCPU_FAST_MU_DELTA
-        (void)cache_mode;
-#else
-        if (cache_mode == StateCacheMode::Full) {
-            is_contact_cache.assign(
-                static_cast<size_t>(num_atoms) * static_cast<size_t>(num_atoms), false);
-        }
-#endif
-    }
+    {}
 
     State(const State&) = default;
     State& operator=(const State&) = default;
@@ -159,16 +138,13 @@ public:
         coords_soa.rotate_atoms(start, end, R, pivot);
     }
 
-    /// Copy coords, torsions, and energy only — never N² / pair caches.
+    /// Copy coords, torsions, and energy only — not the Mu contact list or
+    /// q_pair_cache.
     void copy_dynamic_from(const State& src) {
         coords_soa.copy_all_from(src.coords_soa);
         backbone_torsions = src.backbone_torsions;
         sidechain_torsions = src.sidechain_torsions;
         current_energy = src.current_energy;
-    }
-
-    bool has_contact_cache() const noexcept {
-        return !is_contact_cache.empty();
     }
 
 private:

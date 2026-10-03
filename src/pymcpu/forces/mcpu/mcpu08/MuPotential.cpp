@@ -329,7 +329,6 @@ struct CpTimer {
             throw std::invalid_argument(
                 "MuPotential: hard-core distance exceeds the 6 A neighbor cutoff");
         }
-#if MCPU_FAST_MU_DELTA
         // Exact denselist cutoff from parameter matrices (refined after
         // type_params_ in cache_necessary_data). Default ON.
         apply_mu_denselist_cutoff();
@@ -338,7 +337,6 @@ struct CpTimer {
         if (const char* e = std::getenv("MCPU_TOPO_FLAGS")) {
             use_topo_flags_ = (e[0] != '0');
         }
-#endif
     }
 
     void MuPotential::set_topology_atom_meta(
@@ -347,7 +345,6 @@ struct CpTimer {
         std::vector<uint8_t> atom_role,
         std::vector<uint8_t> res_class
     ) {
-#if MCPU_FAST_MU_DELTA
         const size_t n = res_index.size();
         if (is_sidechain.size() != n || atom_role.size() != n ||
             res_class.size() != n) {
@@ -363,12 +360,6 @@ struct CpTimer {
         atom_role_ = std::move(atom_role);
         res_class_ = std::move(res_class);
         layer1_meta_ready_ = true;
-#else
-        (void)res_index;
-        (void)is_sidechain;
-        (void)atom_role;
-        (void)res_class;
-#endif
     }
 
     void MuPotential::permute_atom_indices(const AtomPermutation& perm) {
@@ -391,7 +382,6 @@ struct CpTimer {
         permute_vec_int(atom_types);
         permute_vec_int(atom_to_residue);
 
-#if MCPU_FAST_MU_DELTA
         if (layer1_meta_ready_ &&
             static_cast<int>(res_index_.size()) == n) {
             auto permute_i32 = [&](std::vector<int32_t>& v) {
@@ -415,7 +405,6 @@ struct CpTimer {
             permute_u8(atom_role_);
             permute_u8(res_class_);
         }
-#endif
 
         auto permute_mat = [&](Eigen::MatrixXf& m) {
             if (m.rows() != n || m.cols() != n) return;
@@ -449,21 +438,15 @@ struct CpTimer {
         };
         permute_flat(topo_contact_mask_);
         permute_flat(topo_clash_mask_);
-#if MCPU_FAST_MU_DELTA
         permute_flat(topo_flag_);
         num_atoms_cached_ = n;
         rebuild_type_params_from_matrices();
         if (layer1_meta_ready_) {
             build_clash_exceptions();
         }
-#endif
-#if !MCPU_FAST_MU_DELTA
-        permute_flat(contact_cache);
-#endif
         num_atoms_cached_ = n;
     }
 
-#if MCPU_FAST_MU_DELTA
     /// Build Layer 3 CSR from final clash masks + Layer 1 rules. O(N²).
     void MuPotential::build_clash_exceptions() {
         const size_t N = static_cast<size_t>(num_atoms_cached_);
@@ -691,7 +674,6 @@ struct CpTimer {
                 stderr, "ERROR: eval_pair_layered: %zu mismatches\n",
                 mismatches);
     }
-#endif
 
     void MuPotential::cache_necessary_data(
         const std::vector<int8_t>& topo_contact_mask,
@@ -709,7 +691,6 @@ struct CpTimer {
         topo_contact_mask_.assign(n2, 0);
         topo_clash_mask_.assign(n2, 0);
 
-#if MCPU_FAST_MU_DELTA
         topo_flag_.assign(n2, uint8_t{0});
 
         int max_t = -1;
@@ -720,11 +701,7 @@ struct CpTimer {
         const size_t NT = static_cast<size_t>(std::max(n_types_, 0));
         type_params_.assign(NT * NT, TypePairParams{});
         std::vector<uint8_t> filled(NT * NT, 0);
-#endif
 
-#if !MCPU_FAST_MU_DELTA
-        contact_cache.resize(n2);
-#endif
 
         for (int i = 0; i < num_atoms; ++i) {
             for (int j = i + 1; j < num_atoms; ++j) {
@@ -742,13 +719,9 @@ struct CpTimer {
                 // neither, and exempting it would drop its protection for good.
                 if (check_clash) {
                     const float dist_sq = cv.dist2(i, j);
-#if MCPU_FAST_MU_DELTA
                     const float hc = hard_core_sq(i, j);
                     if (is_hard_clash(dist_sq,
                                       hard_tol_r2_from(hc > 0.f ? std::sqrt(hc) : 0.f))) {
-#else
-                    if (dist_sq < hard_core_sq(matrix_idx)) {
-#endif
                         check_clash = false;
                     }
                 }
@@ -757,8 +730,7 @@ struct CpTimer {
                     topo_clash_mask_[static_cast<size_t>(matrix_idx_sym)] =
                         static_cast<uint8_t>(check_clash ? 1 : 0);
 
-#if MCPU_FAST_MU_DELTA
-                // Zero-energy contacts are treated as disabled (matches legacy ContactData)
+                // A zero-energy contact pair is no contact pair.
                 const float e_ij = contact_energies(i, j);
                 if (check_contact && e_ij == 0.0f) {
                     check_contact = false;
@@ -787,24 +759,8 @@ struct CpTimer {
                     tp.hard_tol_r2 = hard_tol_r2_from(hr);
                     store_type_pair_params(filled, i, j, tp);
                 }
-#else
-                ContactData& cd = contact_cache[static_cast<size_t>(matrix_idx)];
-                cd.check_clash = check_clash;
-                cd.check_contact = check_contact
-                    ? (contact_energies(matrix_idx) != 0.0f)
-                    : false;
-                cd.energy = cd.check_contact ? contact_energies(matrix_idx) : 0.0f;
-                cd.contact_dist_sq = contact_dist_sq(matrix_idx);
-                cd.hard_core_sq = hard_core_sq(matrix_idx);
-                contact_cache[static_cast<size_t>(matrix_idx_sym)] = cd;
-
-                topo_contact_mask_[static_cast<size_t>(matrix_idx)] =
-                    topo_contact_mask_[static_cast<size_t>(matrix_idx_sym)] =
-                        static_cast<uint8_t>(cd.check_contact ? 1 : 0);
-#endif
             }
         }
-#if MCPU_FAST_MU_DELTA
         if (layer1_meta_ready_) {
             build_clash_exceptions();
         } else {
@@ -823,7 +779,6 @@ struct CpTimer {
         }
         // CHANGED: exact denselist cutoff from type_params_ (default ON).
         apply_mu_denselist_cutoff();
-#endif
     }
 
     // ---------------------------------------------------------
@@ -835,7 +790,6 @@ struct CpTimer {
         const State& new_state,
         const ProposalPatch& patch
     ) const {
-#if MCPU_FAST_MU_DELTA
         // DEFAULT ON. Measured 1.35-1.45x with bit-identical trajectories on
         // chignolin/1igd/actin. MCPU_CONTACT_LIST=0 restores the re-measure path.
         static const bool kContactList = [] {
@@ -875,17 +829,12 @@ struct CpTimer {
             delta = calculateEnergyChange_fast(
                 context, old_state, new_state, patch);
         }
-#else
-        const float delta =
-            calculateEnergyChange_legacy(context, old_state, new_state, patch);
-#endif
         if (delta >= 0.5f * kHardCorePenalty) {
             return EnergyChangeResult::rejected(delta, RejectReason::StericClash);
         }
         return EnergyChangeResult::finite(delta);
     }
 
-#if MCPU_FAST_MU_DELTA
     float MuPotential::calculateEnergyChange_fast(
         const Context& context,
         const State& old_state,
@@ -945,8 +894,6 @@ struct CpTimer {
 
         float delta_E = 0.0f;
         bool clash = false;
-
-        ws.ensure_stamp_capacity(num_atoms); // kept for evaluate_neighbor_grids / legacy paths
 
         const bool skip_rigid_mm =
             patch.is_rigid && context.neighborConfig().skip_rigid_mm;
@@ -1958,17 +1905,6 @@ struct CpTimer {
         ws.clear_moved_grid();
         return delta_E;
     }
-#else // !MCPU_FAST_MU_DELTA
-    float MuPotential::calculateEnergyChange_fast(
-        const Context&, const State&, const State&, const ProposalPatch&
-    ) const {
-        return 0.0f;
-    }
-#endif // MCPU_FAST_MU_DELTA
-
-    // ---------------------------------------------------------
-    // Legacy delta (MCPU_FAST_MU_DELTA=0) — behaviour unchanged; profile optional
-    // ---------------------------------------------------------
 
     // ================================================================
     // LIVE CONTACT LIST  (default; MCPU_CONTACT_LIST=0 turns it off)
@@ -2191,137 +2127,6 @@ struct CpTimer {
         return static_cast<float>(dE);
     }
 
-    float MuPotential::calculateEnergyChange_legacy(
-        const Context& context,
-        const State& old_state,
-        const State& new_state,
-        const ProposalPatch& patch
-    ) const {
-#if MCPU_FAST_MU_DELTA
-        (void)context; (void)old_state; (void)new_state; (void)patch;
-        return 0.0f;
-#else
-        setup_mask_cache(context.getSystem());
-        auto& ws = const_cast<mcpu::MuWorkspace&>(context.getMuWorkspace());
-        ws.clear();
-
-
-        float delta_E = 0.0f;
-        bool clash = false;
-        int num_atoms = context.getSystem().getNumAtoms();
-        const auto& ns = context.neighbors();
-        const std::vector<uint8_t>& is_moved = patch.moving_atoms;
-
-        std::vector<int> moved_indices;
-        {
-            if (!patch.moved_indices.empty()) {
-                moved_indices = patch.moved_indices;
-            } else {
-                moved_indices.reserve(static_cast<size_t>(num_atoms));
-                for (int i = 0; i < num_atoms; ++i) {
-                    if (is_moved[static_cast<size_t>(i)]) moved_indices.push_back(i);
-                }
-            }
-        }
-
-
-        const CoordView cold_legacy(old_state.coord_view());
-        const CoordView cnew_legacy(new_state.coord_view());
-
-        auto evaluate_against_static = [&](int i) {
-            const float ox = cold_legacy.x(i), oy = cold_legacy.y(i), oz = cold_legacy.z(i);
-            const float nx = cnew_legacy.x(i), ny = cnew_legacy.y(i), nz = cnew_legacy.z(i);
-
-            {
-                ns.for_each_mu_candidate(ox, oy, oz, [&](int j) {
-                    if (is_moved[static_cast<size_t>(j)]) return;
-
-                    int matrix_idx = i * num_atoms + j;
-                    const auto& cinfo = contact_cache[static_cast<size_t>(matrix_idx)];
-                    if (old_state.is_contact_cache[static_cast<size_t>(matrix_idx)]) {
-                        delta_E -= cinfo.energy;
-                        ws.pending_updates.push_back({matrix_idx, false});
-                        ws.pending_updates.push_back({j * num_atoms + i, false});
-                    }
-                });
-            }
-
-            {
-                ns.for_each_mu_candidate_while(nx, ny, nz, [&](int j) {
-                    if (is_moved[static_cast<size_t>(j)]) return true;
-
-                    int matrix_idx = i * num_atoms + j;
-                    const auto& cinfo = contact_cache[static_cast<size_t>(matrix_idx)];
-                    if (!cinfo.check_contact && !cinfo.check_clash) {
-                        return true;
-                    }
-
-                    float dist_sq = cnew_legacy.dist2(i, j);
-                    if (cinfo.check_clash &&
-                        is_hard_clash(dist_sq, cinfo.hard_core_sq)) {
-                        clash = true;
-                        return false;
-                    }
-                    if (cinfo.check_contact && dist_sq <= cinfo.contact_dist_sq) {
-                        delta_E += cinfo.energy;
-                        ws.pending_updates.push_back({matrix_idx, true});
-                        ws.pending_updates.push_back({j * num_atoms + i, true});
-                    }
-                    return true;
-                });
-            }
-        };
-
-        for (int i : moved_indices) {
-            evaluate_against_static(i);
-            if (clash) break;
-        }
-
-        if (!patch.is_rigid) {
-            for (size_t idx_i = 0; idx_i < moved_indices.size(); ++idx_i) {
-                int i = moved_indices[idx_i];
-
-                for (size_t idx_j = idx_i + 1; idx_j < moved_indices.size(); ++idx_j) {
-                    int j = moved_indices[idx_j];
-                    int matrix_idx = i * num_atoms + j;
-                    const auto& cinfo = contact_cache[static_cast<size_t>(matrix_idx)];
-                    if (!cinfo.check_contact && !cinfo.check_clash) {
-                        continue;
-                    }
-
-                    if (old_state.is_contact_cache[static_cast<size_t>(matrix_idx)]) {
-                        delta_E -= cinfo.energy;
-                        ws.pending_updates.push_back({matrix_idx, false});
-                        ws.pending_updates.push_back({j * num_atoms + i, false});
-                    }
-
-                    const float dist_sq = cnew_legacy.dist2(i, j);
-
-                    if (cinfo.check_clash &&
-                        is_hard_clash(dist_sq, cinfo.hard_core_sq)) {
-                        clash = true;
-                        break;
-                    } else if (cinfo.check_contact && dist_sq <= cinfo.contact_dist_sq) {
-                        delta_E += cinfo.energy;
-                        ws.pending_updates.push_back({matrix_idx, true});
-                        ws.pending_updates.push_back({j * num_atoms + i, true});
-                    }
-                }
-                if (clash) break;
-            }
-        }
-
-        if (clash) {
-            ws.clear();
-            return kHardCorePenalty;
-        }
-
-
-        return delta_E;
-#endif
-    }
-
-
     float MuPotential::calculateEnergy(const Context& context, const State& state) const {
         return full_energy(context, state, /*resync=*/false);
     }
@@ -2342,7 +2147,6 @@ struct CpTimer {
         float total_energy = 0.0f;
         const int num_atoms = sys.getNumAtoms();
 
-#if MCPU_FAST_MU_DELTA
         // A resync (Potential::resyncEnergy) also rewrites the state's live
         // contact list from this pass, so the list and the running energy are
         // reset together. A rigid pivot does not re-decide the pairs it
@@ -2362,7 +2166,6 @@ struct CpTimer {
                 for (auto& partners : state.mu_contact_list) partners.clear();
             }
         }
-#endif
         const CoordView cv(state.coord_view());
         for (int i = 0; i < num_atoms; ++i) {
             if (sys.is_amide_h_atom(i)) continue;
@@ -2370,7 +2173,6 @@ struct CpTimer {
                 if (sys.is_amide_h_atom(j)) continue;
                 const int matrix_idx = i * num_atoms + j;
 
-#if MCPU_FAST_MU_DELTA
                 if (!topo_contact_mask_[static_cast<size_t>(matrix_idx)] &&
                     !topo_clash_mask_[static_cast<size_t>(matrix_idx)]) {
                     continue;
@@ -2434,29 +2236,6 @@ struct CpTimer {
                     total_energy += e;
                     if (refill_contacts) state.mu_contact_add(i, j, e);
                 }
-#else
-                const auto& contact_info = contact_cache[static_cast<size_t>(matrix_idx)];
-                if (!contact_info.check_contact && !contact_info.check_clash) {
-                    continue;
-                }
-                const float dist_sq = cv.dist2(i, j);
-                if (contact_info.check_clash &&
-                    is_hard_clash(dist_sq, contact_info.hard_core_sq)) {
-                    return kHardCorePenalty;
-                }
-                if (contact_info.check_contact && dist_sq <= contact_info.contact_dist_sq) {
-                    total_energy += contact_info.energy;
-                    if (state.has_contact_cache()) {
-                        state.is_contact_cache[static_cast<size_t>(matrix_idx)] = true;
-                        state.is_contact_cache[static_cast<size_t>(j * num_atoms + i)] = true;
-                    }
-                } else if (contact_info.check_contact) {
-                    if (state.has_contact_cache()) {
-                        state.is_contact_cache[static_cast<size_t>(matrix_idx)] = false;
-                        state.is_contact_cache[static_cast<size_t>(j * num_atoms + i)] = false;
-                    }
-                }
-#endif
             }
         }
 

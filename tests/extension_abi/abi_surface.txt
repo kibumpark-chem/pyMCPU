@@ -150,7 +150,6 @@ Integrator.num_pivot_resample_pro_phi
 Integrator.num_reporters
 Integrator.num_sc_resample_pro
 Integrator.pivot_rama_probability
-Integrator.proposal_is_dynamic_only
 Integrator.proposal_lifecycle_info
 Integrator.reject_restore_enabled
 Integrator.reset_step_stats

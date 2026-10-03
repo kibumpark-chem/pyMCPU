@@ -11,9 +11,6 @@
 #include "pymcpu/System.h"
 #include "pymcpu/neighbor/NeighborConfig.h"
 
-#ifndef MCPU_FAST_MU_DELTA
-#define MCPU_FAST_MU_DELTA 1
-#endif
 
 namespace mcpu {
     class Context;
@@ -22,14 +19,6 @@ namespace mcpu {
 }
 
 namespace mcpu::forces::mcpu08 {
-
-    struct ContactData {
-        bool check_contact=true;
-        bool check_clash=true;
-        float energy=0.0f;
-        float contact_dist_sq=0.0f;
-        float hard_core_sq=0.0f;
-    };
 
     class MuPotential : public mcpu::Potential {
     private:
@@ -64,10 +53,7 @@ namespace mcpu::forces::mcpu08 {
             }
         }
 
-#if MCPU_FAST_MU_DELTA
-        /// Per-pair contact energy (neighbor-grid contact-cache bookkeeping).
-
-        // ── Compact pair table (opt-in; default off until validated) ──────────
+        // ── Compact pair table ─────────────────────────────────────────────
 
         /// Type×type energy parameters, 16 B/entry (deliberately a power of two).
         /// Indexed [type_i * n_types_ + type_j]. At N_TYPES=84 that is 7056
@@ -97,7 +83,7 @@ namespace mcpu::forces::mcpu08 {
         float clash_prefilter_r2_ = std::numeric_limits<float>::infinity();
         int n_types_ = 0;
 
-        // ── Three-layer eval (opt-in; default off until validated) ───────────
+        // ── Three-layer eval ───────────────────────────────────────────────
         // Layer 1: O(N) topology metadata — on-the-fly clash/contact enable.
         // Layer 2: type_params_ (always built) — hard_r2 / contact_r2 / energy.
         // Layer 3: SparseClashExceptions — native-dist structure clash disables.
@@ -488,64 +474,15 @@ namespace mcpu::forces::mcpu08 {
             return eval_pair_layered_v1<C>(i, j, r2, clash_out);
         }
 
-#endif
-
-#if !MCPU_FAST_MU_DELTA
-        std::vector<ContactData> contact_cache;
-#endif
-
-
-        /// Hot pair energy for known r2. Uses flat tables (FAST) / ContactData (legacy).
-        /// Returns contact energy or 0; sets *clash_out on a hard-core overlap
-        /// under cutoff C. The legacy build has one exact cutoff and ignores C.
+        /// Hot pair energy for known r2. Returns contact energy or 0; sets
+        /// *clash_out on a hard-core overlap under cutoff C.
         template <ClashCutoff C = ClashCutoff::Move>
         [[gnu::always_inline]] inline float eval_pair(
             int i, int j, float r2, bool* clash_out
         ) const {
             ++eval_pair_calls_local_;
-#if MCPU_FAST_MU_DELTA
             return eval_pair_layered<C>(i, j, r2, clash_out);
-#else
-            // Residue energy masking (legacy path)
-            const size_t idx = static_cast<size_t>(i) * static_cast<size_t>(num_atoms_cached_)
-                             + static_cast<size_t>(j);
-            if (energy_mask_ptr_) {
-                const auto ri = atom_to_residue[static_cast<size_t>(i)];
-                const auto rj = atom_to_residue[static_cast<size_t>(j)];
-                if (energy_mask_ptr_[static_cast<size_t>(ri)] |
-                    energy_mask_ptr_[static_cast<size_t>(rj)]) {
-                    if (energy_mask_mode_cached_ == EnergyMaskMode::ClashOnly) {
-                        const bool check_clash = topo_clash_mask_[idx] != 0;
-                        if (check_clash &&
-                            is_hard_clash(r2, hard_core_sq(i, j))) {
-                            if (clash_out) *clash_out = true;
-                        }
-                        return 0.0f;
-                    }
-                    return 0.0f;  // IgnoreAll
-                }
-            }
-
-            const bool check_clash = topo_clash_mask_[idx] != 0;
-            const bool check_contact = topo_contact_mask_[idx] != 0;
-            if (check_clash && is_hard_clash(r2, hard_core_sq(i, j))) {
-                if (clash_out) *clash_out = true;
-                return 0.0f;
-            }
-            if (check_contact && r2 <= contact_dist_sq(i, j)) {
-                ++eval_pair_nonzero_local_;
-                return contact_energies(i, j);
-            }
-#endif
-            return 0.0f;
         }
-
-        float calculateEnergyChange_legacy(
-            const Context& context,
-            const State& old_state,
-            const State& new_state,
-            const ProposalPatch& patch
-        ) const;
 
         float calculateEnergyChange_fast(
             const Context& context,
@@ -565,10 +502,9 @@ namespace mcpu::forces::mcpu08 {
         // already knew about last step. Reading them off a list instead is
         // ~60x less work for that half of the move.
         //
-        // A bitmap (State::is_contact_cache, which is what legacy MCPU's
-        // data[][] is) cannot do this: you can ask a bitmap "is THIS pair in
-        // contact" but not "list this atom's contacts" without scanning a whole
-        // row. That distinction is why the list wins on a large protein where
+        // A pair bitmap (legacy MCPU's data[][]) cannot do this: you can ask
+        // a bitmap "is THIS pair in contact" but not "list this atom's
+        // contacts" without scanning a whole row. That distinction is why the list wins on a large protein where
         // the bitmap loses.
         //
         // THE LIST ITSELF LIVES ON State, NOT HERE. One System (hence one
@@ -651,7 +587,6 @@ namespace mcpu::forces::mcpu08 {
             const ProposalPatch& patch
         ) const override;
 
-#if MCPU_FAST_MU_DELTA
         /// Diagnostic sizes (KB). O(1).
         [[nodiscard]] double type_params_size_kb() const noexcept {
             return static_cast<double>(type_params_.size() * sizeof(TypePairParams))
@@ -687,7 +622,6 @@ namespace mcpu::forces::mcpu08 {
         [[nodiscard]] double topo_flag_size_mb() const noexcept {
             return static_cast<double>(topo_flag_.size()) / (1024.0 * 1024.0);
         }
-#endif
 
     };
 

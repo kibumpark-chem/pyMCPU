@@ -228,15 +228,14 @@ def _run_case_in_child(pdb: str, seed: int, steps: int) -> dict[str, Any]:
     proxy = dict(ctx.neighbor_proxy_stats())
 
     # `eval_pair_nonzero` counts the epsilon-free `r2 <= g.contact_r2` compare
-    # at MuPotential.h:419-421, so a +/-1 delta would be the signature of a
+    # in eval_pair_layered_v2, so a +/-1 delta would be the signature of a
     # single contact-membership flip.
     #
     # IMPORTANT -- it reads 0 in the shipped configuration, so do NOT rely on
-    # it. `MCPU_FAST_MU_DELTA=ON` plus the default-enabled contact list routes
-    # the delta through `calculateEnergyChange_clist`, while the flush that
-    # publishes these counters lives in `calculateEnergyChange_fast`
-    # (MuPotential.cpp:928-940), now only a fallback for moves that leave the
-    # dense grid. Measured on chignolin/300 steps: `eval_pair_calls`,
+    # it. The default-enabled contact list routes the delta through
+    # `calculateEnergyChange_clist`, while the flush that publishes these
+    # counters lives in `calculateEnergyChange_fast`, now only a fallback for
+    # moves that leave the dense grid or run under an energy mask. Measured on chignolin/300 steps: `eval_pair_calls`,
     # `pair_distance_checks`, `pairs_within_rcut` and `eval_pair_nonzero` are
     # all 0 by default, and become [3206, 223, 856] per move kind under
     # `MCPU_CONTACT_LIST=0`. Accept counts match across the two paths (64 both

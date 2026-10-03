@@ -355,7 +355,7 @@ correct results must not depend on them:
 ``set_use_sparse_proposal(on)`` / ``use_sparse_proposal`` (read/write
 property: "If True (default): skip per-step ``copy_dynamic_from``;
 O(n_moved) restore on reject"), ``reject_restore_enabled()``,
-``proposal_is_dynamic_only()``, ``proposal_lifecycle_info()``,
+``proposal_lifecycle_info()``,
 ``step_stats()``, ``set_step_stats_verbose(on)`` and
 ``step_stats_verbose()``.
 

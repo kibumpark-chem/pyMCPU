@@ -109,8 +109,7 @@ def test_no_value_is_an_empty_placeholder(info) -> None:
 
 
 def test_feature_flags_are_real_macro_reads(info) -> None:
-    for flag in ("MCPU_FAST_MU_DELTA", "MCPU_USE_POOLED_PROPOSAL"):
-        assert isinstance(info["features"][flag], bool)
+    assert isinstance(info["features"]["MCPU_USE_POOLED_PROPOSAL"], bool)
 
 
 def test_build_flags_alias_agrees_and_warns(info) -> None:
@@ -122,7 +121,7 @@ def test_build_flags_alias_agrees_and_warns(info) -> None:
     with pytest.warns(DeprecationWarning):
         legacy = mcpu_core.build_flags()
     assert legacy["unsafe_math_enabled"] == info["fp"]["fast_math"]
-    assert legacy["MCPU_FAST_MU_DELTA"] == info["features"]["MCPU_FAST_MU_DELTA"]
+    assert legacy["MCPU_USE_POOLED_PROPOSAL"] == info["features"]["MCPU_USE_POOLED_PROPOSAL"]
     assert legacy["arch_march"] == info["arch"]["march"]
 
 

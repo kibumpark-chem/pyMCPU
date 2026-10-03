@@ -293,9 +293,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (through the new `Potential::resyncEnergy`), so only the carry itself
   still shows, as one warning; read-only evaluations such as
   `energy_breakdown` leave the list alone. The pass also stopped writing a
-  pair-flag cache that only the legacy (`MCPU_FAST_MU_DELTA=0`) build reads,
-  and the default build no longer allocates it (N^2 bits per state), which
-  makes the actin recompute about a quarter faster (45 to 34 ms). Writing
+  per-state N^2 pair-flag cache that only the legacy build read (see
+  Removed), which makes the actin recompute about a quarter faster (45 to
+  34 ms). Writing
   `State.coords` now discards that state's contact list too.
   `docs/physics_notes/mc_acceptance.md` described a periodic contact-list
   rebuild (`contact_rebuild_interval`) the engine never had; it now
@@ -472,6 +472,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- **The legacy Mu build (`MCPU_FAST_MU_DELTA=OFF`).** It no longer compiled,
+  so its code was dead: the CMake option and its pyproject pin, the
+  cached-contact delta (`calculateEnergyChange_legacy`, `ContactData`), the
+  per-state N^2 pair bitmap (`State::is_contact_cache`, `StateCacheMode`)
+  and the pending flag updates that fed it. `build_info()["features"]` and
+  the deprecated `build_flags()` lose their `MCPU_FAST_MU_DELTA` key.
+  `Integrator.proposal_is_dynamic_only()`, which only repeated
+  `use_pooled_proposal()`, and the `proposal_dynamic_only` key of
+  `proposal_lifecycle_info()` are gone too. The default build is unchanged.
 - `MCPU_MM_GUARD_N2`, and the always-zero `mmguard_ns` field of the cell-pair
   breakdown in `Integrator.step_stats()`, with the rigid-move re-check they
   belonged to (see Changed).

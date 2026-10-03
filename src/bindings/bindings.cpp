@@ -650,8 +650,8 @@ PYBIND11_MODULE(mcpu_core, m) {
         .def("set_use_pooled_proposal", &mcpu::MCIntegrator::set_use_pooled_proposal,
              py::arg("on"),
              "If True (default when compiled with MCPU_USE_POOLED_PROPOSAL=1): "
-             "DynamicOnly pooled proposal + sparse patch reset. "
-             "If False: emulate vanilla Full State copy + per-step patch alloc + reject restore.")
+             "pooled proposal buffer + sparse patch reset. "
+             "If False: emulate vanilla whole-State copy + per-step patch alloc + reject restore.")
         .def("use_pooled_proposal", &mcpu::MCIntegrator::use_pooled_proposal)
         .def_property(
             "use_sparse_proposal",
@@ -676,14 +676,12 @@ PYBIND11_MODULE(mcpu_core, m) {
              "Metropolis-Hastings correction term of the last forced proposal "
              "from a debug_force_* call (0 for a symmetric move).")
         .def("reject_restore_enabled", &mcpu::MCIntegrator::reject_restore_enabled)
-        .def("proposal_is_dynamic_only", &mcpu::MCIntegrator::proposal_is_dynamic_only)
         .def("proposal_lifecycle_info",
              [](const mcpu::MCIntegrator& integ) {
                  const auto info = integ.proposal_lifecycle_info();
                  py::dict d;
                  d["pooled_proposal_compiled_in"] = info.pooled_proposal_compiled_in;
                  d["use_pooled_proposal"] = info.use_pooled_proposal;
-                 d["proposal_dynamic_only"] = info.proposal_dynamic_only;
                  d["reject_restore_enabled"] = info.reject_restore_enabled;
                  return d;
              })
@@ -1082,7 +1080,7 @@ PYBIND11_MODULE(mcpu_core, m) {
 #if !defined(MCPU_BUILD_ARCH_TIER) || !defined(MCPU_BUILD_LTO)
 #error "BuildConfig.h was not generated; configure through CMake."
 #endif
-#if !defined(MCPU_FAST_MU_DELTA) || !defined(MCPU_USE_POOLED_PROPOSAL)
+#if !defined(MCPU_USE_POOLED_PROPOSAL)
 #error "Feature-flag defines missing; configure through CMake."
 #endif
     m.def(
@@ -1207,7 +1205,6 @@ PYBIND11_MODULE(mcpu_core, m) {
 #endif
 
             py::dict features;
-            features["MCPU_FAST_MU_DELTA"] = (MCPU_FAST_MU_DELTA != 0);
             features["MCPU_USE_POOLED_PROPOSAL"] = (MCPU_USE_POOLED_PROPOSAL != 0);
 #if defined(EIGEN_NO_DEBUG)
             features["EIGEN_NO_DEBUG"] = true;
@@ -1249,7 +1246,6 @@ PYBIND11_MODULE(mcpu_core, m) {
                 py::module_::import("builtins").attr("DeprecationWarning"), 2);
             py::dict d;
             d["MCPU_USE_POOLED_PROPOSAL"] = (MCPU_USE_POOLED_PROPOSAL != 0);
-            d["MCPU_FAST_MU_DELTA"] = (MCPU_FAST_MU_DELTA != 0);
 #if defined(__FAST_MATH__)
             d["unsafe_math_enabled"] = true;
 #else

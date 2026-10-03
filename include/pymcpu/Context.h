@@ -25,12 +25,6 @@ class MuPotential;
 }
 
 struct MuWorkspace {
-    struct ContactUpdate {
-        int index;
-        bool new_value;
-    };
-    std::vector<ContactUpdate> pending_updates;
-
     /// Contacts that begin / end if the pending move is accepted. Lives here,
     /// on the per-Context workspace, so replicas sharing one System (and hence
     /// one MuPotential) cannot tread on each other. Applied by
@@ -43,9 +37,6 @@ struct MuWorkspace {
     };
     std::vector<PendingContact> pending_contact_drop;
     std::vector<PendingContact> pending_contact_add;
-
-    std::vector<uint32_t> seen_stamp;
-    uint32_t cur_stamp = 0;
 
     std::unique_ptr<CellListMC> moved_new_grid;
     std::vector<int> moved_grid_atoms;
@@ -96,24 +87,8 @@ struct MuWorkspace {
     std::vector<int> cell_to_group_scratch;
 
     void clear() {
-        pending_updates.clear();
         pending_contact_drop.clear();
         pending_contact_add.clear();
-    }
-
-    void ensure_stamp_capacity(int num_atoms) {
-        if (static_cast<int>(seen_stamp.size()) < num_atoms) {
-            seen_stamp.assign(static_cast<size_t>(num_atoms), 0u);
-            cur_stamp = 0;
-        }
-    }
-
-    uint32_t next_stamp() {
-        if (++cur_stamp == 0) {
-            std::fill(seen_stamp.begin(), seen_stamp.end(), 0u);
-            cur_stamp = 1;
-        }
-        return cur_stamp;
     }
 
 
