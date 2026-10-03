@@ -57,14 +57,16 @@ PotentialDeltaCheck PhysicsVerifier::verify_potential_delta(
     State old_copy = old_state;
     State proposed_copy = proposed_state;
 
-    // Pooled MC proposals are DynamicOnly (empty N² caches). Total-energy
-    // verification writes Mu contact flags into is_contact_cache — size it.
+#if !MCPU_FAST_MU_DELTA
+    // Pooled MC proposals are DynamicOnly (empty N² caches). The legacy Mu
+    // energy writes contact flags into is_contact_cache — size it.
     const int num_atoms = ctx.getSystem().getNumAtoms();
     const size_t n2 =
         static_cast<size_t>(num_atoms) * static_cast<size_t>(num_atoms);
     if (proposed_copy.is_contact_cache.size() != n2) {
         proposed_copy.is_contact_cache.assign(n2, false);
     }
+#endif
 
     auto& mutable_ctx = const_cast<Context&>(ctx);
     clear_workspaces(mutable_ctx);
@@ -104,12 +106,21 @@ PotentialDeltaCheck PhysicsVerifier::verify_potential_delta(
                 ctx.getSystem().has_energy_mask() &&
                 ctx.getSystem().energy_mask_mode() == EnergyMaskMode::ClashOnly &&
                 std::isfinite(e_new) && !proposed_clash;
-            result.passed = proposed_clash || clash_only_contact;
+            // A move is tested against a cutoff kStateClashBufferA tighter
+            // than the one calculateEnergy judges a state by, so it can be
+            // rejected for a pair the proposed state would still allow.
+            const bool move_cutoff_only =
+                !proposed_clash && !clash_only_contact &&
+                target->clashesAtMoveCutoff(ctx, proposed_copy, patch);
+            result.passed = proposed_clash || clash_only_contact || move_cutoff_only;
             result.message = proposed_clash
                 ? "clash: incremental sentinel matches proposed clash energy"
                 : (clash_only_contact
                        ? "clash: incremental sentinel with ClashOnly contact-only energy"
-                       : "clash: incremental sentinel but proposed energy is finite");
+                       : (move_cutoff_only
+                              ? "clash: incremental sentinel; a re-evaluated pair is "
+                                "under the move cutoff but not the state cutoff"
+                              : "clash: incremental sentinel but proposed energy is finite"));
             return result;
         }
 

@@ -246,6 +246,10 @@ public:
 
     explicit Context(std::shared_ptr<System> sys);
     void setPositions(const Eigen::Matrix3Xf& new_coords);
+    /// Throws if another Context reordered this System's atoms after this one
+    /// was created: this one's coordinates are then in the wrong order. A
+    /// Context created on an already reordered System adopts its permutation.
+    void require_current_atom_order() const;
     void commit_accepted_move(const State& proposed_state, const ProposalPatch& patch,
                               MoveKind move_kind = MoveKind::Other);
     float calculate_total_energy(int target_group = -1);
@@ -359,7 +363,8 @@ public:
         neighbors_.config().mu_verlet_enabled = on;
         if (!on) neighbors_.muVerlet().invalidate();
     }
-    /// Skip moved–moved Mu pairs on rigid pivots (default true). O(1) flag.
+    /// Skip the pairs a rigid pivot carries (default true); see
+    /// NeighborConfig::skip_rigid_mm. O(1) flag.
     void set_skip_rigid_mm(bool on) noexcept {
         neighbors_.config().skip_rigid_mm = on;
     }
@@ -392,12 +397,6 @@ public:
     /// First MuPotential (nullptr if none). For diagnostics / verify.
     [[nodiscard]] forces::mcpu08::MuPotential* mu_potential();
     [[nodiscard]] const forces::mcpu08::MuPotential* mu_potential() const;
-    /// ADDED: MM clash margin for rigid elision path
-    void set_mm_clash_margin(float margin_r2);
-    [[nodiscard]] float mm_clash_margin() const;
-    /// ADDED: double MM boundary clash check
-    void set_mm_double_boundary(bool on);
-    [[nodiscard]] bool mm_double_boundary() const;
     /// Legacy opt-in: restore unconditional pivot→Verlet invalidate (default off).
     void set_invalidate_verlet_on_pivot_accept(bool on) noexcept {
         neighbors_.config().invalidate_verlet_on_pivot_accept = on;
@@ -407,7 +406,8 @@ public:
     }
 
 
-    /// Mu denselist cell size = scale * (r_cut + skin), clamped. Default 1.0.
+    /// Mu denselist cell size = scale * Mu cutoff, never below the cutoff (so
+    /// scale < 1 acts as 1). Default 1.0. The skin does not enter it.
     /// Rebuilds the Mu denselist when positions are already set (scale must be
     /// set before ``setPositions`` / init_only reorder for matching locality).
     void set_mu_cell_size_scale(float scale) noexcept {
@@ -420,7 +420,8 @@ public:
     float mu_cell_size_scale() const noexcept {
         return neighbors_.config().mu_cell_size_scale;
     }
-    /// Absolute Mu denselist cell size (Å). &lt;=0 clears absolute override.
+    /// Absolute Mu denselist cell size (Å), raised to the Mu cutoff if smaller.
+    /// &lt;=0 clears absolute override.
     void set_mu_cell_size_angstrom(float angstrom) noexcept {
         neighbors_.config().mu_cell_size_angstrom = angstrom;
         if (positions_set_) {
@@ -430,9 +431,11 @@ public:
     float mu_cell_size_angstrom() const noexcept {
         return neighbors_.config().mu_cell_size_angstrom;
     }
+    /// Extra lower bound on the cell (Å); only a value above the Mu cutoff
+    /// has an effect. &lt;=0 clears it.
     void set_mu_cell_size_min_angstrom(float angstrom) noexcept {
         neighbors_.config().mu_cell_size_min_angstrom =
-            angstrom > 0.f ? angstrom : 1.5f;
+            angstrom > 0.f ? angstrom : 0.f;
         if (positions_set_) {
             neighbors_.rebuild_from_accepted_state(state.coords_soa);
         }

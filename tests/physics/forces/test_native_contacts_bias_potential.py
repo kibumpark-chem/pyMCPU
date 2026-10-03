@@ -103,3 +103,15 @@ def test_harmonic_bias_energy_at_native_geometry_with_explicit_pairs() -> None:
     # cutoff-derived test above.
     e = float(sim.context.calculate_total_energy(6))
     assert e == pytest.approx(8.0, abs=1e-4)
+
+
+def test_attaching_pairs_outside_the_system_is_refused() -> None:
+    """An out-of-range atom index used to be read out of bounds, or to fail
+    half-way through an init_only reorder with a bare IndexError."""
+    from pymcpu.sampling.collective_variables import attach_native_contacts_bias_potential
+
+    system, _ = setup_minimal_bb_system(_N_RES, _N_RES * 4)
+    too_far = np.array([0, 1, 2, system.get_num_atoms()], dtype=np.int64)
+    cv = NativeContactsCV(too_far, _REF_XYZ, contact_cutoff=11.0, min_seq_sep=2, mode="hard")
+    with pytest.raises(ValueError, match="outside"):
+        attach_native_contacts_bias_potential(system, cv)

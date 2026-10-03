@@ -121,16 +121,6 @@ supplying your own tables.
 
       Read-only ``int``. Number of hard-core overlaps seen.
 
-   .. py:attribute:: mm_clash_margin
-
-      Read/write moved-moved clash margin in Å². Also settable through
-      the ``MCPU_MM_CLASH_MARGIN`` environment variable.
-
-   .. py:attribute:: mm_double_boundary
-
-      Read/write ``bool``: double moved-moved boundary clash check.
-      Also ``MCPU_MM_DOUBLE_BOUNDARY``.
-
    .. rubric:: Internals and benchmarking
 
    These are development hooks, not part of the stable API:
@@ -191,7 +181,9 @@ Bias term
    registered potential can serve a whole replica ladder.
 
    :param ca_atom_i: ``Sequence[int]`` -- first atom of each reference
-      contact pair (engine-internal indices).
+      contact pair, as engine indices in build order (what
+      ``forcefield.blocks`` gives). After an ``init_only`` reorder the
+      System maps them to storage order when the potential is added.
    :param ca_atom_j: ``Sequence[int]`` -- second atom of each pair.
    :param q_cutoff: ``float`` -- contact distance cutoff in Å. A pair
       counts towards ``N`` when it is closer than this.
@@ -326,7 +318,10 @@ and nothing else. See :doc:`/physics_notes/korp_6d`.
 
    The 3.2 A floor is measured rather than assumed -- see
    :doc:`/physics_notes/korp_6d`. Pairs on different chains are never
-   exempt, whatever their residue numbering.
+   exempt, whatever their residue numbering. Moves are tested against the
+   floor; a whole state against a floor 0.001 A lower
+   (``mcpu_core.STATE_CLASH_BUFFER_A``), which leaves room for the rounding
+   of pairs a rigid pivot carries without re-checking them.
 
 Steric clashes
 --------------
@@ -348,8 +343,9 @@ Both :py:meth:`Context.has_steric_clash` and
 :py:meth:`Context.has_hard_constraint_violation` describe the *most
 recent* total-energy evaluation, so call
 :py:meth:`Context.calculate_total_energy` first. During sampling the
-integrator applies the same test itself and rejects the move; see
-:py:meth:`Integrator.get_steric_rejected`.
+integrator tests each move against a cutoff 0.001 A stricter
+(``mcpu_core.STATE_CLASH_BUFFER_A``) and rejects it; see
+:py:meth:`Integrator.get_steric_rejected` and :doc:`/physics_notes/mc_acceptance`.
 
 .. seealso::
    To immobilize part of a structure, use

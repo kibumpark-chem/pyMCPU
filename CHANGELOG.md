@@ -67,21 +67,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `Context.set_mu_cell_size_scale` below 1, or `set_mu_cell_size_angstrom`
+  below the Mu cutoff, crashed the interpreter in `set_positions`: the
+  neighbour grid only supports a one-cell stencil, and a smaller cell
+  overflowed its buffers (the cell-pair path also silently dropped cells).
+  Such a cell is now raised to the cutoff. Larger cells are unchanged.
+- **KORP keeps chain IDs and residue numbers.** Its backbone slice goes through
+  mdtraj's `Topology.subset`, which drops every chain ID and renumbers a
+  residue numbered 0. Multi-chain inputs were therefore numbering-checked,
+  scored and steric-guarded as one chain: a homo-oligomer numbered from 1 in
+  each chain was refused, chains with distinct numbers were scored as one, and
+  the CA-CA guard excused cross-chain contacts as bonded neighbours. Both are
+  now put back, also on `output_topology`, and the inter-chain energy of the
+  bundle's two-chain structures matches korpe. Single-chain inputs are
+  unchanged. The moves still treat all chains as one bonded backbone, so
+  KORPForceField warns on multi-chain input: use it for scoring, or sample
+  one chain.
+- **The native-contacts bias follows the `init_only` atom reorder.** The
+  reorder renumbers atoms and asks each energy term to remap the atom ids it
+  holds; the bias kept its pairs in the old numbering and so measured
+  unrelated atoms (a native bias of 289560 instead of 8 on actin). It now
+  remaps them, and a term added after the reorder is remapped when it is
+  added. The reorder rewrites the System, which REMD replicas share: a
+  Context created on it afterwards now adopts the same atom order, and one
+  created before it raises instead of scoring garbage (40778 instead of -551
+  on actin). Runs without the reorder (every shipped runner) are unchanged.
 - Writing `Context.coords` after the `init_only` atom reorder now discards
   Mu's live contact list, as `set_positions` does, so a run after such a
   reset matches a fresh start. Under `set_output_internal_order(True)` it
   also takes the array in storage order, the order the getter returns; it
   used to treat it as build order and scramble the atoms.
-- **Rigid moves no longer stick on overlaps that an `ignore_all` mask
-  allows.** With `ignore_all`, a pair involving a masked residue (a linker,
-  for example) neither clashes nor makes a contact, and the full energy and
-  the ordinary delta paths respected that. The guard that re-checks the
-  moved-moved pairs of a rigid move did not, so a rigid move carrying such an
-  overlap was rejected as a steric clash, and masked residues that overlapped
-  could get stuck. `clash_only` is unchanged: moves are still rejected on a
-  clash. Runs without a mask are bit-identical. Clearing a `clash_only` mask
-  also brings back clash reporting in the full energy, which used to keep
-  dropping every clash.
+- Clearing a `clash_only` residue mask brings back clash reporting in the
+  full energy, which used to keep dropping every clash.
 - Mu checks that every atom of a type has one radius. The engine keeps one
   hard-core distance, contact distance and energy per pair of atom types,
   filled in atom order, so a parameter set that gave one type two radii
@@ -237,6 +254,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `test_rama_pivot_move.py`'s p = 0 check (92 → 79). The old values still
   come out of the unfixed engine.
 
+- **A full energy recompute also refreshes Mu's contact list.** A move's Mu
+  energy change reads the old contacts off a live list of the accepted
+  state's contacts. A rigid pivot does not re-decide the pairs it carries,
+  and its rounding can carry one across its contact cutoff by about 1e-6 Å,
+  so neither the running energy nor the list sees the change.
+  `calculate_total_energy(-1)`, which `Simulation` runs after every `step()`
+  by default, corrected the energy but kept the stale entry, and the next
+  move that separated the pair was scored one contact energy wrong: on
+  actin, energy-drift warnings came in pairs of opposite sign, up to a few
+  per million steps. That recompute now rewrites the list from the same pass
+  (through the new `Potential::resyncEnergy`), so only the carry itself
+  still shows, as one warning; read-only evaluations such as
+  `energy_breakdown` leave the list alone. The pass also stopped writing a
+  pair-flag cache that only the legacy (`MCPU_FAST_MU_DELTA=0`) build reads,
+  and the default build no longer allocates it (N^2 bits per state), which
+  makes the actin recompute about a quarter faster (45 to 34 ms). Writing
+  `State.coords` now discards that state's contact list too.
+  `docs/physics_notes/mc_acceptance.md` described a periodic contact-list
+  rebuild (`contact_rebuild_interval`) the engine never had; it now
+  describes the list as it is. `MuPotential::calculateEnergyBrute` and a
+  three-argument `calculateEnergy` overload, which nothing called, are gone.
+
+- **Pivots no longer shrink the protein.** The pivot, rama-pivot and
+  continuous sidechain moves turn groups of atoms rigidly, and did so in
+  float32, rounding each coordinate twice: relative to the pivot atom, then
+  in lab coordinates. That left every distance a rotation should keep
+  slightly shorter on average, and the losses added up. Over 5M pivot-only
+  chignolin steps, CA-C bonds shrank by 3e-3 Å and the distances inside the
+  rigid pieces by 3e-3 Å on average, up to 2.6e-2 Å; the default move mix
+  lost about 6e-5 Å per million steps. The rotation is now done in double and
+  each coordinate rounded to float once, which leaves unbiased noise (+6e-6 Å
+  on bonds over the same 5M steps), at no measurable cost. **This changes
+  every trajectory that uses these moves**, under both force fields:
+  `test_rama_pivot_move.py`'s p = 0 check was re-captured (79 → 81), and
+  `test_coords_soa.py`'s frozen baseline, which a GCC 8.5 build missed
+  (271 accepted moves for 264), now comes out of it exactly.
+  `tests/physics/moves/test_rotation_keeps_distances.py` fails on the float32
+  build.
+
 - **KORP's rigid-pivot moved-moved elision is now off by default** — it gave
   Metropolis a wrong delta-E. `OrientationalPairPotential` skipped every pair of
   residues carried by the same rigid pivot, on the grounds that their six pair
@@ -301,6 +357,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Rigid pivots no longer re-check the pairs they carry, which makes actin
+  1.5x faster on the default move mix and 1.9x pivot-only.** A rigid pivot
+  keeps every distance inside the segment it turns, so Mu does not score
+  those pairs (`skip_rigid_mm`). It, and the KORP CA-CA guard, still
+  re-checked them for a hard-core clash, because the pivot rounds each
+  carried coordinate to float and a pair a move had left exactly on its
+  cutoff could land just under it; the full energy then found a clash in a
+  state the move had accepted. That re-check cost a third of the actin step
+  (half of it pivot-only), and it is gone. Moves are still tested against
+  the cutoff; a whole state (`calculate_total_energy`, `has_steric_clash`,
+  `Simulation`'s clash check, `KORPForceField`'s construction check) is now
+  judged against one 0.001 Å looser, `mcpu_core.STATE_CLASH_BUFFER_A`, as is
+  the old side of every move's energy change, and a pair inside that margin
+  scores as any pair at its distance. With nothing re-checking carried
+  pairs, none went more than 1.8e-6 Å under its cutoff in 20M-step chignolin
+  and 5M-step actin runs (three seeds each, with the rotation fix above).
+  Trajectories are unchanged up to the first move the re-check would have
+  rejected; on actin the accepted moves of 2000 steps match bit for bit. Two
+  behaviours change:
+
+  * A pivot that carries an overlap the state already holds (coordinates
+    from `set_positions`, a `clash_only` run, whose full energy ignores
+    clashes, or a pair an `ignore_all` mask allows) is accepted. In 0.1.0 the
+    re-check also ignored `ignore_all`, so masked (linker) residues that
+    overlapped could get stuck. A move that re-decides an overlapping pair,
+    with one atom moved, is still rejected, under `clash_only` too.
+  * `PhysicsVerifier` passes a move rejected for a pair that is under the
+    move cutoff but not the state cutoff. It asks the potential, through the
+    new `Potential::clashesAtMoveCutoff`.
+
 - **Glycine's CA has one engine slot.** `MCPUForceField` stored each glycine
   CA twice, in the backbone segment and again as the residue's sidechain,
   and the Mu potential muted the backbone copy so the atom was scored once.
@@ -360,6 +446,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- `MCPU_MM_GUARD_N2`, and the always-zero `mmguard_ns` field of the cell-pair
+  breakdown in `Integrator.step_stats()`, with the rigid-move re-check they
+  belonged to (see Changed).
+- `Context.set_mm_clash_margin` / `mm_clash_margin`,
+  `Context.set_mm_double_boundary` / `mm_double_boundary`, the matching
+  `MuPotential` properties and the `MCPU_MM_CLASH_MARGIN` and
+  `MCPU_MM_DOUBLE_BOUNDARY` environment variables. They were experiments for
+  the rigid-move clash problem (see Changed), and only the cell-pair path
+  read them. The double-boundary check had become the default check without
+  its prefilter, so it changed only speed. The margin rejected rigid moves
+  that have no clash, on that one path only, so a masked run's trajectory
+  depended on which path a move took. Runs that did not set them are
+  bit-identical.
 - `MCPUAtom.to_write` and `MCPUAtom.is_sidechain`. They existed to tell
   glycine's second CA slot (see Changed) apart from real atoms. `to_write`
   was then false only for explicit amide hydrogens, exactly when

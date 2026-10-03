@@ -114,6 +114,10 @@ private:
     int total_h_atoms  = 0;
     bool virtual_amide_h_ = true;  // default: HBond-only virtual amide H (legacy CheckHBond)
     bool residue_contiguous_layout_ = false;
+    AtomPermutation applied_perm_ = AtomPermutation::identity(0);
+    bool atoms_reordered_ = false;
+    /// Remap every potential's atom ids and record perm as applied.
+    void permute_potentials(const AtomPermutation& perm);
     std::vector<BlockIndices>  block_indices;
     std::vector<int>           ntorsions_per_residue;
     // chi_atom_indices_[r][k] = {i1,i2,i3,i4}: current/internal atom indices
@@ -266,6 +270,15 @@ public:
     void apply_residue_contiguous_blocks(std::vector<BlockIndices> blocks,
                                          const AtomPermutation& perm);
 
+    /// True once an atom permutation has been applied to this System. Both
+    /// functions above also remap every potential's atom ids, and refuse a
+    /// second permutation; addPotential maps a potential added afterwards,
+    /// since callers always build potentials from build-order ids.
+    [[nodiscard]] bool atoms_reordered() const noexcept { return atoms_reordered_; }
+    [[nodiscard]] const AtomPermutation& applied_atom_permutation() const noexcept {
+        return applied_perm_;
+    }
+
     // Read-only access
     int getTotalBBAtoms() const noexcept { return total_bb_atoms; }
     int getTotalOAtoms()  const noexcept { return total_o_atoms;  }
@@ -344,10 +357,12 @@ public:
         const ProposalPatch& patch) const;
 
     /// Weighted total energy with optional hard-rejection reason (baseline).
+    /// With resync, each term is evaluated through Potential::resyncEnergy.
     TotalEnergyResult evaluateTotalEnergy(
         const Context& ctx,
         const State&   state,
-        int            target_group = -1) const;
+        int            target_group = -1,
+        bool           resync = false) const;
 
     EnergyBreakdown energyBreakdown(const Context& ctx, const State& state) const;
 };

@@ -50,6 +50,10 @@ PYBIND11_MODULE(mcpu_core, m) {
     m.doc() = "PyMCPU: A fast Monte Carlo protein folding engine. "
               "C++ physics core with Python interface.";
 
+    // How far under a hard-core cutoff a whole state may hold a pair (A); a
+    // move is tested against the cutoff itself. See Potential.h.
+    m.attr("STATE_CLASH_BUFFER_A") = mcpu::kStateClashBufferA;
+
     // Reporters (bindings match current reporter headers only)
     py::class_<mcpu::Reporter, std::shared_ptr<mcpu::Reporter>>(m, "Reporter",
         "Base class of the output reporters. Exposed so that\n"
@@ -180,7 +184,12 @@ PYBIND11_MODULE(mcpu_core, m) {
         .def_property(
             "coords",
             [](const State& s) { return s.coords_as_eigen(); },
-            [](State& s, const Eigen::Matrix3Xf& m) { s.set_coords_from_eigen(m); })
+            [](State& s, const Eigen::Matrix3Xf& m) { s.set_coords_from_eigen(m); },
+            "Coordinates, shape (3, n_atoms), in Angstrom, in storage order "
+            "(Context.coords uses build order by default). Writing them discards "
+            "this State's Mu contact list. To move a Context, use "
+            "Context.set_positions or Context.coords, which also refresh its "
+            "neighbour grids; writing ctx.get_state().coords does not.")
         .def_property_readonly("current_energy", &State::getEnergy)
         .def_readwrite("backbone_torsions",  &State::backbone_torsions)
         .def_readwrite("sidechain_torsions", &State::sidechain_torsions);
@@ -366,7 +375,10 @@ PYBIND11_MODULE(mcpu_core, m) {
         .def("set_mu_verlet_enabled", &Context::set_mu_verlet_enabled, py::arg("on"),
              "Enable/disable Mu Verlet without changing skin (denselist geometry).")
         .def("set_skip_rigid_mm", &Context::set_skip_rigid_mm, py::arg("on"),
-             "Skip moved-moved Mu pairs for rigid pivots (ΔE_mm=0).")
+             "Skip the pairs a rigid pivot carries (both atoms moved): their "
+             "distances do not change, so Mu neither scores nor re-checks them, "
+             "nor does the KORP CA-CA guard. Default True; False evaluates "
+             "them exactly, as a reference.")
         .def("skip_rigid_mm", &Context::skip_rigid_mm)
         .def("set_use_cell_pair", &Context::set_use_cell_pair, py::arg("on"),
              "Cell-pair denselist Mu (default true). False = per-atom walks.")
@@ -385,12 +397,6 @@ PYBIND11_MODULE(mcpu_core, m) {
             [](Context& c) -> m08::MuPotential* { return c.mu_potential(); },
             py::return_value_policy::reference_internal,
             "First MuPotential, or None.")
-        .def("set_mm_clash_margin", &Context::set_mm_clash_margin, py::arg("margin_r2"),
-             "ADDED: MM clash margin (Å²). Also: MCPU_MM_CLASH_MARGIN.")
-        .def("mm_clash_margin", &Context::mm_clash_margin)
-        .def("set_mm_double_boundary", &Context::set_mm_double_boundary, py::arg("on"),
-             "ADDED: double MM boundary clash check. Also: MCPU_MM_DOUBLE_BOUNDARY=1.")
-        .def("mm_double_boundary", &Context::mm_double_boundary)
         .def("set_verlet_moved_threshold", &Context::set_verlet_moved_threshold,
              py::arg("n"),
              "Force CellOnly when n_moved > n (0 ⇒ always CellOnly).")
@@ -866,7 +872,6 @@ PYBIND11_MODULE(mcpu_core, m) {
                      cpb["old_walk_ns"] = b.old_walk_ns;
                      cpb["old_r2_ns"] = b.old_r2_ns;
                      cpb["old_eval_ns"] = b.old_eval_ns;
-                     cpb["mmguard_ns"] = b.mmguard_ns;
                     cpb["movedbits_ns"] = b.movedbits_ns;
                     cpb["skipmask_ns"] = b.skipmask_ns;
                     cpb["clash_aborts"] = b.clash_aborts;
@@ -1455,16 +1460,6 @@ PYBIND11_MODULE(mcpu_core, m) {
         .def_property_readonly(
             "mu_cutoff_sq", &m08::MuPotential::mu_cutoff_sq,
             "mu_exact_cutoff² used in denselist r² prefilter.")
-        .def_property(
-            "mm_clash_margin",
-            &m08::MuPotential::mm_clash_margin,
-            &m08::MuPotential::set_mm_clash_margin,
-            "ADDED: MM clash margin Å² (MCPU_MM_CLASH_MARGIN).")
-        .def_property(
-            "mm_double_boundary",
-            &m08::MuPotential::mm_double_boundary,
-            &m08::MuPotential::set_mm_double_boundary,
-            "ADDED: double MM boundary check (MCPU_MM_DOUBLE_BOUNDARY).")
         .def("calculate_energy_change",
              [](const m08::MuPotential& mu, const Context& context,
                 const State& old_state, const State& new_state,

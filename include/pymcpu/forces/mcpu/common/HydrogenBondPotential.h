@@ -58,6 +58,10 @@ namespace mcpu::forces {
     public:
         HBondPotential(std::vector<float> loaded_params, std::vector<float> seq_dep_params);
 
+        /// Stores no atom ids: it reads State torsions and System blocks,
+        /// which are remapped for it.
+        void permute_atom_indices(const AtomPermutation&) override {}
+
         EnergyChangeResult calculateEnergyChange(
             const Context& context, 
             const State& old_state, 

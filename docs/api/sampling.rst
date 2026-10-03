@@ -83,8 +83,9 @@ Collective variables
    :members:
 
 The two required arguments, ``ca_internal_idx`` and ``ref_ca_xyz``, are
-engine-internal contact-atom indices and reference contact-atom
-coordinates in Angstroms. The drivers derive both from their
+contact-atom indices in engine build order (what ``forcefield.blocks``
+gives, not storage order after an ``init_only`` reorder) and reference
+contact-atom coordinates in Angstroms. The drivers derive both from their
 ``pdb_path`` / ``reference_pdb`` arguments, using this module's
 ``build_contact_atom_index`` and ``reference_contact_from_pdb``
 helpers; construct the CV directly only when you need a contact set the
@@ -97,7 +98,7 @@ drivers cannot express.
 
 CA-RMSD to a reference structure, superposed with Kabsch before
 measuring, so the value is invariant to rigid-body motion of the mobile
-structure. Takes the same engine-internal CA indices as
+structure. Takes the same build-order CA indices as
 ``NativeContactsCV`` and a reference in Angstroms; build them with
 ``build_ca_index`` and ``reference_ca_from_pdb``.
 

@@ -69,6 +69,27 @@ _RESIDUE_ALIASES = {
 }
 
 
+def _keep_source_identity(source: md.Topology, kept, target: md.Topology) -> None:
+    """Put back the chain IDs and residue numbers ``Topology.subset`` loses.
+
+    ``target`` is ``source.subset(kept)`` or the topology of
+    ``atom_slice(kept)``. mdtraj (1.10.3 at least) rebuilds every chain with
+    no ID and replaces a residue number of 0 with the residue's index. KORP
+    keys sequence separation on both: without the IDs every chain reads as
+    ``' '``, so two chains are numbering-checked and scored as one, and the
+    steric guard excuses cross-chain contacts as bonded neighbours.
+
+    ``subset`` keeps atoms in ``source`` order and drops only empty residues
+    and chains, so target atom k is source atom ``unique(kept)[k]``, and the
+    first atom of each target chain or residue names its source.
+    """
+    src = np.unique(np.asarray(kept, dtype=int))
+    for chain in target.chains:
+        chain.chain_id = source.atom(int(src[next(chain.atoms).index])).residue.chain.chain_id
+    for residue in target.residues:
+        residue.resSeq = source.atom(int(src[next(residue.atoms).index])).residue.resSeq
+
+
 class KORPForceField(BaseForceField):
     """Backbone-only KORP force field.
 
@@ -185,7 +206,9 @@ class KORPForceField(BaseForceField):
                 "no backbone atoms found; KORPForceField needs protein "
                 "residues with N, CA and C"
             )
-        return trajectory.atom_slice(selection)
+        sliced = trajectory.atom_slice(selection)
+        _keep_source_identity(trajectory.topology, selection, sliced.topology)
+        return sliced
 
     def _collect_residues(self, sliced: md.Trajectory) -> None:
         """Gather per-residue identity and check every frame can be built."""
@@ -231,6 +254,18 @@ class KORPForceField(BaseForceField):
         if len(self.res_names) < 3:
             raise ValueError(
                 f"need at least 3 scorable residues, found {len(self.res_names)}"
+            )
+        chains = list(dict.fromkeys(self.chain_ids))
+        if len(chains) > 1:
+            # The energy terms read chain identity, but the moves do not: the
+            # engine has one continuous backbone, so a pivot carries every later
+            # chain with it and KIC keeps the gap between chains as a bond.
+            logger.warning(
+                "KORPForceField: %d chains (%s). Energies treat them as separate "
+                "chains, but the moves treat them as one bonded backbone, so the "
+                "chains cannot move independently. Use multi-chain input for "
+                "scoring, or sample one chain.",
+                len(chains), ", ".join(repr(c) for c in chains),
             )
 
     def _validate_residue_numbering(self) -> None:
@@ -328,20 +363,21 @@ class KORPForceField(BaseForceField):
         which is not monotonic, so engine order is carried by `_output_index`
         -- never by the subset itself. Subsetting on `ordered_indices` directly
         would silently return a sorted topology and a fresh mismatch.
+        ``subset`` also drops chain IDs, which are put back.
         """
         used = sorted(self.ordered_indices)
         remap = {old: new for new, old in enumerate(used)}
         self.output_topology = sliced.topology.subset(used)
+        _keep_source_identity(sliced.topology, used, self.output_topology)
         self._output_index = [remap[i] for i in self.ordered_indices]
 
     def _check_initial_sterics(self) -> None:
         """Fail at construction if the input already violates the guard.
 
         Without this the run starts, the guard returns its sentinel on the
-        very first full energy evaluation, and the user gets a mid-run error
-        about a "detection gap in the delta path" -- which is true of the
-        symptom and useless about the cause. The structure was already
-        clashing before a single move was made.
+        very first full energy evaluation, and the user gets a mid-run
+        StericClashError instead of a clear statement that the structure was
+        already clashing before a single move was made.
         """
         ca = self.coords[0][self.ca_atom_index] * 10.0   # nm -> Angstrom
         seq = np.asarray(self.res_seq)
@@ -353,7 +389,10 @@ class KORPForceField(BaseForceField):
         checked = (~same_chain) | (separation >= self.min_separation)
         np.fill_diagonal(checked, False)
 
-        violations = checked & (distances < self.min_distance)
+        # The engine judges a whole state against a floor STATE_CLASH_BUFFER_A
+        # (0.001 A) below min_distance; moves are tested against min_distance.
+        floor = self.min_distance - mcpu_core.STATE_CLASH_BUFFER_A
+        violations = checked & (distances < floor)
         if not violations.any():
             return
         i, j = np.argwhere(violations)[0]
@@ -361,7 +400,7 @@ class KORPForceField(BaseForceField):
         raise ValueError(
             f"the input structure already violates the CA-CA steric guard: "
             f"{int(violations.sum()) // 2} pair(s) closer than "
-            f"{self.min_distance} A, the closest at {worst:.2f} A "
+            f"{floor:.3f} A, the closest at {worst:.3f} A "
             f"(e.g. {self.res_names[i]}{self.res_seq[i]} and "
             f"{self.res_names[j]}{self.res_seq[j]}). Monte Carlo cannot start "
             f"from a state the guard rejects. Either fix the structure, lower "

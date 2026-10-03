@@ -209,3 +209,50 @@ def test_a_missing_map_says_how_to_get_one(chain_traj, monkeypatch, tmp_path):
     assert "chaconlab.org" in message
     assert "331777205" in message
     assert "KORP_MAP_PATH" in message
+
+
+def _two_chain_energy(tmp_path, b_first):
+    from tests.physics.forcefield.test_korp_chain_identity import _two_chains
+
+    traj = _two_chains(tmp_path, b_first=b_first)
+    ff = KORPForceField(traj, map_path=_map_path())
+    energy = _simulate(ff, traj).context.energy_breakdown(weighted=False)["by_group"][7]
+    return ff, energy
+
+
+def test_two_chains_are_scored_as_two_chains(tmp_path):
+    """Pairs on different chains are non-bonded. The slice used to drop the
+    chain IDs, so the copy was scored as a continuation of chain A."""
+    from pymcpu.forcefields.korp_map import score_structure
+
+    ff, energy = _two_chain_energy(tmp_path, b_first=11)
+    frames = (ff.coords[0, : 3 * ff.n_res] * 10.0).reshape(ff.n_res, 3, 3)
+    two = score_structure(ff.korp_map, frames, ff.res_names, ff.res_seq, ff.chain_ids)
+    one = score_structure(ff.korp_map, frames, ff.res_names, ff.res_seq, [" "] * ff.n_res)
+    assert energy == pytest.approx(two, rel=1e-6)
+    assert abs(two - one) > 1.0
+
+
+def test_renumbering_another_chain_does_not_change_the_energy(tmp_path):
+    _, from_one = _two_chain_energy(tmp_path, b_first=1)
+    _, from_eleven = _two_chain_energy(tmp_path, b_first=11)
+    assert from_one == from_eleven
+
+
+@pytest.mark.parametrize(("rel", "inter_chain"), [
+    ("rcd6/1M4J.pdb", 78.266785),
+    ("rcd6/1DOS.pdb", -295.255619),
+])
+def test_the_inter_chain_energy_matches_korpe(rel, inter_chain):
+    """E(AB) - E(A) - E(B) from the reference korpe binary, on real
+    two-chain structures from the KORP bundle. (The per-chain totals are
+    not compared: chain A differs from korpe by a pre-existing amount that
+    has nothing to do with chains.)"""
+    traj = _load(rel)
+
+    def energy(t):
+        ff = KORPForceField(t, map_path=_map_path())
+        return _simulate(ff, t).context.energy_breakdown(weighted=False)["by_group"][7]
+
+    chains = [traj.atom_slice(traj.topology.select(f"chainid {i}")) for i in range(2)]
+    assert energy(traj) - energy(chains[0]) - energy(chains[1]) == pytest.approx(inter_chain, abs=1e-2)

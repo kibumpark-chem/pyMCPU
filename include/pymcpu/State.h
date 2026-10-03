@@ -27,7 +27,8 @@ struct SidechainTorsionAngles {
     std::array<float, 4> chi_angles = {-mcpu::PI_F, -mcpu::PI_F, -mcpu::PI_F, -mcpu::PI_F};
 };
 
-/// How State constructs optional N² / pair caches.
+/// How State constructs optional N² / pair caches. Only the legacy Mu build
+/// (MCPU_FAST_MU_DELTA=0) has one, is_contact_cache.
 /// DynamicOnly: coords+torsions only (MC proposals — no N² alloc/copy).
 enum class StateCacheMode : std::uint8_t {
     Full = 0,
@@ -42,7 +43,8 @@ public:
     std::vector<BackboneTorsionAngles> backbone_torsions;
     std::vector<SidechainTorsionAngles> sidechain_torsions;
 
-    /// Contact cache (legacy Mu path). Empty when DynamicOnly / unused by FAST delta.
+    /// Pair-contact bitmap of the legacy Mu build (MCPU_FAST_MU_DELTA=0). The
+    /// default build never reads or writes it and leaves it empty.
     mutable std::vector<bool> is_contact_cache;
 
     /// Live Mu contact list: for each atom, who it is CURRENTLY in contact with
@@ -56,7 +58,12 @@ public:
     /// is_contact_cache and q_pair_cache, so each replica has its own.
     ///
     /// Only the ACCEPTED state carries one; proposal buffers leave it empty
-    /// (copy_dynamic_from does not copy it).
+    /// (copy_dynamic_from does not copy it). Built from the coordinates on the
+    /// first move that needs it, kept up to date by each accepted move, and
+    /// rewritten whenever Context::calculate_total_energy(-1) resets the
+    /// running energy (MuPotential::resyncEnergy). Discarded by anything that
+    /// replaces the coordinates wholesale, by a move that cannot use it, and
+    /// by such a reset under a residue energy mask.
     struct MuContactEntry {
         std::int32_t j;
         float energy;
@@ -109,10 +116,14 @@ public:
         , sidechain_torsions(num_residues)
         , current_energy(0.0f)
     {
+#if MCPU_FAST_MU_DELTA
+        (void)cache_mode;
+#else
         if (cache_mode == StateCacheMode::Full) {
             is_contact_cache.assign(
                 static_cast<size_t>(num_atoms) * static_cast<size_t>(num_atoms), false);
         }
+#endif
     }
 
     State(const State&) = default;
@@ -137,13 +148,14 @@ public:
         }
         note_coords_eigen_write_back();
         coords_soa.load_from_eigen(m);
+        mu_contact_invalidate();
     }
     [[nodiscard]] Eigen::Matrix3Xf coords_as_eigen() const {
         note_coords_eigen_materialization();
         return coords_soa.as_eigen();
     }
 
-    void rotate_atoms(int start, int end, const Eigen::Matrix3f& R, const Eigen::Vector3f& pivot) {
+    void rotate_atoms(int start, int end, const Eigen::Matrix3d& R, const Eigen::Vector3d& pivot) {
         coords_soa.rotate_atoms(start, end, R, pivot);
     }
 

@@ -14,6 +14,11 @@
 /// ensemble; a filter cannot, because it only deletes configurations that KORP
 /// was never fitted to score.
 ///
+/// A move is rejected if it puts a CA pair under min_distance. A whole state
+/// is judged against a floor kStateClashBufferA (0.001 A) lower, which allows
+/// for a pair a rigid pivot carried a few 1e-6 A under min_distance by
+/// rounding.
+///
 /// The coarse-graining matches KORP's: one sphere per residue at CA. Note the
 /// limit that comes with that -- 2 A spheres spaced 3.8 A apart along the
 /// backbone leave gaps, so this reliably prevents collapse but does not
@@ -79,6 +84,13 @@ public:
 
     bool canHardReject() const noexcept override { return true; }
 
+    /// The delta's test: a moved CA under min_distance of another, except a
+    /// pair a rigid move carries (with skip_rigid_mm on).
+    bool clashesAtMoveCutoff(
+        const Context& context,
+        const State& proposed_state,
+        const ProposalPatch& patch) const override;
+
     RejectReason rejectionForEnergy(float energy) const noexcept override {
         return energy >= kClashPenalty * 0.5f
             ? RejectReason::StericClash
@@ -93,6 +105,8 @@ private:
     std::vector<std::uint8_t> chain_id_;
     int min_separation_;
     float min_distance_, min_distance_sq_;
+    /// calculateEnergy's floor: min_distance less kStateClashBufferA, squared.
+    float min_distance_state_sq_;
 
     /// -1 where the atom is not some residue's CA.
     std::vector<int> residue_of_ca_;

@@ -14,14 +14,13 @@ does.
    extension.
 
 .. note::
-   ``Context`` exposes 71 public members. This page documents the
+   ``Context`` exposes 67 public members. This page documents the
    user-facing subset. The remainder -- neighbour-list cell sizing and
    Verlet skin knobs (``mu_cell_size_angstrom``, ``mu_skin``,
    ``mu_verlet_enabled``, ``verlet_moved_threshold``,
    ``verlet_partial_threshold``, ``use_cell_pair``,
    ``cell_pair_min_moved``, ``clash_first_min_moved``,
-   ``skip_rigid_mm``, ``mm_clash_margin``, ``mm_double_boundary`` and
-   their setters), rebuild counters (``neighbor_aabb_rebuilds``,
+   ``skip_rigid_mm`` and their setters), rebuild counters (``neighbor_aabb_rebuilds``,
    ``neighbor_dense_cap_fallbacks``, ``neighbor_proxy_stats``,
    ``print_neighbor_audit``) and the atom-permutation internals -- are
    **performance and diagnostic knobs and are not part of the stable
@@ -225,6 +224,12 @@ Atom ordering
 .. py:method:: Context.set_atom_reorder_mode(mode) -> None
 
    Atom locality reorder: ``"off"`` (default) or ``"init_only"``.
+   ``init_only`` renumbers the System's atoms in place and remaps its
+   energy terms. A Context created on that System afterwards (REMD
+   replicas share one) adopts the same order and still takes build-order
+   coordinates. A Context created *before* the reorder holds coordinates
+   in the old order and raises ``RuntimeError`` when used; create it
+   again.
 
 .. py:method:: Context.get_atom_reorder_mode() -> str
 
@@ -297,7 +302,13 @@ State
 
    .. py:attribute:: coords
 
-      ``float32`` ``(3, n)`` coordinate array.
+      ``float32`` ``(3, n)`` coordinate array, in storage order
+      (:py:attr:`pymcpu.Context.coords` uses build order by default; they
+      differ after an ``init_only`` atom reorder). Writing it discards this
+      state's Mu contact list. To move a ``Context``, use
+      :py:meth:`pymcpu.Context.set_positions` or
+      :py:attr:`pymcpu.Context.coords`, which also refresh its neighbour
+      grids; writing ``ctx.get_state().coords`` does not.
 
    .. py:attribute:: current_energy
 

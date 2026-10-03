@@ -50,8 +50,11 @@ struct NeighborConfig {
     /// Runtime Verlet enable (skin value may stay >0 while gate disables use).
     bool mu_verlet_enabled = true;
 
-    /// If true (default), skip moved–moved Mu pairs for ``patch.is_rigid`` pivots.
-    /// Physics: rigid rotation preserves pairwise distances → ΔE_mm = 0.
+    /// If true (default), the pairs a rigid pivot (``patch.is_rigid``) carries
+    /// -- both atoms moved -- are not looked at: a rigid rotation keeps their
+    /// distances, so their energy does not change and they cannot start to
+    /// overlap. Mu neither scores nor re-checks them, nor does the KORP CA-CA
+    /// guard. False evaluates them exactly, as a reference.
     bool skip_rigid_mm = true;
 
     /// If true (default), denselist Mu uses cell-pair inversion (group moved by
@@ -77,12 +80,13 @@ struct NeighborConfig {
     /// Partial Verlet CSR rebuild on SC/KIC accept when n_moved ≤ this.
     int verlet_partial_threshold = 50;
 
-    /// Mu denselist cell size relative to (r_mu + skin). Default 1.0.
+    /// Mu denselist cell size relative to the Mu cutoff. Default 1.0.
     float mu_cell_size_scale = 1.f;
     /// Absolute Mu cell size (Å). If &gt; 0, overrides scale.
     float mu_cell_size_angstrom = -1.f;
-    /// Lower clamp (Å) to avoid huge stencils.
-    float mu_cell_size_min_angstrom = 1.5f;
+    /// Extra lower bound (Å) on the cell; the cell is never below the Mu
+    /// cutoff anyway, so only a value above it does anything. 0 = none.
+    float mu_cell_size_min_angstrom = 0.f;
     /// Denselist query/cell cutoff (Å). Filled by Context::sync_geometry from
     /// MuPotential::mu_exact_cutoff(). &lt;0 → NeighborSystem falls back to 6.0.
     float mu_denselist_cutoff_A = -1.f;
@@ -131,11 +135,11 @@ inline void apply_neighbor_env_overrides(NeighborConfig& cfg) noexcept {
     }
 }
 
-/// Effective Mu denselist cell size (Å): scale*(r_cut+skin) or absolute, with
-/// lower clamp only. Cell may exceed ``r_cut`` (scale>1): stencil radius stays
-/// ``ceil(query/cell)`` (=1 when cell≥cutoff) and still finds all pairs within
-/// cutoff. Upper clamp to ``list`` was removed so ``mu_cell_size_scale>1`` and
-/// absolute sizes > cutoff are usable for occupancy / AVX tuning.
+/// Effective Mu denselist cell size (Å): scale*(r_cut+skin) or absolute, never
+/// below ``r_cut``. Cell may exceed ``r_cut`` (scale>1): stencil radius stays
+/// ``ceil(query/cell)`` = 1 and still finds all pairs within cutoff. Upper
+/// clamp to ``list`` was removed so ``mu_cell_size_scale>1`` and absolute sizes
+/// > cutoff are usable for occupancy / AVX tuning.
 inline float effective_mu_cell_size_A(float r_cut, float skin,
                                      const NeighborConfig& cfg) noexcept {
     const float sk = skin > 0.f ? skin : 0.f;
@@ -144,8 +148,12 @@ inline float effective_mu_cell_size_A(float r_cut, float skin,
                      ? cfg.mu_cell_size_angstrom
                      : list * (cfg.mu_cell_size_scale > 0.f ? cfg.mu_cell_size_scale
                                                            : 1.f);
-    const float mn =
-        cfg.mu_cell_size_min_angstrom > 0.f ? cfg.mu_cell_size_min_angstrom : 1.5f;
+    // FIXED: never below the cutoff. The Mu grid code walks a one-cell stencil
+    // (27 cells, NeighborCellList::kCap); a smaller cell needs a wider stencil,
+    // which overflowed those buffers: set_positions crashed, and the cell-pair
+    // path silently dropped cells.
+    float mn = cfg.mu_cell_size_min_angstrom > 0.f ? cfg.mu_cell_size_min_angstrom : 0.f;
+    if (mn < r_cut) mn = r_cut;
     if (cell < mn) cell = mn;
     // CHANGED: allow cell > list (scale>1 / absolute > cutoff). Correctness:
     // OpenCellGrid uses R=ceil(query_radius/cell_size); query stays at r_cut.
@@ -264,9 +272,8 @@ struct NeighborStats {
     std::uint64_t cp_old_walk_ns = 0;
     std::uint64_t cp_old_r2_ns = 0;
     std::uint64_t cp_old_eval_ns = 0;
-    std::uint64_t cp_mmguard_ns = 0;
     std::uint64_t cp_movedbits_ns = 0;  ///< per-cell moved mask (random is_moved[] loads)
-    std::uint64_t cp_skipmask_ns = 0;   ///< per-(moved atom, cell) skip mask  ///< rigid-MM clash guard (diag build)
+    std::uint64_t cp_skipmask_ns = 0;   ///< per-(moved atom, cell) skip mask
     std::uint64_t cp_clash_aborts = 0;
     std::uint64_t cp_full_evals = 0;
     std::uint64_t cp_new_r2_checks = 0;

@@ -20,7 +20,24 @@ Context::Context(std::shared_ptr<System> sys)
     , state(system->getNumAtoms(), system->getNumResidues())
     , atom_perm_(AtomPermutation::identity(system->getNumAtoms()))
 {
+    // A System another Context reordered (REMD replicas share one) is in
+    // storage order: take its permutation, so coordinates given in build
+    // order are mapped like that Context's.
+    if (system->atoms_reordered()) {
+        atom_perm_ = system->applied_atom_permutation();
+        atom_reorder_mode_ = AtomReorderMode::InitOnly;
+        reorder_applied_ = true;
+    }
     neighbors_.init(*system);
+}
+
+void Context::require_current_atom_order() const {
+    if (system->atoms_reordered() && !reorder_applied_) {
+        throw std::runtime_error(
+            "this Context was created before another Context reordered its "
+            "System's atoms (init_only), so its coordinates are in the old "
+            "order; create the Context again.");
+    }
 }
 
 void Context::set_atom_reorder_mode(AtomReorderMode mode) {
@@ -29,6 +46,7 @@ void Context::set_atom_reorder_mode(AtomReorderMode mode) {
         // Keep identity; do not undo an already-applied permutation in this PR.
         return;
     }
+    require_current_atom_order();
     if (positions_set_ && !reorder_applied_) {
         maybe_apply_init_only_reorder_();
     }
@@ -42,6 +60,7 @@ void Context::maybe_apply_init_only_reorder_() {
     if (atom_reorder_mode_ != AtomReorderMode::InitOnly) return;
     if (reorder_applied_) return;
     if (!positions_set_) return;
+    require_current_atom_order();
 
     std::vector<BlockIndices> new_blocks;
     const NeighborConfig& ncfg = neighbors_.config();
@@ -55,10 +74,8 @@ void Context::maybe_apply_init_only_reorder_() {
     }
 
     permute_coords_soa(state.coords_soa, atom_perm_);
+    // Also remaps every potential and records the permutation on the System.
     system->apply_residue_contiguous_blocks(std::move(new_blocks), atom_perm_);
-    for (auto& potential : system->getPotentials()) {
-        potential->permute_atom_indices(atom_perm_);
-    }
     // Contact cache is indexed by atom pairs in storage order — invalidate.
     state.is_contact_cache.clear();
     // Pair indices change meaning under a permutation -- drop the list too.
@@ -98,6 +115,7 @@ void require_atom_count(const Eigen::Matrix3Xf& coords, int expected) {
 
 void Context::set_coords_from_python(const Eigen::Matrix3Xf& coords) {
     require_atom_count(coords, system->getNumAtoms());
+    require_current_atom_order();
     if (atom_perm_.is_identity()) {
         setPositions(coords);
         return;
@@ -144,6 +162,7 @@ void Context::setQBias(float k_bias, float n_target) {
 // --- INITIALIZATION ---
 void Context::setPositions(const Eigen::Matrix3Xf& new_coords) {
     require_atom_count(new_coords, system->getNumAtoms());
+    require_current_atom_order();
     // Coordinates are being replaced wholesale (load, REMD swap, restart), so
     // the live contact list describes a conformation that no longer exists.
     state.mu_contact_invalidate();
@@ -402,10 +421,13 @@ void Context::commit_accepted_move(const State& proposed_state, const ProposalPa
 
 // --- PHYSICS EVALUATION ---
 float Context::calculate_total_energy(int target_group) {
+    require_current_atom_order();
     // Asks the System to loop through all its Potentials and calculate baseline energy
     // (legacy-weighted by default via energy_weights_).
-    const TotalEnergyResult result =
-        system->evaluateTotalEnergy(*this, state, target_group);
+    // The whole energy is what current_energy gets reset to, so it is a
+    // resync: terms rebuild their incremental bookkeeping in the same pass.
+    const TotalEnergyResult result = system->evaluateTotalEnergy(
+        *this, state, target_group, /*resync=*/target_group == -1);
     const float e = result.energy;
 
     if (target_group == -1) {
@@ -428,6 +450,7 @@ float Context::calculate_total_energy(int target_group) {
 }
 
 float Context::calculate_total_energy_raw(int target_group) const {
+    require_current_atom_order();
     return system->getTotalEnergyRaw(*this, state, target_group);
 }
 
@@ -438,6 +461,7 @@ float Context::calculate_delta_energy(const State& proposed_state, const Proposa
 }
 
 EnergyBreakdown Context::energy_breakdown() const {
+    require_current_atom_order();
     return system->energyBreakdown(*this, state);
 }
 
@@ -457,52 +481,6 @@ const forces::mcpu08::MuPotential* Context::mu_potential() const {
         }
     }
     return nullptr;
-}
-
-void Context::set_mm_clash_margin(float margin_r2) {
-#if MCPU_FAST_MU_DELTA
-    for (auto& f : system->getPotentials()) {
-        if (auto* mu = dynamic_cast<forces::mcpu08::MuPotential*>(f.get())) {
-            mu->set_mm_clash_margin(margin_r2);
-        }
-    }
-#else
-    (void)margin_r2;
-#endif
-}
-
-float Context::mm_clash_margin() const {
-#if MCPU_FAST_MU_DELTA
-    for (const auto& f : system->getPotentials()) {
-        if (const auto* mu = dynamic_cast<const forces::mcpu08::MuPotential*>(f.get())) {
-            return mu->mm_clash_margin();
-        }
-    }
-#endif
-    return 0.f;
-}
-
-void Context::set_mm_double_boundary(bool on) {
-#if MCPU_FAST_MU_DELTA
-    for (auto& f : system->getPotentials()) {
-        if (auto* mu = dynamic_cast<forces::mcpu08::MuPotential*>(f.get())) {
-            mu->set_mm_double_boundary(on);
-        }
-    }
-#else
-    (void)on;
-#endif
-}
-
-bool Context::mm_double_boundary() const {
-#if MCPU_FAST_MU_DELTA
-    for (const auto& f : system->getPotentials()) {
-        if (const auto* mu = dynamic_cast<const forces::mcpu08::MuPotential*>(f.get())) {
-            if (mu->mm_double_boundary()) return true;
-        }
-    }
-#endif
-    return false;
 }
 
 } // namespace mcpu

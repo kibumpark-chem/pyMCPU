@@ -44,6 +44,10 @@ public:
         const ProposalPatch& patch
     ) const override;
 
+    /// Pair endpoints are build-order atom ids; init_only maps them to storage
+    /// order. Pair numbers, and so State::q_pair_cache's layout, are unchanged.
+    void permute_atom_indices(const AtomPermutation& perm) override;
+
 private:
     std::vector<int> pairs_i_;
     std::vector<int> pairs_j_;
@@ -52,6 +56,7 @@ private:
     /// pair indices touching each atom (for incremental delta evaluation)
     std::vector<std::vector<int>> atom_to_pairs_;
 
+    void rebuild_atom_to_pairs();
     bool pairFormed(const State& state, int pair_idx) const noexcept;
     static float biasEnergy(float n, float k_bias, float n_target) noexcept;
 };
