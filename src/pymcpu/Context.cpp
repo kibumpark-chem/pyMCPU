@@ -1,4 +1,5 @@
 #include "pymcpu/Context.h"
+#include <cassert>
 #include <stdexcept>
 #include <string>
 #include "pymcpu/forces/bias/QBiasPotential.h"
@@ -346,14 +347,18 @@ void Context::commit_accepted_move(const State& proposed_state, const ProposalPa
     }
 
     // Copy accepted trial coordinates into master state (no grid mutation here).
+    // moved_indices lists exactly the atoms moving_atoms marks (mark_moved
+    // keeps both; reset_for_step relies on the same invariant), so walking it
+    // copies the same atoms in O(n_moved) instead of scanning all N.
     {
-        for (size_t atom_idx = 0; atom_idx < patch.moving_atoms.size(); ++atom_idx) {
-            if (patch.moving_atoms[atom_idx]) {
-                state.coords_soa.copy_atom_from(
-                    proposed_state.coords_soa,
-                    static_cast<int>(atom_idx),
-                    static_cast<int>(atom_idx));
-            }
+#ifndef NDEBUG
+        std::size_t n_marked = 0;
+        for (std::uint8_t m : patch.moving_atoms) n_marked += (m != 0);
+        assert(n_marked == patch.moved_indices.size() &&
+               "moved_indices must list exactly the atoms moving_atoms marks");
+#endif
+        for (int atom_idx : patch.moved_indices) {
+            state.coords_soa.copy_atom_from(proposed_state.coords_soa, atom_idx, atom_idx);
         }
 
         for (int r : patch.distorted_bb_residues) {
