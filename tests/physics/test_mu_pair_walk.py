@@ -52,3 +52,26 @@ def test_pivot_delta_matches_full_recompute() -> None:
     integrator.set_move_weights(*PIVOT_ONLY)
     integrator.set_seed(11)
     integrator.verify_physics_consistency(context, num_steps=60, atol=ATOL)
+
+
+def test_clash_hot_list_does_not_change_the_trajectory() -> None:
+    # The clash-first pass tests first the atoms that overlapped in recent
+    # rejected moves, a per-Context list that outlives the moves and the
+    # coordinates it came from. Only the order of the pass may depend on it:
+    # a Context that has rejected hundreds of moves, put back at the start
+    # coordinates, must follow a fresh Context's trajectory bit for bit.
+    warm, _ = build_test_context()
+    start = warm.coords.copy()
+    bits_warmup, _ = _run(warm, 300, seed=3)
+    assert sum(bits_warmup) < len(bits_warmup), "warm-up rejected no move"
+    warm.set_positions(start)
+    warm.calculate_total_energy(-1)
+
+    fresh, _ = build_test_context()
+    fresh.set_positions(start)
+    fresh.calculate_total_energy(-1)
+
+    bits_warm, energy_warm = _run(warm, 300)
+    bits_fresh, energy_fresh = _run(fresh, 300)
+    assert bits_warm == bits_fresh
+    assert energy_warm == energy_fresh

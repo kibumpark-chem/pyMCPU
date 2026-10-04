@@ -2167,7 +2167,31 @@ struct CpTimer {
             static_cast<int>(moved.size()) >= kClashFirstMinMoved) {
             const float rq = clash_query_radius();
             if (rq > 0.f) {
-                for (int i : moved) {
+                // Visiting order. The answer is the same in any order; the
+                // cost of a rejected move is how many atoms are tested before
+                // the first overlap. MEASURED (actin, 1500 pivot-only steps):
+                // in moved_indices order that is 30% of the moved atoms on
+                // average (237 of ~790), because moved_indices lists backbone,
+                // then O, then side chains, and 63% of overlapping atoms are
+                // side-chain atoms. So: first the atoms that overlapped in
+                // recent rejected moves (ws.clash_hot; ~50 distinct atoms
+                // cover every rejection of that run), then the moved atoms
+                // back to front. Simulated on the same moves: ~9 atoms per
+                // rejection instead of 237. A hot atom the move carries is
+                // tested twice when it does not overlap; that costs one atom.
+                const int n_hot = ws.clash_hot_n;
+                const int n_mv = static_cast<int>(moved.size());
+                int found = -1;
+                for (int s = 0; s < n_hot + n_mv; ++s) {
+                    int i;
+                    if (s < n_hot) {
+                        i = ws.clash_hot[s];
+                        if (static_cast<size_t>(i) >= is_moved.size() ||
+                            !is_moved[static_cast<size_t>(i)])
+                            continue;
+                    } else {
+                        i = moved[static_cast<size_t>(n_mv - 1 - (s - n_hot))];
+                    }
                     const float nx = cnew.x(i), ny = cnew.y(i), nz = cnew.z(i);
                     auto clash_cell = [&](const int* __restrict__ cids,
                             const float* __restrict__ cx,
@@ -2191,9 +2215,10 @@ struct CpTimer {
                                   nx, ny, nz, rq, mpc, clash_cell)
                             : grid.for_each_neighbor_cell_span_while_within(
                                   nx, ny, nz, rq, clash_cell);
-                    if (!ok) { clash = true; break; }
+                    if (!ok) { found = i; break; }
                 }
-                if (clash) {
+                if (found >= 0) {
+                    ws.note_clash_atom(found);
                     ws.clear();
                     return kHardCorePenalty;
                 }

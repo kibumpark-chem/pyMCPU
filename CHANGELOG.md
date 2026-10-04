@@ -442,17 +442,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **Mu's energy change skips the neighbour cells that hold only moved atoms,
-  which makes actin 1.3x faster on the default move mix and 1.6x
-  pivot-only.** The neighbour grid holds accepted coordinates, so both walks
-  over a moved atom's new neighbours (the clash-first pass and the contact
-  walk) skip every atom the move displaced. On an actin pivot about three
-  quarters of the cells they visited held nothing else. A move now counts
-  its atoms per cell and skips the cells it fills completely. The same pairs
-  are scored in the same order, so trajectories are unchanged bit for bit.
-  Cycles per step against the previous commit: -25% on actin's default move
-  mix (54.5 to 42.2 µs/step over 3000 steps), -37% pivot-only and -7% on
-  chignolin.
+- **Mu's energy change does less work per moved atom, which makes actin
+  1.5x faster on the default move mix and 2.0x pivot-only.** Each part
+  scores the same pairs in the same order and returns the same answer, so
+  trajectories are unchanged bit for bit. Cycles per step on actin's default
+  move mix (3000 steps), actin pivot-only (1500) and chignolin (30000), each
+  against the step before:
+
+  * Both walks over a moved atom's new neighbours (the clash-first pass and
+    the contact walk) skip the cells that hold only atoms the move
+    displaced. The grid holds accepted coordinates, so those atoms were
+    skipped one by one anyway; on an actin pivot they filled about three
+    quarters of the cells visited. -25%, -37% and -7%.
+  * The clash-first pass tests first the atoms that overlapped in recent
+    rejected moves, then the moved atoms from the end of the move's list
+    (for a pivot, side chains before backbone). It used to test about 30%
+    of a rejected actin pivot's atoms before it found the overlap. -12% and -20% on actin; chignolin's moves
+    are too small for the pass.
+
+  Both together: -34% cycles per step on actin's default move mix and
+  -50% pivot-only.
 
 - **A YAML config with an unknown key is an error.** The flat YAML schema
   ignored any key it did not read, so a misspelled key such as `num_cylces`
