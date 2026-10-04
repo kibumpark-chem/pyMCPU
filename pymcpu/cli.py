@@ -1,7 +1,7 @@
 """``mcpu`` command-line entry point.
 
 Subcommands: ``version``, ``download-params``, ``materialize-params``,
-``run``, ``validate``, ``, ``, ````. See docs/cli.rst.
+``run`` and ``validate``. See docs/cli.rst.
 """
 
 from __future__ import annotations
@@ -189,7 +189,6 @@ def build_parser() -> argparse.ArgumentParser:
     p_val.add_argument("config", type=Path, help="Path to config file (.json/.yaml/.yml)")
     _add_checkpoint_args(p_val)
     p_val.set_defaults(func=_cmd_validate)
-
 
     return parser
 
