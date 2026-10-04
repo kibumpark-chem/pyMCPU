@@ -1238,11 +1238,17 @@ void MCIntegrator::apply_rotamer_at(Context& context, State& proposal, ProposalP
     recompute_sidechain_torsion(proposal, system, r);
 }
 
-// Symmetrically stable local frame to prevent KIC numerical drift
+// Carries a residue's dependent atoms (sidechain, O, H) rigidly with its backbone frame
+// (bisector of p1-center-p3), from old_coords to new_coords.
+//
+// Done in double and rounded to float once per coordinate, like CoordsSoA::rotate_atoms. In
+// float32 the frame maths was biased, not just noisy: over 3M default-mix chignolin steps
+// the bonds it carries in KIC's residues drifted linearly (sidechain bonds +8e-4 A on average,
+// CA-CB -2.2e-4 A), while bonds in residues KIC never moves stayed under 1e-4 A.
 void transfer_dependent_atoms(
     const CoordsSoA& old_coords, CoordsSoA& new_coords,
-    int p1_idx, int center_idx, int p3_idx, 
-    int dep_start, int dep_len)            
+    int p1_idx, int center_idx, int p3_idx,
+    int dep_start, int dep_len)
 {
     if (dep_len <= 0 || dep_start < 0) return;
     const int n = old_coords.n;
@@ -1251,34 +1257,34 @@ void transfer_dependent_atoms(
         return;
     }
 
-    auto build_frame = [](const Eigen::Vector3f& p1, const Eigen::Vector3f& center, const Eigen::Vector3f& p3) {
-        Eigen::Vector3f v1 = (p1 - center).normalized();
-        Eigen::Vector3f v2 = (p3 - center).normalized();
-        
-        Eigen::Vector3f bisector = (v1 + v2).normalized();
-        Eigen::Vector3f n = v1.cross(v2).normalized();
-        Eigen::Vector3f ortho = n.cross(bisector).normalized();
-        
-        Eigen::Matrix3f frame;
-        frame.col(0) = bisector; 
-        frame.col(1) = ortho; 
-        frame.col(2) = n;
+    // One division per unit vector, and none for the third axis: nrm is
+    // perpendicular to bisector, so their cross product is already a unit.
+    auto unit = [](const Eigen::Vector3d& v) { return Eigen::Vector3d(v * (1.0 / v.norm())); };
+    auto build_frame = [&unit](const Eigen::Vector3d& p1, const Eigen::Vector3d& center,
+                               const Eigen::Vector3d& p3) {
+        const Eigen::Vector3d v1 = unit(p1 - center);
+        const Eigen::Vector3d v2 = unit(p3 - center);
+        const Eigen::Vector3d bisector = unit(v1 + v2);
+        const Eigen::Vector3d nrm = unit(v1.cross(v2));
+        Eigen::Matrix3d frame;
+        frame.col(0) = bisector;
+        frame.col(1) = nrm.cross(bisector);
+        frame.col(2) = nrm;
         return frame;
     };
 
-    const Eigen::Vector3f center_old = old_coords.atom(center_idx);
-    const Eigen::Vector3f center_new = new_coords.atom(center_idx);
-    Eigen::Matrix3f frame_old = build_frame(
-        old_coords.atom(p1_idx), center_old, old_coords.atom(p3_idx)
-    );
-    Eigen::Matrix3f frame_new = build_frame(
-        new_coords.atom(p1_idx), center_new, new_coords.atom(p3_idx)
-    );
+    const Eigen::Vector3d center_old = old_coords.atom(center_idx).cast<double>();
+    const Eigen::Vector3d center_new = new_coords.atom(center_idx).cast<double>();
+    const Eigen::Matrix3d frame_old = build_frame(
+        old_coords.atom(p1_idx).cast<double>(), center_old, old_coords.atom(p3_idx).cast<double>());
+    const Eigen::Matrix3d frame_new = build_frame(
+        new_coords.atom(p1_idx).cast<double>(), center_new, new_coords.atom(p3_idx).cast<double>());
+    const Eigen::Matrix3d M = frame_new * frame_old.transpose();
 
     for (int i = 0; i < dep_len; ++i) {
-        int atom_idx = dep_start + i;
-        Eigen::Vector3f local_pos = frame_old.transpose() * (old_coords.atom(atom_idx) - center_old);
-        new_coords.set_atom(atom_idx, center_new + (frame_new * local_pos));
+        const int atom_idx = dep_start + i;
+        const Eigen::Vector3d p = center_new + M * (old_coords.atom(atom_idx).cast<double>() - center_old);
+        new_coords.set_atom(atom_idx, p.cast<float>());
     }
 }
 

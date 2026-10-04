@@ -67,6 +67,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **KIC no longer stretches the bonds of the atoms it carries.** A KIC move
+  carries each window residue's O, sidechain and amide H rigidly with its
+  backbone frame, and `transfer_dependent_atoms` built that frame in
+  float32. The error was a bias, not noise: every accepted move pushed the
+  carried bonds the same way. Over 3M default-mix chignolin steps, in the
+  residues KIC moves, sidechain bonds grew by 7.6e-4 Å on average (up to
+  1.6e-3 Å), CA-CB shrank by 2.2e-4 Å and C=O drifted by 7e-4 Å rms, while
+  the backbone bonds KIC re-closes stayed within 4e-5 Å. The frame is now
+  built in double and each coordinate rounded to float once, as
+  `CoordsSoA::rotate_atoms` already does: the same bonds stay within 2e-4 Å
+  (rms 5e-5 to 9e-5 Å), and over 200k KIC-only steps within 2e-5 Å, against
+  1e-3 Å before. Trajectories change from the first accepted KIC move;
+  energies and acceptance rates were statistically unchanged over 7 seeds.
+  The double maths costs about 3% per step on chignolin's default move mix
+  and 4% with KIC moves only.
+
 - **Rigid pivots score the carried pairs that rounding takes across their Mu
   contact cutoff.** A rigid pivot does not re-measure the pairs it carries,
   but its rounding moves each carried distance by up to sqrt(3) float steps
