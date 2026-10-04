@@ -468,6 +468,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   All three together: -41% cycles per step on actin's default move mix,
   -57% pivot-only and -12% on chignolin.
 
+- **KIC moves find their closures 2.5x faster, which makes chignolin 11%
+  faster on the default move mix.** Most of a closure's time went to the
+  Sturm root counts of its degree-16 polynomial, and most of those to the
+  bisection that finishes a root. With AVX2 and FMA (the default `v3`
+  build) a count evaluates four polynomials of the Sturm sequence per
+  vector, with the same fused multiply-adds as before, and the bisection
+  takes two steps per round from counts computed together. 37k to 15k
+  cycles per solve; every root is unchanged bit for bit, so trajectories
+  are too. Cycles per step: -11% on chignolin's default move mix, -4% on
+  actin's. Builds without AVX2, and builds with `MCPU_FP_CONTRACT` set to
+  anything but `fast`, run the scalar code as before.
+
+  The packed counts hold the cores at a lower AVX clock. With every core of
+  a socket running a simulation (22 processes on a Xeon 8268) the clock
+  drops from 3.44 to 2.97 GHz, so actin's default move mix makes 3.4% fewer
+  steps per second across the socket than with the scalar counts, while
+  chignolin, where closures are a larger share of the step, still makes
+  11% more. A single process gains on both: 7% on actin, 17% on chignolin.
+
 - **A YAML config with an unknown key is an error.** The flat YAML schema
   ignored any key it did not read, so a misspelled key such as `num_cylces`
   or `checkpoint_intrval` silently left the setting at its default, and
