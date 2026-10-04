@@ -822,9 +822,9 @@ class FoldingRunner:
         if state.replica_coords:
             coords = np.asarray(state.replica_coords[0], dtype=np.float64)
             if coords.ndim == 2 and coords.shape[0] == 3:
-                self.simulation.context.set_positions(coords.astype(np.float32))
+                self.simulation.context.set_positions(coords)
             else:
-                self.simulation.context.set_positions(coords.T.astype(np.float32))
+                self.simulation.context.set_positions(coords.T)
             self.simulation.context.calculate_total_energy(-1)
             check_state_clash(self.simulation.context, f"checkpoint restore from {checkpoint_path}")
 

@@ -646,7 +646,7 @@ private:
     bool use_pooled_proposal_ = (MCPU_USE_POOLED_PROPOSAL != 0);
     /// When true (default): skip per-step full proposal sync; restore on reject. O(n_moved).
     bool use_sparse_proposal_ = true;
-    /// False until first ``copy_dynamic_from`` in the current ``run`` (or after AutoRecenter).
+    /// False until first ``copy_dynamic_from`` in the current ``run``.
     bool proposal_synced_ = false;
     std::vector<uint8_t> last_accept_bits_;
     StepStats step_stats_;

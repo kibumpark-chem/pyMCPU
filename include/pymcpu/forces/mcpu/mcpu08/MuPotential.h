@@ -587,11 +587,6 @@ namespace mcpu::forces::mcpu08 {
         /// Count of moves that could not use the list, energy-masked ones
         /// aside (diagnostic only).
         mutable std::uint64_t clist_fallbacks_ = 0;
-        /// A rigid pivot's carry bound (carry_bound_A) above which the
-        /// dispatch notes, once, that the coordinates are too far from the
-        /// origin: an eighth of kStateClashBufferA, reached from 1024 A out.
-        static constexpr float kFarCarryNoteA = kStateClashBufferA / 8.f;
-        mutable bool far_carry_noted_ = false;
         /// Count of rebuild_contact_list calls (diagnostic only).
         mutable std::uint64_t contact_list_rebuilds_ = 0;
 

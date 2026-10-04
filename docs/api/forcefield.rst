@@ -83,11 +83,13 @@ conversion is the caller's job:
 
 ============================  ====================================
 ``ff.coords``                 nanometres, ``(n_frames, n_atoms, 3)``
-``Context.set_positions``     Angstrom, ``(3, n_atoms)``, float32
+``Context.set_positions``     Angstrom, ``(3, n_atoms)``
 ============================  ====================================
 
 so the first frame is passed as
-``(ff.coords[0] * 10.0).T.astype(np.float32)``.
+``(ff.coords[0] * 10.0).T.astype(np.float32)``. The engine stores float32,
+which this enters exactly; a structure far from the origin runs in a
+shifted frame (``Context.frame_offset``, see :ref:`context-frame`).
 
 What ``create_system`` installs
 -------------------------------

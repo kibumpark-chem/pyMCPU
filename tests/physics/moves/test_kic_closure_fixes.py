@@ -14,6 +14,9 @@ this fix they did not:
 * KIC's Jacobian depended on how the molecule sat in the lab frame.
 * KIC left stale cached backbone torsions on neighbouring residues, so the
   incremental energy of later moves was wrong.
+* KIC carried each window residue's O, CB and sidechain with frame maths done
+  in float32, which stretched sidechain bonds and shortened CA-CB a little on
+  every accepted move.
 
 Each test below fails on the unfixed engine. All run on chignolin (10 residues,
 PRO at index 3) and take seconds; the KORP one needs ``KORP_MAP_PATH``, like the
@@ -156,6 +159,39 @@ def test_accepted_moves_keep_backbone_geometry(virtual_amide_h):
     lengths_a = {k: v for k, v in worst.items() if k in ("N-CA", "CA-C", "C=O", "C-N", "N-H")}
     assert max(angles_deg.values()) < ANGLE_TOL_DEG, angles_deg
     assert max(lengths_a.values()) < LENGTH_TOL_A, lengths_a
+
+
+def test_kic_keeps_the_bonds_it_carries():
+    """Every heavy-atom bond length stays at its start value over 200k KIC-only
+    steps (about 19k accepted moves).
+
+    KIC moves a window residue's dependent atoms (O, the sidechain, H) rigidly
+    with its backbone frame. With that frame maths in float32 the carried bonds
+    drifted steadily, not as a random walk: sidechain bonds grew by up to 1e-3 A
+    and C=O changed by up to 6e-4 A here. Done in double and rounded once, they
+    move by about 2e-5 A, the same float noise as every other atom."""
+    traj = md.load(str(default_example_pdb()))
+    heavy = traj.atom_slice(traj.topology.select("not element H"))
+    heavy.topology.create_standard_bonds()
+    forcefield = MCPUForceField(heavy)
+    engine = {a.original_index: k for k, a in enumerate(forcefield.ordered_atom_list)}
+    bonds = np.array([(engine[a.index], engine[b.index]) for a, b in heavy.topology.bonds])
+    context = mcpu_core.Context(forcefield.create_system(heavy.topology))
+    start = (forcefield.coords[0] * 10.0).T.astype(np.float32)
+    context.set_positions(start)
+    context.calculate_total_energy(-1)
+
+    def lengths(coords):
+        X = np.asarray(coords, dtype=np.float64)
+        return np.linalg.norm(X[:, bonds[:, 0]] - X[:, bonds[:, 1]], axis=0)
+
+    integrator = mcpu_core.Integrator(temperature=0.6)
+    integrator.set_seed(1)
+    integrator.set_move_weights(0.0, 1.0, 0.0)
+    integrator.run(context, 200_000)
+    assert integrator.get_kic_accepted() > 15_000
+    worst = float(np.abs(lengths(context.coords) - lengths(start)).max())
+    assert worst < 1e-4, f"a bond changed by {worst:.2e} A under KIC"
 
 
 def test_kic_never_changes_proline_phi():

@@ -67,6 +67,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **KIC no longer stretches the bonds of the atoms it carries.** A KIC move
+  carries each window residue's O, sidechain and amide H rigidly with its
+  backbone frame, and `transfer_dependent_atoms` built that frame in
+  float32. The error was a bias, not noise: every accepted move pushed the
+  carried bonds the same way. Over 3M default-mix chignolin steps, in the
+  residues KIC moves, sidechain bonds grew by 7.6e-4 Å on average (up to
+  1.6e-3 Å), CA-CB shrank by 2.2e-4 Å and C=O drifted by 7e-4 Å rms, while
+  the backbone bonds KIC re-closes stayed within 4e-5 Å. The frame is now
+  built in double and each coordinate rounded to float once, as
+  `CoordsSoA::rotate_atoms` already does: the same bonds stay within 2e-4 Å
+  (rms 5e-5 to 9e-5 Å), and over 200k KIC-only steps within 2e-5 Å, against
+  1e-3 Å before. Trajectories change from the first accepted KIC move;
+  energies and acceptance rates were statistically unchanged over 7 seeds.
+  The double maths costs about 3% per step on chignolin's default move mix
+  and 4% with KIC moves only.
+
 - **Rigid pivots score the carried pairs that rounding takes across their Mu
   contact cutoff.** A rigid pivot does not re-measure the pairs it carries,
   but its rounding moves each carried distance by up to sqrt(3) float steps
@@ -407,6 +423,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **A structure placed far from the origin runs shifted next to it, and
+  coordinates come back as float64.** Coordinates are float32 and every move
+  rounds each coordinate it changes at its absolute value, so the rounding
+  grows with the distance from the origin (3.8e-6 Å per float step at 50 Å,
+  2.4e-4 Å at 4000 Å). Far out that showed: over 200k actin pivot steps,
+  backbone bond lengths drifted by up to 6.9e-3 Å at 1000 Å and 2.2e-2 Å at
+  4000 Å (2e-4 Å at the origin); chignolin's KIC moves failed their
+  reversibility check 193 times in 20k steps at 300 Å and 1967 times at
+  4000 Å, where only 10 were accepted (1 failure and about 430 accepted at
+  the origin); and from a few thousand Å out a rigidly carried pair could
+  slip under its hard-core cutoff and stop the run with `StericClashError`.
+  Such inputs are common: cryo-EM models often sit several hundred Å out.
+  A `Context` now runs a structure that reaches 64 Å or more from the
+  origin in an engine frame shifted next to it: on its first placement it
+  shifts each axis whose coordinates all lie on one side of the origin by a
+  whole number of Å. That is exact for float32 input, so every distance, and
+  every energy term computed from distances, is unchanged bit for bit (the
+  virtual amide hydrogens and aromatic ring centres, built from absolute
+  positions, now round more finely), and the run behaves as it would at the
+  origin. The new read-only `Context.frame_offset` holds the shift, and
+  `Context.coords`, XTC files, checkpoints, `get_coords` and
+  `EngineSession.coords()` add it back, so callers see their own frame. They
+  return float64, because engine + offset is exact only in double: a run
+  restored from them, or a replica swap, re-enters bit for bit in a
+  `Context` that placed the same start structure first, as every pyMCPU
+  driver does (store them as float64 to keep that; an engine coordinate
+  within a few 1e-6 Å of zero can come back off by about 2e-13 Å).
+  `set_positions` takes float64 too (rounded to float32 once, in the engine
+  frame), and a keyword-only `frame_offset` to choose the shift. Structures
+  within 64 Å of the origin, or straddling it on every axis, run in the
+  engine exactly as before, which covers every input in the test suite
+  except the KORP structures, whose energies are unchanged. Python code that
+  takes coordinates from `get_coords`, such as REMD's native-contact counts,
+  now computes in float64. `get_state().coords` is in the engine frame. If
+  coordinates still reach 256 Å in the engine frame, the `Context` prints a
+  note (once per process); Mu's far-from-origin note is gone. Integrations
+  that store coordinates between runs, such as the pymcpu-westpa add-on,
+  should store them as float64.
+
 - **A trial move out of the neighbour grid drops Mu's contact list only if it
   is accepted.** Such a move cannot use the list, and it used to discard it
   at once, so the next move rebuilt it from the coordinates (O(N^2), about
@@ -434,11 +489,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and 5M-step actin runs (three seeds each, with the rotation fix above).
   That holds near the origin: a float step grows with the coordinate, and
   with actin moved 4000 Å out a carried pair went through the margin within
-  200k pivot-only steps (1000 Å out, none did in 1M). Mu prints a note, once,
-  when the coordinates reach about 1000 Å from the origin; centre such a
-  structure. Trajectories are unchanged up to the first move the re-check
-  would have rejected; on actin the accepted moves of 2000 steps match bit
-  for bit. Two behaviours change:
+  200k pivot-only steps (1000 Å out, none did in 1M). The engine therefore
+  keeps its coordinates near the origin (see "A structure placed far from
+  the origin..." above). Trajectories are unchanged up to the first move the
+  re-check would have rejected; on actin the accepted moves of 2000 steps
+  match bit for bit. Two behaviours change:
 
   * A pivot that carries an overlap the state already holds (coordinates
     from `set_positions`, a `clash_only` run, whose full energy ignores
@@ -508,6 +563,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the only hard-rejecting term.
 
 ### Removed
+
+- `BoxPolicy` with its unreachable `Fixed` and `AutoRecenter` modes,
+  `CoordsSoA::recenter` and the always-zero `num_reject_out_of_box` entry of
+  `Context.neighbor_proxy_stats()`. Nothing could select those modes;
+  `AutoRecenter` would have moved every atom by an inexact float centroid and
+  lost the caller's frame.
 
 - **The legacy Mu build (`MCPU_FAST_MU_DELTA=OFF`).** It no longer compiled,
   so its code was dead: the CMake option and its pyproject pin, the

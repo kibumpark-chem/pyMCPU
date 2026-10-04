@@ -48,7 +48,7 @@ converts it.
 from pymcpu.sampling import EngineSession
 
 session = EngineSession(spec)
-session.set_coords(start_coords)      # (3, n_atoms) float32, Angstrom
+session.set_coords(start_coords)      # (3, n_atoms) Angstrom
 session.step(1000)
 coords = session.coords()
 ```
@@ -141,6 +141,13 @@ restart files your own code writes — a `.chk` from a completed
 `FoldingRunner` or `ReplicaExchange` run, or a plain `.pdb`. Either
 coordinate orientation is accepted and normalized, which matters because a
 transposed array is not an error, it is a silently wrong structure.
+
+Store `session.coords()` as it comes, `float64`. For a structure far from
+the origin the engine runs shifted (`Context.frame_offset`), and `coords()`
+adds the shift back exactly (but for an engine coordinate within a few
+1e-6 Å of zero, which comes back off by about 1e-13 Å); a `float32` copy
+would round the coordinates at the far position again, and the restart
+would no longer continue the run bit for bit.
 
 `session.fingerprint` hashes what the engine was built from, so a restart
 state loaded against a different system fails loudly instead of producing

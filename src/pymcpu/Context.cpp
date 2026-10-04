@@ -6,6 +6,8 @@
 #include "pymcpu/AtomReorder.h"
 #include "pymcpu/utils/geometry_utils.h"
 #include "pymcpu/utils/sidechain_torsion_utils.h"
+#include "pymcpu/utils/FrameOffset.h"
+#include <atomic>
 #include <cstdint>
 #include <cmath>
 #include <utility>
@@ -88,18 +90,25 @@ void Context::maybe_apply_init_only_reorder_() {
     reorder_applied_ = true;
 }
 
-Eigen::Matrix3Xf Context::coords_for_python() const {
-    if (output_internal_order_ || atom_perm_.is_identity()) {
-        return state.coords_as_eigen();
+Eigen::Matrix3Xd Context::coords_for_python() const {
+    Eigen::Matrix3Xd out =
+        (output_internal_order_ || atom_perm_.is_identity())
+            ? state.coords_as_eigen().cast<double>().eval()
+            : scatter_internal_to_external(state.coords_soa, atom_perm_).cast<double>().eval();
+    // Back to the user's frame. Exact in double unless an engine coordinate
+    // lies within about 2^-29 |offset| of zero. An axis without an offset is
+    // left alone, so a -0.0 keeps its sign.
+    for (int d = 0; d < 3; ++d) {
+        if (frame_offset_[d] != 0.0) out.row(d).array() += frame_offset_[d];
     }
-    return scatter_internal_to_external(state.coords_soa, atom_perm_);
+    return out;
 }
 
 namespace {
 // Coordinates must cover every atom slot. load_from_eigen would otherwise
 // resize the state silently, and a file written with a different atom layout
 // would load with every atom after the first difference shifted.
-void require_atom_count(const Eigen::Matrix3Xf& coords, int expected) {
+void require_atom_count(const Eigen::Matrix3Xd& coords, int expected) {
     if (coords.cols() != expected) {
         throw std::invalid_argument(
             "got coordinates for " + std::to_string(coords.cols()) +
@@ -111,7 +120,50 @@ void require_atom_count(const Eigen::Matrix3Xf& coords, int expected) {
 }
 }  // namespace
 
-void Context::set_coords_from_python(const Eigen::Matrix3Xf& coords) {
+Eigen::Matrix3Xf Context::enter_frame_(
+        const Eigen::Matrix3Xd& coords,
+        const std::optional<Eigen::Vector3d>& frame_offset) {
+    if (frame_offset) {
+        // Past 2^24 A no float32 coordinate survives the shift.
+        if (!frame_offset->allFinite() ||
+            frame_offset->cwiseAbs().maxCoeff() >= 16777216.0) {
+            throw std::invalid_argument(
+                "frame_offset must be finite and under 2^24 A in magnitude");
+        }
+        frame_offset_ = *frame_offset;
+    } else if (!positions_set_) {
+        frame_offset_ = choose_frame_offset(coords);
+    }
+    // Exact for float32 input with the offset chosen from it (see
+    // choose_frame_offset). Without an offset this is the plain cast to float.
+    Eigen::Matrix3Xf engine(3, coords.cols());
+    float far = 0.f;
+    for (int d = 0; d < 3; ++d) {
+        const double c = frame_offset_[d];
+        for (Eigen::Index i = 0; i < coords.cols(); ++i) {
+            const double u = coords(d, i);
+            engine(d, i) = static_cast<float>(c != 0.0 ? u - c : u);
+            if (std::isfinite(engine(d, i))) far = std::max(far, std::fabs(engine(d, i)));
+        }
+    }
+    static std::atomic<bool> noted{false};
+    if (far >= kFarFrameNoteA && !noted.exchange(true)) {
+        std::fprintf(stderr,
+            "NOTE: coordinates reach %.0f A from the origin even in the engine "
+            "frame (frame_offset %.0f %.0f %.0f A). One float32 step there is "
+            "%.1e A, and every move rounds the atoms it moves to it, so bond "
+            "lengths drift and KIC moves fail more often than near the origin. "
+            "The engine shifts a structure toward the origin only along axes "
+            "it does not straddle, and keeps an explicit frame_offset as "
+            "given. (Printed once per process.)\n",
+            static_cast<double>(far), frame_offset_[0], frame_offset_[1],
+            frame_offset_[2],
+            static_cast<double>(std::nextafter(far, 2.f * far) - far));
+    }
+    return engine;
+}
+
+void Context::set_coords_from_python(const Eigen::Matrix3Xd& coords) {
     require_atom_count(coords, system->getNumAtoms());
     require_current_atom_order();
     if (atom_perm_.is_identity()) {
@@ -122,11 +174,12 @@ void Context::set_coords_from_python(const Eigen::Matrix3Xf& coords) {
     // order under set_output_internal_order(true), build order otherwise.
     // setPositions always assumes build order, so it cannot be used here.
     // As in setPositions, the live contact list describes the old coordinates.
+    const Eigen::Matrix3Xf engine = enter_frame_(coords, std::nullopt);
     state.mu_contact_invalidate();
     if (output_internal_order_) {
-        state.coords_soa.load_from_eigen(coords);
+        state.coords_soa.load_from_eigen(engine);
     } else {
-        gather_external_to_internal(coords, atom_perm_, state.coords_soa);
+        gather_external_to_internal(engine, atom_perm_, state.coords_soa);
     }
     sync_geometry();
     computeTorsions();
@@ -158,17 +211,19 @@ void Context::setQBias(float k_bias, float n_target) {
 }
 
 // --- INITIALIZATION ---
-void Context::setPositions(const Eigen::Matrix3Xf& new_coords) {
+void Context::setPositions(const Eigen::Matrix3Xd& new_coords,
+                           const std::optional<Eigen::Vector3d>& frame_offset) {
     require_atom_count(new_coords, system->getNumAtoms());
     require_current_atom_order();
+    const Eigen::Matrix3Xf engine = enter_frame_(new_coords, frame_offset);
     // Coordinates are being replaced wholesale (load, REMD swap, restart), so
     // the live contact list describes a conformation that no longer exists.
     state.mu_contact_invalidate();
     // Incoming coords are always treated as *external* (build) order.
     if (!reorder_applied_ || atom_perm_.is_identity()) {
-        state.coords_soa.load_from_eigen(new_coords);
+        state.coords_soa.load_from_eigen(engine);
     } else {
-        gather_external_to_internal(new_coords, atom_perm_, state.coords_soa);
+        gather_external_to_internal(engine, atom_perm_, state.coords_soa);
     }
     positions_set_ = true;
     sync_geometry();
@@ -362,10 +417,6 @@ void Context::commit_accepted_move(const State& proposed_state, const ProposalPa
             }
         }
 #endif
-
-        if (neighbors_.config().box_policy == BoxPolicy::AutoRecenter) {
-            state.coords_soa.recenter();
-        }
     }
 
     // Single lifecycle update for ALL indices (Mu + HBond).

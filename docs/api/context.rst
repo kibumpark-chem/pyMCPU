@@ -14,7 +14,7 @@ does.
    extension.
 
 .. note::
-   ``Context`` exposes 67 public members. This page documents the
+   ``Context`` exposes 68 public members. This page documents the
    user-facing subset. The remainder -- neighbour-list cell sizing and
    Verlet skin knobs (``mu_cell_size_angstrom``, ``mu_skin``,
    ``mu_verlet_enabled``, ``verlet_moved_threshold``,
@@ -39,7 +39,7 @@ does.
    .. code-block:: python
 
       context = pymcpu.Context(system)
-      context.set_positions(coords_3xn)      # float32, shape (3, n)
+      context.set_positions(coords_3xn)      # shape (3, n), Angstrom
       context.calculate_total_energy(-1)     # seeds the running total
 
 Core state
@@ -53,13 +53,24 @@ Core state
 
    The live state object (coordinates, torsions, running energy).
 
-.. py:method:: Context.set_positions(coords, /) -> None
+.. py:method:: Context.set_positions(coords, /, *, frame_offset=None) -> None
 
-   Replace the coordinates. ``coords`` is a ``float32`` array of shape
-   ``(3, n)`` -- **atom-major columns**, i.e. the transpose of MDTraj's
-   ``(n, 3)`` frame -- in Ångström, with ``n`` equal to
-   ``System.get_num_atoms()``; any other ``n`` raises ``ValueError``. The
-   argument is positional-only.
+   Replace the coordinates. ``coords`` is an array of shape ``(3, n)`` --
+   **atom-major columns**, i.e. the transpose of MDTraj's ``(n, 3)`` frame --
+   in Ångström, with ``n`` equal to ``System.get_num_atoms()``; any other
+   ``n`` raises ``ValueError``. The coordinates are rounded to ``float32``
+   once, in the engine frame (see :ref:`context-frame`); ``float32`` input
+   placed with the offset its first placement chose enters exactly.
+   ``coords`` is positional-only.
+
+   ``frame_offset`` (Ångström, shape ``(3,)``, under 2\ :sup:`24` Å) sets the
+   frame offset instead of letting the first placement choose it, and keeps
+   it for later placements. Entry is then exact only if, on every axis, the
+   offset is a whole number of Ångström with the sign of the coordinates and
+   at most twice their smallest magnitude -- for example another
+   ``Context``'s ``frame_offset`` for the same start structure. It is rarely
+   needed: to continue a run in a fresh ``Context`` bit for bit, place its
+   start structure first, as every pyMCPU driver does.
 
    .. important::
       ``set_positions()`` does not seed the running total energy.
@@ -70,20 +81,78 @@ Core state
 
 .. py:attribute:: Context.coords
 
-   Read/write ``float32`` ``(3, n)`` array. Writing an array with a
-   different ``n`` raises ``ValueError``, as for :py:meth:`Context.set_positions`.
+   Read/write ``(3, n)`` array in Ångström and the caller's frame; reads
+   return ``float64``, the engine coordinates plus
+   :py:attr:`Context.frame_offset` (exact, except as noted under
+   :ref:`context-frame`). Writing is :py:meth:`Context.set_positions` in the
+   same order, and an array with a different ``n`` raises ``ValueError``.
 
    Coordinates in external (build) order by default;
    ``set_output_internal_order(True)`` for storage order.
 
+.. py:attribute:: Context.frame_offset
+
+   Read-only ``float64`` array of shape ``(3,)``, in Ångström:
+   ``Context.coords`` equals the engine coordinates
+   (``get_state().coords``) plus this. Zero when every coordinate of the first
+   placement is within 64 Å of the origin; otherwise each axis whose
+   coordinates all have one sign is shifted. An explicit ``frame_offset``
+   given to :py:meth:`Context.set_positions` replaces it.
+
 .. py:method:: Context.coords_for_python() -> numpy.ndarray
 
-   Method form of reading :py:attr:`Context.coords`; returns a ``float32``
+   Method form of reading :py:attr:`Context.coords`; returns a ``float64``
    ``(3, n)`` array.
 
 .. py:method:: Context.set_coords_from_python(coords, /) -> None
 
    Method form of writing :py:attr:`Context.coords`.
+
+.. _context-frame:
+
+The engine frame
+~~~~~~~~~~~~~~~~
+
+Coordinates are stored as ``float32``, and every move rounds each coordinate
+it changes at its absolute value, so the rounding noise grows with the
+distance from the origin: one ``float32`` step is 3.8e-6 Å at 50 Å but
+2.4e-4 Å at 4000 Å. Far out, bond lengths drift, KIC moves fail their
+reversibility check, and pairs a rigid pivot carries can slip under their
+hard-core cutoff.
+
+A ``Context`` therefore runs a structure that reaches 64 Å or more from the
+origin shifted next to it. If any coordinate of its first placement is that
+far out, it picks, for each axis whose coordinates all lie on one side of the
+origin, a whole number of Ångström close to the middle of that axis, at most
+twice its smallest ``|coordinate|``; an axis the structure straddles is not
+shifted. For ``float32`` input that shift is exact: every distance between
+atoms is unchanged bit for bit, and so is every energy term computed from
+distances (Mu, the torsion terms, KORP, the CA guard, the native-contact
+bias). The virtual amide hydrogens and aromatic ring centres are built from
+absolute positions; they round more finely in the engine frame, so a pair
+sitting exactly on a cutoff or bin edge can score differently.
+:py:attr:`Context.coords`, trajectory files and checkpoints are written back
+in the caller's frame by adding the offset in ``float64``.
+
+The offset stays fixed after the first placement, so restores and replica
+swaps of ``Context.coords`` re-enter bit for bit, provided the restoring
+``Context`` placed the same start structure first (as every pyMCPU driver
+does) or was given the same ``frame_offset``. One exception: an engine
+coordinate within a few 1e-6 Å of zero (below 3.8e-6 Å for an offset of
+4000 Å) can need more bits than ``float64`` holds once the offset is added;
+it then comes back off by up to about 2e-13 Å, and the restore is not bit
+for bit. A ``-0.0`` on a shifted axis comes back as ``+0.0``. Store
+coordinates as ``float64`` to keep the rest: a ``float32`` copy of a shifted
+run rounds them at the far position again. A later placement of a different structure, or one with an explicit
+``frame_offset`` that breaks the conditions above, is rounded to ``float32``
+once, in the engine frame. Structures within 64 Å of the origin, or
+straddling it on every axis, run unshifted, exactly as before.
+
+Rounding still grows with the distance from the origin inside the engine
+frame. If the coordinates still reach 256 Å or more there (a structure
+several hundred Å across, an axis that straddles the origin but reaches far,
+or an explicit ``frame_offset``), the ``Context`` prints a note; it prints at
+most once per process.
 
 Energy
 ------
@@ -302,9 +371,10 @@ State
 
    .. py:attribute:: coords
 
-      ``float32`` ``(3, n)`` coordinate array, in storage order
-      (:py:attr:`pymcpu.Context.coords` uses build order by default; they
-      differ after an ``init_only`` atom reorder). Writing it discards this
+      ``float32`` ``(3, n)`` coordinate array, in storage order and the
+      engine frame (:py:attr:`pymcpu.Context.coords` uses build order by
+      default, which differs after an ``init_only`` atom reorder, and adds
+      :py:attr:`pymcpu.Context.frame_offset`). Writing it discards this
       state's Mu contact list. To move a ``Context``, use
       :py:meth:`pymcpu.Context.set_positions` or
       :py:attr:`pymcpu.Context.coords`, which also refresh its neighbour

@@ -731,9 +731,9 @@ class MPIReplicaExchange:
             slot = self.replicas[rid]
             coords = np.asarray(coords_list[rid], dtype=np.float64)
             if coords.ndim == 2 and coords.shape[0] == 3:
-                slot.simulation.context.set_positions(coords.astype(np.float32))
+                slot.simulation.context.set_positions(coords)
             else:
-                slot.simulation.context.set_positions(coords.T.astype(np.float32))
+                slot.simulation.context.set_positions(coords.T)
             slot.simulation.context.calculate_total_energy(-1)
             check_state_clash(
                 slot.simulation.context, "checkpoint restore"

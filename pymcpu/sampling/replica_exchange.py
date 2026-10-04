@@ -438,7 +438,7 @@ class ReplicaExchange:
       rng_states = checkpoint.get("integrator_rng_states", [""] * self.n_replicas)
 
       for i, rep in enumerate(self.replicas):
-        coords = np.asarray(coords_list[i], dtype=np.float32)
+        coords = np.asarray(coords_list[i], dtype=np.float64)
         rep.simulation.context.set_positions(coords)
         rep.simulation.context.set_native_contacts_bias(self.k_bias, float(rep.n_target))
         rep.simulation.context.calculate_total_energy(-1)

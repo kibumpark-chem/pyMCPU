@@ -26,10 +26,13 @@ class StericClashError(RuntimeError):
     puts a pair under it. A rigid pivot carries the pairs inside its segment
     without re-checking them, and float rounding can leave such a pair a few
     1e-6 A under its cutoff, so a whole state is judged against cutoffs
-    ``mcpu_core.STATE_CLASH_BUFFER_A`` (0.001 A) looser. A clash here therefore
-    means coordinates that did not come from a move (``set_positions``, a
-    restore, a start structure other than the one the force field was built
-    from) or a pair a delta path missed.
+    ``mcpu_core.STATE_CLASH_BUFFER_A`` (0.001 A) looser. (The engine keeps its
+    coordinates near the origin, where that holds; see
+    ``Context.frame_offset``.) A clash here therefore means coordinates that
+    did not come from a move (``set_positions``, a restore, a start structure
+    other than the one the force field was built from), coordinates the engine
+    could not bring near the origin (see ``Context.frame_offset``; the first
+    such placement in a process prints a note), or a pair a delta path missed.
 
     Fatal by default, because the previous silent behaviour let
     ``weight * 99999`` flow into the REMD Metropolis criterion as if it were an
@@ -265,11 +268,12 @@ class Simulation:
                     f"  steric_rejected so far: {self.integrator.get_steric_rejected()}\n"
                     "No move can do that: moves are tested against the cutoff itself, "
                     "and rounding moves a pair a rigid pivot carries by a few 1e-6 A at "
-                    "most near the origin. Either the coordinates came in that way "
-                    "(set_positions, a restore, a start structure other than the force "
-                    "field's), they lie thousands of A from the origin, where that "
-                    "rounding is far larger (centre the structure), or a delta path "
-                    "missed the pair."
+                    "most near the origin, where the engine keeps its coordinates. "
+                    "Either the coordinates came in that way (set_positions, a restore, "
+                    "a start structure other than the force field's), the engine "
+                    "could not bring them near the origin (check Context.frame_offset "
+                    "and get_state().coords; the first such placement in a process "
+                    "prints a NOTE), or a delta path missed the pair."
                 )
                 if _clash_is_fatal():
                     raise StericClashError(_detail)
