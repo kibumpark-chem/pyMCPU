@@ -21,7 +21,7 @@ from __future__ import annotations
 import argparse
 import sys
 
-from pymcpu.utils.cli import add_checkpoint_args
+from pymcpu.utils.cli import add_checkpoint_args, apply_checkpoint_args
 
 
 def main() -> int:
@@ -56,7 +56,13 @@ def main() -> int:
         help="Suppress verbose output",
     )
 
-    add_checkpoint_args(parser)
+    # Unset flags stay None, so the YAML's checkpointing block is kept.
+    add_checkpoint_args(
+        parser,
+        checkpoint_interval_default=None,
+        checkpoint_dir_default=None,
+        keep_last_n_default=None,
+    )
     args = parser.parse_args()
 
     from pymcpu.utils.yaml_parser import simulation_from_yaml
@@ -71,18 +77,9 @@ def main() -> int:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
 
-    chk = sim.config.checkpoint
-    chk.checkpoint_dir = args.checkpoint_dir
-    chk.checkpoint_interval = int(args.checkpoint_interval)
-    chk.keep_last_n = int(args.keep_last_n)
-    chk.cloud_sync = bool(args.cloud_sync)
-    chk.cloud_bucket = str(args.cloud_bucket or "")
-    chk.cloud_sync_cmd = str(args.cloud_sync_cmd or "aws s3 cp")
-
+    apply_checkpoint_args(sim.config.checkpoint, args)
     if args.checkpoint:
         sim.load_checkpoint(args.checkpoint)
-    elif args.resume:
-        chk.resume = True
 
     if args.dry_run:
         print("[dry-run] YAML parsed successfully. Simulation object created.")

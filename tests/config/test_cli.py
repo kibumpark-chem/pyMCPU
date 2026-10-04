@@ -10,6 +10,8 @@ shell caller (or CI) would rely on (rc=0/1, a human-readable stdout line).
 
 from __future__ import annotations
 
+import runpy
+import sys
 from pathlib import Path
 
 import pytest
@@ -49,3 +51,83 @@ def test_validate_example_config_reports_ok(
 def test_validate_missing_file_returns_error(tmp_path: Path) -> None:
     rc = main(["validate", str(tmp_path / "missing.json")])
     assert rc == 1  # rc=1 is the CLI's own failure contract
+
+
+def _config_with_checkpointing(tmp_path: Path) -> Path:
+    config = tmp_path / "run.yaml"
+    config.write_text(
+        "pdb: examples/data/1uao.pdb\n"
+        "temperatures: [0.5, 0.6]\n"
+        "checkpointing:\n"
+        "  checkpoint_dir: mine\n"
+        "  checkpoint_interval: 7\n"
+        "  keep_last_n: 2\n"
+        "  cloud_sync_cmd: gsutil cp\n"
+    )
+    return config
+
+
+def _checkpoint_settings(checkpoint) -> tuple:
+    return (
+        checkpoint.checkpoint_dir,
+        checkpoint.checkpoint_interval,
+        checkpoint.keep_last_n,
+        checkpoint.resume,
+        checkpoint.cloud_sync_cmd,
+    )
+
+
+# A checkpoint flag left out keeps the config's setting; a flag given wins.
+# --cloud-sync-cmd used to default to 'aws s3 cp' on the command line, which
+# replaced a config's own upload command on every run.
+_CHECKPOINT_FLAG_CASES = [
+    ([], ("mine", 7, 2, False, "gsutil cp")),
+    (
+        ["--checkpoint-interval", "3", "--resume", "--cloud-sync-cmd", "rclone copyto"],
+        ("mine", 3, 2, True, "rclone copyto"),
+    ),
+]
+
+
+@pytest.mark.parametrize("command", ["run", "validate"])
+@pytest.mark.parametrize("flags, expected", _CHECKPOINT_FLAG_CASES)
+def test_checkpoint_flags_override_only_what_they_set(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, command: str, flags: list, expected: tuple
+) -> None:
+    import pymcpu.config
+
+    monkeypatch.chdir(REPO_ROOT)
+    loaded = []
+    load = pymcpu.config.load_config_auto
+    monkeypatch.setattr(
+        pymcpu.config, "load_config_auto", lambda path: loaded.append(load(path)) or loaded[-1]
+    )
+    monkeypatch.setattr("pymcpu.runners.run_from_config", lambda cfg, **kwargs: None)
+
+    assert main([command, str(_config_with_checkpointing(tmp_path)), *flags]) == 0
+    assert _checkpoint_settings(loaded[0].checkpoint) == expected
+
+
+@pytest.mark.parametrize("flags, expected", _CHECKPOINT_FLAG_CASES)
+def test_gromacs_example_checkpoint_flags_override_only_what_they_set(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, flags: list, expected: tuple
+) -> None:
+    from pymcpu.utils.yaml_parser import SimulationHandle
+
+    monkeypatch.chdir(REPO_ROOT)
+    described = []
+    monkeypatch.setattr(SimulationHandle, "describe", lambda self: described.append(self.config))
+    config = _config_with_checkpointing(tmp_path)
+    monkeypatch.setattr(sys, "argv", ["run.py", "-i", str(config), "--dry-run", *flags])
+
+    with pytest.raises(SystemExit) as exit_info:
+        runpy.run_path(str(REPO_ROOT / "examples" / "gromacs_style" / "run.py"), run_name="__main__")
+    assert exit_info.value.code == 0
+    assert _checkpoint_settings(described[0].checkpoint) == expected
+
+
+@pytest.mark.parametrize("flag", ["--cloud-bucket", "--cloud-sync-cmd"])
+def test_empty_cloud_flags_are_rejected(flag: str, capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit):
+        build_parser().parse_args(["run", "config.yaml", flag, ""])
+    assert "must not be empty" in capsys.readouterr().err

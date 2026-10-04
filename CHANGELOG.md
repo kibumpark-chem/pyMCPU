@@ -67,6 +67,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Checkpoint flags override only the settings they are given.**
+  `--cloud-sync-cmd` defaulted to `aws s3 cp` on the command line, so
+  `mcpu run`, `mcpu validate` and `scripts/run_mcpu_replica_exchange.py
+  --config` replaced a config's own `cloud_sync_cmd` on every run, and
+  `examples/gromacs_style/run.py` replaced the YAML's checkpoint directory,
+  interval, keep count and cloud settings with the flags' defaults. A flag
+  left out now keeps the config's setting. The shared
+  `pymcpu.utils.cli.apply_checkpoint_args` applies the flags for all of
+  them. An empty `--cloud-bucket` or `--cloud-sync-cmd` is now an error
+  rather than ignored.
+
 - **KIC no longer stretches the bonds of the atoms it carries.** A KIC move
   carries each window residue's O, sidechain and amide H rigidly with its
   backbone frame, and `transfer_dependent_atoms` built that frame in
