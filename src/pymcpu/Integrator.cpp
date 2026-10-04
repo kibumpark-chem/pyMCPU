@@ -1956,13 +1956,8 @@ void MCIntegrator::run(Context& context, int num_steps, int step_offset)
 
             const bool in_box = context.trial_in_bounds(proposal, move_patch);
             if (!in_box) {
-                if (context.neighborConfig().box_policy == BoxPolicy::Fixed) {
-                    ++context.neighborStats().num_reject_out_of_box;
-                    move_patch.is_valid = false;
-                } else {
-                    mu_ws.use_trial_fallback = true;
-                    ++context.neighborStats().num_trial_fallback;
-                }
+                mu_ws.use_trial_fallback = true;
+                ++context.neighborStats().num_trial_fallback;
             }
 
             if (move_patch.is_valid &&
@@ -2077,12 +2072,6 @@ void MCIntegrator::run(Context& context, int num_steps, int step_offset)
                     ScopedTimer commit_timer(&step_stats_.commit_ns);
                     context.commit_accepted_move(proposal, move_patch, move_kind);
                 }
-                // CHANGED: sparse — AutoRecenter translates all accepted atoms;
-                // proposal unmoved coords are then stale (Q1).
-                if (context.neighborConfig().box_policy == BoxPolicy::AutoRecenter) {
-                    proposal_synced_ = false;
-                }
-
                 if (tried_pivot) {
                     bb_accepted_++;
                     if (tried_rama_pivot) rama_pivot_accepted_++;

@@ -130,12 +130,13 @@ ctx.set_positions((ff.coords[0] * 10.0).T.astype(np.float32))
 ctx.calculate_total_energy(-1)   # seeds the running total
 ```
 
-`set_positions` takes a `(3, n_atoms)` float32 array in **Angstroms**, in
-the engine's atom order; MDTraj's `xyz` is nanometres, hence the
-`* 10.0`. It does not seed the running total energy, so a raw-`Context`
-caller must follow it with `calculate_total_energy(-1)`;
-`pymcpu.Simulation` does that for you. `examples/actin/bench.py` is a
-short working example of the whole sequence.
+`set_positions` takes a `(3, n_atoms)` array in **Angstroms**, in the
+engine's atom order; MDTraj's `xyz` is nanometres, hence the `* 10.0`.
+It does not seed the running total energy, so a raw-`Context` caller must
+follow it with `calculate_total_energy(-1)`; `pymcpu.Simulation` does that
+for you. `examples/actin/bench.py` is a short working example of the whole
+sequence. A structure far from the origin runs in a shifted engine frame,
+and `Context.coords` adds the shift back (`Context.frame_offset`).
 
 ## What each side owns
 

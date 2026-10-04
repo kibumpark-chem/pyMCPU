@@ -242,18 +242,19 @@ def test_a_pair_under_its_hard_core_keeps_its_contact_energy(mask) -> None:
 
 @pytest.mark.slow
 def test_the_drift_budget_rebuilds_the_list_in_time(capfd) -> None:
-    """Actin moved 1000 A from the origin, where a float step is up to
-    1.2e-4 A, so a pivot can move a carried distance by 2.1e-4 A and the
-    0.05 A band is used up after about 230 accepted pivots. Pivot-only, with
-    nothing resetting the running energy: it must still equal the full energy,
-    and the list must have been rebuilt on schedule. Small pivots keep every
-    move inside the neighbour grid, so no rebuild comes from a move that
-    leaves it."""
+    """Actin run 1000 A from the origin (frame_offset 0 keeps the engine
+    there), where a float step is up to 1.2e-4 A, so a pivot can move a
+    carried distance by 2.1e-4 A and the 0.05 A band is used up after about
+    230 accepted pivots. Pivot-only, with nothing resetting the running
+    energy: it must still equal the full energy, and the list must have been
+    rebuilt on schedule. Small pivots keep every move inside the neighbour
+    grid, so no rebuild comes from a move that leaves it."""
     traj = md.load(str(resolve_test_pdb()))
     heavy = traj.atom_slice(traj.topology.select("not element H"))
     ff = MCPUForceField(heavy)
     ctx = mcpu_core.Context(ff.create_system(heavy.topology))
-    ctx.set_positions((ff.coords[0] * 10.0).T.astype(np.float32) + np.float32(1000.0))
+    ctx.set_positions((ff.coords[0] * 10.0).T.astype(np.float32) + np.float32(1000.0),
+                      frame_offset=(0.0, 0.0, 0.0))
     ctx.calculate_total_energy(-1)
     integ = mcpu_core.Integrator(temperature=0.6, step_size_rad=0.02)
     integ.set_seed(3)

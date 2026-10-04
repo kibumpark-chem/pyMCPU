@@ -1,5 +1,6 @@
 #pragma once
 #include <memory>
+#include <optional>
 #include <Eigen/Dense>
 #include <vector>
 #include <cstdint>
@@ -220,15 +221,28 @@ private:
     bool positions_set_ = false;
     bool reorder_applied_ = false;
     RejectReason last_total_reject_reason_ = RejectReason::None;
+    /// User coordinates = engine coordinates + frame_offset_ (see
+    /// utils/FrameOffset.h). Chosen at the first placement, kept after that.
+    Eigen::Vector3d frame_offset_ = Eigen::Vector3d::Zero();
 
     void maybe_apply_init_only_reorder_();
+    /// User-frame coordinates (any order) to the engine frame. Chooses the
+    /// frame offset on the first placement, or takes frame_offset if given.
+    Eigen::Matrix3Xf enter_frame_(const Eigen::Matrix3Xd& coords,
+                                  const std::optional<Eigen::Vector3d>& frame_offset);
 
 public:
     float contactCutoffA() const noexcept { return neighbors_.mu_cutoff_A(); }
     static constexpr float hbondCutoffA() noexcept { return NeighborSystem::kHBondCutoffA; }
 
     explicit Context(std::shared_ptr<System> sys);
-    void setPositions(const Eigen::Matrix3Xf& new_coords);
+    /// Places the atoms, in build order and the user's frame. The first
+    /// placement fixes the frame offset (utils/FrameOffset.h) unless
+    /// frame_offset is given, which replaces it.
+    void setPositions(const Eigen::Matrix3Xd& new_coords,
+                      const std::optional<Eigen::Vector3d>& frame_offset = std::nullopt);
+    /// Engine coordinates (get_state()) = user coordinates - frame_offset().
+    [[nodiscard]] const Eigen::Vector3d& frame_offset() const noexcept { return frame_offset_; }
     /// Throws if another Context reordered this System's atoms after this one
     /// was created: this one's coordinates are then in the wrong order. A
     /// Context created on an already reordered System adopts its permutation.
@@ -285,9 +299,10 @@ public:
     void set_output_internal_order(bool on) noexcept { output_internal_order_ = on; }
     [[nodiscard]] bool output_internal_order() const noexcept { return output_internal_order_; }
 
-    /// Python/IO: coords in external order unless output_internal_order.
-    [[nodiscard]] Eigen::Matrix3Xf coords_for_python() const;
-    void set_coords_from_python(const Eigen::Matrix3Xf& coords);
+    /// Python/IO: coords in the user's frame, in external order unless
+    /// output_internal_order. Double, so engine + offset is exact.
+    [[nodiscard]] Eigen::Matrix3Xd coords_for_python() const;
+    void set_coords_from_python(const Eigen::Matrix3Xd& coords);
 
     float getQBiasK() const noexcept { return q_bias_k_; }
     float getQBiasTarget() const noexcept { return q_bias_target_; }

@@ -142,15 +142,24 @@ same way.
 
 That margin assumes coordinates near the origin. A float step grows with the
 coordinate (3.8e-6 Å at 50 Å, 6.1e-5 Å at 1000 Å, 2.4e-4 Å at 4000 Å), and
-so does the rounding of a carry: with actin moved 4000 Å out, a carried pair
-went through the margin within 200k pivot-only steps, and the full energy
-reported a clash; 1000 Å out, none did in 1M steps. A run does not get there
-by itself (chignolin's centre moved about 10 Å in 5M steps), so this
-concerns structures that start far out, such as some cryo-EM models. Mu
-prints a note, once, when the coordinates reach about 1000 Å from the
-origin; centre such a structure first. The running energy, and the old side
-of every move, keep such a pair's contact energy, so the energy is right
-again once the pair moves apart.
+so does the rounding of every move: with actin moved 4000 Å out, a carried
+pair went through the margin within 200k pivot-only steps, backbone bond
+lengths drifted by up to 0.02 Å (2e-4 Å at the origin), and KIC moves failed
+their reversibility check hundreds of times more often. A run does not get
+there by itself (chignolin's centre moved about 10 Å in 5M steps), but
+structures that start far out, such as some cryo-EM models, would. So a
+`Context` runs a structure that reaches 64 Å or more from the origin in an
+engine frame shifted next to it, exactly (`Context.frame_offset`; see the
+Context API docs). The rounding never stops growing with distance, though:
+KIC's reversibility check fails in about 6e-4 of chignolin's attempts at the
+origin, 1e-2 at 64 Å and 0.1 at 300 Å, roughly doubling with every doubling
+of the coordinates. The hard-core margin, by contrast, holds with room to
+spare within a few hundred Å. When coordinates still reach 256 Å in the
+engine frame (a structure several hundred Å across, an axis that straddles
+the origin but reaches far, or an explicit `frame_offset`), the `Context`
+prints a note, once per process. The running energy, and the old side of
+every move, keep a carried pair's contact energy, so the energy is right
+again once such a pair moves apart.
 
 A clash in an accepted state therefore means coordinates that did not come
 from a move, or a pair a delta path missed. `Simulation` checks

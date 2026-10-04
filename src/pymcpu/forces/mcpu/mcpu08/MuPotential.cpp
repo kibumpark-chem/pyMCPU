@@ -802,19 +802,6 @@ struct CpTimer {
             const float carry_bound =
                 carries ? carry_bound_A(context, new_state, patch) : 0.f;
             const float budget = kContactBandA - kContactBandSlackA;
-            if (carry_bound > kFarCarryNoteA && !far_carry_noted_) {
-                far_carry_noted_ = true;
-                std::fprintf(stderr,
-                    "NOTE: Mu: the coordinates are far enough from the origin "
-                    "that rounding moves a distance a rigid pivot carries by "
-                    "up to %.1e A per move. A carried pair is not re-checked "
-                    "for overlap, and that is no longer small next to the "
-                    "0.001 A hard-core margin (STATE_CLASH_BUFFER_A), so over "
-                    "a long run one can end up under its hard-core cutoff and "
-                    "fail the clash check. Centre the structure near the "
-                    "origin.\n",
-                    static_cast<double>(carry_bound));
-            }
             // The live list is only valid where the dense contiguous grid sees
             // every candidate pair, no residue is energy-masked, and the
             // carry fits the drift budget.

@@ -57,6 +57,12 @@ void XtcReporter::report(int step, const Context& context, const MCIntegrator& i
     int internal_natoms = soa.n;
     const auto& perm = context.atom_permutation();
     const bool map_ext = !perm.is_identity() && !context.output_internal_order();
+    // Written in the user's frame: engine coordinate + frame offset, in double.
+    const Eigen::Vector3d& offset = context.frame_offset();
+    auto nm = [&offset](float engine, int d) {
+        const double user = offset[d] != 0.0 ? engine + offset[d] : engine;
+        return static_cast<float>(user / 10.0);
+    };
 
     // 2. Prepare the C-style array for xdrfile (converting Angstroms to Nanometers)
     int out_natoms = (original_natoms_ > 0) ? original_natoms_ : internal_natoms;
@@ -66,9 +72,9 @@ void XtcReporter::report(int step, const Context& context, const MCIntegrator& i
         for (int i = 0; i < internal_natoms; ++i) {
             const int out_i = map_ext ? perm.to_external(i) : i;
             if (out_i < 0 || out_i >= out_natoms) continue;
-            x[out_i][0] = static_cast<float>(soa.x[static_cast<size_t>(i)] / 10.0);
-            x[out_i][1] = static_cast<float>(soa.y[static_cast<size_t>(i)] / 10.0);
-            x[out_i][2] = static_cast<float>(soa.z[static_cast<size_t>(i)] / 10.0);
+            x[out_i][0] = nm(soa.x[static_cast<size_t>(i)], 0);
+            x[out_i][1] = nm(soa.y[static_cast<size_t>(i)], 1);
+            x[out_i][2] = nm(soa.z[static_cast<size_t>(i)], 2);
         }
     } else {
         for (int i = 0; i < internal_natoms; ++i) {
@@ -76,9 +82,9 @@ void XtcReporter::report(int step, const Context& context, const MCIntegrator& i
             if (ext < 0 || ext >= static_cast<int>(inverse_mapping_.size())) continue;
             int out_idx = inverse_mapping_[static_cast<size_t>(ext)];
             if (out_idx >= 0 && out_idx < out_natoms) {
-                x[out_idx][0] = static_cast<float>(soa.x[static_cast<size_t>(i)] / 10.0);
-                x[out_idx][1] = static_cast<float>(soa.y[static_cast<size_t>(i)] / 10.0);
-                x[out_idx][2] = static_cast<float>(soa.z[static_cast<size_t>(i)] / 10.0);
+                x[out_idx][0] = nm(soa.x[static_cast<size_t>(i)], 0);
+                x[out_idx][1] = nm(soa.y[static_cast<size_t>(i)], 1);
+                x[out_idx][2] = nm(soa.z[static_cast<size_t>(i)], 2);
             }
         }
     }

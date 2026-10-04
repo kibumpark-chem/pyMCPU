@@ -50,6 +50,7 @@ Context.coords
 Context.coords_for_python
 Context.effective_mu_cell_size_A
 Context.energy_breakdown
+Context.frame_offset
 Context.get_atom_reorder_mode
 Context.get_energy_weights
 Context.get_state

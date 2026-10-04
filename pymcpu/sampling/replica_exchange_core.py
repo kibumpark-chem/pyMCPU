@@ -281,10 +281,14 @@ def evaluate_exchange_acceptance(
 
 
 def get_coords(context: mcpu_core.Context) -> np.ndarray:
-    """The context's coordinates in build (topology) order, the order
-    ``set_positions`` takes them in. ``get_state().coords`` is storage
-    order, which differs after an ``init_only`` atom reorder."""
-    return np.asarray(context.coords, dtype=np.float32)
+    """The context's coordinates, float64, in build (topology) order and the
+    caller's frame: what ``set_positions`` takes. Placing them again in a
+    Context with the same frame offset restores it bit for bit, except for an
+    engine coordinate within a few 1e-6 A of zero (see
+    ``Context.frame_offset``); storing them as float32 would not, for a
+    structure the engine runs shifted. ``get_state().coords`` is storage
+    order and the engine frame."""
+    return np.asarray(context.coords, dtype=np.float64)
 
 
 def swap_context_coordinates(

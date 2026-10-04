@@ -171,11 +171,16 @@ class EngineSession:
         return np.asarray(self._ensure_cv()(coords_3xn), dtype=np.float64)
 
     def coords(self) -> np.ndarray:
-        return np.asarray(self._ensure_sim().context.coords, dtype=np.float32)
+        """``(3, n_atoms)`` float64 Angstrom, in the input structure's frame.
+        Stored as float64 they restore the run bit for bit through
+        :meth:`set_coords` (except for an engine coordinate within a few 1e-6 A
+        of zero); as float32 they would not for a structure the engine runs
+        shifted (see ``Context.frame_offset``)."""
+        return np.asarray(self._ensure_sim().context.coords, dtype=np.float64)
 
     def set_coords(self, coords_3xn: np.ndarray) -> None:
         sim = self._ensure_sim()
-        sim.context.set_positions(np.asarray(coords_3xn, dtype=np.float32))
+        sim.context.set_positions(np.asarray(coords_3xn, dtype=np.float64))
         sim.context.calculate_total_energy(-1)
         check_state_clash(sim.context, "EngineSession.set_coords")
 
@@ -206,7 +211,7 @@ class EngineSession:
 
     def coords_from_auxref(self, auxref: str) -> np.ndarray:
         """Resolve a basis/initial-state ``auxref`` to engine-order
-        coordinates ``(3, n_atoms)`` float32 Angstrom. Supports:
+        coordinates ``(3, n_atoms)`` float64 Angstrom. Supports:
 
         * ``.npz`` -- anything carrying a ``coords`` array, which includes
           a restart state written by an external sampler.
@@ -239,7 +244,7 @@ class EngineSession:
                         f"{auxref!r} has no 'coords' array (found "
                         f"{sorted(payload.files)})"
                     )
-                coords = np.asarray(payload["coords"], dtype=np.float32)
+                coords = np.asarray(payload["coords"], dtype=np.float64)
             if coords.ndim != 2 or 3 not in coords.shape:
                 raise ValueError(
                     f"{auxref!r} 'coords' has shape {coords.shape}; expected "
@@ -251,7 +256,7 @@ class EngineSession:
             from pymcpu.checkpointing import load_checkpoint
 
             data = load_checkpoint(path)
-            coords = np.asarray(data["replica_coords"][0], dtype=np.float32)
+            coords = np.asarray(data["replica_coords"][0], dtype=np.float64)
             if coords.ndim == 2 and coords.shape[0] != 3 and coords.shape[1] == 3:
                 coords = coords.T
         elif suffix == ".pdb":
@@ -268,6 +273,6 @@ class EngineSession:
                 "expected .npz, .chk, or .pdb"
             )
 
-        coords = np.asarray(coords, dtype=np.float32)
+        coords = np.asarray(coords, dtype=np.float64)
         self._auxref_cache[auxref] = coords
         return coords.copy()

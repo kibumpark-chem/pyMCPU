@@ -6,12 +6,6 @@
 
 namespace mcpu {
 
-enum class BoxPolicy : int {
-    Fixed = 0,
-    AutoExpand = 1,
-    AutoRecenter = 2
-};
-
 enum class NeighborMode : int {
     CellOnly = 0,         // Pivot: never Verlet
     VerletPreferred = 1   // KIC/SC: Verlet when valid
@@ -25,7 +19,6 @@ enum class MoveKind : int {
 };
 
 struct NeighborConfig {
-    BoxPolicy box_policy = BoxPolicy::AutoExpand;
     /// Mu Verlet skin (Å). Default 0 = denselist CellOnly (no Verlet CSR).
     /// skin=1.0 + partial rebuild is parity-clean but wall-regresses on actin
     /// (CSR pack + pivot-triggered full rebuilds). Keep 0; opt-in via set_mu_skin
@@ -213,7 +206,6 @@ struct NeighborStats {
     std::uint64_t num_delta_cell_pivot = 0;
     std::uint64_t num_delta_verlet_kic_sc = 0;       // alias: num_verlet_used
     std::uint64_t num_delta_cell_kic_sc_fallback = 0; // alias: num_verlet_fallback_cell
-    std::uint64_t num_reject_out_of_box = 0;
     std::uint64_t num_reject_hard_disp = 0;
     std::uint64_t num_aabb_rebuild_accept = 0;
 

@@ -370,7 +370,7 @@ public:
                               MoveKind move_kind,
                               bool is_rigid) {
         bool left_bounds = false;
-        if (cfg_.box_policy == BoxPolicy::AutoExpand && bounds_.valid) {
+        if (bounds_.valid) {
             if (!patch.moved_indices.empty()) {
                 for (int i : patch.moved_indices) {
                     const size_t k = static_cast<size_t>(i);
@@ -383,7 +383,7 @@ public:
             }
         }
 
-        if (left_bounds && cfg_.box_policy == BoxPolicy::AutoExpand) {
+        if (left_bounds) {
             rebuild_from_accepted_state(coords_new);
             if (move_kind == MoveKind::Pivot || is_rigid) {
                 mu_verlet_.invalidate(VerletList::DirtyCause::AutoExpand);
@@ -392,13 +392,6 @@ public:
             } else {
                 mu_verlet_.invalidate(VerletList::DirtyCause::AutoExpand);
             }
-            return;
-        }
-
-        if (cfg_.box_policy == BoxPolicy::AutoRecenter) {
-            // Caller must have already recentered coords_new into accepted state;
-            // we only rebuild indices here.
-            rebuild_from_accepted_state(coords_new);
             return;
         }
 

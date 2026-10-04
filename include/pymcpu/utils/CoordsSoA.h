@@ -78,25 +78,6 @@ struct CoordsSoA {
         return m;
     }
 
-    void recenter() {
-        if (n <= 0) return;
-        float cx = 0.f, cy = 0.f, cz = 0.f;
-        const float inv = 1.f / static_cast<float>(n);
-        for (int i = 0; i < n; ++i) {
-            cx += x[static_cast<size_t>(i)];
-            cy += y[static_cast<size_t>(i)];
-            cz += z[static_cast<size_t>(i)];
-        }
-        cx *= inv;
-        cy *= inv;
-        cz *= inv;
-        for (int i = 0; i < n; ++i) {
-            x[static_cast<size_t>(i)] -= cx;
-            y[static_cast<size_t>(i)] -= cy;
-            z[static_cast<size_t>(i)] -= cz;
-        }
-    }
-
     /// Rotate atoms [start, end) by R about pivot.
     ///
     /// The arithmetic is done in double and each coordinate is rounded to float
