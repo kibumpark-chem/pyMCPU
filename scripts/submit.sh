@@ -44,12 +44,14 @@ fi
 
 # Derive replica count from YAML so --ntasks stays in sync automatically.
 # Formula: len(temperatures) * len(q_targets|n_targets)  [or * 1 if neither]
+# A config with an unknown key stops here, not after waiting in the queue.
 N_REPLICAS=$(python -c "
 import yaml, sys
 sys.path.insert(0, '${REPO_ROOT}')
-from pymcpu.config import replica_grid_dims
+from pymcpu.config import check_yaml_keys, replica_grid_dims
 with open('${CONFIG}') as f:
     c = yaml.safe_load(f)
+check_yaml_keys(c, '${CONFIG}')
 print(replica_grid_dims(c)[0])
 ")
 

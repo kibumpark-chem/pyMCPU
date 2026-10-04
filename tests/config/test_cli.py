@@ -10,6 +10,8 @@ shell caller (or CI) would rely on (rc=0/1, a human-readable stdout line).
 
 from __future__ import annotations
 
+import runpy
+import sys
 from pathlib import Path
 
 import pytest
@@ -49,3 +51,141 @@ def test_validate_example_config_reports_ok(
 def test_validate_missing_file_returns_error(tmp_path: Path) -> None:
     rc = main(["validate", str(tmp_path / "missing.json")])
     assert rc == 1  # rc=1 is the CLI's own failure contract
+
+
+def test_validate_reports_a_missing_pdb(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    config = tmp_path / "missing_pdb.yaml"
+    config.write_text("pdb: no_such_structure.pdb\ntemperatures: [0.5]\n")
+    assert main(["validate", str(config)]) == 1
+    assert "pdb 'no_such_structure.pdb': not found" in capsys.readouterr().err
+
+
+def test_validate_reports_a_missing_reference_pdb(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.chdir(REPO_ROOT)
+    config = tmp_path / "missing_reference.yaml"
+    config.write_text(
+        "pdb: examples/data/1uao.pdb\n"
+        "reference_pdb: no_such_native.pdb\n"
+        "temperatures: [0.4, 0.5]\n"
+    )
+    assert main(["validate", str(config)]) == 1
+    assert "reference_pdb 'no_such_native.pdb': not found" in capsys.readouterr().err
+
+
+def test_validate_ignores_the_reference_pdb_of_a_folding_config(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A folding run never reads reference_pdb, so validate does not either.
+    monkeypatch.chdir(REPO_ROOT)
+    config = tmp_path / "folding.yaml"
+    config.write_text(
+        "pdb: examples/data/1uao.pdb\n"
+        "reference_pdb: no_such_native.pdb\n"
+        "temperatures: [0.5]\n"
+    )
+    assert main(["validate", str(config)]) == 0
+
+
+def test_validate_reports_a_pdb_that_is_a_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.chdir(REPO_ROOT)
+    config = tmp_path / "directory_pdb.yaml"
+    config.write_text("pdb: examples/data\ntemperatures: [0.5]\n")
+    assert main(["validate", str(config)]) == 1
+    assert "is not a file" in capsys.readouterr().err
+
+
+def test_validate_reports_a_bad_value_in_one_line(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # A number where the loader expects a list raises TypeError, which used to
+    # escape as a traceback.
+    config = tmp_path / "scalar_temperatures.yaml"
+    config.write_text("pdb: examples/data/1uao.pdb\ntemperatures: 0.5\n")
+    assert main(["validate", str(config)]) == 1
+    assert "config validation failed: TypeError" in capsys.readouterr().err
+
+
+def _config_with_checkpointing(tmp_path: Path) -> Path:
+    config = tmp_path / "run.yaml"
+    config.write_text(
+        "pdb: examples/data/1uao.pdb\n"
+        "temperatures: [0.5, 0.6]\n"
+        "checkpointing:\n"
+        "  checkpoint_dir: mine\n"
+        "  checkpoint_interval: 7\n"
+        "  keep_last_n: 2\n"
+        "  cloud_sync_cmd: gsutil cp\n"
+    )
+    return config
+
+
+def _checkpoint_settings(checkpoint) -> tuple:
+    return (
+        checkpoint.checkpoint_dir,
+        checkpoint.checkpoint_interval,
+        checkpoint.keep_last_n,
+        checkpoint.resume,
+        checkpoint.cloud_sync_cmd,
+    )
+
+
+# A checkpoint flag left out keeps the config's setting; a flag given wins.
+# --cloud-sync-cmd used to default to 'aws s3 cp' on the command line, which
+# replaced a config's own upload command on every run.
+_CHECKPOINT_FLAG_CASES = [
+    ([], ("mine", 7, 2, False, "gsutil cp")),
+    (
+        ["--checkpoint-interval", "3", "--resume", "--cloud-sync-cmd", "rclone copyto"],
+        ("mine", 3, 2, True, "rclone copyto"),
+    ),
+]
+
+
+@pytest.mark.parametrize("command", ["run", "validate"])
+@pytest.mark.parametrize("flags, expected", _CHECKPOINT_FLAG_CASES)
+def test_checkpoint_flags_override_only_what_they_set(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, command: str, flags: list, expected: tuple
+) -> None:
+    import pymcpu.config
+
+    monkeypatch.chdir(REPO_ROOT)
+    loaded = []
+    load = pymcpu.config.load_config_auto
+    monkeypatch.setattr(
+        pymcpu.config, "load_config_auto", lambda path: loaded.append(load(path)) or loaded[-1]
+    )
+    monkeypatch.setattr("pymcpu.runners.run_from_config", lambda cfg, **kwargs: None)
+
+    assert main([command, str(_config_with_checkpointing(tmp_path)), *flags]) == 0
+    assert _checkpoint_settings(loaded[0].checkpoint) == expected
+
+
+@pytest.mark.parametrize("flags, expected", _CHECKPOINT_FLAG_CASES)
+def test_gromacs_example_checkpoint_flags_override_only_what_they_set(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, flags: list, expected: tuple
+) -> None:
+    from pymcpu.utils.yaml_parser import SimulationHandle
+
+    monkeypatch.chdir(REPO_ROOT)
+    described = []
+    monkeypatch.setattr(SimulationHandle, "describe", lambda self: described.append(self.config))
+    config = _config_with_checkpointing(tmp_path)
+    monkeypatch.setattr(sys, "argv", ["run.py", "-i", str(config), "--dry-run", *flags])
+
+    with pytest.raises(SystemExit) as exit_info:
+        runpy.run_path(str(REPO_ROOT / "examples" / "gromacs_style" / "run.py"), run_name="__main__")
+    assert exit_info.value.code == 0
+    assert _checkpoint_settings(described[0].checkpoint) == expected
+
+
+@pytest.mark.parametrize("flag", ["--cloud-bucket", "--cloud-sync-cmd"])
+def test_empty_cloud_flags_are_rejected(flag: str, capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit):
+        build_parser().parse_args(["run", "config.yaml", flag, ""])
+    assert "must not be empty" in capsys.readouterr().err

@@ -1,8 +1,9 @@
 Command-line interface
 ======================
 
-Installing pyMCPU puts a single ``mcpu`` executable on your ``PATH``. It covers
-parameter resolution, running and validating configs, and WESTPA scaffolding.
+Installing pyMCPU puts an ``mcpu`` command on your ``PATH``. It prints the
+version, prepares the force-field parameters, and runs or checks a simulation
+config.
 
 .. code-block:: bash
 
@@ -12,9 +13,9 @@ parameter resolution, running and validating configs, and WESTPA scaffolding.
 ``mcpu version``
 ----------------
 
-Print the installed package version. Useful in bug reports and job logs.
+Print the installed pyMCPU version.
 
-.. code-block:: bash
+.. code-block:: console
 
    $ mcpu version
    0.1.0
@@ -22,9 +23,13 @@ Print the installed package version. Useful in bug reports and job logs.
 ``mcpu download-params``
 ------------------------
 
-Resolve the pretrained potentials and print the resulting directory. Runs the
-full resolution order documented in :doc:`installation` and exits non-zero with
-an explanation if no source can satisfy the request.
+.. program:: mcpu download-params
+
+Find the parameter set the way the force field does (the order is under
+"MCPU parameter lookup" in :doc:`installation`) and print its directory.
+Despite the name it needs no network: if nothing else provides the set, it
+unpacks the copy shipped with pyMCPU. If no source has the set, it says what
+to do and exits with status 1.
 
 .. code-block:: bash
 
@@ -33,50 +38,57 @@ an explanation if no source can satisfy the request.
 
 .. option:: --set SET
 
-   Parameter set name from the registry. Default ``mcpu08``.
+   Parameter set name. Default ``mcpu08``.
 
 .. option:: --dir DIR
 
-   Optional staging directory to copy the resolved parameters into. Use this to
-   pre-place parameters on node-local scratch.
+   Copy the parameters into ``DIR`` and print ``DIR`` instead, for example to
+   put them on node-local scratch; then ``export MCPU_PARAMS_DIR=DIR``. Run it
+   with ``MCPU_PARAMS_DIR`` unset: if that already points at ``DIR``, the
+   command copies ``DIR`` onto itself, which fails and can delete part of it.
 
 ``mcpu materialize-params``
 ---------------------------
 
-Decode the compact parameter archive that ships inside the package into a full
-parameters root, and print its path.
+.. program:: mcpu materialize-params
 
-You rarely need this interactively — ``ensure_params()`` does it on demand. It
-exists for **multi-rank MPI jobs**, where N ranks cold-starting against a
-shared ``$HOME`` would otherwise all try to decode at once. Running it once
-before ``mpirun`` turns that race into a single serial call and pins every rank
-to one identical root:
+Unpack the parameters shipped with pyMCPU into the cache and print the
+directory. pyMCPU does this itself on first use when nothing earlier in the
+lookup order provides the set (see "MCPU parameter lookup" in
+:doc:`installation`). Before an MPI job that uses the shipped parameters, run
+it once yourself, so the processes do not all unpack at once into a shared
+home directory:
 
 .. code-block:: bash
 
    export MCPU_PARAMS_DIR="$(mcpu materialize-params --set mcpu08)"
    mpirun -n 32 python my_remd_run.py
 
-The cache directory is content-addressed (``<set>-<sha256[:12]>``), so
-upgrading the package produces a different directory rather than requiring
-invalidation, and repeated calls are cheap no-ops.
+The command always unpacks the shipped copy, even when an earlier step of the
+lookup, such as ``MCPU_PARAMS_BUNDLE``, would supply other parameters; in that
+case do not export its output. The directory name includes a hash of the
+shipped tables, so a release with different tables unpacks into a new
+directory, and running the command again is quick.
 
 .. option:: --set SET
 
-   Parameter set name from the registry. Default ``mcpu08``.
+   Parameter set name. Default ``mcpu08``.
 
-.. option:: --timeout TIMEOUT
+.. option:: --timeout SECONDS
 
-   Seconds to wait for another process that holds the materialization lock.
-   Default ``900``.
+   How long to wait while another process is unpacking the same set. A lock
+   older than this is taken to be abandoned and is taken over. Default
+   ``900``.
 
 .. option:: --no-verify
 
-   Skip the per-table SHA-256 check. Faster, but you lose the guarantee that
-   the decoded tables match the shipped ones. Not recommended.
+   Skip the SHA-256 check of each unpacked table. Faster, but a damaged table
+   goes unnoticed. Not recommended.
 
 ``mcpu run``
 ------------
+
+.. program:: mcpu run
 
 Run a simulation from a JSON or YAML config.
 
@@ -85,73 +97,78 @@ Run a simulation from a JSON or YAML config.
    mcpu run config.yaml
    mcpu run config.yaml --resume --checkpoint-dir checkpoints/
 
+``mcpu run`` uses a single process. Under ``mpirun`` every process would run
+its own full copy. For MPI replica exchange, start a short script like this
+one under ``mpirun``, or use ``scripts/run_mcpu_replica_exchange.py --mpi``
+from a source checkout (see :doc:`running_remd`):
+
+.. code-block:: python
+
+   from mpi4py import MPI
+
+   from pymcpu.config import load_config_auto
+   from pymcpu.runners import run_from_config
+
+   run_from_config(load_config_auto("config.yaml"), comm=MPI.COMM_WORLD)
+
 .. option:: config
 
-   Path to the config file (``.json`` / ``.yaml`` / ``.yml``).
+   Path to the config file (``.json``, ``.yaml`` or ``.yml``).
 
 .. option:: --quiet
 
-   Reduce stdout chatter.
+   Print less progress output.
 
-Checkpointing options — these override the config's ``checkpointing`` block, so
-you can restart a run without editing it. See :doc:`checkpointing`.
+The checkpoint options below override the matching settings in the config
+(its ``checkpointing`` block in YAML, ``checkpoint`` in JSON), so you can
+resume a run without editing the config. An option you leave out keeps the
+config's setting; the defaults given are those of a config that does not set
+it either. See :doc:`checkpointing`.
 
 .. option:: --checkpoint-interval N
 
    Save a checkpoint every ``N`` cycles. Default ``50``.
 
-.. option:: --checkpoint-dir CHECKPOINT_DIR
+.. option:: --checkpoint-dir DIR
 
    Directory for checkpoint files. Default ``checkpoints/``.
 
-.. option:: --keep-last-n KEEP_LAST_N
+.. option:: --keep-last-n N
 
-   Number of versioned checkpoints to retain. Default ``3``.
+   Numbered checkpoints to keep. Default ``3``.
 
 .. option:: --resume
 
-   Resume from the newest checkpoint in ``--checkpoint-dir``.
+   Resume from the latest checkpoint in the checkpoint directory.
 
 .. option:: --cloud-sync
 
-   Upload ``last.chk`` after every save.
+   Upload ``last.chk`` after every save. It needs a bucket, from
+   :option:`--cloud-bucket` or the config.
 
 .. option:: --cloud-bucket URI
 
-   Destination URI, for example ``s3://my-bucket/run-01/``.
+   Where to upload, for example ``s3://my-bucket/run-01/``.
 
-.. option:: --cloud-sync-cmd CLOUD_SYNC_CMD
+.. option:: --cloud-sync-cmd CMD
 
-   Upload command. Default ``aws s3 cp``.
+   Upload command, for example ``gsutil cp``. Default: the config's, else
+   ``aws s3 cp``.
 
 ``mcpu validate``
 -----------------
 
-Parse and validate a config without running anything, and report what it
-resolved to. Accepts the same checkpointing options as ``run`` so that a
-resume-capable config can be checked in the exact form it will be run.
+Load a config and check its settings without running anything, then print the
+mode, the PDB path, and the checkpoint directory and interval it resolved. It
+takes the same checkpoint options as ``mcpu run``, so you can check a config in
+the form you will run it.
 
 .. code-block:: bash
 
    mcpu validate config.yaml
 
-Use it in a submission script before requesting a large allocation — a typo in
-a config is much cheaper to find here than after the job starts.
-
-WESTPA subcommands
-------------------
-
-WESTPA scaffolding moved out of ``mcpu`` when the integration became the
-separate ``pymcpu-westpa`` distribution. Install it and you get a
-``mcpu-westpa`` command with ``init`` and ``check`` subcommands:
-
-.. code-block:: bash
-
-   pip install pymcpu-westpa
-   mcpu-westpa init --pdb protein.pdb --out we_run/ --mode equilibrium
-   mcpu-westpa check we_run/west.cfg --bstates we_run/bstates/bstates.txt
-
-They are not on ``mcpu`` itself because argparse cannot register a
-subcommand lazily: ``mcpu --help`` would advertise them to every user,
-almost none of whom have WESTPA installed.
-
+It exits with status 1 and the reason if the config has an unknown key or a
+value the loader rejects, or if the ``pdb`` file, or the ``reference_pdb`` file
+of a replica exchange config, is missing or is not a file. It does not read
+the structure or the force-field parameters, so a problem inside the PDB file
+shows up only when the run starts.

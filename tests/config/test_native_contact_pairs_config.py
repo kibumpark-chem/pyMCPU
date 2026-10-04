@@ -2,9 +2,8 @@
 
 Pure config-plumbing: verifies ``yaml_dict_to_config`` parses/validates the
 new ``native_contact_pairs`` top-level YAML key the way ``pymcpu/config.py``'s
-``ReplicaExchangeConfig`` dataclass defines it, and that
-``pymcpu/utils/yaml_parser.py``'s ``KNOWN_FIELDS`` allowlist was updated to
-match (so a valid config doesn't trigger the unknown-field warning). No
+``ReplicaExchangeConfig`` dataclass defines it, and that the YAML schema
+knows the key (so a valid config isn't rejected as having an unknown key). No
 physics computation is involved here -- deep semantic validation (index
 range, self-pairs, duplicates, energy-ignored residues) needs ``n_res`` and
 is deliberately deferred to ``NativeContactsCV`` at construction time (see
@@ -36,9 +35,10 @@ from pymcpu.config import (
     OutputsConfig,
     ReplicaExchangeConfig,
     SimulationConfig,
+    check_yaml_keys,
     yaml_dict_to_config,
 )
-from pymcpu.utils.yaml_parser import KNOWN_FIELDS, load_yaml
+from pymcpu.utils.yaml_parser import load_yaml
 
 # Minimal valid base kwargs shared by every case below; each test overrides
 # only the field(s) it's actually exercising.
@@ -78,10 +78,8 @@ def test_native_contact_pairs_wrong_arity_raises_at_parse_time() -> None:
 
 
 def test_native_contact_pairs_is_a_known_field() -> None:
-    """A valid ``native_contact_pairs`` key must not trigger the unknown-
-    field warning -- i.e. it must be registered in yaml_parser's
-    KNOWN_FIELDS allowlist."""
-    assert "native_contact_pairs" in KNOWN_FIELDS
+    """A valid ``native_contact_pairs`` key must not be rejected as unknown."""
+    check_yaml_keys({**_BASE_YAML, "native_contact_pairs": [[0, 5], [1, 6]]})
 
 
 def test_native_contact_pairs_key_does_not_warn(tmp_path) -> None:

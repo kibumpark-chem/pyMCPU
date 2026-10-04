@@ -8,74 +8,16 @@ to :mod:`pymcpu.config` and :mod:`pymcpu.runners`.
 
 from __future__ import annotations
 
-import warnings
 from pathlib import Path
 from typing import Any
 
 import yaml
 
-from pymcpu.config import SimulationConfig, load_yaml_config
+from pymcpu.config import SimulationConfig, check_yaml_keys, load_yaml_config
 
 REQUIRED_FIELDS = [
     "pdb",
 ]
-
-KNOWN_FIELDS = {
-    "pdb",
-    "mpi",
-    "output_layout",
-    "output_prefix",
-    "title",
-    "description",
-    "num_cycles",
-    "mc_replica_steps",
-    "steps",
-    "log_interval",
-    "exchange_log",
-    "state_log_interval",
-    "log_walker_in_data_csv",
-    "seed",
-    "fixed_residue_indices",
-    "fixed_residues",
-    "linker_residue_indices",
-    "linker_residues",
-    "linker_energy_mode",
-    "temp_min",
-    "temp_step",
-    "n_temps",
-    "temperatures",
-    "contact_cutoff",
-    "min_seq_sep",
-    "contact_atom_mode",
-    "native_contact_pairs",
-    "q_targets",
-    "n_targets",
-    "native_contact_targets",
-    "k_bias",
-    "k_native_contacts",
-    "checkpoint_dir",
-    "checkpoint_interval",
-    "checkpointing",
-    "resume",
-    "reference_pdb",
-    "param_set",
-    "param_dir",
-    "step_size_rad",
-    "temperature",
-    "mode",
-    "integrator",
-    "outputs",
-    "replica_exchange",
-    "constraints",
-    "checkpoint",
-    "hdf5",
-    "output_dir",
-    "keep_last_n",
-    "cloud_sync",
-    "cloud_bucket",
-    "cloud_sync_cmd",
-    "enabled",
-}
 
 
 def load_yaml(path: str | Path) -> dict[str, Any]:
@@ -90,25 +32,19 @@ def load_yaml(path: str | Path) -> dict[str, Any]:
 
 
 def _validate(cfg: dict[str, Any], source: str) -> None:
-    """Validate required fields and warn on unknown fields."""
+    """Check that the required fields are present and every key is known."""
     missing = [k for k in REQUIRED_FIELDS if k not in cfg]
     if missing:
         raise ValueError(
             f"[yaml_parser] The following required fields are missing "
             f"in {source}:\n  " + "\n  ".join(missing)
         )
-    unknown = set(cfg) - KNOWN_FIELDS
-    if unknown:
-        warnings.warn(
-            f"[yaml_parser] Unknown fields in {source} (will be ignored):\n  "
-            + "\n  ".join(sorted(unknown)),
-            stacklevel=3,
-        )
+    check_yaml_keys(cfg, source)
 
 
 def config_from_yaml(path: str | Path) -> SimulationConfig:
     """Parse YAML into a validated SimulationConfig (no simulation objects yet)."""
-    # Validate first so missing/unknown fields behave as load_yaml does.
+    # Validate first, so that errors about missing or unknown keys name the file.
     load_yaml(path)
     return load_yaml_config(path)
 

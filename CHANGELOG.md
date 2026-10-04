@@ -67,6 +67,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Checkpoint flags override only the settings they are given.**
+  `--cloud-sync-cmd` defaulted to `aws s3 cp` on the command line, so
+  `mcpu run`, `mcpu validate` and `scripts/run_mcpu_replica_exchange.py
+  --config` replaced a config's own `cloud_sync_cmd` on every run, and
+  `examples/gromacs_style/run.py` replaced the YAML's checkpoint directory,
+  interval, keep count and cloud settings with the flags' defaults. A flag
+  left out now keeps the config's setting. The shared
+  `pymcpu.utils.cli.apply_checkpoint_args` applies the flags for all of
+  them. An empty `--cloud-bucket` or `--cloud-sync-cmd` is now an error
+  rather than ignored.
+
+- **`mcpu validate` checks that the structure files exist.** For a YAML
+  config it reported OK when `pdb`, or a replica exchange config's
+  `reference_pdb`, did not exist, so the mistake surfaced only when the run
+  started; the JSON loader already checked. For either format it now fails,
+  naming the file, when the file is missing or is not a file. Any other
+  error while loading the config is now reported in one line rather than as
+  a traceback, for example a single number where a list is expected.
+
 - **KIC no longer stretches the bonds of the atoms it carries.** A KIC move
   carries each window residue's O, sidechain and amide H rigidly with its
   backbone frame, and `transfer_dependent_atoms` built that frame in
@@ -422,6 +441,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   its eight cases fail.
 
 ### Changed
+
+- **A YAML config with an unknown key is an error.** The flat YAML schema
+  ignored any key it did not read, so a misspelled key such as `num_cylces`
+  or `checkpoint_intrval` silently left the setting at its default, and
+  `checkpointing: false` left checkpointing on. Loading a YAML config now
+  raises `ValueError` naming every unknown key, at the top level and in the
+  `checkpointing` block, with the closest known key or, for a name from
+  the JSON schema such as `report_interval` or `integrator`, what to write
+  instead; and `checkpointing` must be a mapping.
+
+  The old `load_yaml` allow-list also let through eight keys that no loader
+  read. Two of them, which existing configs carry, still load but warn that
+  they have no effect: `output_layout` and `mode` (a YAML config runs
+  replica exchange when it lists more than one temperature, and folding
+  otherwise). The other six are now errors: `temperature` (write
+  `temperatures: [T]`, a list even for one temperature) and the JSON blocks
+  `integrator`, `outputs`, `replica_exchange`, `constraints` and
+  `checkpoint`.
+
+  `pymcpu.utils.yaml_parser.load_yaml` raises the same error instead of
+  warning, and its `KNOWN_FIELDS` list, which had drifted from the keys the
+  loader reads, is gone; `pymcpu.config.check_yaml_keys` does the check.
+  `replica_grid_dims` no longer counts `n_q_windows`, which the YAML loader
+  never read (it is an argument of `ReplicaExchange` and a flag of
+  `scripts/run_mcpu_replica_exchange.py`), so `scripts/submit.sh` could
+  size a job for more replicas than the run made. `scripts/submit.sh` also
+  checks the keys before it submits, so a typo fails at once rather than
+  after the job has waited in the queue. JSON configs already rejected
+  unknown fields.
 
 - **A structure placed far from the origin runs shifted next to it, and
   coordinates come back as float64.** Coordinates are float32 and every move

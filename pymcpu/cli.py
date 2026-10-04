@@ -1,15 +1,26 @@
 """``mcpu`` command-line entry point.
 
 Subcommands: ``version``, ``download-params``, ``materialize-params``,
-``run``, ``validate``, ``, ``, ````. See docs/cli.rst.
+``run`` and ``validate``. See docs/cli.rst.
 """
 
 from __future__ import annotations
 
 import argparse
-import json
 import sys
 from pathlib import Path
+
+from pymcpu.utils.cli import add_checkpoint_args, apply_checkpoint_args
+
+
+def _add_checkpoint_args(parser: argparse.ArgumentParser) -> None:
+    # Unset flags stay None, so they leave the config's checkpointing alone.
+    add_checkpoint_args(
+        parser,
+        checkpoint_interval_default=None,
+        checkpoint_dir_default=None,
+        keep_last_n_default=None,
+    )
 
 
 def _cmd_download_params(args: argparse.Namespace) -> int:
@@ -35,40 +46,41 @@ def _cmd_version(_: argparse.Namespace) -> int:
 
 
 def _cmd_validate(args: argparse.Namespace) -> int:
-    from pymcpu.config import load_config_auto
+    from pymcpu.config import load_config_auto, repo_root
 
     try:
         cfg = load_config_auto(args.config)
-    except (OSError, ValueError, json.JSONDecodeError, FileNotFoundError) as exc:
-        print(f"config validation failed: {exc}", file=sys.stderr)
+        apply_checkpoint_args(cfg.checkpoint, args)
+        pdb = cfg.resolve_pdb()
+        structures = [("pdb", cfg.pdb, pdb)]
+        # Only replica exchange reads the reference structure.
+        if cfg.mode == "replica_exchange_2d" and cfg.reference_pdb:
+            structures.append(("reference_pdb", cfg.reference_pdb, cfg.resolve_reference_pdb()))
+    except Exception as exc:
+        # ValueError and OSError messages are written for users; for any other
+        # error, the type is part of the message.
+        if isinstance(exc, (ValueError, OSError)):
+            reason = str(exc)
+        else:
+            reason = f"{type(exc).__name__}: {exc}"
+        print(f"config validation failed: {reason}", file=sys.stderr)
         return 1
-    _apply_checkpoint_cli_overrides(cfg, args)
-    print(f"OK  mode={cfg.mode}  pdb={cfg.pdb}")
-    if cfg.mpi:
-        print("    mpi=true")
+    for key, given, path in structures:
+        if path.is_file():
+            continue
+        if path.exists():
+            problem = f"{path} is not a file"
+        elif Path(given).expanduser().is_absolute():
+            problem = "not found"
+        else:
+            problem = f"not found in the current directory or in {repo_root()}"
+        print(f"config validation failed: {key} {given!r}: {problem}", file=sys.stderr)
+        return 1
+    print(f"OK  mode={cfg.mode}  pdb={pdb}")
     if cfg.checkpoint.checkpoint_dir:
         print(f"    checkpoint_dir={cfg.checkpoint.checkpoint_dir}")
         print(f"    checkpoint_interval={cfg.checkpoint.checkpoint_interval}")
     return 0
-
-
-def _apply_checkpoint_cli_overrides(cfg, args: argparse.Namespace) -> None:
-    """Merge CLI checkpoint flags into ``cfg.checkpoint`` when provided."""
-    chk = cfg.checkpoint
-    if getattr(args, "checkpoint_dir", None) is not None:
-        chk.checkpoint_dir = args.checkpoint_dir
-    if getattr(args, "checkpoint_interval", None) is not None:
-        chk.checkpoint_interval = int(args.checkpoint_interval)
-    if getattr(args, "keep_last_n", None) is not None:
-        chk.keep_last_n = int(args.keep_last_n)
-    if getattr(args, "resume", False):
-        chk.resume = True
-    if getattr(args, "cloud_sync", False):
-        chk.cloud_sync = True
-    if getattr(args, "cloud_bucket", None):
-        chk.cloud_bucket = str(args.cloud_bucket)
-    if getattr(args, "cloud_sync_cmd", None):
-        chk.cloud_sync_cmd = str(args.cloud_sync_cmd)
 
 
 def _cmd_materialize_params(args: argparse.Namespace) -> int:
@@ -103,60 +115,12 @@ def _cmd_run(args: argparse.Namespace) -> int:
 
     try:
         cfg = load_config_auto(args.config)
-        _apply_checkpoint_cli_overrides(cfg, args)
+        apply_checkpoint_args(cfg.checkpoint, args)
         run_from_config(cfg, verbose=not args.quiet)
     except Exception as exc:
         print(f"mcpu run failed: {exc}", file=sys.stderr)
         return 1
     return 0
-
-
-def _add_checkpoint_args(parser: argparse.ArgumentParser) -> None:
-    checkpoint_group = parser.add_argument_group("checkpointing")
-    checkpoint_group.add_argument(
-        "--checkpoint-interval",
-        type=int,
-        default=None,
-        metavar="N",
-        help="Save a checkpoint every N cycles. Default: 50 (from CheckpointConfig).",
-    )
-    checkpoint_group.add_argument(
-        "--checkpoint-dir",
-        type=str,
-        default=None,
-        help="Directory to write checkpoint files. Default: checkpoints/",
-    )
-    checkpoint_group.add_argument(
-        "--keep-last-n",
-        type=int,
-        default=None,
-        help="Number of versioned checkpoints to keep. Default: 3.",
-    )
-    checkpoint_group.add_argument(
-        "--resume",
-        action="store_true",
-        default=False,
-        help="Resume from the latest checkpoint in --checkpoint-dir.",
-    )
-    checkpoint_group.add_argument(
-        "--cloud-sync",
-        action="store_true",
-        default=False,
-        help="Upload last.chk to cloud after each save.",
-    )
-    checkpoint_group.add_argument(
-        "--cloud-bucket",
-        type=str,
-        default="",
-        metavar="URI",
-        help="Cloud destination URI. Example: s3://my-bucket/run-01/",
-    )
-    checkpoint_group.add_argument(
-        "--cloud-sync-cmd",
-        type=str,
-        default="aws s3 cp",
-        help="Cloud sync command. Default: 'aws s3 cp'.",
-    )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -225,7 +189,6 @@ def build_parser() -> argparse.ArgumentParser:
     p_val.add_argument("config", type=Path, help="Path to config file (.json/.yaml/.yml)")
     _add_checkpoint_args(p_val)
     p_val.set_defaults(func=_cmd_validate)
-
 
     return parser
 

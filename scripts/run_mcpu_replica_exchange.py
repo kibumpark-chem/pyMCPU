@@ -215,13 +215,13 @@ def _run_from_config_path(args: argparse.Namespace) -> None:
     run_from_config path as ``mcpu run``, instead of hand-rolling a second
     config-to-kwargs adapter. MPI-ness still comes only from ``--mpi``
     (never from a ``mpi:`` key in the config -- see docs/running_remd.md)."""
-    from pymcpu.cli import _apply_checkpoint_cli_overrides
     from pymcpu.config import load_config_auto
+    from pymcpu.utils.cli import apply_checkpoint_args
 
     cfg = load_config_auto(args.config)
     if cfg.replica_exchange is None:
         raise ValueError("Config does not define a replica exchange simulation")
-    _apply_checkpoint_cli_overrides(cfg, args)
+    apply_checkpoint_args(cfg.checkpoint, args)
     if args.hdf5 is not None:
         cfg.outputs.hdf5 = args.hdf5
 

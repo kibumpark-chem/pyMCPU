@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import difflib
 import json
+import warnings
 from dataclasses import dataclass, field, fields
 from pathlib import Path
 from typing import Any, Literal, Mapping, Sequence
@@ -35,6 +37,7 @@ __all__ = [
     # config format should go through these rather than reimplement the rules,
     # so that every entry point rejects the same inputs identically.
     "apply_linker_energy_mask",
+    "check_yaml_keys",
     "normalize_linker_energy_mode",
     "normalize_move_weights",
     "normalize_pivot_rama_probability",
@@ -316,6 +319,8 @@ class SimulationConfig:
     #: half-irrelevant whichever you pick. Unknown keys raise at build time.
     forcefield_options: dict[str, Any] = field(default_factory=dict)
     reference_pdb: str | None = None
+    #: Accepted and not used: a run uses MPI when it is launched that way
+    #: (``--mpi`` under ``mpirun``), whatever the config says.
     mpi: bool = False
     integrator: IntegratorConfig = field(default_factory=IntegratorConfig)
     outputs: OutputsConfig = field(default_factory=OutputsConfig)
@@ -634,7 +639,7 @@ def replica_grid_dims(data: Mapping[str, Any]) -> tuple[int, int]:
     Formula mirrors ReplicaExchange/MPIReplicaExchange's actual replica grid:
         n_replicas = len(temperatures) * n_windows
     where n_windows = len(q_targets) if set, else len(n_targets|native_contact_targets)
-    if set, else n_q_windows (default 1).
+    if set, else 1.
     """
     temperatures = _expand_temperatures(data)
     q_targets = data.get("q_targets")
@@ -644,7 +649,7 @@ def replica_grid_dims(data: Mapping[str, Any]) -> tuple[int, int]:
     elif n_targets is not None:
         n_windows = len(n_targets)
     else:
-        n_windows = int(data.get("n_q_windows", 1))
+        n_windows = 1
     return len(temperatures) * n_windows, len(temperatures)
 
 
@@ -652,6 +657,111 @@ def _infer_output_dir_and_prefix(output_prefix: str) -> tuple[str, str]:
     """Split an output_prefix path into (directory, filename_prefix)."""
     p = Path(output_prefix)
     return str(p.parent), p.name
+
+
+# Keys of a YAML config's ``checkpointing`` block. They are also accepted at
+# the top level of the flat schema.
+_YAML_CHECKPOINT_KEYS = frozenset({
+    "checkpoint_dir", "checkpoint_interval", "keep_last_n", "resume",
+    "cloud_sync", "cloud_bucket", "cloud_sync_cmd", "enabled",
+})
+
+# Every top-level key of the flat YAML schema (see yaml_dict_to_config).
+# ``mpi``, ``title`` and ``description`` are accepted and not used.
+_YAML_KEYS = frozenset({
+    # structure and force field
+    "pdb", "reference_pdb", "param_set", "param_dir", "forcefield",
+    "forcefield_options",
+    # temperatures
+    "temperatures", "temp_min", "temp_step", "n_temps",
+    # run length and moves
+    "seed", "mc_replica_steps", "steps", "num_cycles", "log_interval",
+    "step_size_rad", "sidechain_move_mode", "pivot_rama_probability",
+    "pivot_rama_schedule", "move_weights",
+    # replica exchange
+    "q_targets", "n_targets", "native_contact_targets", "k_bias",
+    "k_native_contacts", "contact_cutoff", "min_seq_sep", "contact_atom_mode",
+    "native_contact_pairs", "exchange_log", "state_log_interval",
+    "log_walker_in_data_csv",
+    # constraints
+    "fixed_residue_indices", "fixed_residues", "linker_residue_indices",
+    "linker_residues", "linker_energy_mode",
+    # outputs
+    "output_prefix", "output_dir", "hdf5",
+    # checkpointing
+    "checkpointing", *_YAML_CHECKPOINT_KEYS,
+    # accepted, not used
+    "mpi", "title", "description",
+})
+
+# Keys that older configs carry and that no loader ever read. They load with a
+# warning, so that existing configs keep working.
+_RETIRED_YAML_KEYS = {
+    "output_layout": "the output location comes from output_prefix and output_dir",
+    "mode": (
+        "a YAML config runs replica exchange when it lists more than one "
+        "temperature, and folding otherwise"
+    ),
+}
+
+_JSON_BLOCK = "a block of the JSON schema; in YAML its settings are top-level keys"
+
+# What to write instead of a key that a YAML config does not have but that a
+# user may well try: names from the JSON schema, and keys of older configs.
+# difflib's guess is wrong or missing for most of these.
+_YAML_KEY_HINTS = {
+    "temperature": "write 'temperatures: [T]', a list even for one temperature",
+    "integrator": _JSON_BLOCK,
+    "outputs": _JSON_BLOCK,
+    "replica_exchange": _JSON_BLOCK,
+    "constraints": _JSON_BLOCK,
+    "checkpoint": "the YAML block is called 'checkpointing'",
+    "report_interval": "the YAML name is 'log_interval'",
+    "steps_per_cycle": "the YAML name is 'mc_replica_steps'",
+    "swap_interval": "the YAML name is 'mc_replica_steps'",
+}
+
+
+def _unknown_keys(data: Mapping[str, Any], known: frozenset[str], prefix: str = "") -> list[str]:
+    found = []
+    for key in sorted((k for k in data if k not in known), key=str):
+        hint = None if prefix else _YAML_KEY_HINTS.get(key)
+        if hint is None:
+            close = difflib.get_close_matches(str(key), sorted(known), n=1)
+            hint = f"did you mean {close[0]!r}?" if close else None
+        name = f"{prefix}{key}"
+        found.append(f"{name!r} ({hint})" if hint else repr(name))
+    return found
+
+
+def check_yaml_keys(data: Mapping[str, Any], source: str = "the YAML config") -> None:
+    """Raise ValueError if a flat YAML config has keys the schema does not.
+
+    Checks the top level and the ``checkpointing`` block and names every
+    unknown key at once, with the closest known key or what to write instead,
+    so that a misspelled key is reported instead of silently ignored. Keys
+    that older configs carry and that do nothing (``output_layout``,
+    ``mode``) only warn. ``source`` names the config in the messages.
+    """
+    for key, reason in _RETIRED_YAML_KEYS.items():
+        if key in data:
+            warnings.warn(
+                f"{key!r} in {source} has no effect ({reason}); you can delete it",
+                UserWarning,
+                stacklevel=1,
+            )
+    unknown = _unknown_keys(data, _YAML_KEYS | frozenset(_RETIRED_YAML_KEYS))
+    block = data.get("checkpointing")
+    if isinstance(block, Mapping):
+        unknown += _unknown_keys(block, _YAML_CHECKPOINT_KEYS, prefix="checkpointing.")
+    if unknown:
+        noun = "key" if len(unknown) == 1 else "keys"
+        raise ValueError(f"Unknown {noun} in {source}: {', '.join(unknown)}")
+    if block is not None and not isinstance(block, Mapping):
+        raise ValueError(
+            f"'checkpointing' in {source} must be a mapping of checkpoint "
+            f"settings, got {block!r}"
+        )
 
 
 def _checkpoint_from_yaml(data: Mapping[str, Any]) -> CheckpointConfig:
@@ -694,6 +804,8 @@ def load_yaml_config(path: str | Path) -> SimulationConfig:
         fixed_residue_indices, temp_min/temp_step/n_temps (or temperatures),
         n_targets/native_contact_targets or q_targets, k_bias, contact_cutoff,
         min_seq_sep, checkpointing / checkpoint_dir, log_interval, …
+
+    An unknown key raises ValueError (see :func:`check_yaml_keys`).
     """
     import yaml
 
@@ -703,12 +815,18 @@ def load_yaml_config(path: str | Path) -> SimulationConfig:
     if not isinstance(data, dict):
         raise ValueError(f"YAML config must be a mapping, got {type(data).__name__}")
 
-    return yaml_dict_to_config(data)
+    return yaml_dict_to_config(data, source=str(p))
 
 
-def yaml_dict_to_config(data: Mapping[str, Any]) -> SimulationConfig:
-    """Convert a flat YAML dict into a SimulationConfig."""
+def yaml_dict_to_config(
+    data: Mapping[str, Any], *, source: str = "the YAML config"
+) -> SimulationConfig:
+    """Convert a flat YAML dict into a SimulationConfig.
+
+    ``source`` names the config in error messages, for example its path.
+    """
     data = dict(data)
+    check_yaml_keys(data, source)
     if "pdb" not in data:
         raise ValueError("YAML config requires 'pdb'")
 
