@@ -7,7 +7,6 @@ Subcommands: ``version``, ``download-params``, ``materialize-params``,
 from __future__ import annotations
 
 import argparse
-import json
 import sys
 from pathlib import Path
 
@@ -47,17 +46,37 @@ def _cmd_version(_: argparse.Namespace) -> int:
 
 
 def _cmd_validate(args: argparse.Namespace) -> int:
-    from pymcpu.config import load_config_auto
+    from pymcpu.config import load_config_auto, repo_root
 
     try:
         cfg = load_config_auto(args.config)
-    except (OSError, ValueError, json.JSONDecodeError, FileNotFoundError) as exc:
-        print(f"config validation failed: {exc}", file=sys.stderr)
+        apply_checkpoint_args(cfg.checkpoint, args)
+        pdb = cfg.resolve_pdb()
+        structures = [("pdb", cfg.pdb, pdb)]
+        # Only replica exchange reads the reference structure.
+        if cfg.mode == "replica_exchange_2d" and cfg.reference_pdb:
+            structures.append(("reference_pdb", cfg.reference_pdb, cfg.resolve_reference_pdb()))
+    except Exception as exc:
+        # ValueError and OSError messages are written for users; for any other
+        # error, the type is part of the message.
+        if isinstance(exc, (ValueError, OSError)):
+            reason = str(exc)
+        else:
+            reason = f"{type(exc).__name__}: {exc}"
+        print(f"config validation failed: {reason}", file=sys.stderr)
         return 1
-    apply_checkpoint_args(cfg.checkpoint, args)
-    print(f"OK  mode={cfg.mode}  pdb={cfg.pdb}")
-    if cfg.mpi:
-        print("    mpi=true")
+    for key, given, path in structures:
+        if path.is_file():
+            continue
+        if path.exists():
+            problem = f"{path} is not a file"
+        elif Path(given).expanduser().is_absolute():
+            problem = "not found"
+        else:
+            problem = f"not found in the current directory or in {repo_root()}"
+        print(f"config validation failed: {key} {given!r}: {problem}", file=sys.stderr)
+        return 1
+    print(f"OK  mode={cfg.mode}  pdb={pdb}")
     if cfg.checkpoint.checkpoint_dir:
         print(f"    checkpoint_dir={cfg.checkpoint.checkpoint_dir}")
         print(f"    checkpoint_interval={cfg.checkpoint.checkpoint_interval}")

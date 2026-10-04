@@ -78,6 +78,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   them. An empty `--cloud-bucket` or `--cloud-sync-cmd` is now an error
   rather than ignored.
 
+- **`mcpu validate` checks that the structure files exist.** For a YAML
+  config it reported OK when `pdb`, or a replica exchange config's
+  `reference_pdb`, did not exist, so the mistake surfaced only when the run
+  started; the JSON loader already checked. For either format it now fails,
+  naming the file, when the file is missing or is not a file. Any other
+  error while loading the config is now reported in one line rather than as
+  a traceback, for example a single number where a list is expected.
+
 - **KIC no longer stretches the bonds of the atoms it carries.** A KIC move
   carries each window residue's O, sidechain and amide H rigidly with its
   backbone frame, and `transfer_dependent_atoms` built that frame in

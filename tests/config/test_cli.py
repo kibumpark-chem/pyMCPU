@@ -53,6 +53,64 @@ def test_validate_missing_file_returns_error(tmp_path: Path) -> None:
     assert rc == 1  # rc=1 is the CLI's own failure contract
 
 
+def test_validate_reports_a_missing_pdb(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    config = tmp_path / "missing_pdb.yaml"
+    config.write_text("pdb: no_such_structure.pdb\ntemperatures: [0.5]\n")
+    assert main(["validate", str(config)]) == 1
+    assert "pdb 'no_such_structure.pdb': not found" in capsys.readouterr().err
+
+
+def test_validate_reports_a_missing_reference_pdb(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.chdir(REPO_ROOT)
+    config = tmp_path / "missing_reference.yaml"
+    config.write_text(
+        "pdb: examples/data/1uao.pdb\n"
+        "reference_pdb: no_such_native.pdb\n"
+        "temperatures: [0.4, 0.5]\n"
+    )
+    assert main(["validate", str(config)]) == 1
+    assert "reference_pdb 'no_such_native.pdb': not found" in capsys.readouterr().err
+
+
+def test_validate_ignores_the_reference_pdb_of_a_folding_config(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A folding run never reads reference_pdb, so validate does not either.
+    monkeypatch.chdir(REPO_ROOT)
+    config = tmp_path / "folding.yaml"
+    config.write_text(
+        "pdb: examples/data/1uao.pdb\n"
+        "reference_pdb: no_such_native.pdb\n"
+        "temperatures: [0.5]\n"
+    )
+    assert main(["validate", str(config)]) == 0
+
+
+def test_validate_reports_a_pdb_that_is_a_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.chdir(REPO_ROOT)
+    config = tmp_path / "directory_pdb.yaml"
+    config.write_text("pdb: examples/data\ntemperatures: [0.5]\n")
+    assert main(["validate", str(config)]) == 1
+    assert "is not a file" in capsys.readouterr().err
+
+
+def test_validate_reports_a_bad_value_in_one_line(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # A number where the loader expects a list raises TypeError, which used to
+    # escape as a traceback.
+    config = tmp_path / "scalar_temperatures.yaml"
+    config.write_text("pdb: examples/data/1uao.pdb\ntemperatures: 0.5\n")
+    assert main(["validate", str(config)]) == 1
+    assert "config validation failed: TypeError" in capsys.readouterr().err
+
+
 def _config_with_checkpointing(tmp_path: Path) -> Path:
     config = tmp_path / "run.yaml"
     config.write_text(

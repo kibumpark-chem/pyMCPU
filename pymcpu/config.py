@@ -319,6 +319,8 @@ class SimulationConfig:
     #: half-irrelevant whichever you pick. Unknown keys raise at build time.
     forcefield_options: dict[str, Any] = field(default_factory=dict)
     reference_pdb: str | None = None
+    #: Accepted and not used: a run uses MPI when it is launched that way
+    #: (``--mpi`` under ``mpirun``), whatever the config says.
     mpi: bool = False
     integrator: IntegratorConfig = field(default_factory=IntegratorConfig)
     outputs: OutputsConfig = field(default_factory=OutputsConfig)
