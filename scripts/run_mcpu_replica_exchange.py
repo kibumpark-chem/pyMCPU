@@ -2,7 +2,7 @@
 """CLI entry point for pyMCPU replica exchange / parallel tempering.
 
 Usage with config file (preferred):
-    bash scripts/submit.sh inputs/template.yaml
+    bash scripts/submit.sh CONFIG.yaml
     mpirun -n N_REPLICAS python run_mcpu_replica_exchange.py --mpi -c input.yaml
     python run_mcpu_replica_exchange.py -c input.yaml
 

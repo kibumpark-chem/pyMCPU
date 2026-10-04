@@ -1,6 +1,6 @@
 # ============================================================
 # pyMCPU Input Template (GROMACS-style YAML)
-# All fields documented. Copy and modify for your simulation.
+# The common fields, with their defaults. Copy and modify for your simulation.
 # Run: python examples/gromacs_style/run.py --input this_file.yaml
 # Or:  mcpu run this_file.yaml
 # ============================================================
@@ -13,34 +13,37 @@ pdb: examples/data/1uao.pdb          # REQUIRED | path to input PDB (heavy atoms
 
 # ── Simulation mode ───────────────────────────────────────────
 # Inferred from temperature list:
-#   1 temperature  → folding
+#   1 temperature  → folding (q_targets / n_targets are ignored)
 #   >1 temperature → replica_exchange_2d
 
 # ── Temperature ladder ────────────────────────────────────────
 # Option A: explicit list
 # temperatures: [0.4, 0.45, 0.5, 0.55, 0.6]
 # Option B: generate from range (preferred for large grids)
-temp_min: 0.4                         # reduced units | lowest temperature  # REQUIRED
+temp_min: 0.4                         # reduced units | lowest temperature  # REQUIRED unless temperatures is given
 temp_step: 0.05                       # reduced units | spacing between temperatures  # default: 0.025
-n_temps: 11                           # int | number of temperature replicas  # REQUIRED
+n_temps: 11                           # int | number of temperatures  # default: 1
 
 # ── Native contacts / umbrella ────────────────────────────────
+# One window per target. With no targets there is one window at N0 = 0 that
+# k_bias still applies to; set k_bias: 0 for plain temperature REMD.
 # q_targets: fraction-based umbrella centers (converted to N0 = Q * n_contacts)
 q_targets: [0.20, 0.40, 0.60, 0.80]  # list[float] | fraction Q umbrella centers
-k_bias: 200                           # float | harmonic umbrella strength on N  # REQUIRED when q_targets set
+# n_targets: [0, 5, 10]               # list[float] | umbrella centers in contacts N (instead of q_targets)
+k_bias: 200                           # float | harmonic umbrella strength on N  # default: 1.0
 contact_atom_mode: ca                 # ca | cb (cb = CB–CB; GLY / missing CB → backbone CA)  # default: ca
 contact_cutoff: 6.0                   # Angstrom | reference contact-atom distance cutoff (tunable; CB often larger)  # default: 6.0
 min_seq_sep: 7                        # int | minimum sequence separation for contact pairs  # default: 4
 
 # ── Monte Carlo parameters ────────────────────────────────────
-num_cycles: 10                        # int | number of exchange cycles  # REQUIRED
-mc_replica_steps: 10                  # int | MC steps per replica per cycle  # REQUIRED
+num_cycles: 10                        # int | number of exchange cycles  # default: 10
+mc_replica_steps: 10                  # int | MC steps per replica per cycle  # default: 1000
 seed: 0                               # int | random seed for reproducibility  # default: 42
 # step_size_rad: 0.1                  # float | MC move step size in radians  # default: 0.1
 
 # ── Constraints ───────────────────────────────────────────────
 # Engine-internal residue indices (0-based) to hold fixed during MC.
-fixed_residue_indices: [88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126, 127, 128, 129, 130, 131, 132, 133, 134, 135, 136, 137, 138, 139, 140, 141, 142, 143, 144, 145, 146, 147, 148, 149, 150, 151, 152, 153, 154, 155, 156, 157, 158, 159, 160, 161, 162, 163, 164, 165, 166, 167, 168, 169, 170, 171, 172, 173, 174, 175, 176, 177, 178, 179, 180, 181, 182, 183, 184, 185, 186, 187, 188, 189, 190, 191, 192, 193, 194, 195, 196, 197, 198, 199]
+# fixed_residue_indices: [0, 1]
 # Movable ghost residues (0-based engine indices). Soft energies off; disjoint from fixed.
 # linker_residue_indices: [40, 41, 42, 43, 44]
 # linker_energy_mode: ignore_all   # ignore_all (default) | clash_only
@@ -57,7 +60,7 @@ log_walker_in_data_csv: true          # bool | stamp walker_id on each _data.csv
 checkpointing:
   enabled: true
   checkpoint_dir: "checkpoints"
-  checkpoint_interval: 50  # lowered from previous default; saves every 50 cycles
+  checkpoint_interval: 50  # cycles between checkpoints
   keep_last_n: 3
   resume: false
   cloud_sync: false
@@ -68,7 +71,7 @@ checkpointing:
 # MPI parallelism is configured in the launch script (scripts/submit.sh),
 # not here. The number of replicas is:
 #   len(temperatures) × len(q_targets) = 11 × 4 = 44 replicas
-# Launch: bash scripts/submit.sh inputs/template.yaml
+# Launch: bash scripts/submit.sh examples/configs/template.yaml
 # See: docs/running_remd.md
 
 # ── Metadata ──────────────────────────────────────────────────
