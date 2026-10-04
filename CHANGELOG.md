@@ -434,6 +434,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **A YAML config with an unknown key is an error.** The flat YAML schema
+  ignored any key it did not read, so a misspelled key such as `num_cylces`
+  or `checkpoint_intrval` silently left the setting at its default, and
+  `checkpointing: false` left checkpointing on. Loading a YAML config now
+  raises `ValueError` naming every unknown key, at the top level and in the
+  `checkpointing` block, with the closest known key or, for a name from
+  the JSON schema such as `report_interval` or `integrator`, what to write
+  instead; and `checkpointing` must be a mapping.
+
+  The old `load_yaml` allow-list also let through eight keys that no loader
+  read. Two of them, which existing configs carry, still load but warn that
+  they have no effect: `output_layout` and `mode` (a YAML config runs
+  replica exchange when it lists more than one temperature, and folding
+  otherwise). The other six are now errors: `temperature` (write
+  `temperatures: [T]`, a list even for one temperature) and the JSON blocks
+  `integrator`, `outputs`, `replica_exchange`, `constraints` and
+  `checkpoint`.
+
+  `pymcpu.utils.yaml_parser.load_yaml` raises the same error instead of
+  warning, and its `KNOWN_FIELDS` list, which had drifted from the keys the
+  loader reads, is gone; `pymcpu.config.check_yaml_keys` does the check.
+  `replica_grid_dims` no longer counts `n_q_windows`, which the YAML loader
+  never read (it is an argument of `ReplicaExchange` and a flag of
+  `scripts/run_mcpu_replica_exchange.py`), so `scripts/submit.sh` could
+  size a job for more replicas than the run made. `scripts/submit.sh` also
+  checks the keys before it submits, so a typo fails at once rather than
+  after the job has waited in the queue. JSON configs already rejected
+  unknown fields.
+
 - **A structure placed far from the origin runs shifted next to it, and
   coordinates come back as float64.** Coordinates are float32 and every move
   rounds each coordinate it changes at its absolute value, so the rounding

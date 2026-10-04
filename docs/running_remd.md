@@ -16,8 +16,10 @@ n_replicas = len(temperatures) × len(q_targets | n_targets)
 
 Temperatures may be an explicit `temperatures:` list or generated from
 `temp_min` / `temp_step` / `n_temps`. If neither `q_targets` nor
-`n_targets` / `native_contact_targets` is set, the window count defaults
-to `n_q_windows` (usually 1 → temperature REMD only).
+`n_targets` / `native_contact_targets` is set, there is one window,
+centred at N = 0, and its umbrella still applies with `k_bias` (default
+1.0), which pulls every replica toward unfolded structures. For plain
+temperature REMD, set `k_bias: 0`.
 
 For a YAML with 11 temperatures and 4 Q targets: **44 replicas**.
 
@@ -60,11 +62,9 @@ supported way to trade wall-time for node count.
 
 ## The `mpi: true` YAML key
 
-`mpi` is a recognized-but-ignored key in the YAML schema (see
-`pymcpu/utils/yaml_parser.py`'s `KNOWN_FIELDS`). It is not read by
-`pymcpu.config`, and no warning is emitted for it today. MPI is
-controlled entirely by how you launch the script (`--mpi` plus
-`mpirun` / `srun -n N_RANKS`), not by anything in the YAML.
+`mpi` is accepted in a YAML config but not used. MPI is controlled
+entirely by how you launch the script (`--mpi` plus `mpirun` /
+`srun -n N_RANKS`), not by anything in the YAML.
 
 ## Environment variables
 
