@@ -487,10 +487,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   chignolin, where closures are a larger share of the step, still makes
   11% more. A single process gains on both: 7% on actin, 17% on chignolin.
 
-- **An accepted move copies only the atoms it moved.** Committing it
-  scanned the whole moved-atom mask, one entry per atom of the system; it now
-  walks the list of moved atoms. -2% cycles per step on actin's default move
-  mix and -3% pivot-only; trajectories are unchanged bit for bit.
+- **An accepted move copies only the atoms it moved, and the step timers
+  read the CPU's time-stamp counter.** Committing a move scanned the whole
+  moved-atom mask, one entry per atom of the system; it now walks the list
+  of moved atoms (-2% cycles per step on actin's default move mix, -3%
+  pivot-only). The per-step timers behind `Integrator.step_stats()` read
+  the time-stamp counter on x86, calibrated once against `steady_clock`
+  in a 2 ms wait the first time a timer runs, instead of `steady_clock`
+  itself (-3% on actin, -5% on chignolin); they report the same times, and
+  other platforms keep `steady_clock`.
+  Trajectories are unchanged bit for bit.
 
 - **A YAML config with an unknown key is an error.** The flat YAML schema
   ignored any key it did not read, so a misspelled key such as `num_cylces`
