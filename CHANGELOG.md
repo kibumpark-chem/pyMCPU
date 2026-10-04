@@ -442,6 +442,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Mu's energy change skips the neighbour cells that hold only moved atoms,
+  which makes actin 1.3x faster on the default move mix and 1.6x
+  pivot-only.** The neighbour grid holds accepted coordinates, so both walks
+  over a moved atom's new neighbours (the clash-first pass and the contact
+  walk) skip every atom the move displaced. On an actin pivot about three
+  quarters of the cells they visited held nothing else. A move now counts
+  its atoms per cell and skips the cells it fills completely. The same pairs
+  are scored in the same order, so trajectories are unchanged bit for bit.
+  Cycles per step against the previous commit: -25% on actin's default move
+  mix (54.5 to 42.2 µs/step over 3000 steps), -37% pivot-only and -7% on
+  chignolin.
+
 - **A YAML config with an unknown key is an error.** The flat YAML schema
   ignored any key it did not read, so a misspelled key such as `num_cylces`
   or `checkpoint_intrval` silently left the setting at its default, and

@@ -571,6 +571,101 @@ public:
         return true;
     }
 
+    /**
+     * for_each_cell_span_within_fast for a query that skips every atom a move
+     * displaced: `moved_per_cell[c]` counts the atoms listed in cell c that
+     * the pending move displaces. A cell whose atoms all moved (count ==
+     * moved_per_cell[c], which also covers an empty cell) holds nothing such
+     * a query keeps, so it is not visited. The cells still visited come in
+     * the unfiltered order, and their spans are the same.
+     */
+    template <typename CellFunc>
+    bool for_each_cell_span_within_fast_unmoved(float x, float y, float z,
+                                                float radius,
+                                                const std::uint8_t* moved_per_cell,
+                                                CellFunc&& cell_fn) const {
+        static_assert(CELL_CAPACITY <= 255,
+                      "moved_per_cell holds per-cell counts in a uint8");
+        if (!configured_ || !use_contiguous_) return true;
+        const float fx = (x - bounds_.lo.x()) * inv_cell_;
+        const float fy = (y - bounds_.lo.y()) * inv_cell_;
+        const float fz = (z - bounds_.lo.z()) * inv_cell_;
+        const int ix0 = static_cast<int>(std::floor(fx));
+        const int iy0 = static_cast<int>(std::floor(fy));
+        const int iz0 = static_cast<int>(std::floor(fz));
+        const float ox = (fx - static_cast<float>(ix0)) * cell_size_;
+        const float oy = (fy - static_cast<float>(iy0)) * cell_size_;
+        const float oz = (fz - static_cast<float>(iz0)) * cell_size_;
+        int axs[3][3];
+        int nax[3];
+        const float hi = cell_size_ - radius;
+        auto fill = [&](int k, int i0, float off) {
+            int n = 0;
+            if (off < radius) axs[k][n++] = i0 - 1;
+            axs[k][n++] = i0;
+            if (off > hi) axs[k][n++] = i0 + 1;
+            nax[k] = n;
+        };
+        fill(0, ix0, ox);
+        fill(1, iy0, oy);
+        fill(2, iz0, oz);
+        for (int a = 0; a < nax[0]; ++a) {
+            const int ix = axs[0][a];
+            if (ix < 0 || ix >= nx_) continue;
+            for (int b = 0; b < nax[1]; ++b) {
+                const int iy = axs[1][b];
+                if (iy < 0 || iy >= ny_) continue;
+                for (int cc = 0; cc < nax[2]; ++cc) {
+                    const int iz = axs[2][cc];
+                    if (iz < 0 || iz >= nz_) continue;
+                    const int c = (ix * ny_ + iy) * nz_ + iz;
+                    const int count = cell_count_[static_cast<size_t>(c)];
+                    if (count == static_cast<int>(moved_per_cell[static_cast<size_t>(c)]))
+                        continue;
+                    const size_t base = static_cast<size_t>(c) * CELL_CAPACITY;
+                    if (!cell_fn(cell_atoms_.data() + base, cell_x_.data() + base,
+                                 cell_y_.data() + base, cell_z_.data() + base,
+                                 count))
+                        return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    /// for_each_neighbor_cell_span_while minus the cells whose atoms all
+    /// moved; see for_each_cell_span_within_fast_unmoved.
+    template <typename CellFunc>
+    bool for_each_neighbor_cell_span_while_unmoved(float x, float y, float z,
+                                                   const std::uint8_t* moved_per_cell,
+                                                   CellFunc&& cell_fn) const {
+        if (!configured_ || neighbor_offsets_.empty() || !use_contiguous_)
+            return true;
+        const int ix0 =
+            static_cast<int>(std::floor((x - bounds_.lo.x()) * inv_cell_));
+        const int iy0 =
+            static_cast<int>(std::floor((y - bounds_.lo.y()) * inv_cell_));
+        const int iz0 =
+            static_cast<int>(std::floor((z - bounds_.lo.z()) * inv_cell_));
+        for (const CellOffset& o : neighbor_offsets_) {
+            const int ix = ix0 + o.dx;
+            const int iy = iy0 + o.dy;
+            const int iz = iz0 + o.dz;
+            if (ix < 0 || iy < 0 || iz < 0 || ix >= nx_ || iy >= ny_ ||
+                iz >= nz_)
+                continue;
+            const int c = (ix * ny_ + iy) * nz_ + iz;
+            const int count = cell_count_[static_cast<size_t>(c)];
+            if (count == static_cast<int>(moved_per_cell[static_cast<size_t>(c)]))
+                continue;
+            const size_t base = static_cast<size_t>(c) * CELL_CAPACITY;
+            if (!cell_fn(cell_atoms_.data() + base, cell_x_.data() + base,
+                         cell_y_.data() + base, cell_z_.data() + base, count))
+                return false;
+        }
+        return true;
+    }
+
     /// Like for_each_neighbor_cell_span but stops if cell_fn returns false. O(stencil×occ).
     template <typename CellFunc>
     bool for_each_neighbor_cell_span_while(float x, float y, float z,

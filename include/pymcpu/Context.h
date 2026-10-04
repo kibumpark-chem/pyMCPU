@@ -93,6 +93,12 @@ struct MuWorkspace {
     /// Scratch: cell_id → group index; size = n_cells. Filled with -1. O(1) reuse.
     std::vector<int> cell_to_group_scratch;
 
+    /// Contact-list delta: how many of the atoms a cell of the accepted Mu
+    /// grid lists does the pending move displace. Filled from the moved atoms'
+    /// cells at the start of the delta and zeroed again before it returns, so
+    /// it is all zeros between moves. Size >= n_cells.
+    std::vector<std::uint8_t> moved_per_cell;
+
     void clear() {
         pending_contact_drop.clear();
         pending_contact_add.clear();

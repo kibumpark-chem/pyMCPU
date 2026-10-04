@@ -2097,6 +2097,34 @@ struct CpTimer {
         double dE = 0.0;
         bool clash = false;
 
+        // Both new-position walks below skip every moved atom they meet: the
+        // grid holds accepted coordinates, so a moved atom's packed position
+        // is stale. On a pivot most of the cells they visit hold nothing else
+        // (measured on actin: 71% of the contact walk's cell visits, 78% of
+        // the clash pass's, ~75% of all slots), so count the moved atoms each
+        // cell lists and skip a cell whose atoms all moved. Same pairs, same
+        // order: only cells that contribute nothing are dropped. O(n_moved)
+        // to fill, and the guard zeroes it again on every return.
+        auto& moved_per_cell = ws.moved_per_cell;
+        if (moved_per_cell.size() < grid.num_cells())
+            moved_per_cell.assign(static_cast<size_t>(grid.num_cells()), 0);
+        for (int i : moved) {
+            const int c = grid.atom_cell(i);
+            if (c >= 0) ++moved_per_cell[static_cast<size_t>(c)];
+        }
+        struct MovedPerCellReset {
+            std::vector<std::uint8_t>& counts;
+            const OpenCellGrid& g;
+            const std::vector<int>& atoms;
+            ~MovedPerCellReset() {
+                for (int i : atoms) {
+                    const int c = g.atom_cell(i);
+                    if (c >= 0) counts[static_cast<size_t>(c)] = 0;
+                }
+            }
+        } moved_per_cell_reset{moved_per_cell, grid, moved};
+        const std::uint8_t* const mpc = moved_per_cell.data();
+
         // ---- OPTIONAL PASS 0: answer "does this move overlap?" on its own ----
         // About a third of the actin step is contact energy computed for pivot
         // moves that are then discarded for a hard-core overlap (measured:
@@ -2159,8 +2187,8 @@ struct CpTimer {
                         };
                     const bool ok =
                         (kClashFirst == 2)
-                            ? grid.for_each_cell_span_within_fast(
-                                  nx, ny, nz, rq, clash_cell)
+                            ? grid.for_each_cell_span_within_fast_unmoved(
+                                  nx, ny, nz, rq, mpc, clash_cell)
                             : grid.for_each_neighbor_cell_span_while_within(
                                   nx, ny, nz, rq, clash_cell);
                     if (!ok) { clash = true; break; }
@@ -2208,8 +2236,8 @@ struct CpTimer {
         // ---- NEW half: one cell walk, one distance per candidate. ----
         for (int i : moved) {
             const float nx = cnew.x(i), ny = cnew.y(i), nz = cnew.z(i);
-            const bool ok = grid.for_each_neighbor_cell_span_while(
-                nx, ny, nz,
+            const bool ok = grid.for_each_neighbor_cell_span_while_unmoved(
+                nx, ny, nz, mpc,
                 [&](const int* __restrict__ cids,
                     const float* __restrict__ cx,
                     const float* __restrict__ cy,
