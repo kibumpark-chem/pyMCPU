@@ -609,6 +609,11 @@ public:
         fill(0, ix0, ox);
         fill(1, iy0, oy);
         fill(2, iz0, oz);
+        // Collect the cells to visit first, without branching on the skip
+        // test (data-dependent, so a frequent mispredict), then visit them
+        // in the same order.
+        int live[27];
+        int n_live = 0;
         for (int a = 0; a < nax[0]; ++a) {
             const int ix = axs[0][a];
             if (ix < 0 || ix >= nx_) continue;
@@ -619,16 +624,19 @@ public:
                     const int iz = axs[2][cc];
                     if (iz < 0 || iz >= nz_) continue;
                     const int c = (ix * ny_ + iy) * nz_ + iz;
-                    const int count = cell_count_[static_cast<size_t>(c)];
-                    if (count == static_cast<int>(moved_per_cell[static_cast<size_t>(c)]))
-                        continue;
-                    const size_t base = static_cast<size_t>(c) * CELL_CAPACITY;
-                    if (!cell_fn(cell_atoms_.data() + base, cell_x_.data() + base,
-                                 cell_y_.data() + base, cell_z_.data() + base,
-                                 count))
-                        return false;
+                    live[n_live] = c;
+                    n_live += (cell_count_[static_cast<size_t>(c)] !=
+                               static_cast<int>(moved_per_cell[static_cast<size_t>(c)]));
                 }
             }
+        }
+        for (int k = 0; k < n_live; ++k) {
+            const size_t c = static_cast<size_t>(live[k]);
+            const size_t base = c * CELL_CAPACITY;
+            if (!cell_fn(cell_atoms_.data() + base, cell_x_.data() + base,
+                         cell_y_.data() + base, cell_z_.data() + base,
+                         cell_count_[c]))
+                return false;
         }
         return true;
     }
@@ -647,6 +655,34 @@ public:
             static_cast<int>(std::floor((y - bounds_.lo.y()) * inv_cell_));
         const int iz0 =
             static_cast<int>(std::floor((z - bounds_.lo.z()) * inv_cell_));
+        constexpr std::size_t kMaxLive = 128;
+        if (neighbor_offsets_.size() <= kMaxLive) {
+            // Branch-free collection, then the visits in the same order; see
+            // for_each_cell_span_within_fast_unmoved.
+            int live[kMaxLive];
+            int n_live = 0;
+            for (const CellOffset& o : neighbor_offsets_) {
+                const int ix = ix0 + o.dx;
+                const int iy = iy0 + o.dy;
+                const int iz = iz0 + o.dz;
+                if (ix < 0 || iy < 0 || iz < 0 || ix >= nx_ || iy >= ny_ ||
+                    iz >= nz_)
+                    continue;
+                const int c = (ix * ny_ + iy) * nz_ + iz;
+                live[n_live] = c;
+                n_live += (cell_count_[static_cast<size_t>(c)] !=
+                           static_cast<int>(moved_per_cell[static_cast<size_t>(c)]));
+            }
+            for (int k = 0; k < n_live; ++k) {
+                const size_t c = static_cast<size_t>(live[k]);
+                const size_t base = c * CELL_CAPACITY;
+                if (!cell_fn(cell_atoms_.data() + base, cell_x_.data() + base,
+                             cell_y_.data() + base, cell_z_.data() + base,
+                             cell_count_[c]))
+                    return false;
+            }
+            return true;
+        }
         for (const CellOffset& o : neighbor_offsets_) {
             const int ix = ix0 + o.dx;
             const int iy = iy0 + o.dy;

@@ -443,7 +443,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **Mu's energy change does less work per moved atom, which makes actin
-  1.5x faster on the default move mix and 2.0x pivot-only.** Each part
+  1.7x faster on the default move mix and 2.3x pivot-only.** Each part
   scores the same pairs in the same order and returns the same answer, so
   trajectories are unchanged bit for bit. Cycles per step on actin's default
   move mix (3000 steps), actin pivot-only (1500) and chignolin (30000), each
@@ -459,9 +459,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     (for a pivot, side chains before backbone). It used to test about 30%
     of a rejected actin pivot's atoms before it found the overlap. -12% and -20% on actin; chignolin's moves
     are too small for the pass.
+  * Both walks test eight slots of a cell at once against the cutoff (AVX2,
+    in the default `v3` build) and look at the survivors one by one, as
+    before; they used to branch on every slot. They also gather the cells
+    to visit before visiting them, without a branch per cell. -11%, -13%
+    and -6%. Builds without AVX2 run a scalar loop with the same result.
 
-  Both together: -34% cycles per step on actin's default move mix and
-  -50% pivot-only.
+  All three together: -41% cycles per step on actin's default move mix,
+  -57% pivot-only and -12% on chignolin.
 
 - **A YAML config with an unknown key is an error.** The flat YAML schema
   ignored any key it did not read, so a misspelled key such as `num_cylces`
