@@ -93,15 +93,17 @@ bool contact_list_enabled() {
 
 // MCPU_CLASH_FIRST picks the clash-first pass of the contact-list delta:
 // 0 = off; 1 = the 27-offset + point-to-box cull variant (measured slower,
-// kept so the comparison can be reproduced); 2 (default) = direct
-// reachable-cell enumeration.
+// kept so the comparison can be reproduced); 2 = direct reachable-cell
+// enumeration over every moved atom; 3 (default) = the same, over the
+// clash_hot atoms the move carries only.
 int clash_first_mode() noexcept {
     static const int mode = [] {
         const char* e = std::getenv("MCPU_CLASH_FIRST");
-        if (!e || !e[0]) return 2;
+        if (!e || !e[0]) return 3;
         if (e[0] == '0') return 0;
         if (e[0] == '1') return 1;
-        return 2;
+        if (e[0] == '2') return 2;
+        return 3;
     }();
     return mode;
 }
@@ -2500,9 +2502,15 @@ inline __attribute__((always_inline)) unsigned span_mask8(
         const bool clash_first =
             clash_first_mode() != 0 &&
             static_cast<int>(moved.size()) >= kClashFirstMinMoved;
+        // By default the pass tests only the clash_hot atoms. They catch
+        // 98.6-99.4% of the pivots that overlap (actin, LDH-A, PGK1), while
+        // testing every moved atom cost the pivots that do NOT overlap a
+        // full extra pass, 6-9% of a pivot-only step. The contact walk below
+        // rejects the few overlaps the hot atoms miss, and feeds clash_hot.
+        int clash_atom = -1;
         if (clash_first) {
             const int found = first_grid_overlap(context, new_state, patch, mpc,
-                                                 /*hot_only=*/false);
+                                                 clash_first_mode() == 3);
             if (found >= 0) {
                 ws.note_clash_atom(found);
                 ws.clear();
@@ -2571,7 +2579,11 @@ inline __attribute__((always_inline)) unsigned span_mask8(
                             if (r2 > contact_cutoff_sq_) continue;
                             bool local_clash = false, near = false;
                             const float e = eval_pair(i, j, r2, &local_clash, &near);
-                            if (local_clash) { clash = true; return false; }
+                            if (local_clash) {
+                                clash = true;
+                                clash_atom = i;
+                                return false;
+                            }
                             if (e != 0.0f || near) {
                                 dE += static_cast<double>(e);
                                 ws.pending_contact_add.push_back(
@@ -2608,6 +2620,7 @@ inline __attribute__((always_inline)) unsigned span_mask8(
         }
 
         if (clash) {
+            if (clash_first && clash_atom >= 0) ws.note_clash_atom(clash_atom);
             ws.clear();
             return kHardCorePenalty;
         }
