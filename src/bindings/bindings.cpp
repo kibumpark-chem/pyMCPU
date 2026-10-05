@@ -1100,7 +1100,7 @@ PYBIND11_MODULE(mcpu_core, m) {
     // generated BuildConfig.h, which CMake fills from the same variables that
     // produced the flags. There are deliberately NO fallback literals: a
     // missing define is a #error, not a plausible-looking default.
-#if !defined(MCPU_BUILD_ARCH_TIER) || !defined(MCPU_BUILD_LTO)
+#if !defined(MCPU_BUILD_ARCH_TIER) || !defined(MCPU_BUILD_LTO) || !defined(MCPU_BUILD_JCC_PAD)
 #error "BuildConfig.h was not generated; configure through CMake."
 #endif
 #if !defined(MCPU_USE_POOLED_PROPOSAL)
@@ -1187,6 +1187,11 @@ PYBIND11_MODULE(mcpu_core, m) {
             py::dict build;
             build["type"] = MCPU_BUILD_TYPE;
             build["lto"] = (MCPU_BUILD_LTO != 0);
+            // EFFECTIVE, like lto: on only when CMake's probes showed the
+            // assembler that emits the shipped code honours the option.
+            build["jcc_pad"] = (MCPU_BUILD_JCC_PAD != 0);
+            build["jcc_pad_mode"] = MCPU_BUILD_JCC_PAD_MODE;
+            build["jcc_pad_reason"] = MCPU_BUILD_JCC_PAD_REASON;
             build["cmake_version"] = MCPU_BUILD_CMAKE_VERSION;
             // Two independent facts a single "Release" string cannot express:
             // RelWithDebInfo sets both, and a CXXFLAGS=-O0 override sets only

@@ -411,6 +411,130 @@ if(ENABLE_LTO)
 endif()
 
 # ---------------------------------------------------------------------------
+# Branch alignment for the Skylake JCC erratum (x86-64, GNU assembler)
+# ---------------------------------------------------------------------------
+# Intel's microcode fix for the JCC erratum (Skylake through Cascade Lake and
+# Comet Lake) stops the decoded-uop cache from holding any jump that crosses
+# or ends on a 32-byte boundary. Such jumps are decoded again by the legacy
+# decoder on every pass. The engine's inner loops are short and full of
+# branches, so with the default code layout about half of all uops came from
+# the legacy decoder. Padding the branches (binutils >= 2.34:
+# -mbranches-within-32B-boundaries) measured 6-13% fewer cycles per MC step
+# on a Cascade Lake Xeon, results bit-identical. It also removed a ~5% speed
+# swing that came from where unrelated edits happened to move the code. The
+# cost on CPUs without the erratum is a slightly larger .text (nops and
+# prefixes); nothing changes numerically.
+#
+#   MCPU_JCC_PAD=AUTO (default)  apply it when the probes below pass, else off
+#   MCPU_JCC_PAD=ON              same probes, but a failure is a hard error
+#   MCPU_JCC_PAD=OFF             never apply it
+#
+# Why the two-part probe: the flag is an ASSEMBLER option. Without LTO it only
+# has to reach `as` at compile time. With LTO the code that ships is generated
+# again at link time, by the LTO back end (ltrans), and that assembler run is
+# what must see the flag. GCC 8 does not forward -Wa,... from the link line to
+# ltrans and does not warn about it. A compile-only check would pass there,
+# and build_info() would report padding that is not in the binary. So with
+# LTO on we also link a tiny LTO program with a deliberately INVALID -Wa
+# option: if that link still succeeds, the LTO driver dropped -Wa and the real
+# flag would have been dropped too.
+set(MCPU_JCC_PAD "AUTO" CACHE STRING
+    "Pad x86 branches against the Skylake JCC erratum: AUTO, ON or OFF")
+set_property(CACHE MCPU_JCC_PAD PROPERTY STRINGS AUTO ON OFF)
+string(TOUPPER "${MCPU_JCC_PAD}" _jcc_mode)
+if(NOT _jcc_mode MATCHES "^(AUTO|ON|OFF|TRUE|FALSE|YES|NO|1|0)$")
+    message(FATAL_ERROR "MCPU_JCC_PAD=${MCPU_JCC_PAD}: expected AUTO, ON or OFF")
+endif()
+if(_jcc_mode MATCHES "^(TRUE|YES|1)$")
+    set(_jcc_mode ON)
+elseif(_jcc_mode MATCHES "^(FALSE|NO|0)$")
+    set(_jcc_mode OFF)
+endif()
+
+set(MCPU_JCC_PAD_EFFECTIVE 0)
+set(MCPU_JCC_PAD_REASON "")
+set(MCPU_JCC_PAD_FLAG "-Wa,-mbranches-within-32B-boundaries")
+if(_jcc_mode STREQUAL "OFF")
+    set(MCPU_JCC_PAD_REASON "disabled (MCPU_JCC_PAD=OFF)")
+elseif(NOT MCPU_APPLY_ARCH)
+    set(MCPU_JCC_PAD_REASON "not applied for this build type (${CMAKE_BUILD_TYPE})")
+elseif(NOT CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64|amd64|x86-64)$")
+    set(MCPU_JCC_PAD_REASON "not an x86-64 target (${CMAKE_SYSTEM_PROCESSOR})")
+elseif(NOT CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    # Clang's integrated assembler ignores -Wa,..., and at an LTO link the
+    # option has to be spelled per linker (-plugin-opt / -mllvm). Untested
+    # here, so not claimed.
+    set(MCPU_JCC_PAD_REASON "only wired for GCC (compiler is ${CMAKE_CXX_COMPILER_ID})")
+else()
+    include(CheckCXXSourceCompiles)
+    # Branchy enough that the assembler has jumps to pad. volatile keeps the
+    # loop alive under -O3 and LTO.
+    set(_jcc_src "
+volatile int mcpu_jcc_sink;
+int main(int argc, char**) {
+    int s = 0;
+    for (int i = 0; i < argc * 1000; ++i) {
+        if (i % 3 == 0) s += i; else if (i % 5 == 0) s -= i; else s ^= i;
+        mcpu_jcc_sink = s;
+    }
+    return s & 1;
+}")
+    set(CMAKE_REQUIRED_QUIET ON)
+    # 1. Does the assembler accept the option? binutils < 2.34 rejects it.
+    set(CMAKE_REQUIRED_FLAGS "${MCPU_JCC_PAD_FLAG}")
+    check_cxx_source_compiles("${_jcc_src}" MCPU_JCC_AS_OK)
+    unset(CMAKE_REQUIRED_FLAGS)
+    if(NOT MCPU_JCC_AS_OK)
+        set(MCPU_JCC_PAD_REASON
+            "the assembler rejects -mbranches-within-32B-boundaries (binutils >= 2.34 needed)")
+    elseif(MCPU_LTO_EFFECTIVE)
+        # 2. Does the LTO link forward -Wa,... to the ltrans assembler?
+        set(CMAKE_REQUIRED_FLAGS "-flto -fno-fat-lto-objects ${MCPU_JCC_PAD_FLAG}")
+        set(CMAKE_REQUIRED_LINK_OPTIONS -flto ${MCPU_JCC_PAD_FLAG})
+        check_cxx_source_compiles("${_jcc_src}" MCPU_JCC_LTO_LINK_OK)
+        set(CMAKE_REQUIRED_LINK_OPTIONS -flto "-Wa,--mcpu-jcc-probe-invalid-option")
+        check_cxx_source_compiles("${_jcc_src}" MCPU_JCC_LTO_DROPS_WA)
+        unset(CMAKE_REQUIRED_FLAGS)
+        unset(CMAKE_REQUIRED_LINK_OPTIONS)
+        if(NOT MCPU_JCC_LTO_LINK_OK)
+            set(MCPU_JCC_PAD_REASON "an LTO link with the option failed")
+        elseif(MCPU_JCC_LTO_DROPS_WA)
+            set(MCPU_JCC_PAD_REASON
+                "this GCC's LTO link does not pass -Wa,... to the assembler (GCC ${CMAKE_CXX_COMPILER_VERSION}); the padding would be lost at link time")
+        else()
+            set(MCPU_JCC_PAD_EFFECTIVE 1)
+        endif()
+    else()
+        set(MCPU_JCC_PAD_EFFECTIVE 1)
+    endif()
+    unset(CMAKE_REQUIRED_QUIET)
+endif()
+
+if(MCPU_JCC_PAD_EFFECTIVE)
+    # Never empty: build_info() treats an empty string as a template that
+    # configure_file failed to fill.
+    if(MCPU_LTO_EFFECTIVE)
+        set(MCPU_JCC_PAD_REASON "assembler and LTO link both honour the option")
+    else()
+        set(MCPU_JCC_PAD_REASON "assembler honours the option")
+    endif()
+    # C++ sources only: the probe ran the C++ compiler, and the C sources
+    # (the vendored xdrfile reader, cold I/O code) may be built by a C driver
+    # that finds a different assembler. Under LTO they are code-generated at
+    # the link anyway, where the link option below covers them.
+    target_compile_options(MCPU_lib  PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${MCPU_JCC_PAD_FLAG}>)
+    target_compile_options(mcpu_core PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${MCPU_JCC_PAD_FLAG}>)
+    # The link line matters only with LTO, but it is harmless without.
+    target_link_options(mcpu_core PRIVATE ${MCPU_JCC_PAD_FLAG})
+    message(STATUS "JCC-erratum branch padding: on (${MCPU_JCC_PAD_FLAG})")
+elseif(_jcc_mode STREQUAL "ON")
+    message(FATAL_ERROR "MCPU_JCC_PAD=ON but branch padding cannot be applied: "
+                        "${MCPU_JCC_PAD_REASON}. Use a newer toolchain or MCPU_JCC_PAD=AUTO.")
+else()
+    message(STATUS "JCC-erratum branch padding: off -- ${MCPU_JCC_PAD_REASON}")
+endif()
+
+# ---------------------------------------------------------------------------
 # Optional C++ tests
 # ---------------------------------------------------------------------------
 # REMOVED: a BUILD_TESTING block guarding test_scripts/test_cell_list.cpp,
