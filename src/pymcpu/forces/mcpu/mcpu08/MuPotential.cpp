@@ -6,6 +6,7 @@
 #include "pymcpu/neighbor/OpenCellGrid.h"
 #include "pymcpu/neighbor/NeighborConfig.h"
 #include "pymcpu/neighbor/NeighborFallback.h"
+#include "pymcpu/neighbor/PairSearch.h"
 #include "pymcpu/neighbor/VerletList.h"
 #include "pymcpu/utils/CoordsSoA.h"
 #include "pymcpu/utils/CoordView.h"
@@ -79,8 +80,7 @@ struct CpTimer {
 
 namespace {
 
-// Relative slack of span_mask8's cutoff over the exact one; see there.
-constexpr float kSpanMaskSlack = 1.0f + 1.0e-4f;
+using mcpu::neighbor::kSpanMaskSlack;
 
 /// MCPU_CONTACT_LIST=0 turns the live contact list off; read once.
 bool contact_list_enabled() {
@@ -243,60 +243,6 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
         }
     }
     return false;
-}
-
-static_assert(OpenCellGrid::CELL_CAPACITY % 8 == 0,
-              "span_mask8 loads whole 8-slot blocks of a cell span");
-
-/// Bit k of the result is set when slot m0+k (k < 8, m0+k < count) of a
-/// packed cell span holds an atom other than `self` whose r2 to (nx,ny,nz)
-/// is not greater than `lim2` (NaN counts as kept). A pre-filter only:
-/// callers take the set bits in increasing order, recompute r2 in scalar
-/// and apply the exact original test, so the pairs and their order are
-/// unchanged. lim2 carries kSpanMaskSlack over the real cutoff because FMA
-/// contraction can make the scalar r2 differ from this one by a few ulp.
-///
-/// Why: the walks over a moved atom's new neighbours were bound by branch
-/// mispredicts, one data-dependent branch per slot, and most slots fail the
-/// cutoff. Eight distances per AVX2 vector and one branch per surviving slot
-/// take ~12% off actin's default move mix on top of skipping fully moved
-/// cells. The AVX2 path loads 8 slots from m0 even when fewer remain: a span
-/// is CELL_CAPACITY slots, a multiple of 8, so the load stays inside the
-/// cell's storage and the lanes past count are masked off. Builds without
-/// AVX2 take the scalar loop, which keeps the same bits.
-inline __attribute__((always_inline)) unsigned span_mask8(
-        float nx, float ny, float nz, const int* cids, const float* cx,
-        const float* cy, const float* cz, int m0, int count, int self,
-        float lim2) noexcept {
-#if defined(__AVX2__)
-    const __m256 dx = _mm256_sub_ps(_mm256_set1_ps(nx), _mm256_loadu_ps(cx + m0));
-    const __m256 dy = _mm256_sub_ps(_mm256_set1_ps(ny), _mm256_loadu_ps(cy + m0));
-    const __m256 dz = _mm256_sub_ps(_mm256_set1_ps(nz), _mm256_loadu_ps(cz + m0));
-    const __m256 r2 = _mm256_add_ps(
-        _mm256_add_ps(_mm256_mul_ps(dx, dx), _mm256_mul_ps(dy, dy)),
-        _mm256_mul_ps(dz, dz));
-    unsigned keep = static_cast<unsigned>(_mm256_movemask_ps(
-        _mm256_cmp_ps(r2, _mm256_set1_ps(lim2), _CMP_NGT_UQ)));
-    const __m256i ids =
-        _mm256_loadu_si256(reinterpret_cast<const __m256i*>(cids + m0));
-    const unsigned is_self = static_cast<unsigned>(_mm256_movemask_ps(
-        _mm256_castsi256_ps(_mm256_cmpeq_epi32(ids, _mm256_set1_epi32(self)))));
-    keep &= ~is_self;
-    const int left = count - m0;
-    const unsigned valid = left >= 8 ? 0xFFu : ((1u << left) - 1u);
-    return keep & valid;
-#else
-    unsigned keep = 0;
-    const int n = std::min(8, count - m0);
-    for (int k = 0; k < n; ++k) {
-        const float dx = nx - cx[m0 + k];
-        const float dy = ny - cy[m0 + k];
-        const float dz = nz - cz[m0 + k];
-        const float r2 = dx * dx + dy * dy + dz * dz;
-        if (!(r2 > lim2) && cids[m0 + k] != self) keep |= 1u << k;
-    }
-    return keep;
-#endif
 }
 
 }  // namespace
@@ -1087,7 +1033,7 @@ inline __attribute__((always_inline)) unsigned span_mask8(
                 if (overlap >= 0) {
                     auto& ws = const_cast<mcpu::MuWorkspace&>(
                         context.getMuWorkspace());
-                    ws.note_clash_atom(overlap);
+                    ws.clash_hot.note(overlap);
                     ws.clear();
                     delta = kHardCorePenalty;
                 } else {
@@ -1130,53 +1076,26 @@ inline __attribute__((always_inline)) unsigned span_mask8(
         const std::vector<uint8_t>& is_moved = patch.moving_atoms;
         const std::vector<int>& moved = patch.moved_indices;
         const CoordView cnew(new_state.coord_view());
-        const float clash_lim2 = clash_prefilter_r2_ * kSpanMaskSlack;
-        const bool reachable_cells = clash_first_mode() != 1;
-        const int n_hot = ws.clash_hot_n;
-        const int n_mv = static_cast<int>(moved.size());
-        int found = -1;
-        const int n_scan = hot_only ? n_hot : n_hot + n_mv;
-        for (int s = 0; s < n_scan; ++s) {
-            int i;
-            if (s < n_hot) {
-                i = ws.clash_hot[s];
-                if (static_cast<size_t>(i) >= is_moved.size() ||
-                    !is_moved[static_cast<size_t>(i)])
-                    continue;
-            } else {
-                i = moved[static_cast<size_t>(n_mv - 1 - (s - n_hot))];
-            }
-            const float nx = cnew.x(i), ny = cnew.y(i), nz = cnew.z(i);
-            auto clash_cell = [&](const int* __restrict__ cids,
-                    const float* __restrict__ cx,
-                    const float* __restrict__ cy,
-                    const float* __restrict__ cz, int count) {
-                    for (int m0 = 0; m0 < count; m0 += 8) {
-                        unsigned bits = span_mask8(nx, ny, nz, cids, cx, cy,
-                                                   cz, m0, count, i, clash_lim2);
-                        while (bits) {
-                            const int m = m0 + __builtin_ctz(bits);
-                            bits &= bits - 1u;
-                            const int j = cids[m];
-                            if (is_moved[static_cast<size_t>(j)]) continue;
-                            const float dx = nx - cx[m];
-                            const float dy = ny - cy[m];
-                            const float dz = nz - cz[m];
-                            const float r2 = dx * dx + dy * dy + dz * dz;
-                            if (overlaps_at_move_cutoff(i, j, r2)) return false;
-                        }
-                    }
-                    return true;
-                };
-            const bool ok =
-                reachable_cells
-                    ? grid.for_each_cell_span_within_fast_unmoved(
-                          nx, ny, nz, rq, mpc, clash_cell)
-                    : grid.for_each_neighbor_cell_span_while_within(
-                          nx, ny, nz, rq, clash_cell);
-            if (!ok) { found = i; break; }
-        }
-        return found;
+        // Mode 1 walks the stencil cells within rq (no moved-cell skip);
+        // the others enumerate only the cells rq can reach.
+        const neighbor::WalkArgs wa{
+            is_moved.data(), is_moved.size(), mpc, rq,
+            clash_prefilter_r2_ * kSpanMaskSlack,
+            clash_first_mode() != 1 ? neighbor::Cells::WithinRadius
+                                    : neighbor::Cells::StencilWithinRadius};
+        return neighbor::hot_then_moved<neighbor::Cells::FromArgs>(
+            grid, cnew, ws.clash_hot, moved.data(),
+            hot_only ? 0 : static_cast<int>(moved.size()), wa,
+            [&](const neighbor::Probe& p, int j, const neighbor::CellSpan& s,
+                int m) {
+                const float dx = p.x - s.x[m];
+                const float dy = p.y - s.y[m];
+                const float dz = p.z - s.z[m];
+                const float r2 = dx * dx + dy * dy + dz * dz;
+                return overlaps_at_move_cutoff(p.i, j, r2)
+                           ? neighbor::Visit::Stop
+                           : neighbor::Visit::Continue;
+            });
     }
 
     int MuPotential::fallback_grid_overlap(const Context& context,
@@ -1186,20 +1105,10 @@ inline __attribute__((always_inline)) unsigned span_mask8(
         auto& ws = const_cast<mcpu::MuWorkspace&>(context.getMuWorkspace());
         const OpenCellGrid& grid = context.neighbors().muGrid().grid();
         const std::vector<int>& moved = patch.moved_indices;
-        auto& mpc = ws.moved_per_cell;
-        if (mpc.size() < grid.num_cells())
-            mpc.assign(static_cast<size_t>(grid.num_cells()), 0);
-        for (int i : moved) {
-            const int c = grid.atom_cell(i);
-            if (c >= 0) ++mpc[static_cast<size_t>(c)];
-        }
-        const int found = first_grid_overlap(context, new_state, patch,
-                                             mpc.data(), /*hot_only=*/false);
-        for (int i : moved) {
-            const int c = grid.atom_cell(i);
-            if (c >= 0) mpc[static_cast<size_t>(c)] = 0;
-        }
-        return found;
+        const neighbor::MovedCellScope<OpenCellGrid> moved_cells(
+            ws.moved_per_cell, grid, moved.data(), static_cast<int>(moved.size()));
+        return first_grid_overlap(context, new_state, patch,
+                                  moved_cells.counts(), /*hot_only=*/false);
     }
 
     float MuPotential::carry_bound_A(const Context& context, const State& new_state,
@@ -2452,9 +2361,6 @@ inline __attribute__((always_inline)) unsigned span_mask8(
         // cell lists and skip a cell whose atoms all moved. Same pairs, same
         // order: only cells that contribute nothing are dropped. O(n_moved)
         // to fill, and the guard zeroes it again on every return.
-        auto& moved_per_cell = ws.moved_per_cell;
-        if (moved_per_cell.size() < grid.num_cells())
-            moved_per_cell.assign(static_cast<size_t>(grid.num_cells()), 0);
 #ifndef NDEBUG
         // The skip test (count == moved_per_cell[c]) is only right when each
         // moved atom is listed once: a duplicate makes a cell that still holds
@@ -2466,22 +2372,9 @@ inline __attribute__((always_inline)) unsigned span_mask8(
                    "moved_indices must list each atom moving_atoms marks exactly once");
         }
 #endif
-        for (int i : moved) {
-            const int c = grid.atom_cell(i);
-            if (c >= 0) ++moved_per_cell[static_cast<size_t>(c)];
-        }
-        struct MovedPerCellReset {
-            std::vector<std::uint8_t>& counts;
-            const OpenCellGrid& g;
-            const std::vector<int>& atoms;
-            ~MovedPerCellReset() {
-                for (int i : atoms) {
-                    const int c = g.atom_cell(i);
-                    if (c >= 0) counts[static_cast<size_t>(c)] = 0;
-                }
-            }
-        } moved_per_cell_reset{moved_per_cell, grid, moved};
-        const std::uint8_t* const mpc = moved_per_cell.data();
+        const neighbor::MovedCellScope<OpenCellGrid> moved_cells(
+            ws.moved_per_cell, grid, moved.data(), static_cast<int>(moved.size()));
+        const std::uint8_t* const mpc = moved_cells.counts();
 
         // ---- OPTIONAL PASS 0: answer "does this move overlap?" on its own ----
         // About a third of the actin step is contact energy computed for pivot
@@ -2512,7 +2405,7 @@ inline __attribute__((always_inline)) unsigned span_mask8(
             const int found = first_grid_overlap(context, new_state, patch, mpc,
                                                  clash_first_mode() == 3);
             if (found >= 0) {
-                ws.note_clash_atom(found);
+                ws.clash_hot.note(found);
                 ws.clear();
                 return kHardCorePenalty;
             }
@@ -2552,75 +2445,59 @@ inline __attribute__((always_inline)) unsigned span_mask8(
         }
 
         // ---- NEW half: one cell walk, one distance per candidate. ----
-        const float contact_lim2 = contact_cutoff_sq_ * kSpanMaskSlack;
-        for (int i : moved) {
-            const float nx = cnew.x(i), ny = cnew.y(i), nz = cnew.z(i);
-            const bool ok = grid.for_each_neighbor_cell_span_while_unmoved(
-                nx, ny, nz, mpc,
-                [&](const int* __restrict__ cids,
-                    const float* __restrict__ cx,
-                    const float* __restrict__ cy,
-                    const float* __restrict__ cz, int count) {
-                    for (int m0 = 0; m0 < count; m0 += 8) {
-                        unsigned bits = span_mask8(nx, ny, nz, cids, cx, cy, cz,
-                                                   m0, count, i, contact_lim2);
-                        while (bits) {
-                            const int m = m0 + __builtin_ctz(bits);
-                            bits &= bits - 1u;
-                            const int j = cids[m];
-                            // The grid holds ACCEPTED coordinates, so a moved
-                            // partner's packed position is stale. Moved-moved
-                            // pairs are done below from the trial coordinates.
-                            if (is_moved[static_cast<size_t>(j)]) continue;
-                            const float dx = nx - cx[m];
-                            const float dy = ny - cy[m];
-                            const float dz = nz - cz[m];
-                            const float r2 = dx * dx + dy * dy + dz * dz;
-                            if (r2 > contact_cutoff_sq_) continue;
-                            bool local_clash = false, near = false;
-                            const float e = eval_pair(i, j, r2, &local_clash, &near);
-                            if (local_clash) {
-                                clash = true;
-                                clash_atom = i;
-                                return false;
-                            }
-                            if (e != 0.0f || near) {
-                                dE += static_cast<double>(e);
-                                ws.pending_contact_add.push_back(
-                                    mcpu::MuWorkspace::PendingContact{i, j, e});
-                            }
-                        }
-                    }
-                    return true;
-                });
-            if (!ok || clash) { clash = true; break; }
-        }
+        // The grid holds ACCEPTED coordinates, so a moved partner's packed
+        // position is stale: the walk skips moved partners, and moved-moved
+        // pairs are done below from the trial coordinates.
+        const neighbor::WalkArgs contact_wa{
+            is_moved.data(), is_moved.size(), mpc, 0.f,
+            contact_cutoff_sq_ * kSpanMaskSlack, neighbor::Cells::Stencil};
+        const bool walked = neighbor::moved_vs_static<neighbor::Cells::Stencil>(
+            grid, cnew, moved.data(), static_cast<int>(moved.size()),
+            neighbor::Order::Forward, contact_wa,
+            [&](const neighbor::Probe& p, int j, const neighbor::CellSpan& s,
+                int m) {
+                const float dx = p.x - s.x[m];
+                const float dy = p.y - s.y[m];
+                const float dz = p.z - s.z[m];
+                const float r2 = dx * dx + dy * dy + dz * dz;
+                if (r2 > contact_cutoff_sq_) return neighbor::Visit::Continue;
+                bool local_clash = false, near = false;
+                const float e = eval_pair(p.i, j, r2, &local_clash, &near);
+                if (local_clash) {
+                    clash_atom = p.i;
+                    return neighbor::Visit::Stop;
+                }
+                if (e != 0.0f || near) {
+                    dE += static_cast<double>(e);
+                    ws.pending_contact_add.push_back(
+                        mcpu::MuWorkspace::PendingContact{p.i, j, e});
+                }
+                return neighbor::Visit::Continue;
+            });
+        if (!walked) clash = true;
 
         // ---- moved-moved pairs ----
         // A rigid move keeps every moved-moved distance up to rounding: the
         // listed ones were re-decided in the OLD half, and the rest cannot
         // cross (State::mu_list_drift). A flexible move re-decides them here.
         if (!clash && moved.size() > 1 && !skip_mm) {
-            for (size_t a = 0; a < moved.size() && !clash; ++a) {
-                const int i = moved[a];
-                for (size_t b = a + 1; b < moved.size(); ++b) {
-                    const int j = moved[b];
-                    const float r2 = cnew.dist2(i, j);
-                    if (r2 > contact_cutoff_sq_) continue;
+            clash = !neighbor::moved_vs_moved(
+                cnew, moved.data(), static_cast<int>(moved.size()),
+                contact_cutoff_sq_, [&](int i, int j, float r2) {
                     bool local_clash = false, near = false;
                     const float e = eval_pair(i, j, r2, &local_clash, &near);
-                    if (local_clash) { clash = true; break; }
+                    if (local_clash) return neighbor::Visit::Stop;
                     if (e != 0.0f || near) {
                         dE += static_cast<double>(e);
                         ws.pending_contact_add.push_back(
                             mcpu::MuWorkspace::PendingContact{i, j, e});
                     }
-                }
-            }
+                    return neighbor::Visit::Continue;
+                });
         }
 
         if (clash) {
-            if (clash_first && clash_atom >= 0) ws.note_clash_atom(clash_atom);
+            if (clash_first && clash_atom >= 0) ws.clash_hot.note(clash_atom);
             ws.clear();
             return kHardCorePenalty;
         }

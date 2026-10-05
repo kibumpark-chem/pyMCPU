@@ -454,6 +454,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Mu's contact-list delta walks its pairs through a shared pair-search
+  layer, and is 5-9% faster.** Internal refactor, bit-identical. The cell
+  walks that Mu's contact-list delta wrote out by hand (the clash-first
+  pass, the moved-vs-grid contact walk, the moved-moved loop), the 8-slot
+  distance prefilter, the per-cell moved-atom counts and the clash_hot
+  list now live in header-only templates under
+  `include/pymcpu/neighbor/` (`SpanMask.h`, `MovedCells.h`,
+  `PairSearch.h`), for the H-bond and KORP terms to use next. Each walk
+  is an always-inlined template that takes the term's callback by
+  forwarding reference, and the exact distance test stays in Mu's
+  callback, so the pairs, their order and every rounding are unchanged.
+  The contact walk's per-cell callback, which the compiler had kept out of
+  line, is now inlined: cycles per step -4.9% to -5.7% on the default move
+  mix and -7.6% to -8.6% pivot-only on T4 lysozyme, CA2, LDH-A, actin and
+  PGK1 (interleaved, n=3, against the parent). `scripts/check_inlining.py` disassembles the built extension and
+  fails if the hot functions call into the layer or a lambda.
+
 - **Ordinary runs no longer print a Mu contact-list NOTE.** The engine
   printed "NOTE: Mu move #1 that cannot use the contact list ..." to stderr
   on the first move that could not use the list, and on every thousandth,

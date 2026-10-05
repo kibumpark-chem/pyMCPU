@@ -14,6 +14,7 @@
 #include "pymcpu/AtomPermutation.h"
 #include "pymcpu/AtomReorder.h"
 #include "pymcpu/utils/geometry_utils.h"
+#include "pymcpu/neighbor/MovedCells.h"
 #include "pymcpu/neighbor/NeighborConfig.h"
 #include "pymcpu/neighbor/NeighborSystem.h"
 #include "pymcpu/neighbor/VerletList.h"
@@ -94,10 +95,10 @@ struct MuWorkspace {
     std::vector<int> cell_to_group_scratch;
 
     /// Contact-list delta: how many of the atoms a cell of the accepted Mu
-    /// grid lists does the pending move displace. Filled from the moved atoms'
-    /// cells at the start of the delta and zeroed again before it returns, so
-    /// it is all zeros between moves. Size >= n_cells.
-    std::vector<std::uint8_t> moved_per_cell;
+    /// grid lists does the pending move displace. A neighbor::MovedCellScope
+    /// fills it at the start of the delta and zeroes it again before it
+    /// returns, so it is all zeros between moves. Size >= n_cells.
+    neighbor::MovedCellCounts moved_per_cell;
 
     /// Atoms that overlapped a fixed atom in recent rejected moves, most
     /// recent first. Mu's clash-first pass tests the ones a move carries
@@ -106,21 +107,7 @@ struct MuWorkspace {
     /// pass depends on it, never its answer, and an entry that is out of
     /// range for the system is skipped. Survives clear().
     static constexpr int kClashHotCap = 64;
-    int clash_hot[kClashHotCap] = {};
-    int clash_hot_n = 0;
-
-    /// Move `atom` to the front of clash_hot, dropping the oldest entry
-    /// when full. O(kClashHotCap).
-    void note_clash_atom(int atom) noexcept {
-        int k = 0;
-        while (k < clash_hot_n && clash_hot[k] != atom) ++k;
-        if (k == clash_hot_n) {
-            if (clash_hot_n < kClashHotCap) ++clash_hot_n;
-            k = clash_hot_n - 1;
-        }
-        for (; k > 0; --k) clash_hot[k] = clash_hot[k - 1];
-        clash_hot[0] = atom;
-    }
+    neighbor::HotList<kClashHotCap> clash_hot;
 
     void clear() {
         pending_contact_drop.clear();
