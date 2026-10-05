@@ -1,75 +1,124 @@
-# Running REMD with pyMCPU
+# Running replica exchange
 
-## Design principle
+Replica exchange (REMD) runs several copies of the protein, called replicas,
+side by side. Each has its own temperature and, optionally, its own umbrella
+window on N, the number of native contacts. After every cycle of MC steps,
+neighbouring replicas try to swap places. This page covers running it from a
+YAML config, on one process or with MPI. The config holds the simulation
+settings; the number of processes, the nodes and the run time belong to the
+launch command. To set up replica exchange in Python instead, see
+[Sampling](api/sampling.rst).
 
-YAML input files describe **physics** (temperatures, move schedule,
-force fields). Launch scripts describe **infrastructure** (nodes,
-MPI ranks, walltime). Do not mix them.
+## The replica grid
 
-## How replica count is determined
-
-The number of replicas is always:
+A YAML config runs replica exchange when it lists more than one temperature.
+With a single temperature it runs folding instead, and any targets are
+ignored.
 
 ```text
-n_replicas = len(temperatures) × len(q_targets | n_targets)
+n_replicas = number of temperatures × number of windows
 ```
 
-Temperatures may be an explicit `temperatures:` list or generated from
-`temp_min` / `temp_step` / `n_temps`. If neither `q_targets` nor
-`n_targets` / `native_contact_targets` is set, there is one window,
-centred at N = 0, and its umbrella still applies with `k_bias` (default
-1.0), which pulls every replica toward unfolded structures. For plain
-temperature REMD, set `k_bias: 0`.
+- **Temperatures:** a `temperatures:` list, or `temp_min`, `temp_step`
+  (default 0.025) and `n_temps`.
+- **Windows:** one per entry of `n_targets`, the umbrella centres in native
+  contacts N, or of `q_targets`, the same centres as a fraction Q of the
+  native contacts (N = Q × the number of native contacts). Set one of the
+  two, not both. `k_bias` (default 1.0) is the strength of the harmonic
+  umbrella on N.
+- **No targets:** there is one window, centred at N = 0, and its umbrella
+  still applies with `k_bias`, which pulls every replica toward unfolded
+  structures. For plain temperature REMD, set `k_bias: 0`.
 
-For a YAML with 11 temperatures and 4 Q targets: **44 replicas**.
+Native contacts are the residue pairs, at least `min_seq_sep` (default 4)
+apart in sequence, whose contact atoms (`contact_atom_mode`, default `ca`)
+lie within `contact_cutoff` (default 6 Å) of each other in `reference_pdb`
+(default: the starting `pdb`).
 
-## Serial run (debugging, single-process REMD)
+For example, 11 temperatures and 4 Q targets give 44 replicas. A small
+config with 4 × 3 = 12 replicas:
+
+```yaml
+pdb: protein.pdb
+temperatures: [0.40, 0.45, 0.50, 0.55]
+n_targets: [0, 20, 40]
+k_bias: 0.5
+num_cycles: 1000          # each cycle: MC steps, then one round of swaps
+mc_replica_steps: 1000    # MC steps per replica per cycle
+output_prefix: out/run1
+```
+
+`examples/configs/template.yaml` shows the common keys with their defaults.
+
+## Running on one process
 
 ```bash
-python scripts/run_mcpu_replica_exchange.py -c inputs/template.yaml
+mcpu run config.yaml
 ```
 
-Or via the config runner (serial backend):
+All replicas run in one process, one after another. Use it to try a config
+before a large run; it needs no MPI. In a source checkout,
+`python scripts/run_mcpu_replica_exchange.py -c config.yaml` does the same.
+
+## Running with MPI
+
+Set up MPI and mpi4py as described in [Installation](installation.rst), then
+start a short script under `mpirun`:
+
+```python
+# my_remd_run.py
+from mpi4py import MPI
+
+from pymcpu.config import load_config_auto
+from pymcpu.runners import run_from_config
+
+run_from_config(load_config_auto("config.yaml"), comm=MPI.COMM_WORLD)
+```
 
 ```bash
-mcpu run inputs/template.yaml
+mpirun -n 12 python my_remd_run.py
 ```
 
-No `mpirun` needed. Same YAML works unchanged.
+In a source checkout, `scripts/run_mcpu_replica_exchange.py --mpi -c
+config.yaml` does the same, and also takes the checkpoint options of
+`mcpu run`.
 
-## MPI REMD run (production)
+Each process runs a block of replicas. Fewer processes than replicas is
+fine: a process with several replicas runs them one after another, which
+trades wall time for nodes. More processes than replicas is an error. An
+`mpi:` key in the config is accepted and ignored; only the launch decides.
+
+### On a Slurm cluster
+
+A source checkout has a submission helper. `scripts/submit.sh` reads the
+replica count from the config and submits `scripts/job_template.slurm` with
+that many tasks:
 
 ```bash
-# Step 1: compute replica count from YAML and submit
-bash scripts/submit.sh inputs/template.yaml
-
-# Dry-run (print replica count, do not sbatch):
-bash scripts/submit.sh inputs/template.yaml --dry-run
-
-# Or manually:
-mpirun -n 44 python scripts/run_mcpu_replica_exchange.py \
-    --mpi -c inputs/template.yaml
+bash scripts/submit.sh config.yaml --dry-run   # print the sbatch command only
+bash scripts/submit.sh config.yaml --partition=shared --time=2-00:00:00
 ```
 
-MPI ranks do **not** need to match the replica count exactly:
-`partition_replicas()` supports fewer ranks than replicas, distributing
-multiple replicas per rank (each rank steps its local replicas
-sequentially before exchange attempts). Launching with more ranks than
-replicas is rejected with a `ValueError`. `scripts/submit.sh` sizes
-`--ntasks` to the full replica count so each rank gets exactly one
-replica, which is the common case, but running with fewer ranks is a
-supported way to trade wall-time for node count.
+It passes any other options on to `sbatch`, and it checks the config's keys
+first, so a typo fails before the job waits in the queue. Before the first
+submission, edit `job_template.slurm` for your cluster: the lines that load
+modules and activate the environment, and the `#SBATCH` defaults.
 
-## The `mpi: true` YAML key
+## Output
 
-`mpi` is accepted in a YAML config but not used. MPI is controlled
-entirely by how you launch the script (`--mpi` plus `mpirun` /
-`srun -n N_RANKS`), not by anything in the YAML.
+Files go to the directory of `output_prefix` and are named after its last
+part, `run1` for `output_prefix: out/run1`:
 
-## Environment variables
+- `run1_tXX_qYY.xtc` and `run1_tXX_qYY_data.csv` for each temperature XX and
+  window YY. A slot keeps its temperature and window while replicas move
+  between slots; the `walker_id` column says which replica was there.
+- `run1_rex_stats.json`: exchange attempts and acceptance rates.
+- With `exchange_log: all`, `run1_exchange.csv` records every attempt. With
+  `state_log_interval: K`, `run1_state.csv` records each slot's N, Q and
+  energy every K cycles. With `hdf5: FILE`, the per-cycle samples go to FILE
+  (relative to the output directory) for MBAR reweighting.
 
-| Variable | Effect |
-|----------|--------|
-| `MCPU_USE_CELL_PAIR` | `0` to disable cell-pair inversion |
-| `MCPU_TOPO_FLAGS` | `0` for layered v1 on-the-fly Layer 1 (debug; slower) |
-| `MCPU_MU_SKIN` | `1` to enable partial Verlet skin (default off) |
+Checkpoints go to `checkpoints/` every 50 cycles and at the end of the run,
+by default. To continue a stopped run, use `mcpu run config.yaml --resume`;
+with the MPI script, set `resume: true` in the config's `checkpointing`
+block. See [Checkpointing](checkpointing.md).

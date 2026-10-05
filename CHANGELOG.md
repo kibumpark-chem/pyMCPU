@@ -67,6 +67,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`examples/configs/template.yaml` runs on its own structure.** It held
+  residues 88-199 fixed, but the 1uao structure it points to has 10
+  residues, so any run of it stopped with an `IndexError`. That line is now
+  a commented example. Its comments no longer mark keys that have defaults
+  as required, and no longer point to `inputs/template.yaml`, which does
+  not exist.
+
 - **Checkpoint flags override only the settings they are given.**
   `--cloud-sync-cmd` defaulted to `aws s3 cp` on the command line, so
   `mcpu run`, `mcpu validate` and `scripts/run_mcpu_replica_exchange.py
@@ -442,6 +449,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`scripts/job_template.slurm` no longer activates a particular conda
+  environment.** It activated `mcpu_dev`, a conda environment from one
+  developer's setup, and used that environment's `mpirun`. The job now
+  uses the environment it is submitted from, and a marked block shows how
+  to load one instead. `scripts/submit.sh` now requires the config
+  argument; it defaulted to `inputs/template.yaml`, which does not exist.
 - **Mu's energy change does less work per moved atom, which makes actin
   1.7x faster on the default move mix and 2.3x pivot-only.** Each part
   scores the same pairs in the same order and returns the same answer, so

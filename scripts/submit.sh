@@ -1,12 +1,12 @@
 #!/bin/bash
-# Submit an MPI REMD job with --ntasks derived from the YAML physics grid.
-#
-# Design: YAML describes physics (temperatures, Q/N targets). This script
-# describes infrastructure (nodes, walltime, MPI ranks). Do not put mpi: in YAML.
+# Submit scripts/job_template.slurm for one config, with --ntasks set to the
+# config's replica count.
 #
 # Usage:
-#   bash scripts/submit.sh inputs/template.yaml
-#   bash scripts/submit.sh inputs/template.yaml --dry-run
+#   bash scripts/submit.sh CONFIG.yaml [--dry-run] [sbatch options...]
+#
+#   --dry-run       print the sbatch command instead of running it
+#   sbatch options  passed on to sbatch, e.g. --partition=shared --time=2-00:00:00
 #
 # See docs/running_remd.md
 
@@ -15,7 +15,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
-CONFIG="${1:-inputs/template.yaml}"
+CONFIG="${1:?Usage: bash scripts/submit.sh CONFIG.yaml [--dry-run] [sbatch options...]}"
 shift || true
 
 DRY_RUN=0

@@ -7,29 +7,18 @@
 #SBATCH --output=logs/%j.out
 #SBATCH --error=logs/%j.err
 #
-# --ntasks is set by scripts/submit.sh from the YAML replica grid.
-# Do not hardcode --ntasks here.
-#
-# Design: YAML = physics; sbatch/mpirun = infrastructure.
-# See docs/running_remd.md
+# Run MPI replica exchange for one config. Submit it with scripts/submit.sh,
+# which sets --ntasks to the config's replica count; do not set --ntasks here.
+# Edit the #SBATCH defaults above and the environment block below for your
+# cluster. See docs/running_remd.md.
 
 set -euo pipefail
 
 CONFIG="${1:?Usage: sbatch --ntasks=N job_template.slurm CONFIG.yaml}"
 
-# Resolve the repo root.
-#
-# Do NOT derive this from BASH_SOURCE. sbatch does not execute this file in
-# place -- SLURM copies the batch script to the compute node and runs the copy
-# out of /var/slurmd/spool/slurmd/scripts/. BASH_SOURCE[0] therefore points into
-# the spool directory, and because that directory is itself named "scripts",
-# "${SCRIPT_DIR}/.." silently yielded /var/slurmd/spool/slurmd and the job died
-# on a near-plausible path:
-#     python: can't open file
-#     '/var/slurmd/spool/slurmd/scripts/run_mcpu_replica_exchange.py'
-# scripts/submit.sh runs un-spooled, so its own BASH_SOURCE resolution IS valid;
-# it exports the answer to us as PYMCPU_REPO. The fallback below covers running
-# this file directly (bash scripts/job_template.slurm ...), nothing spooled.
+# SLURM runs a spooled copy of this file, so the file cannot find the
+# repository from its own path; scripts/submit.sh passes it in PYMCPU_REPO.
+# The fallback covers running this file directly with bash.
 if [[ -n "${PYMCPU_REPO:-}" ]]; then
   REPO_ROOT="${PYMCPU_REPO}"
 else
@@ -48,43 +37,24 @@ fi
 cd "${REPO_ROOT}"
 mkdir -p logs
 
-# ADDED: activate the environment explicitly. This script previously ran a bare
-# `python`, inheriting whatever the submitting shell happened to have on PATH.
-# Under sbatch that resolves to the base Mambaforge python, whose pymcpu comes
-# from the ~/.local py3.10 user-site install -- a *different* build from the one
-# in mcpu_dev, and one that cannot be rebuilt with the current toolchain
-# (GCC 14.2 emits CXXABI_1.3.15; Mambaforge's libstdc++ provides only 1.3.14).
-# Production REMD was therefore silently running whatever binary that install
-# last held.
+# ---- Environment: edit for your cluster ------------------------------------
+# The job inherits the environment you submit from (submit.sh exports it).
+# To set it up here instead, load the MPI library that mpi4py was built
+# against and activate the Python environment pyMCPU is installed in, e.g.
 #
-# The unset block matters because sbatch
-# inherits the submitting shell's environment, and a pre-activated conda env
-# there can make "module load Mambaforge" + "mamba activate" silently leave
-# PATH pointing at the wrong python.
-unset CONDA_SHLVL CONDA_PREFIX CONDA_DEFAULT_ENV CONDA_PROMPT_MODIFIER \
-      CONDA_EXE CONDA_PYTHON_EXE _CE_M _CE_CONDA MAMBA_EXE MAMBA_ROOT_PREFIX
+#   module load openmpi
+#   source ~/venvs/pymcpu/bin/activate
+#
+# or, with conda:
+#
+#   module load Mambaforge
+#   mamba activate pymcpu
+# -----------------------------------------------------------------------------
 
-module load Mambaforge
-mamba activate mcpu_dev
-echo "python: $(python -V)  $(which python)"
-echo "mpirun: ${CONDA_PREFIX}/bin/mpirun"
+echo "python: $(python -V)  $(command -v python)"
+echo "mpirun: $(command -v mpirun)"
 python -c "import pymcpu, pymcpu.mcpu_core as m; print('mcpu_core:', m.__file__)"
 
-# MPI intent lives here, not in the YAML.
-# SLURM_NTASKS is set from submit.sh (--ntasks derived from temperatures × Q/N).
-# Launch with the SAME MPI install mpi4py is linked against. mpi4py in mcpu_dev
-# resolves libmpi.so.40 out of its own package dir to the conda Open MPI 5.0.10;
-# a foreign mpirun hands the ranks PMIx wire-up its linked library cannot read,
-# and MPI_Init segfaults -- the failure recorded in p18.8.X/submission.sh
-# ("FASRC mpirun caused segfaults"). Deliberately NO fallback to a PATH mpirun:
-# silently launching with a foreign one is exactly the bug, so this must be fatal.
-MPIRUN="${CONDA_PREFIX}/bin/mpirun"
-if [[ ! -x "${MPIRUN}" ]]; then
-  echo "ERROR: no mpirun in the active env: ${MPIRUN}" >&2
-  exit 1
-fi
-
-"${MPIRUN}" -n "${SLURM_NTASKS}" \
-  python "${RUNNER}" \
-  --mpi \
-  -c "${CONFIG}"
+# The mpirun must belong to the MPI that mpi4py was built against; a different
+# one can crash MPI_Init (see docs/installation.rst).
+mpirun -n "${SLURM_NTASKS}" python "${RUNNER}" --mpi -c "${CONFIG}"

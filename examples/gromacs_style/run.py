@@ -6,8 +6,8 @@ Usage
     python run.py --input input.yaml [--resume --checkpoint-dir checkpoints]
                   [--output-dir ./results] [--dry-run]
 
-The input YAML fully specifies the simulation. See inputs/template.yaml
-for all available fields and their default values.
+The input YAML fully specifies the simulation. See
+examples/configs/template.yaml for the common fields and their defaults.
 
 This script is a thin adapter:
   (a) Parses the YAML
