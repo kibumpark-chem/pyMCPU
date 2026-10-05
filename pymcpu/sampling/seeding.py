@@ -32,12 +32,11 @@ __all__ = ["derive_seed"]
 def derive_seed(base_seed: int, round_index: int, stream_index: int) -> int:
     """Derive an independent 32-bit seed for one stream of one round.
 
-    ``round_index`` is the outer iteration (a WE iteration, an FFS stage, a
-    sampling round); ``stream_index`` identifies the walker within it. The
-    result is unique per pair, stable across processes, machines and runs,
-    and fits the unsigned 32-bit range ``Integrator.set_seed`` expects.
-
-    In WESTPA terms this is ``derive_seed(base_seed, n_iter, seg_id)``.
+    ``round_index`` is the outer iteration (a weighted-ensemble iteration,
+    an FFS stage, a sampling round); ``stream_index`` identifies the walker
+    within it. The result is unique per pair, stable across processes,
+    machines and runs, and fits the unsigned 32-bit range
+    ``Integrator.set_seed`` expects.
 
     **This is a frozen wire format.** Changing the packing or the truncation
     below silently reseeds every existing run -- results would stay

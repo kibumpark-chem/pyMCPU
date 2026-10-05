@@ -1,18 +1,17 @@
 """One pyMCPU engine, built once and reused across many trajectory segments.
 
 This is the object an external sampling framework holds per worker process.
-Building an :class:`~pymcpu.forcefields.mcpu.MCPUForceField` reads the
-parameter tables from disk (~0.5 s, independent of protein size), so
-rebuilding one per segment turns a large run into a parameter-parsing
-benchmark rather than a sampling one. :class:`EngineSession` defers all of
-it until first use and then holds it for the life of the process.
+Building the engine takes from under a second for a small protein to several
+seconds for a large one, so rebuilding it for every segment would dominate a
+large run. :class:`EngineSession` defers all of it until first use and then
+holds it for the life of the process.
 
 It deliberately does **not** decide when a new session is needed. That
 lazy/per-PID policy belongs to the caller, because only the caller knows
-its own process model -- whether it forks workers, when, and how many. The
-WESTPA add-on's propagator is a worked example: it keys a session on
-``(thread, PID)`` and keeps construction cheap so the object survives being
-created in a master process before workers fork.
+its own process model -- whether it forks workers, when, and how many. A
+caller that forks typically keys a session on ``(thread, PID)``. Creating
+one builds nothing, so the object can be made in the main process before the
+fork, as long as each worker builds its own engine.
 
 **It never seeds the integrator.** The caller seeds each segment itself,
 from :func:`pymcpu.sampling.derive_seed`; see that function for why
@@ -102,8 +101,8 @@ def build_forcefield(spec: EngineSpec) -> tuple[BaseForceField, md.Topology]:
 
 
 class EngineSession:
-    """Lazily-built, cached pyMCPU forcefield/system/context/integrator for
-    one WE sim root's configuration."""
+    """Lazily built, cached pyMCPU force field, system, context and
+    integrator for one :class:`~pymcpu.config.EngineSpec`."""
 
     def __init__(self, spec: EngineSpec):
         self.spec = spec
@@ -159,7 +158,7 @@ class EngineSession:
         return self._sim
 
     # ------------------------------------------------------------------
-    # Public API used by MCPUPropagator
+    # Public API
     # ------------------------------------------------------------------
     @property
     def fingerprint(self) -> str:
@@ -188,10 +187,9 @@ class EngineSession:
         self._ensure_sim().integrator.set_seed(int(seed))
 
     def get_rng_state(self) -> str:
-        """Exact MC RNG stream state — only ever saved/restored when
-        ``store_rng_state: true`` (debug single-segment replay). Restoring
-        this across a *split* (multiple children sharing one parent state)
-        would make every child bitwise-identical; see
+        """Exact MC random state, for replaying a single trajectory.
+        Restoring it across a clone (several children sharing one parent
+        state) would make every child bitwise identical; see
         :func:`pymcpu.sampling.derive_seed`."""
         return str(self._ensure_sim().integrator.get_rng_state())
 
@@ -210,15 +208,15 @@ class EngineSession:
         self._ensure_sim().current_step = int(value)
 
     def coords_from_auxref(self, auxref: str) -> np.ndarray:
-        """Resolve a basis/initial-state ``auxref`` to engine-order
-        coordinates ``(3, n_atoms)`` float64 Angstrom. Supports:
+        """Read starting coordinates from a file (``auxref``), in engine
+        order, as ``(3, n_atoms)`` float64 Angstrom. Supports:
 
         * ``.npz`` -- anything carrying a ``coords`` array, which includes
           a restart state written by an external sampler.
         * ``.chk`` — a :func:`pymcpu.checkpointing.load_checkpoint` payload
           (the endpoint of an existing ``FoldingRunner``/``ReplicaExchange``
-          production run) -- lets an external sampler start from prior
-          pyMCPU output with no new API.
+          production run; for replica exchange, its first replica) -- lets an
+          external sampler start from prior pyMCPU output with no new API.
         * ``.pdb`` -- an arbitrary starting structure, mapped into engine atom
           order by a throwaway force field of the session's own kind
           (``spec.forcefield``) built from it. This assumes the PDB is the
@@ -235,9 +233,9 @@ class EngineSession:
         suffix = path.suffix.lower()
         if suffix == ".npz":
             # Any .npz carrying a `coords` array, NOT a specific framework's
-            # restart format. The add-on's own segment-state files satisfy
-            # this by construction, which is what keeps the interop working
-            # without core knowing anything about them.
+            # restart format. Restart files an external sampler writes
+            # satisfy this by construction, so pyMCPU needs to know nothing
+            # about their format.
             with np.load(path) as payload:
                 if "coords" not in payload:
                     raise ValueError(

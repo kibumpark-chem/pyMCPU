@@ -305,7 +305,7 @@ def materialize_from_wheel(
     rather than ``open(O_CREAT|O_EXCL)``, which is unreliable on NFSv3. The
     winner builds a private staging directory and renames it into place; losers
     poll. Deliberately MPI-agnostic (no ``mpi4py`` import) so it also covers
-    WESTPA workers, job arrays, and unrelated concurrent runs.
+    sampler worker pools, job arrays, and unrelated concurrent runs.
 
     In production, prefer avoiding the race altogether::
 
