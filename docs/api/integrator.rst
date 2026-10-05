@@ -7,17 +7,10 @@ or rejects, and feeds the attached :doc:`reporters <reporters>`.
 
 .. note::
    ``temperature`` is a dimensionless reduced parameter, not a physical
-   temperature unit. Typical values: 0.3 (cold/folded) to 0.6
-   (hot/unfolded). Energies are unitless knowledge-based table sums, so
-   there is no kT and no Boltzmann constant in the acceptance test --
-   see :doc:`../physics_notes/mc_acceptance`.
-
-.. note::
-   ``Integrator`` is a compiled ``pymcpu.mcpu_core`` class (the C++
-   type is ``MCIntegrator``; ``Integrator`` is the only name exposed to
-   Python). The documentation build mocks that module, so the
-   directives on this page are hand-authored; the signatures and
-   defaults below were read off the built extension.
+   temperature unit. Where a protein unfolds depends on the protein;
+   chignolin melts at about 0.65 to 0.7. Energies are unitless
+   knowledge-based table sums, so there is no kT and no Boltzmann constant
+   in the acceptance test -- see :doc:`../physics_notes/mc_acceptance`.
 
 .. py:currentmodule:: pymcpu
 
@@ -80,8 +73,8 @@ each slot is chosen; the remaining knobs select the algorithm used
    raises ``ValueError``.
 
    The default is ``(0.25, 0.25, 0.50)``, the mix the engine has always
-   used. Passing it explicitly is byte-identical to never calling this
-   method: exactly one RNG draw is consumed per step whatever the
+   used. Passing it explicitly gives exactly the same run as not calling
+   this method: exactly one RNG draw is consumed per step whatever the
    weights are, so the stream does not shift.
 
    .. warning::
@@ -352,9 +345,8 @@ These are tuning and instrumentation knobs. They do not change the
 sampled distribution, they are **not part of the stable API**, and
 correct results must not depend on them:
 ``set_use_pooled_proposal(on)`` / ``use_pooled_proposal()``,
-``set_use_sparse_proposal(on)`` / ``use_sparse_proposal`` (read/write
-property: "If True (default): skip per-step ``copy_dynamic_from``;
-O(n_moved) restore on reject"), ``reject_restore_enabled()``,
+``set_use_sparse_proposal(on)`` / ``use_sparse_proposal`` (a read/write
+property), ``reject_restore_enabled()``,
 ``proposal_lifecycle_info()``,
 ``step_stats()``, ``set_step_stats_verbose(on)`` and
 ``step_stats_verbose()``.

@@ -207,8 +207,40 @@ PYBIND11_MODULE(mcpu_core, m) {
         .def_readwrite("o_atom_moved", &ProposalPatch::o_atom_moved)
         .def_readwrite("h_atom_moved", &ProposalPatch::h_atom_moved)
         .def_readwrite("moving_atoms", &ProposalPatch::moving_atoms)
-        .def_readwrite("moved_indices", &ProposalPatch::moved_indices)
-        .def("mark_moved", &ProposalPatch::mark_moved)
+        // moved_indices and mark_moved are the two ways Python can hand the
+        // engine a moved-atom list, so both are checked here, off the engine's
+        // hot path: an index outside [0, num_atoms) would write past
+        // moving_atoms, and a duplicate breaks the per-cell moved counts in
+        // Mu's delta (see ProposalPatch::mark_moved).
+        .def_property(
+            "moved_indices",
+            [](const ProposalPatch& p) { return p.moved_indices; },
+            [](ProposalPatch& p, const std::vector<int>& idx) {
+                std::vector<std::uint8_t> seen(p.moving_atoms.size(), 0);
+                for (int i : idx) {
+                    if (i < 0 || static_cast<size_t>(i) >= seen.size())
+                        throw py::index_error(
+                            "moved_indices: atom index " + std::to_string(i) +
+                            " is outside [0, " + std::to_string(seen.size()) + ")");
+                    if (seen[static_cast<size_t>(i)]++)
+                        throw py::value_error(
+                            "moved_indices: atom index " + std::to_string(i) +
+                            " is listed twice; the list must not hold duplicates");
+                }
+                p.moved_indices = idx;
+            })
+        .def(
+            "mark_moved",
+            [](ProposalPatch& p, int i) {
+                if (i < 0 || static_cast<size_t>(i) >= p.moving_atoms.size())
+                    throw py::index_error(
+                        "mark_moved: atom index " + std::to_string(i) +
+                        " is outside [0, " + std::to_string(p.moving_atoms.size()) + ")");
+                // Marking an atom twice is a no-op, as the mask already was.
+                if (p.moving_atoms[static_cast<size_t>(i)] == 0) p.mark_moved(i);
+            },
+            py::arg("i"),
+            "Mark atom i as moved. Marking an already-marked atom does nothing.")
         .def("add_distorted_bb_residue", &ProposalPatch::add_distorted_bb_residue)
         .def("add_distorted_sc_residue", &ProposalPatch::add_distorted_sc_residue);
 
@@ -617,8 +649,9 @@ PYBIND11_MODULE(mcpu_core, m) {
     py::class_<mcpu::MCIntegrator>(m, "Integrator",
         "Metropolis Monte Carlo move engine: backbone pivot, continuous\n"
         "sidechain, rotamer-library and kinematic-closure loop moves.\n\n"
-        "temperature is required: a DIMENSIONLESS reduced parameter, roughly\n"
-        "0.3 (cold, folded) to 0.6 (hot, unfolded) -- it is not Kelvin.\n\n"
+        "temperature is required: a DIMENSIONLESS reduced parameter, not Kelvin.\n"
+        "Where a protein unfolds depends on the protein; chignolin melts at\n"
+        "about 0.65 to 0.7.\n\n"
         "Call set_seed(): the same seed, input and build reproduce a run exactly.")
         .def(py::init<float, float, float>(), py::arg("temperature"),
              py::arg("step_size_rad") = 0.1f,
@@ -1099,7 +1132,7 @@ PYBIND11_MODULE(mcpu_core, m) {
     // generated BuildConfig.h, which CMake fills from the same variables that
     // produced the flags. There are deliberately NO fallback literals: a
     // missing define is a #error, not a plausible-looking default.
-#if !defined(MCPU_BUILD_ARCH_TIER) || !defined(MCPU_BUILD_LTO)
+#if !defined(MCPU_BUILD_ARCH_TIER) || !defined(MCPU_BUILD_LTO) || !defined(MCPU_BUILD_JCC_PAD)
 #error "BuildConfig.h was not generated; configure through CMake."
 #endif
 #if !defined(MCPU_USE_POOLED_PROPOSAL)
@@ -1186,6 +1219,11 @@ PYBIND11_MODULE(mcpu_core, m) {
             py::dict build;
             build["type"] = MCPU_BUILD_TYPE;
             build["lto"] = (MCPU_BUILD_LTO != 0);
+            // EFFECTIVE, like lto: on only when CMake's probes showed the
+            // assembler that emits the shipped code honours the option.
+            build["jcc_pad"] = (MCPU_BUILD_JCC_PAD != 0);
+            build["jcc_pad_mode"] = MCPU_BUILD_JCC_PAD_MODE;
+            build["jcc_pad_reason"] = MCPU_BUILD_JCC_PAD_REASON;
             build["cmake_version"] = MCPU_BUILD_CMAKE_VERSION;
             // Two independent facts a single "Release" string cannot express:
             // RelWithDebInfo sets both, and a CXXFLAGS=-O0 override sets only

@@ -131,3 +131,22 @@ def test_release_builds_actually_get_lto(info) -> None:
         "not use, a dependency enabled it and check_ipo_supported() needs its "
         "LANGUAGES argument scoped to CXX."
     )
+
+
+def test_jcc_pad_report_is_consistent(info) -> None:
+    """``jcc_pad`` is the EFFECTIVE state, decided by CMake's probes.
+
+    GCC 8 with LTO drops ``-Wa,...`` at the link without a warning, so a
+    requested-but-lost padding must show up as ``jcc_pad=False`` with a
+    reason, never as ``True``. A forced ``MCPU_JCC_PAD=ON`` that could not
+    be honoured fails at configure time and never reaches this test.
+    """
+    build = info["build"]
+    mode = build["jcc_pad_mode"].upper()
+    assert isinstance(build["jcc_pad"], bool)
+    assert mode in {"AUTO", "ON", "OFF", "TRUE", "FALSE", "YES", "NO", "1", "0"}, mode
+    assert build["jcc_pad_reason"], "jcc_pad_reason must say why"
+    if mode in {"OFF", "FALSE", "NO", "0"}:
+        assert build["jcc_pad"] is False
+    if mode in {"ON", "TRUE", "YES", "1"}:
+        assert build["jcc_pad"] is True
