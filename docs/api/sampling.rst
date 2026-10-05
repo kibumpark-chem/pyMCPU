@@ -11,16 +11,18 @@ Three drivers are provided: :class:`~pymcpu.sampling.FoldingRunner` for
 a single-temperature run, :class:`~pymcpu.sampling.ReplicaExchange` for
 in-process replica exchange, and
 :class:`~pymcpu.sampling.MPIReplicaExchange` for the same algorithm
-spread over MPI ranks. All three build the
-:class:`~pymcpu.MCPUForceField`, the :doc:`System <system>` and one
+spread over MPI ranks. All three build the mcpu08 force field
+(:class:`~pymcpu.MCPUForceField`), the :doc:`System <system>` and one
 :doc:`Integrator <integrator>` per replica internally, so a run is
-configured entirely through constructor keywords.
+configured entirely through constructor keywords. The force field is
+always mcpu08: a config's ``forcefield:`` does not change that yet, and the
+replica-exchange drivers take no parameter-set argument.
 
 .. note::
    Temperature is a dimensionless reduced parameter, not a physical
-   temperature: roughly 0.3 (cold, folded) to 0.6 (hot, unfolded).
-   Energies are unitless sums of knowledge-based potential table
-   entries.
+   temperature. Where a protein unfolds depends on the protein; chignolin
+   melts at about 0.65 to 0.7. Energies are unitless sums of
+   knowledge-based potential table entries.
 
 Replica exchange
 ----------------
@@ -47,17 +49,11 @@ MPI replica exchange
 --------------------
 
 .. note::
-   Requires ``mpi4py`` built against a working MPI library:
-   ``pip install "pymcpu[mpi]"``. When the import fails, both
+   Needs ``mpi4py`` built for the MPI you launch with; see
+   :doc:`../installation`. When the import fails, both
    ``pymcpu.sampling.MPIReplicaExchange`` and
    ``pymcpu.sampling.partition_replicas`` are set to ``None`` rather
    than raising, so guard on them before use.
-
-.. note::
-   **HPC-specific:** on a cluster, build ``mpi4py`` against the site
-   MPI installation (make the system MPI available first, then install
-   ``mpi4py`` from source) instead of taking a prebuilt wheel, which
-   may not match the launcher.
 
 Rank count need not equal replica count. Launch with
 ``mpirun -n R python your_script.py`` for any ``R`` from 1 up to the
@@ -72,6 +68,13 @@ configuration workflow.
 
 Single-temperature folding
 --------------------------
+
+.. important::
+   From a folded start, a ``FoldingRunner`` stops after 10 cycles, whatever
+   ``steps`` asked for; the early stop is described below. Pass
+   ``q_threshold=1.1`` to always run the full length. ``mcpu run`` runs a
+   folding config (a YAML config with one temperature) through
+   ``FoldingRunner`` and cannot change this yet.
 
 .. autoclass:: pymcpu.sampling.FoldingRunner
    :members:
