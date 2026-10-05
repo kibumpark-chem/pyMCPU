@@ -12,12 +12,11 @@ using Mat3 = Eigen::Matrix3d;
 
 constexpr int MAX_SOLN = 16; 
 
+// Fixed-size, so a closure costs no heap allocation (a KIC step builds up to 2 x 16).
 struct Solution {
-    std::vector<Vec3> r_n; 
-    std::vector<Vec3> r_a; 
-    std::vector<Vec3> r_c; 
-    
-    Solution() : r_n(3), r_a(3), r_c(3) {}
+    std::array<Vec3, 3> r_n;
+    std::array<Vec3, 3> r_a;
+    std::array<Vec3, 3> r_c;
 };
 
 // Removed the namespace wrapper so pybind11 can see this directly

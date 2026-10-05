@@ -68,7 +68,8 @@ int TripeptideSolver::solv_3pep_poly(const Vec3& r_n1, const Vec3& r_a1,
     Eigen::Matrix<double, 17, 1> poly_coeff = Eigen::Matrix<double, 17, 1>::Zero();
     get_poly_coeff(poly_coeff);
 
-    std::vector<double> roots;
+    // Reused across solves: its capacity (<= 16 roots) is allocated once per thread.
+    static thread_local std::vector<double> roots;
     solve_roots(poly_coeff, roots);
     
     if (roots.empty()) {

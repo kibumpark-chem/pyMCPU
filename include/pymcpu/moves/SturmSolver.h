@@ -38,6 +38,15 @@ namespace TripeptideLoopClosure {
 // against the scalar counts (+7% / +17% for one process). A 128-bit version kept
 // licence 1 (density, not width, sets it) and lost 3.1% there, so the 256-bit one
 // stays. Without AVX2 (v2/none builds) the original scalar loops run unchanged.
+//
+// Single-root refinement (not bit-identical, allowed by the tolerance rule): the
+// Sturm counts above still isolate each root, but when modrf stops without meeting
+// |f(x)/x| < 1e-15 it now hands back its narrowed sign-change bracket, and the root is
+// finished by halving that bracket on the sign of the polynomial itself (one Horner
+// evaluation) with the same 1e-15 relative stop. modrf also stops as soon as its bracket
+// is that narrow. The Sturm-count bisection runs only when the bracket ends have the
+// same sign. On 10,475 T4L/CA2 closures the closure counts are unchanged, 76% of the
+// 24,206 closures are bit-identical, and the largest coordinate difference is 3.7e-9 A.
 class SturmSolver {
 private:
     static constexpr int MAX_ORDER = 16;
@@ -231,14 +240,18 @@ private:
         return atneginf - atposinf;
     }
 
-    bool modrf(int ord, const std::array<double, MAX_ORDER + 1>& coef, double a, double b, double& val) const {
+    // Illinois regula falsi on [a, b]. Returns 1 with val set when |f(x)/x| < rel_error;
+    // 2 when the bracket shrank to the bisection stop width (or the iterations ran out)
+    // first, leaving a and b as the narrowed sign-change bracket; 0 when f(a), f(b) have
+    // the same sign.
+    int modrf(int ord, const std::array<double, MAX_ORDER + 1>& coef, double& a, double& b, double& val) const {
         double fa = coef[ord], fb = coef[ord];
         for (int i = ord - 1; i >= 0; i--) {
             fa = a * fa + coef[i];
             fb = b * fb + coef[i];
         }
 
-        if (fa * fb > 0.0) return false;
+        if (fa * fb > 0.0) return 0;
 
         double lfx = fa;
         for (int its = 0; its < max_iter_secant; its++) {
@@ -249,9 +262,9 @@ private:
             for (int i = ord - 1; i >= 0; i--) fx = x * fx + coef[i];
 
             if (std::abs(x) > rel_error) {
-                if (std::abs(fx / x) < rel_error) { val = x; return true; }
+                if (std::abs(fx / x) < rel_error) { val = x; return 1; }
             } else if (std::abs(fx) < rel_error) {
-                val = x; return true;
+                val = x; return 1;
             }
 
             if ((fa * fx) < 0.0) {
@@ -262,8 +275,27 @@ private:
                 if ((lfx * fx) > 0.0) fb /= 2.0;
             }
             lfx = fx;
+            if (bisect_done(a, b, 0.5 * (a + b))) return 2;
         }
-        return false;
+        return 2;
+    }
+
+    // Finishes a single root from a sign-change bracket of the polynomial itself: one
+    // Horner sign per halving instead of a Sturm count, with the Sturm loop's stop test.
+    double sign_bisect(int ord, const std::array<double, MAX_ORDER + 1>& coef, double a, double b) const {
+        double fa = coef[ord];
+        for (int i = ord - 1; i >= 0; i--) fa = a * fa + coef[i];
+        double mid = 0.5 * (a + b);
+        for (int its = 0; its < max_it; its++) {
+            mid = 0.5 * (a + b);
+            if (bisect_done(a, b, mid)) return mid;
+            double fm = coef[ord];
+            for (int i = ord - 1; i >= 0; i--) fm = mid * fm + coef[i];
+            if (fm == 0.0) return mid;
+            if ((fa < 0.0) != (fm < 0.0)) b = mid;
+            else { a = mid; fa = fm; }
+        }
+        return mid;
     }
 
     // The single-root loop's stop test; it does not depend on the count at mid.
@@ -277,11 +309,10 @@ private:
         int nroot = atmin - atmax;
         
         if (nroot == 1) {
-            double val = 0.0;
-            if (modrf(sseq[0].ord, sseq[0].coef, min, max, val)) {
-                roots.push_back(val);
-                return;
-            }
+            double val = 0.0, lo = min, hi = max;
+            const int rf = modrf(sseq[0].ord, sseq[0].coef, lo, hi, val);
+            if (rf == 1) { roots.push_back(val); return; }
+            if (rf == 2) { roots.push_back(sign_bisect(sseq[0].ord, sseq[0].coef, lo, hi)); return; }
             int its = 0;
 #if MCPU_STURM_SIMD
             // Two of the loop below per round; see the class comment.
