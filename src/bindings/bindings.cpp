@@ -617,8 +617,9 @@ PYBIND11_MODULE(mcpu_core, m) {
     py::class_<mcpu::MCIntegrator>(m, "Integrator",
         "Metropolis Monte Carlo move engine: backbone pivot, continuous\n"
         "sidechain, rotamer-library and kinematic-closure loop moves.\n\n"
-        "temperature is required: a DIMENSIONLESS reduced parameter, roughly\n"
-        "0.3 (cold, folded) to 0.6 (hot, unfolded) -- it is not Kelvin.\n\n"
+        "temperature is required: a DIMENSIONLESS reduced parameter, not Kelvin.\n"
+        "Where a protein unfolds depends on the protein; chignolin melts at\n"
+        "about 0.65 to 0.7.\n\n"
         "Call set_seed(): the same seed, input and build reproduce a run exactly.")
         .def(py::init<float, float, float>(), py::arg("temperature"),
              py::arg("step_size_rad") = 0.1f,
