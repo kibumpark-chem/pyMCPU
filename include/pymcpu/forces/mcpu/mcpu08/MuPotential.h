@@ -613,6 +613,24 @@ namespace mcpu::forces::mcpu08 {
             float carry_bound
         ) const;
 
+        /// First moved atom whose new position overlaps an unmoved atom held
+        /// by the accepted Mu grid, or -1 if none does: the clash-first pass.
+        /// Tests the clash_hot atoms the move carries first, then, unless
+        /// `hot_only`, every other moved atom, last first. moved_per_cell
+        /// counts, per cell, the listed atoms the move displaces. Only the
+        /// order of the search depends on clash_hot, never its answer.
+        inline int first_grid_overlap(const Context& context,
+                                      const State& new_state,
+                                      const ProposalPatch& patch,
+                                      const std::uint8_t* moved_per_cell,
+                                      bool hot_only) const;
+
+        /// first_grid_overlap for a move that takes the all-pairs fallback
+        /// delta because it leaves the grid (or carries too far for the
+        /// contact list). Fills and clears moved_per_cell itself.
+        int fallback_grid_overlap(const Context& context, const State& new_state,
+                                  const ProposalPatch& patch) const;
+
     public:
         explicit MuPotential(
             Eigen::MatrixXf  contact_energies,
