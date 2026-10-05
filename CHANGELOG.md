@@ -452,7 +452,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   developer diagnostic, and it showed up inside notebook cells. It is now
   printed only with `MCPU_VERBOSE=1`, like the engine's other diagnostics.
 
-- **A replica swap no longer pays for a second O(N^2) Mu pass or a full grid
+- **A replica swap no longer pays for O(N^2) Mu passes or a full grid
   clear, and the aromatic energy change computes each ring's geometry once.**
   Trajectories are unchanged bit for bit, including across a two-replica
   swap run compared step by step.
@@ -470,6 +470,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   * The aromatic term computes every ring's geometry once per state instead
     of inside its pair loop, and returns 0 for a move that touches no ring
     atom. 10,000 steps: -3.2% on actin, -4.7% on PGK1.
+  * The Mu full energy and the contact-list rebuild find pairs through a
+    cell grid instead of testing every pair of atoms. A full recompute takes
+    63.2 -> 20.6 Mcycles on actin and 72.1 -> 24.3 on PGK1. With all of the
+    above, an accepted swap plus a full recompute costs one replica 2.8% of
+    10,000 MC steps on actin and 3.0% on PGK1, down from 15.2% and 15.4%.
 
 - **`scripts/job_template.slurm` no longer activates a particular conda
   environment.** It activated `mcpu_dev`, a conda environment from one
