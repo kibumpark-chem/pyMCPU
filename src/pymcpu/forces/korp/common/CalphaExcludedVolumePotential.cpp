@@ -38,6 +38,7 @@ CalphaExcludedVolumePotential::CalphaExcludedVolumePotential(
     for (int idx : ca_atom_) need(idx >= 0, "a residue has no CA atom index");
 
     moved_.assign(n, 0);
+    chain_int_.assign(chain_id_.begin(), chain_id_.end());
     rebuild_atom_lookup();
 }
 
@@ -124,8 +125,38 @@ bool CalphaExcludedVolumePotential::clashesAtMoveCutoff(
         return (pb - pa).squaredNorm() < min_distance_sq_;
     };
 
+    // Prefilter: for each moved residue, one branch-free pass over every
+    // residue asks whether ANY checked partner is under a slightly loosened
+    // cutoff. Only then does the exact loop below run for that residue, with
+    // the moved/moved rules and the exact distance test. The loosened cutoff
+    // means the prefilter cannot miss a pair the exact test would catch, so
+    // the yes/no answer is unchanged.
+    const std::size_t un = static_cast<std::size_t>(n);
+    cx_.resize(un); cy_.resize(un); cz_.resize(un);
+    for (std::size_t j = 0; j < un; ++j) {
+        const Eigen::Vector3f p = proposed_state.atom_pos(ca_atom_[j]);
+        cx_[j] = p.x(); cy_[j] = p.y(); cz_[j] = p.z();
+    }
+    const float filter_sq = min_distance_sq_ * (1.0f + 1e-4f);
+    const int min_sep = min_separation_;
+
     for (std::size_t ia = 0; ia < moved_residues_.size(); ++ia) {
         const int a = moved_residues_[ia];
+        const std::size_t ua = static_cast<std::size_t>(a);
+        const float ax = cx_[ua], ay = cy_[ua], az = cz_[ua];
+        const int sa = seq_number_[ua];
+        const int ka = chain_int_[ua];
+        int hit = 0;
+        for (std::size_t j = 0; j < un; ++j) {
+            const float dx = cx_[j] - ax;
+            const float dy = cy_[j] - ay;
+            const float dz = cz_[j] - az;
+            const int sep = seq_number_[j] - sa;
+            const int checked = (chain_int_[j] != ka) | (sep >= min_sep) | (-sep >= min_sep);
+            hit |= (dx * dx + dy * dy + dz * dz < filter_sq) & checked;
+        }
+        if (!hit) continue;
+
         for (int j = 0; j < n; ++j) {
             if (j == a) continue;
             if (moved_[static_cast<std::size_t>(j)]) {
