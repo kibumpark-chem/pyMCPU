@@ -1376,7 +1376,10 @@ void MCIntegrator::apply_concerted_rotation_move(Context& context, State& propos
     //     for the reverse-move probability to be well-defined.  If the solver
     //     finds 0 solutions the acceptance ratio n_new/n_old is undefined, so
     //     we must reject rather than clamp to 1.
-    std::vector<Solution> pre_solutions = solver.solve(r_n1, r_a1, r_a3, r_c3);
+    // Closure buffers reused across steps, so a KIC step makes no heap allocation here.
+    static thread_local std::vector<Solution> pre_solutions;
+    static thread_local std::vector<Solution> new_solutions;
+    solver.solv_3pep_poly(r_n1, r_a1, r_a3, r_c3, pre_solutions);
     // KIC FIX (F2): the solver drops closures that miss an N-CA-C target by > 1e-6 rad, in
     // this solve and the post-move one alike, so both counts below are filtered the same way.
     kic_geometry_invalid_ += solver.last_rejected();
@@ -1449,14 +1452,14 @@ void MCIntegrator::apply_concerted_rotation_move(Context& context, State& propos
     }
 
     // 4. Run the KIC Solver for the POST-rotation endpoints
-    std::vector<Solution> new_solutions = solver.solve(r_n1, r_a1, r_a3, r_c3);
+    solver.solv_3pep_poly(r_n1, r_a1, r_a3, r_c3, new_solutions);
     kic_geometry_invalid_ += solver.last_rejected();  // KIC FIX (F2)
     int n_new = static_cast<int>(new_solutions.size());
     if (n_new == 0) return;
 
     // 5. Pick one solution uniformly at random
     std::uniform_int_distribution<int> root_dist(0, n_new - 1);
-    Solution chosen_soln = new_solutions[root_dist(rng)];
+    const Solution& chosen_soln = new_solutions[static_cast<size_t>(root_dist(rng))];
 
     // 6. Calculate Jacobian of the NEW state
     double J_new = solver.calculate_jacobian(chosen_soln);

@@ -465,6 +465,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   3.7e-9 A (76% bit-identical). KIC-only steps: T4L 139k -> 125k cycles
   (-10%), CA2 115k -> 106k (-8%); actin default mix 91.9k -> 88.8k (-3%).
 
+- **A KIC step no longer allocates.** A closure (`Solution`) held three
+  heap vectors of three points, and each step built two closure lists, a
+  root list and two more closures, each closure three allocations plus
+  copies. `Solution` now holds fixed-size arrays and the root and closure
+  lists are reused across steps. Python still sees `Solution.r_n`, `r_a`
+  and `r_c` as lists of three points, but setting one now takes exactly
+  three; before, a list of another length was accepted and the KIC code
+  could read past its end.
+  Trajectories are unchanged bit for bit. KIC-only steps: T4L 125k -> 120k
+  cycles (-4%), CA2 106k -> 100k (-5%); actin default mix 88.8k -> 87.1k.
+
 - **Ordinary runs no longer print a Mu contact-list NOTE.** The engine
   printed "NOTE: Mu move #1 that cannot use the contact list ..." to stderr
   on the first move that could not use the list, and on every thousandth,
