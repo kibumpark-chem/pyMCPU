@@ -7,10 +7,21 @@
 #include "pymcpu/utils/virtual_amide_h.h"
 #include <array>
 #include <cmath>
+#if defined(__AVX2__)
+#include <immintrin.h>
+#endif
 
 namespace mcpu::forces {
 
 namespace {
+
+// A donor/acceptor pair whose H and O are at least HBOND_CUTOFF apart in both
+// states scores 0 in both, so its term in the delta is exactly +0.0f and it
+// can be dropped without changing the sum. The filters below drop a pair only
+// when both distances clear this slightly larger cutoff, which leaves room for
+// the last-bit differences between their arithmetic and the evaluator's.
+constexpr float kFarCut2 = 2.55f * 2.55f;
+static_assert(kFarCut2 > HBOND_CUTOFF_SQUARED, "far filter must be looser than the H-bond cutoff");
 
 /// Load donor amide H (explicit atom or legacy virtual) into hpos[3].
 inline bool load_donor_h(
@@ -118,14 +129,26 @@ EnergyChangeResult HBondPotential::calculateEnergyChange(
         if (!load_donor_h(proposed_state, sys, r_don, nh)) return;
 
         auto query_oxygen = [&](int neighbor_atom) {
-            evaluate_hbond_pair(r_don, sys.atom_to_residue[static_cast<size_t>(neighbor_atom)]);
+            const int r_acc = sys.atom_to_residue[static_cast<size_t>(neighbor_atom)];
+            if (r_acc >= 0 && r_acc < num_residues) {
+                // Skip pairs that are far apart in both states (see kFarCut2).
+                const int o = blocks[static_cast<size_t>(r_acc)].o_start;
+                if (o < 0) return;
+                const float ax = oh[0] - cold.x(o), ay = oh[1] - cold.y(o), az = oh[2] - cold.z(o);
+                const float bx = nh[0] - cnew.x(o), by = nh[1] - cnew.y(o), bz = nh[2] - cnew.z(o);
+                if (ax * ax + ay * ay + az * az > kFarCut2
+                    && bx * bx + by * by + bz * bz > kFarCut2) return;
+            }
+            evaluate_hbond_pair(r_don, r_acc);
         };
         if (use_brute) {
             ns.for_each_hbond_acceptor_bruteforce(old_state.coords_soa, oh[0], oh[1], oh[2], cut2, query_oxygen);
             ns.for_each_hbond_acceptor_bruteforce(old_state.coords_soa, nh[0], nh[1], nh[2], cut2, query_oxygen);
         } else {
+            // The second walk skips the cells the first one covered: every
+            // candidate there has been marked or is far in both states.
             ns.for_each_hbond_acceptor_candidate(oh[0], oh[1], oh[2], query_oxygen);
-            ns.for_each_hbond_acceptor_candidate(nh[0], nh[1], nh[2], query_oxygen);
+            ns.for_each_hbond_acceptor_candidate_not_near(nh[0], nh[1], nh[2], oh[0], oh[1], oh[2], query_oxygen);
         }
     };
 
@@ -148,8 +171,9 @@ EnergyChangeResult HBondPotential::calculateEnergyChange(
                 ns.for_each_hbond_h_bruteforce(old_state.coords_soa, no0, no1, no2, cut2, query_donor);
             }
         } else {
+            // As for donors: the first walk marks every candidate it sees.
             ns.for_each_hbond_h_candidate(oo0, oo1, oo2, query_donor);
-            ns.for_each_hbond_h_candidate(no0, no1, no2, query_donor);
+            ns.for_each_hbond_h_candidate_not_near(no0, no1, no2, oo0, oo1, oo2, query_donor);
         }
     };
 
@@ -201,27 +225,69 @@ EnergyChangeResult HBondPotential::calculateEnergyChange(
     for (int r = 0; r < num_residues; ++r) {
         if (res_affected[static_cast<size_t>(r)]) aff_list.push_back(r);
     }
+    // Affected donor x affected acceptor pairs, which the grid walks above can
+    // miss when both ends moved. Pack the acceptors' O coordinates once, drop
+    // the pairs that are far in both states eight at a time, and send the rest
+    // through the original test in the original (donor, acceptor) order.
+    auto& acc_res = hb_ws.acc_res;
+    auto& aox = hb_ws.acc_old_x; auto& aoy = hb_ws.acc_old_y; auto& aoz = hb_ws.acc_old_z;
+    auto& anx = hb_ws.acc_new_x; auto& any = hb_ws.acc_new_y; auto& anz = hb_ws.acc_new_z;
+    acc_res.clear();
+    aox.clear(); aoy.clear(); aoz.clear(); anx.clear(); any.clear(); anz.clear();
+    for (int r_acc : aff_list) {
+        const int o_atom = blocks[static_cast<size_t>(r_acc)].o_start;
+        if (o_atom < 0) continue;
+        acc_res.push_back(r_acc);
+        aox.push_back(cold.x(o_atom)); aoy.push_back(cold.y(o_atom)); aoz.push_back(cold.z(o_atom));
+        anx.push_back(cnew.x(o_atom)); any.push_back(cnew.y(o_atom)); anz.push_back(cnew.z(o_atom));
+    }
+    const int n_acc = static_cast<int>(acc_res.size());
+    const int n_acc8 = (n_acc + 7) & ~7;
+    // Padding sits ~1e18 A away, so it never passes the far filter.
+    for (auto* v : {&aox, &aoy, &aoz, &anx, &any, &anz}) v->resize(static_cast<size_t>(n_acc8), 1e18f);
+    auto d2 = [](const float* h, float x, float y, float z) {
+        const float dx = h[0] - x, dy = h[1] - y, dz = h[2] - z;
+        return dx * dx + dy * dy + dz * dz;
+    };
     for (int r_don : aff_list) {
         if (!blocks[static_cast<size_t>(r_don)].amide_donor) continue;
         float hold[3], hnew[3];
         if (!load_donor_h(old_state, sys, r_don, hold)) continue;
         if (!load_donor_h(proposed_state, sys, r_don, hnew)) continue;
-        for (int r_acc : aff_list) {
+        auto visit = [&](int k) {
+            const int r_acc = acc_res[static_cast<size_t>(k)];
             const int o_atom = blocks[static_cast<size_t>(r_acc)].o_start;
-            if (o_atom < 0) continue;
             const float ox = cold.x(o_atom), oy = cold.y(o_atom), oz = cold.z(o_atom);
             const float nx = cnew.x(o_atom), ny = cnew.y(o_atom), nz = cnew.z(o_atom);
-            auto d2 = [](const float* h, float x, float y, float z) {
-                const float dx = h[0] - x, dy = h[1] - y, dz = h[2] - z;
-                return dx * dx + dy * dy + dz * dz;
-            };
             const float d_old2 = d2(hold, ox, oy, oz);
             const float d_new2 = d2(hnew, nx, ny, nz);
-            if (d_old2 > cut2 && d_new2 > cut2) continue;
+            if (d_old2 > cut2 && d_new2 > cut2) return;
             evaluate_hbond_pair(r_don, r_acc);
+        };
+#if defined(__AVX2__)
+        const __m256 far = _mm256_set1_ps(kFarCut2);
+        const __m256 hox = _mm256_set1_ps(hold[0]), hoy = _mm256_set1_ps(hold[1]), hoz = _mm256_set1_ps(hold[2]);
+        const __m256 hnx = _mm256_set1_ps(hnew[0]), hny = _mm256_set1_ps(hnew[1]), hnz = _mm256_set1_ps(hnew[2]);
+        for (int k0 = 0; k0 < n_acc8; k0 += 8) {
+            const __m256 dxo = _mm256_sub_ps(hox, _mm256_loadu_ps(aox.data() + k0));
+            const __m256 dyo = _mm256_sub_ps(hoy, _mm256_loadu_ps(aoy.data() + k0));
+            const __m256 dzo = _mm256_sub_ps(hoz, _mm256_loadu_ps(aoz.data() + k0));
+            const __m256 dxn = _mm256_sub_ps(hnx, _mm256_loadu_ps(anx.data() + k0));
+            const __m256 dyn = _mm256_sub_ps(hny, _mm256_loadu_ps(any.data() + k0));
+            const __m256 dzn = _mm256_sub_ps(hnz, _mm256_loadu_ps(anz.data() + k0));
+            const __m256 ro = _mm256_add_ps(_mm256_add_ps(_mm256_mul_ps(dxo, dxo), _mm256_mul_ps(dyo, dyo)), _mm256_mul_ps(dzo, dzo));
+            const __m256 rn = _mm256_add_ps(_mm256_add_ps(_mm256_mul_ps(dxn, dxn), _mm256_mul_ps(dyn, dyn)), _mm256_mul_ps(dzn, dzn));
+            unsigned m = static_cast<unsigned>(_mm256_movemask_ps(_mm256_or_ps(
+                _mm256_cmp_ps(ro, far, _CMP_LE_OQ), _mm256_cmp_ps(rn, far, _CMP_LE_OQ))));
+            while (m) {
+                visit(k0 + __builtin_ctz(m));
+                m &= m - 1;
+            }
         }
+#else
+        for (int k = 0; k < n_acc; ++k) visit(k);
+#endif
     }
-
     return EnergyChangeResult::finite(delta_E / 1000.0f);
 }
 

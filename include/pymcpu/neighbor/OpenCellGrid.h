@@ -1084,6 +1084,57 @@ public:
         }
     }
 
+    /// for_each_neighbor(x, y, z) minus the cells that for_each_neighbor(px,
+    /// py, pz) visits. A caller that has just walked (px, py, pz) and dedupes
+    /// what it sees gets nothing new from the cells the two stencils share, so
+    /// it can skip them. The cells it does visit come in the same order as in
+    /// the full walk.
+    template <typename Func>
+    void for_each_neighbor_not_near(float x, float y, float z,
+                                    float px, float py, float pz,
+                                    Func&& func,
+                                    std::uint64_t* cell_visits = nullptr) const {
+        if (!configured_ || neighbor_offsets_.empty()) return;
+        const int ix0 =
+            static_cast<int>(std::floor((x - bounds_.lo.x()) * inv_cell_));
+        const int iy0 =
+            static_cast<int>(std::floor((y - bounds_.lo.y()) * inv_cell_));
+        const int iz0 =
+            static_cast<int>(std::floor((z - bounds_.lo.z()) * inv_cell_));
+        const int jx0 =
+            static_cast<int>(std::floor((px - bounds_.lo.x()) * inv_cell_));
+        const int jy0 =
+            static_cast<int>(std::floor((py - bounds_.lo.y()) * inv_cell_));
+        const int jz0 =
+            static_cast<int>(std::floor((pz - bounds_.lo.z()) * inv_cell_));
+        if (ix0 == jx0 && iy0 == jy0 && iz0 == jz0) return;
+        const int R = stencil_radius_;
+        for (const CellOffset& o : neighbor_offsets_) {
+            const int ix = ix0 + o.dx;
+            const int iy = iy0 + o.dy;
+            const int iz = iz0 + o.dz;
+            if (ix < 0 || iy < 0 || iz < 0 || ix >= nx_ || iy >= ny_ ||
+                iz >= nz_)
+                continue;
+            if (std::abs(ix - jx0) <= R && std::abs(iy - jy0) <= R &&
+                std::abs(iz - jz0) <= R)
+                continue;
+            if (cell_visits) ++*cell_visits;
+            const int c = (ix * ny_ + iy) * nz_ + iz;
+            if (use_contiguous_) {
+                const int* atoms =
+                    cell_atoms_.data() + static_cast<size_t>(c) * CELL_CAPACITY;
+                const int count = cell_count_[static_cast<size_t>(c)];
+                for (int k = 0; k < count; ++k) func(atoms[k]);
+            } else {
+                for (int a = head_[static_cast<size_t>(c)]; a != -1;
+                     a = next_[static_cast<size_t>(a)]) {
+                    func(a);
+                }
+            }
+        }
+    }
+
     template <typename Func>
     void for_each_neighbor(const Eigen::Vector3f& pos, Func&& func,
                            std::uint64_t* cell_visits = nullptr,

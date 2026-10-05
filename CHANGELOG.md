@@ -461,6 +461,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   developer diagnostic, and it showed up inside notebook cells. It is now
   printed only with `MCPU_VERBOSE=1`, like the engine's other diagnostics.
 
+- **The H-bond energy change skips donor-acceptor pairs that are far apart
+  in both the old and the new state, which makes 164-417 residue proteins
+  2-8% faster.** On pivot moves the H-bond delta was 13-24% of the step and
+  the one term whose cost grows with how much of the chain moves. Pairs
+  that can score are evaluated at the same point in the same order, so
+  trajectories are unchanged bit for bit; only the parity dump's work
+  counters drop. Cycles per step, default move mix / pivot-only: T4
+  lysozyme -3.3% / -6.2%, CA2 -4.1% / -2.3%, LDH-A -4.4% / -5.6%, actin
+  -5.8% / -5.5%, PGK1 -5.2% / -8.2%.
 - **`ProposalPatch` checks moved-atom lists set from Python.** Setting
   `moved_indices` to a list with an index outside `[0, num_atoms)` raises
   `IndexError`, and a list that names an atom twice raises `ValueError`;
@@ -494,6 +503,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   uses the environment it is submitted from, and a marked block shows how
   to load one instead. `scripts/submit.sh` now requires the config
   argument; it defaulted to `inputs/template.yaml`, which does not exist.
+
+- **`scripts/arch_parity_dump.py` no longer fails a comparison on internal
+  work counters alone.** Counters such as `hbond_num_candidates_iterated`,
+  `neighbor_num_cell_visits` and the Mu candidate and Verlet counters are
+  printed as a note when they differ; energies, accept bits, coordinate
+  hashes, move counts and step totals stay strict. A speedup that skips work
+  the result does not depend on used to read as a parity failure.
+
 - **Mu's energy change does less work per moved atom, which makes actin
   1.7x faster on the default move mix and 2.3x pivot-only.** Each part
   scores the same pairs in the same order and returns the same answer, so

@@ -88,6 +88,15 @@ public:
     }
 
     template <typename Func>
+    inline void for_each_neighbor_not_near(float x, float y, float z,
+                                           float px, float py, float pz,
+                                           Func&& func,
+                                           std::uint64_t* cell_visits = nullptr) const {
+        grid_.for_each_neighbor_not_near(x, y, z, px, py, pz,
+                                         std::forward<Func>(func), cell_visits);
+    }
+
+    template <typename Func>
     inline bool for_each_neighbor_while(const Eigen::Vector3f& pos, Func&& func,
                                         std::uint64_t* cell_visits = nullptr,
                                         float r_cut2 = -1.f) const {

@@ -174,6 +174,12 @@ struct HBondWorkspace {
     std::vector<uint8_t> res_affected;
     std::vector<int> aff_list;
 
+    // Old and new O coordinates of the affected acceptors, packed for the
+    // affected-donor x affected-acceptor scan; padded to a multiple of 8.
+    std::vector<int> acc_res;
+    std::vector<float> acc_old_x, acc_old_y, acc_old_z;
+    std::vector<float> acc_new_x, acc_new_y, acc_new_z;
+
     void ensure_capacity(int num_residues) {
         if (num_residues == n_res &&
             static_cast<int>(pair_stamp.size()) == num_residues * num_residues) {
