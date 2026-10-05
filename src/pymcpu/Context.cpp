@@ -28,6 +28,7 @@ Context::Context(std::shared_ptr<System> sys)
     // order are mapped like that Context's.
     if (system->atoms_reordered()) {
         atom_perm_ = system->applied_atom_permutation();
+        atom_perm_identity_ = atom_perm_.is_identity();
         atom_reorder_mode_ = AtomReorderMode::InitOnly;
         reorder_applied_ = true;
     }
@@ -71,7 +72,8 @@ void Context::maybe_apply_init_only_reorder_() {
         neighbors_.mu_cutoff_A(), ncfg.skin, ncfg);
     atom_perm_ = compute_init_only_atom_permutation(
         *system, state.coords_soa, ncfg.skin, mu_cell, &new_blocks);
-    if (atom_perm_.is_identity()) {
+    atom_perm_identity_ = atom_perm_.is_identity();
+    if (atom_perm_identity_) {
         reorder_applied_ = true;
         return;
     }
@@ -82,6 +84,8 @@ void Context::maybe_apply_init_only_reorder_() {
     // Pair indices change meaning under a permutation -- drop the contact list.
     state.mu_contact_invalidate();
     // NeighborSystem caches donor bb_starts from System — re-init + rebuild.
+    // Registered subset grids name atoms by their pre-reorder ids.
+    neighbors_.remap_subset_members(atom_perm_.ext_to_int);
     neighbors_.init(*system, neighbors_.config());
     sync_geometry();
     computeTorsions();
@@ -321,11 +325,8 @@ void Context::commit_accepted_move(const State& proposed_state, const ProposalPa
     // entries carry their own energies, so this needs nothing from the potential.
     if (mu_ws.pending_list_invalidate) {
         state.mu_contact_invalidate();
-    } else if (state.mu_contact_list_ready) {
-        for (const auto& p : mu_ws.pending_contact_drop)
-            state.mu_contact_remove(p.i, p.j);
-        for (const auto& p : mu_ws.pending_contact_add)
-            state.mu_contact_add(p.i, p.j, p.energy);
+    } else if (state.mu_contacts.ready()) {
+        mu_ws.pending_contacts.commit_into(state.mu_contacts);
         state.mu_list_drift += mu_ws.pending_list_drift;
     } else if (state.mu_contact_list_prebuilt) {
         // A move that did not adopt the prebuilt list changed the coordinates

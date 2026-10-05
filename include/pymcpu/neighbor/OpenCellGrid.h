@@ -147,14 +147,15 @@ inline bool compute_grid_shape(const BoxBounds& b, float cell,
  * Scale>1 (larger cells) measured max_occ=31 (s=1.2) / 46 (s=1.5) but
  * wall-regressed; CAP=48 gives headroom vs overflow at production scale=1.0.
  */
-class OpenCellGrid {
+template <int Cap>
+class BasicOpenCellGrid {
 public:
     /// Fixed atoms per cell for contiguous mode. Overflow disables contiguous.
-    static constexpr int CELL_CAPACITY = 48;
+    static constexpr int CELL_CAPACITY = Cap;
 
-    OpenCellGrid() { init_contiguous_default_(); }
+    BasicOpenCellGrid() { init_contiguous_default_(); }
 
-    explicit OpenCellGrid(float cell_size_in, int num_atoms_hint = 0)
+    explicit BasicOpenCellGrid(float cell_size_in, int num_atoms_hint = 0)
         : cell_size_(cell_size_in), inv_cell_(cell_size_in > 0.f ? 1.f / cell_size_in : 0.f) {
         if (num_atoms_hint > 0) ensure_atom_capacity(num_atoms_hint);
         init_contiguous_default_();
@@ -1491,5 +1492,8 @@ private:
     mutable std::uint64_t occ_maint_ns_ = 0;
     mutable std::uint64_t occ_maint_calls_ = 0;
 };
+
+/// The grid every term uses today: 48 slots per cell.
+using OpenCellGrid = BasicOpenCellGrid<48>;
 
 } // namespace mcpu
