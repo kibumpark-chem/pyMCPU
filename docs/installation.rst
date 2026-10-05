@@ -168,6 +168,32 @@ Accepted values are ``v2``, ``v3``, ``v4``, ``native``, ``none`` (no
    floating-point results in the last bit, which can flip a single Metropolis
    decision. Runs you intend to compare should use the same build.
 
+Branch padding on Intel CPUs
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Intel CPUs from Skylake to Cascade Lake run code more slowly when a jump
+sits on a 32-byte boundary (the "JCC erratum"). When the toolchain allows it,
+the build pads jumps away from those boundaries. On those CPUs this makes
+runs 3-8% faster, and 8-14% faster together with a newer compiler. Results
+do not change. On other CPUs the only effect is about 2% more machine code.
+
+Padding needs GCC with binutils 2.34 or newer, and with LTO (the Release
+default) GCC 11 or newer. Older toolchains build without it. To check a
+build, run:
+
+.. code-block:: bash
+
+   python -c "import pymcpu.mcpu_core as m; b = m.build_info()['build']; print(b['jcc_pad'], b['jcc_pad_reason'])"
+
+Set ``MCPU_JCC_PAD`` to choose:
+
+.. code-block:: bash
+
+   MCPU_JCC_PAD=ON  pip install --no-build-isolation -e .   # fail if it cannot pad
+   MCPU_JCC_PAD=OFF pip install --no-build-isolation -e .   # never pad
+
+The default, ``AUTO``, pads when it can and otherwise builds without padding.
+
 C++ runtime compatibility
 ~~~~~~~~~~~~~~~~~~~~~~~~~
 

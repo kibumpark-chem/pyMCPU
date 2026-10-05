@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `scripts/tolerance_check.py`: accepts or rejects a build that is correct
+  but not bit-identical to a reference, for speedups that change float
+  rounding. It compares per-group static energies (1e-5 relative), checks
+  the running energy against a full recompute after long runs
+  (max(1e-3, 1e-5·|E|); float32 accumulation already drifts past a flat
+  1e-3 on main), compares sampling statistics over several seeds within
+  statistical error, and checks KORP against the reference `korpe`
+  energies. `CONTRIBUTING.md` says when to use it instead of
+  `arch_parity_dump.py`.
 - `Integrator.set_move_weights(pivot, kic, sidechain)` and
   `Integrator.move_weights()`, plus a `move_weights` key on `IntegratorConfig`
   and `EngineSpec`. The Pivot/KIC/Sidechain mix was previously three
@@ -461,6 +470,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   counters drop. Cycles per step, default move mix / pivot-only: T4
   lysozyme -3.3% / -6.2%, CA2 -4.1% / -2.3%, LDH-A -4.4% / -5.6%, actin
   -5.8% / -5.5%, PGK1 -5.2% / -8.2%.
+- **`ProposalPatch` checks moved-atom lists set from Python.** Setting
+  `moved_indices` to a list with an index outside `[0, num_atoms)` raises
+  `IndexError`, and a list that names an atom twice raises `ValueError`;
+  `mark_moved` raises `IndexError` for an out-of-range index and ignores an
+  atom that is already marked, where it used to append it again. Mu's delta
+  compares each grid cell's count of moved atoms with its occupancy, so a
+  duplicate made a cell that still held an unmoved atom look fully moved and
+  dropped its pairs, and an out-of-range index wrote past `moving_atoms`. The
+  engine's own moves never build such a list, so the release engine does not
+  check and its results are unchanged; debug builds assert the contract.
+- **Release builds pad branches against Intel's JCC erratum.** On Skylake
+  through Cascade Lake, a jump that crosses or ends on a 32-byte boundary
+  cannot be served from the decoded-uop cache, and about half of the
+  engine's uops were coming from the slower legacy decoder. The build now
+  passes `-Wa,-mbranches-within-32B-boundaries` to the compile and the LTO
+  link when the toolchain honours it. On a Cascade Lake Xeon with GCC 13 it
+  cut cycles per step by 4.6% on actin and by 3.3-7.5% on an 8222-atom
+  protein (8.5-13.6% compared with a GCC 8 build), and runs stay
+  bit-identical. It also removes a code-layout effect that made speed swing
+  by about 5% after unrelated edits. The new `MCPU_JCC_PAD` option (`AUTO`,
+  the default; `ON`; `OFF`) controls it, and `build_info()["build"]` reports
+  `jcc_pad`, `jcc_pad_mode` and `jcc_pad_reason`. `AUTO` turns padding off
+  when the assembler is older than binutils 2.34, or when the GCC LTO link
+  drops `-Wa` options. GCC 8 drops them without a warning, so CMake now
+  tests for this instead of assuming. Wheels are built with
+  `MCPU_JCC_PAD=ON`.
 
 - **`scripts/job_template.slurm` no longer activates a particular conda
   environment.** It activated `mcpu_dev`, a conda environment from one

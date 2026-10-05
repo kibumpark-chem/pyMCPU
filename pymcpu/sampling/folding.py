@@ -42,10 +42,13 @@ logger = logging.getLogger(__name__)
 
 
 class FoldingRunner:
-    """OpenMM-style single-temperature MC folding with periodic checkpoints.
+    """Single-temperature MC folding, run in cycles, with checkpoints.
 
-    There is no separate FoldingSimulation / FoldingReplicaExchange class in
-    this codebase — folding is one Simulation stepped in report-sized cycles.
+    Each cycle is ``steps_per_cycle`` MC steps (by default ``report_interval``).
+    After each cycle, Q, the fraction of native contacts formed, is counted
+    against ``reference_pdb`` (by default the starting structure). The run
+    stops early once Q has stayed at or above ``q_threshold`` (default 0.75)
+    for ``convergence_window`` (default 10) cycles in a row.
     """
 
     def __init__(
@@ -882,7 +885,8 @@ class FoldingRunner:
         Run folding MC in report-sized cycles with optional checkpoint/resume.
 
         Provide either ``n_cycles`` or ``steps`` (converted to cycles using
-        ``steps_per_cycle``, defaulting to ``report_interval``).
+        ``steps_per_cycle``, defaulting to ``report_interval``). The run can
+        stop sooner, once Q converges; see the class description.
         """
         cfg = self.checkpoint_config
         if checkpoint_dir is not None:

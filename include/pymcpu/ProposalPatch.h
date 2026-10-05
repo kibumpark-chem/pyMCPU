@@ -1,5 +1,6 @@
 #pragma once
 #include <algorithm>
+#include <cassert>
 #include <vector>
 #include <unordered_set>
 #include <limits>
@@ -79,7 +80,18 @@ struct ProposalPatch {
 
     /// Mark atom i as moved (mask + dense index list). Idempotent on the mask;
     /// callers must not double-push the same index into moved_indices.
+    ///
+    /// The no-duplicates contract is load-bearing, not tidiness: Mu's delta
+    /// counts the moved atoms each grid cell lists and skips a cell whose
+    /// count equals its occupancy, so a duplicated index makes a cell that
+    /// still holds an unmoved atom look fully moved and its pairs are dropped
+    /// (and potentials that walk moved_indices count a duplicate twice). The
+    /// engine's moves mark disjoint atom sets by construction, so the release
+    /// build does not pay for a check here; debug builds assert it, and the
+    /// Python bindings (the only way outside code builds a patch) validate.
     void mark_moved(int i) {
+        assert(moving_atoms[static_cast<size_t>(i)] == 0 &&
+               "mark_moved: atom already marked; moved_indices must not hold duplicates");
         moving_atoms[static_cast<size_t>(i)] = 1;
         moved_indices.push_back(i);
     }

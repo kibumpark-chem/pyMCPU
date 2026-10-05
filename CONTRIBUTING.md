@@ -47,6 +47,32 @@ goldens as an explicit and dated capture (see the capture history at the top of
 `tests/physics/test_coords_soa.py` — it models this well), and note it in
 `CHANGELOG.md`.
 
+### Bit-identical, or within tolerance
+
+Use `scripts/arch_parity_dump.py` for a change that should not move any
+number: refactors, compiler flags, and speedups that skip work the result
+does not depend on. Exit 0 is required.
+
+Use `scripts/tolerance_check.py` for a speedup that legitimately changes
+float rounding (a different summation order or recompute path), where the
+trajectories part at some Metropolis decision and a bit-exact comparison
+says nothing. It runs a reference and a candidate build side by side:
+
+```bash
+python scripts/tolerance_check.py --import-root MAIN --import-root NEW --cpus 0-5           # quick, for a PR
+python scripts/tolerance_check.py --import-root MAIN --import-root NEW --cpus 0-5 --mode full
+```
+
+and checks four things: per-group static energies within 1e-5 relative
+(1e-4 absolute for terms near zero); the running energy against a full
+recompute after a long run, within max(1e-3, 1e-5·|E|) for each build;
+mean energy, native-contact fraction and per-move acceptance over several
+seeds, within statistical error; and KORP against the reference `korpe`
+energies when `KORP_MAP_PATH` is set. Exit 0 = PASS, 1 = a check failed,
+2 = a case crashed. It uses chignolin and actin from the repository by
+default; `--pdb` adds others, and the script's docstring says how to fetch
+the 164-417 residue structures the tolerances were validated on.
+
 ## Tests
 
 The default suite excludes slow, network, MPI and example tiers. Before

@@ -57,8 +57,8 @@ mcpu run config.yaml --resume
 or set `resume: true` in the config. The run continues after the state in
 `last.chk` in `checkpoint_dir`. Output files are first cut back to what had
 been written at that checkpoint and then appended to, so nothing written after
-the last save is duplicated. This works for XTC, CSV, HDF5 and NPZ files; a
-DCD file is left as it is and must be deleted by hand.
+the last save is duplicated. This covers the XTC, CSV, HDF5 and NPZ files
+pyMCPU writes.
 
 If there is no checkpoint yet, folding and MPI replica exchange start from the
 beginning, while single-process replica exchange stops with an error.
