@@ -1,23 +1,20 @@
 # Integrating pyMCPU with your sampling framework
 
-pyMCPU owns one engine: coordinates, energies, Monte Carlo moves, collective
-variables. Your framework owns the ensemble: walkers, weights, cloning,
-binning, scheduling, storage. This page is the seam between them, and
-[`pymcpu-westpa`](https://github.com/kibumpark-chem/pymcpu-westpa)
-is a production integration that uses nothing else.
+pyMCPU owns one engine: coordinates, energies, Monte Carlo moves and
+collective variables. Your framework owns the ensemble: walkers, weights,
+cloning, binning, scheduling and storage. This page describes the interface
+between them.
 
 | pyMCPU gives you | you provide |
 |---|---|
-| Build an engine from a spec | your own configuration format |
-| Set/get coordinates, step Monte Carlo | when to step, and for how long |
+| An engine built from a spec | your own configuration format |
+| Set and get coordinates, step Monte Carlo | when to step, and for how long |
 | Collective variables from a declarative spec | what to do with the values |
 | Independent random streams for clones | the cloning policy itself |
-| Restart identity and multi-format state loading | where state files live |
+| Restart checks and loading from several file formats | where state files live |
 
-There is no plugin API to register with, and that is deliberate. WESTPA
-loads its driver classes by dotted path from its own config file, so the
-add-on needed **no change to pyMCPU at all** to exist. If your framework can
-import a class by name, so do you.
+There is no plugin API to register with. Your package imports pyMCPU and
+calls the classes below, so a new integration needs no change to pyMCPU.
 
 ## 1. Describe the engine
 
@@ -32,15 +29,14 @@ spec = EngineSpec(
 )
 ```
 
-Map your framework's config onto this. `EngineSpec` validates eagerly —
-missing files, bad move modes, a fixed residue that is also a linker — so
-build it in your master process and a bad field is rejected there, not
-inside one worker where it looks like a single failed trajectory.
+Map your framework's configuration onto this. `EngineSpec` checks its fields
+when it is created: missing files, an unknown move mode or force field, a
+fixed residue that is also a linker. Build it in your main process, so a bad
+field fails there rather than inside one worker, where it looks like a
+single failed trajectory.
 
 If you already have a pyMCPU config, `EngineSpec.from_simulation_config`
-converts it.
-
-**`EngineSpec` has no `seed` field, on purpose.** See step 4.
+converts it. `EngineSpec` has no `seed` field, on purpose; see step 4.
 
 ## 2. Hold one engine per worker
 
@@ -48,41 +44,40 @@ converts it.
 from pymcpu.sampling import EngineSession
 
 session = EngineSession(spec)
-session.set_coords(start_coords)      # (3, n_atoms) Angstrom
+session.set_coords(start_coords)      # (3, n_atoms), Å
 session.step(1000)
 coords = session.coords()
 ```
 
-Constructing an `EngineSession` is cheap; it builds nothing until first use.
-Building the force field reads the parameter tables (~0.5 s, independent of
-system size), so create **one session per worker process and reuse it** —
-per-trajectory construction turns a large run into a parameter-parsing
-benchmark.
+Creating an `EngineSession` is cheap: it builds the engine on first use.
+Building it takes from under a second for a small protein to several seconds
+for a large one, so create **one session per worker process and reuse it**.
 
 pyMCPU does not decide when a new session is needed, because only you know
 your process model. If you fork workers, build the session lazily *inside*
-the worker and key it on the PID: a session created before the fork holds
-C++ state that must not be shared. The add-on's propagator keys on
-`(thread, PID)` and defines `__getstate__` so the object cannot be pickled
-into a worker by accident.
+each worker, and key it on the process ID (and the thread, if workers are
+threads): a session created before the fork holds C++ state that must not be
+shared. Make the object that holds the session refuse pickling, for example
+with a `__getstate__` that raises, so it cannot be sent to a worker by
+accident.
 
 ## 3. Compute a collective variable
 
 ```python
-from pymcpu.sampling import build_cv, build_forcefield
-
-forcefield, _topology = build_forcefield(spec)
-cv = build_cv(spec.cv, forcefield)
-values = cv(coords)                    # np.ndarray, shape (cv.ndim,)
+values = session.compute_cv(session.coords())   # np.ndarray of length cv.ndim
 ```
 
-Built-in `type` values: `native_contacts_q`, `native_contacts_n`,
-`ca_rmsd`, `two_state_rmsd`, `two_state_delta`, and `custom`. Several specs
-in one list produce a concatenated CV, with `ndim` and `labels` composed
-for you.
+The session builds the CV from `spec.cv`. Outside a session,
+`pymcpu.sampling.build_cv(spec.cv, forcefield)` builds the same object, with
+a force field from `build_forcefield(spec)`.
 
-`custom` takes a dotted path to your own factory, which is the escape hatch
-that means a framework-specific CV needs no change here:
+Built-in `type` values: `native_contacts_q`, `native_contacts_n`, `ca_rmsd`,
+`two_state_rmsd`, `two_state_delta` and `custom`. Several specs in one list
+give one CV whose values are concatenated, with its `ndim` and `labels`
+combined.
+
+`custom` takes a dotted path to your own factory, so a framework-specific CV
+needs no change to pyMCPU:
 
 ```yaml
 cv:
@@ -91,17 +86,16 @@ cv:
     kwargs: {atom_a: 0, atom_b: 41}
 ```
 
-Anything satisfying `pymcpu.sampling.CollectiveVariable` works — `ndim`,
-`labels`, and `__call__(coords_3xn) -> np.ndarray`. It is a
-`runtime_checkable` Protocol, so a consumer can accept a CV it has never
-heard of.
+The factory can return any object that satisfies
+`pymcpu.sampling.CollectiveVariable`: `ndim`, `labels`, and
+`__call__(coords_3xn) -> np.ndarray`. It is a `runtime_checkable` Protocol,
+so a consumer can accept a CV it has never seen.
 
-One rule these follow and yours should too: **raise, do not return a
-sentinel.** A Q or an RMSD of exactly `0.0` is physically meaningful, so
-substituting it for a failure corrupts a free-energy or flux estimate with
-no visible symptom.
-
-## 4. Seed independent streams — the part that is easy to get wrong
+The built-in CVs follow one rule, and yours should too: **raise, do not
+return a sentinel.** A Q or an RMSD of exactly 0.0 is physically meaningful,
+so returning it for a failure corrupts a free-energy or flux estimate with no
+visible symptom.
+## 4. Seed independent streams
 
 ```python
 from pymcpu.sampling import derive_seed
@@ -110,55 +104,56 @@ session.set_seed(derive_seed(base_seed, round_index, stream_index))
 ```
 
 When your framework clones a walker, every child starts from the **same**
-parent state. If you seed a child by restoring the parent's saved RNG
-state, every child runs a **bitwise identical** trajectory. The clone
-"succeeds": the children are distinct objects, the weights divide
-correctly, every log line looks healthy. You have one walker counted N
-times, and only the statistics will ever tell you.
+parent state. If you seed a child by restoring the parent's saved random
+state, every child runs a **bitwise identical** trajectory. Nothing looks
+wrong: the children are distinct objects, the weights divide correctly, and
+every log line looks healthy. You have one walker counted N times, and only
+the statistics will ever show it.
 
-So pyMCPU's restart contract is `(coordinates, step)` and deliberately
-**not** an RNG state, and `EngineSpec` has no `seed` field for an engine to
-pick up at construction time. Derive each stream instead: the result is
-unique per `(round_index, stream_index)` and stable across processes and
-machines.
+So pyMCPU's restart state is the coordinates and the step count, and
+deliberately not the random state, and `EngineSpec` has no `seed` field.
+Derive a seed for each stream instead: `derive_seed` gives a different seed
+for each `(round_index, stream_index)`, the same on every process and
+machine. Its output is fixed for good, because changing it would reseed
+every existing run.
 
-`derive_seed` is a frozen wire format — changing it reseeds every run ever
-done. Two tests in the pyMCPU repo demonstrate both halves:
-`tests/physics/test_stream_independence.py` (clones diverge, *and* the
-naive design provably produces identical siblings) and
-`tests/unit/test_seed_derivation.py` (the derivation pinned by literal).
+To replay a single trajectory exactly, `session.get_rng_state()` and
+`session.restore_rng_state()` save and restore the random state. Never use
+them across a clone.
 
 ## 5. Restart safely
 
 ```python
-from pymcpu.sampling import compute_fingerprint
-
-coords = session.coords_from_auxref("prior_state.npz")   # or .chk, or .pdb
+session.set_coords(saved_coords)
+session.current_step = saved_step
+session.set_seed(derive_seed(base_seed, round_index, stream_index))
 ```
 
-`coords_from_auxref` reads any `.npz` carrying a `coords` array — including
-restart files your own code writes — a `.chk` from a completed
-`FoldingRunner` or `ReplicaExchange` run, or a plain `.pdb`. Either
-coordinate orientation is accepted and normalized, which matters because a
-transposed array is not an error, it is a silently wrong structure.
+Store `session.coords()` as it comes, as float64. The engine runs a
+structure far from the origin shifted toward it, and `coords()` adds the
+shift back; a float32 copy would round the coordinates again, and the
+restart would no longer continue the run exactly.
 
-Store `session.coords()` as it comes, `float64`. For a structure far from
-the origin the engine runs shifted (`Context.frame_offset`), and `coords()`
-adds the shift back exactly (but for an engine coordinate within a few
-1e-6 Å of zero, which comes back off by about 1e-13 Å); a `float32` copy
-would round the coordinates at the far position again, and the restart
-would no longer continue the run bit for bit.
+`session.coords_from_auxref(path)` reads starting coordinates from a file:
 
-`session.fingerprint` hashes what the engine was built from, so a restart
-state loaded against a different system fails loudly instead of producing
-nonsense. Record it with your state and check it on load. The hash includes
-the engine's atom count, so it changed for every protein with glycine when
-glycine's CA went from two engine slots to one; `set_coords` also rejects
-coordinates of the wrong size.
+- `.npz`: any file with a `coords` array, including restart files your own
+  code writes. Either orientation, `(3, n_atoms)` or `(n_atoms, 3)`, is
+  accepted.
+- `.chk`: a pyMCPU checkpoint. It takes the first replica, which in replica
+  exchange is the first temperature of the ladder in the first window.
+- `.pdb`: a structure of the same protein as `spec.pdb`.
 
-## 6. Ship it as your own distribution
+`session.fingerprint` is a hash of what the engine was built from: the PDB's
+absolute path, the parameter set and the atom count. Record it with your
+state and compare it on load, so that a state loaded against a different
+system fails loudly instead of producing nonsense. Because the path is part
+of it, the same files moved to another directory give a different
+fingerprint. `set_coords` also rejects coordinates of the wrong size, and
+coordinates with overlapping atoms.
 
-You do not need to vendor anything or patch pyMCPU. Depend on it:
+## 6. Ship it as your own package
+
+You do not need to vendor or patch pyMCPU. Depend on it:
 
 ```toml
 [project]
@@ -169,45 +164,22 @@ dependencies = ["pymcpu>=0.1.0,<0.2", "myframework"]
 myframework-pymcpu = "myframework_pymcpu.cli:main"
 ```
 
-Cap the pyMCPU version while it is pre-1.0. Ship your CLI as its own
-console script rather than asking for a subcommand on `mcpu`: argparse
-cannot register a subcommand lazily, so anything added there is advertised
-to every pyMCPU user whether or not they can run it. A console script
-appears exactly when your package is installed.
-
-## The reference implementation, by the numbers
-
-`pymcpu_westpa`, measured:
-
-| module | lines | what is WESTPA-specific |
-|---|---|---|
-| `propagator.py` | 266 | subclasses `WESTPropagator`; segment/status bookkeeping |
-| `tools.py` | 247 | writes and preflights `west.cfg` |
-| `state.py` | 187 | **nothing** — the WE restart-file layout, pure numpy |
-| `config.py` | 146 | parses the `west.pymcpu` config block |
-| `cli.py` | 115 | `mcpu-westpa init` / `check` |
-| `system.py` | 68 | subclasses `WESTSystem`; bin mapper |
-| `__init__.py` | 73 | exports |
-| **total** | **1102** | **46 lines mention a WESTPA symbol at all** |
-
-The two modules that subclass a WESTPA class are 334 lines together. **None
-of the 1102 reimplement pyMCPU behaviour** — no energy term, no move, no
-integrator loop, no CV maths. That is the claim this page is making, and it
-is why the integration is worth reading before writing your own.
+Cap the pyMCPU version while it is below 1.0. Ship your command-line tool as
+its own console script rather than as an `mcpu` subcommand; it then appears
+exactly when your package is installed.
 
 ## Validating a new integration
 
-In this order, because each step makes the next one debuggable:
+Work through these in order; each one makes the next easier to debug.
 
-1. Build the spec and session; step one short trajectory; check the energy
-   is finite and the CV is in range.
-2. Run a handful of rounds **serially**. Confirm restart works: tear the
-   session down, rebuild it from `(coords, step)`, and continue.
-3. Confirm clones diverge. Two children of one parent with different stream
-   indices must not produce identical coordinates.
-4. Run the same thing in parallel. Confirm the results are unchanged by
-   worker count — if they are not, you are sharing engine state across a
-   fork.
-5. The one that actually matters: compare an equilibrium observable against
-   a long unbiased `pymcpu.sampling.FoldingRunner` trajectory. Everything
-   above can pass while the reweighting is wrong.
+1. Build the spec and session, and step one short trajectory. Check that the
+   energy is finite and the CV is in range.
+2. Run a few rounds **serially**. Check that restart works: tear the session
+   down, rebuild it from the coordinates and step count, and continue.
+3. Check that clones diverge: two children of one parent with different
+   stream indices must not produce identical coordinates.
+4. Run the same thing in parallel. The results must not depend on the number
+   of workers; if they do, you are sharing engine state across a fork.
+5. The one that matters most: compare an equilibrium observable with a long
+   unbiased `pymcpu.sampling.FoldingRunner` trajectory. Everything above can
+   pass while the reweighting is wrong.

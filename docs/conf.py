@@ -122,6 +122,5 @@ if os.environ.get("PYMCPU_DOCS_NO_MOCK") != "1":
         "h5py",
         "mpi4py",
         "scipy",
-        "westpa",
         "matplotlib",
     ]

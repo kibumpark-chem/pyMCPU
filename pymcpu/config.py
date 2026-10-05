@@ -12,8 +12,8 @@ from typing import Any, Literal, Mapping, Sequence
 from pymcpu.checkpointing import CheckpointConfig
 
 # The supported surface of this module. It is declared explicitly because
-# external code depends on it: `scripts/`, `examples/` and the WESTPA add-on
-# all import from here, and without an `__all__` every name was public only by
+# external code depends on it: `scripts/`, `examples/` and external
+# integrations all import from here, and without an `__all__` every name was public only by
 # accident -- there was no way for a caller to tell an intended API from an
 # implementation detail it happened to be able to reach.
 __all__ = [
@@ -358,10 +358,6 @@ class EngineSpec:
     first random number of every segment. Leaving those fields out of the
     type means that cannot be done by accident, which is stronger than a
     test asserting nobody did it.
-
-    The fields and their defaults are exactly the engine-relevant subset of
-    what the WESTPA integration's own config block has always carried, with
-    the same values, so promoting this type changed no behaviour.
     """
 
     pdb: str
