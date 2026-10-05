@@ -770,12 +770,18 @@ public:
         nx_ = nx; ny_ = ny; nz_ = nz;
         const size_t n_cells = static_cast<size_t>(nx_) * ny_ * nz_;
         head_.assign(n_cells, -1);
+        // Every reader of the packed arrays stops at cell_count_ (span_mask8
+        // masks the lanes past it), so only the slots the previous binning
+        // filled are cleared and the allocation is kept. Writing the whole
+        // n_cells * CELL_CAPACITY block on every set_positions was ~88% of
+        // its time; this is O(atoms) plus the resize.
+        clear_packed_slots_();
         cell_count_.assign(n_cells, 0);
         const size_t pack = n_cells * static_cast<size_t>(CELL_CAPACITY);
-        cell_atoms_.assign(pack, 0);
-        cell_x_.assign(pack, 0.f);
-        cell_y_.assign(pack, 0.f);
-        cell_z_.assign(pack, 0.f);
+        cell_atoms_.resize(pack, 0);
+        cell_x_.resize(pack, 0.f);
+        cell_y_.resize(pack, 0.f);
+        cell_z_.resize(pack, 0.f);
         peak_cell_occupancy_ = 0;
         init_contiguous_default_();
         configured_ = true;
@@ -1201,6 +1207,21 @@ private:
         int dy = 0;
         int dz = 0;
     };
+
+    /// Zero the packed slots [0, cell_count_[c]) of every cell. O(occupied).
+    void clear_packed_slots_() {
+        const size_t n = std::min(cell_count_.size(),
+                                  cell_atoms_.size() / static_cast<size_t>(CELL_CAPACITY));
+        for (size_t c = 0; c < n; ++c) {
+            const int k = std::min(cell_count_[c], static_cast<int>(CELL_CAPACITY));
+            if (k <= 0) continue;
+            const size_t base = c * static_cast<size_t>(CELL_CAPACITY);
+            std::fill_n(cell_atoms_.begin() + static_cast<std::ptrdiff_t>(base), k, 0);
+            std::fill_n(cell_x_.begin() + static_cast<std::ptrdiff_t>(base), k, 0.f);
+            std::fill_n(cell_y_.begin() + static_cast<std::ptrdiff_t>(base), k, 0.f);
+            std::fill_n(cell_z_.begin() + static_cast<std::ptrdiff_t>(base), k, 0.f);
+        }
+    }
 
     void init_contiguous_default_() {
         static const bool kEnvOff = [] {
