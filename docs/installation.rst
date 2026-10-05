@@ -98,6 +98,8 @@ to unpack them at the same moment into your shared home directory:
 
 See :doc:`running_remd` for how processes are assigned to replicas.
 
+.. _korp-map:
+
 KORP energy map
 ---------------
 

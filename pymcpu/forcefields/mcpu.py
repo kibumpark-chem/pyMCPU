@@ -42,14 +42,10 @@ _DEFAULT_PARAM_SET = "mcpu08"
 
 @dataclass
 class MCPUAtom:
-    """One atom's identity and metadata in MCPU's reordered global atom layout.
+    """One engine atom: the topology atom it came from, its name and residue.
 
-    Built by :meth:`MCPUForceField._order_atoms` (and appended to by
-    :meth:`MCPUForceField._infer_hydrogens` for explicit amide hydrogens) to
-    track, for each atom in the engine's internal order, which original
-    topology atom it came from and where it sits in the topology.
-    ``original_index`` is -1 for an explicit amide hydrogen, which has no
-    topology atom.
+    ``original_index`` is the atom's index in the topology, or -1 for an
+    explicit amide hydrogen, which the topology does not have.
     """
 
     original_index: int
@@ -59,15 +55,12 @@ class MCPUAtom:
 
 
 class MCPUForceField(BaseForceField):
-    """Concrete :class:`~pymcpu.forcefields.base.BaseForceField` for the MCPU potential.
+    """The MCPU force field: all-atom, with the five MCPU knowledge-based potentials.
 
-    Constructed once from an MDTraj trajectory (loads parameters, validates
-    the topology, reorders atoms into MCPU's required global layout, and
-    computes per-residue block/downstream-cache bookkeeping), then used
-    repeatedly to build C++ engine systems via :meth:`create_system`. Also
-    exposes :attr:`inverse_mapping` so callers (e.g. XTC reporters) can map
-    the engine's internal atom order back to the original topology's atom
-    indices.
+    Build it once from a structure; it loads the parameters, checks the
+    structure and puts the atoms in the engine's order. Then build systems
+    with :meth:`create_system`. :attr:`inverse_mapping` maps the engine's atom
+    order back to the topology's, for reporters.
     """
 
     def __init__(self,
@@ -79,30 +72,29 @@ class MCPUForceField(BaseForceField):
              dssp_coil_state: str = "C",
              allow_provisional_rama: bool = False) -> None:
         """
-        Initialize the MCPU ForceField.
+        Load the parameters, check the structure and lay out its atoms.
 
-        Amide hydrogens are NOT built at import time.  The HBond potential
-        computes virtual amide-H positions on the fly from backbone geometry
-        (N, CA, C_prev) during energy evaluation, guaranteeing consistency
-        with the current conformation after every move.
+        By default no amide hydrogens are added: the hydrogen-bond potential
+        places virtual ones from the backbone (N, CA and the previous C)
+        whenever it evaluates, so they always match the current structure.
 
         Parameters
         ----------
         trajectory
-            Input structure (heavy atoms preferred).
+            The structure, with heavy atoms only (see :meth:`prepare_trajectory`).
         param_dir
             Explicit parameter root (``constants/`` + ``mcpu_params/``).
             If omitted, resolves via :func:`pymcpu.params.ensure_params`.
         param_set
             Registry set name used when ``param_dir`` is omitted (default ``mcpu08``).
         virtual_amide_h
-            If True (default), use on-the-fly virtual amide H. If False, build
-            explicit amide hydrogens into the topology (escape hatch).
+            If True (default), use virtual amide hydrogens as above. If False,
+            add explicit amide hydrogens to the engine's atoms instead.
         compute_dssp
             If True, compute per-residue secondary structure via
             ``mdtraj.compute_dssp(trajectory, simplified=True)`` (frame 0) and feed
             it to the H-bond potential's secondary-structure gates. Default False:
-            every residue reads as ``'C'``, byte-identical to pre-DSSP behavior.
+            every residue counts as coil (``'C'``).
         dssp_coil_state
             Legacy secstr state to map DSSP's simplified ``'C'``/``'NA'`` codes onto
             (only used when ``compute_dssp=True``). Default ``'C'``; legacy's other
@@ -138,11 +130,9 @@ class MCPUForceField(BaseForceField):
 
     @classmethod
     def prepare_trajectory(cls, trajectory: md.Trajectory) -> md.Trajectory:
-        """Drop hydrogens. MCPU is a heavy-atom force field.
+        """Return the trajectory without hydrogens; MCPU uses heavy atoms only.
 
-        Idempotent: selecting heavy atoms from an already-heavy trajectory
-        keeps all of them, so call sites that were already slicing are
-        unaffected.
+        A trajectory that has no hydrogens comes back unchanged.
         """
         return trajectory.atom_slice(
             trajectory.topology.select("not element H"))
@@ -521,7 +511,10 @@ class MCPUForceField(BaseForceField):
 
     def create_system(self, topology: md.Topology) -> mcpu_core.System:
         """
-        BUILD PHASE: Map MDTraj topology to the C++ System.
+        Build a System with the five MCPU potentials for this structure.
+
+        Pass the topology the force field was built from. Call it once for
+        each simulation; every call returns a new System.
         """
         system = mcpu_core.System(self.n_atoms, self.n_res)
         system.set_block_indices(self.blocks)
@@ -704,12 +697,12 @@ class MCPUForceField(BaseForceField):
     @property
     def inverse_mapping(self) -> list[int]:
         """
-        Generates the mapping from internal MCPU atom indices back to the 
-        original MDTraj topology indices.
-        Returns a list where index is the internal atom index, and the value 
-        is the original topology index. The value is -1 for explicit amide
-        hydrogens, which have no atom in the topology; the XTC reporter skips
-        them.
+        Topology atom index of each engine atom, in engine order.
+
+        -1 for an explicit amide hydrogen, which the topology does not have;
+        the XTC reporter skips those. Pass this to a reporter to write frames
+        in topology order. ``xyz[inverse_mapping]`` puts a frame from the
+        topology's order into the engine's.
         """
         return [atom.original_index for atom in self.ordered_atom_list]
         

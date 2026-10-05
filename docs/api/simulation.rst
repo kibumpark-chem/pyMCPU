@@ -1,13 +1,12 @@
 Simulation
 ==========
 
-:class:`~pymcpu.Simulation` is the primary entry point: it binds a
-topology, a system and an integrator, owns the ``Context`` that holds
-the current configuration, keeps the reporter list in sync with the C++
-integrator, and advances the chain with
-:meth:`~pymcpu.Simulation.step`. Driving the engine through it is
-preferred over using ``Context`` and ``Integrator`` directly, because it
-takes care of the energy bookkeeping described below.
+:class:`~pymcpu.Simulation` is where a run starts: it ties a topology, a
+system and an integrator together, owns the ``Context`` that holds the
+current structure, keeps the reporters attached, and runs Monte Carlo steps
+with :meth:`~pymcpu.Simulation.step`. Use it rather than driving ``Context``
+and ``Integrator`` directly: it keeps the energy bookkeeping described below
+right.
 
 Composing a run
 ---------------
@@ -17,8 +16,9 @@ Composing a run
    import mdtraj as md
    import numpy as np
    import pymcpu as mc
+   from pymcpu.runners import default_example_pdb
 
-   traj = md.load("examples/data/1uao.pdb")
+   traj = md.load(str(default_example_pdb()))
    heavy = traj.atom_slice(traj.topology.select("not element H"))
 
    ff = mc.MCPUForceField(heavy, param_set="mcpu08")
@@ -40,9 +40,9 @@ Composing a run
    print(sim.describe())
    print(float(sim.context.get_state().current_energy))
 
-Temperature here is a dimensionless reduced parameter (roughly 0.3 cold
-to 0.6 hot), and energies are unitless sums of knowledge-based table
-entries.
+Temperature is a dimensionless reduced parameter, and where a protein
+unfolds depends on the protein (chignolin: about 0.65 to 0.7). Energies are
+unitless sums of knowledge-based table entries.
 
 .. note::
    ``Simulation`` constructs its own ``Context`` from the system and
@@ -65,14 +65,14 @@ Reporter helpers
 ``mcpu_core.Reporter`` and raises ``TypeError`` for anything else. The
 three factory methods construct a reporter, attach it, and return it:
 
-* ``add_xtc_reporter(path, interval, inverse_mapping=None)`` --
-  trajectory output. Pass
-  :attr:`~pymcpu.MCPUForceField.inverse_mapping` so frames are written
-  in the original topology order; without it the engine's internal atom
-  order is written.
-* ``add_energy_reporter(path, interval)`` -- per-frame energy log.
-* ``add_simulation_reporter(interval)`` -- progress/status reporter with
-  no output file.
+* ``add_xtc_reporter(path, interval, inverse_mapping=None)`` -- a trajectory
+  frame every ``interval`` steps. Pass
+  :attr:`~pymcpu.MCPUForceField.inverse_mapping` so frames are written in
+  the topology's atom order; without it they are in the engine's order.
+* ``add_energy_reporter(path, interval)`` -- a CSV row of the energies and
+  move counts every ``interval`` steps.
+* ``add_simulation_reporter(interval)`` -- prints the move counts and the
+  energy to standard output every ``interval`` steps.
 
 The Python-side list is :attr:`~pymcpu.Simulation.reporters`; it is
 pushed to the C++ integrator on every :meth:`~pymcpu.Simulation.step` as
@@ -84,10 +84,9 @@ expose a ``flush()`` method.
 Energy bookkeeping
 ------------------
 
-The engine maintains a running total energy incrementally from accepted
-move deltas, and periodically checks it against a full O(N^2)
-recompute. Three attributes control that, none of which appears in the
-class docstring:
+The engine keeps a running total energy, updated from each accepted move's
+change, and checks it against a full O(N^2) recompute. Three attributes
+control that:
 
 .. py:attribute:: pymcpu.Simulation.full_energy_every
    :type: int
@@ -138,23 +137,19 @@ The one-time seeding is why the recipe above does not call
 Steric clashes in accepted states
 ---------------------------------
 
-The integrator rejects any proposal that puts a pair under its hard-core
-cutoff. A rigid pivot carries the pairs inside its segment without
-re-checking them, and float rounding can leave such a pair a few 1e-6 Å
-under its cutoff, so the full recompute judges a state against cutoffs
-0.001 Å looser (``mcpu_core.STATE_CLASH_BUFFER_A``). A hard-core overlap it
-finds anyway came from outside the moves (``set_positions``, a restore, a
-start structure other than the one the force field was built from) or from
-a pair a delta path missed, and
+The integrator rejects any proposal that puts a pair of atoms under its
+hard-core cutoff. The full recompute allows 0.001 Å for rounding
+(``mcpu_core.STATE_CLASH_BUFFER_A``). An overlap it finds anyway came from
+outside the moves (``set_positions``, a restore, a start structure other than
+the one the force field was built from) or from a pair a move missed, and
 :meth:`~pymcpu.Simulation.step` raises:
 
 .. autoexception:: pymcpu.simulation.StericClashError
 
-:attr:`~pymcpu.Simulation.steric_clash_events` is incremented either
-way. Setting the environment variable ``MCPU_CLASH_FATAL=0`` downgrades
-the exception to a counted warning, which is the right choice for a long
-production run; the default is fatal so that reproduction runs and CI
-stop at the first occurrence.
+:attr:`~pymcpu.Simulation.steric_clash_events` counts these either way.
+Setting the environment variable ``MCPU_CLASH_FATAL=0`` turns the error into
+a counted warning, so the run keeps going; by default it stops at the first
+one.
 
 Coordinates set from outside the moves are checked the same way, by
 :func:`pymcpu.simulation.check_state_clash`, as soon as they are set: a

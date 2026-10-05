@@ -153,7 +153,7 @@ class Simulation:
             self.integrator.add_reporter(reporter)
 
     def add_reporter(self, reporter: mcpu_core.Reporter) -> None:
-        """Attach a reporter (no kwargs — C++ accepts only the reporter object)."""
+        """Attach a reporter. Raises ``TypeError`` for anything else."""
         if not isinstance(reporter, mcpu_core.Reporter):
             raise TypeError(
                 f"reporter must be a pymcpu Reporter, got {type(reporter)!r}"
@@ -177,6 +177,11 @@ class Simulation:
         interval: int,
         inverse_mapping: Sequence[int] | None = None,
     ) -> mcpu_core.XtcReporter:
+        """Write a trajectory frame every ``interval`` steps, and return the reporter.
+
+        Pass the force field's ``inverse_mapping`` to write the frames in the
+        topology's atom order.
+        """
         mapping = list(inverse_mapping) if inverse_mapping is not None else []
         reporter = mcpu_core.XtcReporter(str(path), int(interval), mapping)
         self.add_reporter(reporter)
@@ -185,6 +190,10 @@ class Simulation:
     def add_energy_reporter(
         self, path: str, interval: int
     ) -> mcpu_core.EnergyReporter:
+        """Write a CSV row of energies and move counts every ``interval`` steps.
+
+        Returns the reporter.
+        """
         reporter = mcpu_core.EnergyReporter(str(path), int(interval))
         self.add_reporter(reporter)
         return reporter
@@ -192,6 +201,10 @@ class Simulation:
     def add_simulation_reporter(
         self, interval: int
     ) -> mcpu_core.SimulationReporter:
+        """Print the move counts and the energy every ``interval`` steps.
+
+        Returns the reporter.
+        """
         reporter = mcpu_core.SimulationReporter(int(interval))
         self.add_reporter(reporter)
         return reporter
@@ -200,10 +213,10 @@ class Simulation:
     # Propagation
     # ------------------------------------------------------------------
     def step(self, n_steps: int) -> None:
-        """Advance the simulation by ``n_steps`` Monte Carlo steps.
+        """Run ``n_steps`` Monte Carlo steps.
 
-        Passes ``step_offset=current_step`` into the integrator so reporters
-        see a monotonically increasing global step across REMD cycles.
+        Step numbers keep counting across calls, so reporters see the
+        global step.
         """
         self._sync_reporters()
         # A pre-run full O(N^2) recompute used to sit here unconditionally. It

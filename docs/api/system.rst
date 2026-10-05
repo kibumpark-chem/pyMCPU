@@ -1,28 +1,19 @@
 System
 ======
 
-``System`` is the immutable-topology half of a pyMCPU simulation: it
-owns the atom/residue layout, the per-residue chemistry and torsion
-bookkeeping, the move libraries, and the list of registered
-:doc:`potentials <forces>`. Coordinates and energies live in
-:doc:`Context <context>`, never here.
+``System`` holds what does not change during a run: the atom and residue
+layout, the per-residue chemistry and torsion bookkeeping, the move
+libraries, and the registered :doc:`potentials <forces>`. Coordinates and
+energies live in :doc:`Context <context>`, never here.
 
-You normally do not construct a ``System`` yourself.
+You normally do not build a ``System`` yourself.
 ``MCPUForceField.create_system(topology)`` builds one from an MDTraj
-topology: it sizes the object, fills every table below from the
-parameter files, and registers the five physics potentials.
+topology: it sizes the object, fills the tables below from the parameter
+files, and registers the five mcpu08 potentials
+(``KORPForceField.create_system`` does the same for KORP).
 
 .. note::
-   ``System`` is a compiled ``pymcpu.mcpu_core`` class. The
-   documentation build mocks that module, so the directives on this
-   page are hand-authored; the signatures were read off the built
-   extension. The class and its methods carry **no docstrings**, so
-   every description here is written by hand rather than extracted.
-
-.. note::
-   Many setters were bound without ``py::arg`` names, so pybind11
-   exposes no keywords for them and they must be called positionally.
-   Those are marked with a trailing ``, /`` in the signatures below.
+   Methods whose signature ends in ``, /`` take positional arguments only.
 
 .. py:currentmodule:: pymcpu
 
@@ -59,7 +50,7 @@ parameter files, and registers the five physics potentials.
       atoms, then carbonyl oxygens, then sidechain atoms, then
       hydrogens -- so this reports ``False``. It becomes ``True`` only
       after an atom-locality reorder has regrouped the blocks per
-      residue. Several neighbour-list and Mu fast paths branch on it.
+      residue.
 
    .. py:attribute:: atom_to_residue
 
@@ -82,12 +73,6 @@ parameter files, and registers the five physics potentials.
 
       The registered potentials, in registration order.
 
-      .. note::
-         pybind11 renders the element type of this method and of
-         ``add_potential`` using the raw C++ name ``mcpu::Potential``
-         rather than ``pymcpu.mcpu_core.Potential``. The objects
-         themselves are ordinary ``Potential`` instances.
-
    .. py:method:: energy_terms() -> dict[int, str]
 
       The energy terms as ``{group: name}``, sorted by group -- for MCPU
@@ -98,6 +83,9 @@ parameter files, and registers the five physics potentials.
 
       ``add_potential`` raises ``ValueError`` if a potential would give one
       group two names, or use one name for two groups.
+
+   The setters below are what a force field calls to fill a system; you
+   rarely need them yourself.
 
    .. rubric:: Residue chemistry
 

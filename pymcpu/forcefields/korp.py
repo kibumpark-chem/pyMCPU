@@ -96,25 +96,26 @@ class KORPForceField(BaseForceField):
     Parameters
     ----------
     trajectory
-        Any protein structure. Sidechains are stripped here rather than being
-        a precondition on the caller, because the failure mode of forgetting
-        is silent: the engine's atom indices would no longer be dense and the
-        XTC reporter would write sidechain slots as (0, 0, 0).
+        Any protein structure. Side chains and hydrogens are removed here.
     map_path
-        The ``korp6Dv1.bin`` energy map. pyMCPU does not ship it: at 316 MiB it
-        is well over PyPI's per-file limit. Resolved from this argument, then
-        ``$KORP_MAP_PATH``, then ``$MCPU_PARAMS_DIR``, then the cache.
+        The ``korp6Dv1.bin`` energy map, which pyMCPU does not ship (it is
+        316 MiB). Looked for here, then at ``$KORP_MAP_PATH``, then in
+        ``$MCPU_PARAMS_DIR``, then in the cache.
     steric_guard
         Install the CA-CA excluded-volume filter. On by default and you almost
         certainly want it: KORP has no hard-core repulsion, so without it a
         chain will collapse through itself during MC.
-    min_separation, min_distance
-        Steric guard tuning. The 3.2 A floor is measured rather than assumed:
-        across 1CEO, 1DOS, T0860D1, actin and chignolin the closest CA-CA
-        contact at three or more apart in sequence is 3.53 A. Those are real
-        packing contacts -- actin has no numbering gaps at all and still
-        reaches 3.88 A at separation 9 -- so a 4.0 A floor rejects native
-        structures outright.
+    min_separation
+        The steric guard checks only CA pairs at least this many residues
+        apart in sequence (default 3).
+    min_distance
+        The smallest CA-CA distance the steric guard allows, in Å (default
+        3.2). The closest such contact in the native structures tested was
+        3.53 Å, so the guard does not reject native structures.
+    strict_residue_numbering
+        Raise if residue numbers do not increase within a chain (default
+        True). KORP takes sequence separation from these numbers, so
+        out-of-order numbering would silently change the energy.
     """
 
     def __init__(
@@ -413,16 +414,10 @@ class KORPForceField(BaseForceField):
 
     @property
     def inverse_mapping(self) -> list[int]:
-        """Engine atom index -> index in :attr:`output_topology`.
+        """Index in :attr:`output_topology` of each engine atom, in engine order.
 
-        A dense permutation of ``range(n_atoms)`` with no -1 entries, which is
-        what makes the XTC reporter correct: it sizes its output from
-        ``max(mapping) + 1`` and zero-fills anything unmapped, so a sparse
-        mapping would write a file that loads cleanly and is full of atoms
-        sitting at the origin. Density is guaranteed by
-        :meth:`_build_output_topology`, which restricts ``output_topology`` to
-        the atoms the engine actually holds -- it is NOT ``ordered_indices``,
-        which indexes the wider backbone slice.
+        Every engine atom has one, so there are no -1 entries. Pass this to a
+        reporter, and load what it writes against :attr:`output_topology`.
         """
         return list(self._output_index)
 
@@ -489,12 +484,10 @@ class KORPForceField(BaseForceField):
         return system
 
     def apply_energy_weights(self, context) -> None:
-        """Drop the legacy MCPU outer weights, which mean nothing for KORP.
+        """Set the weights of the KORP terms (groups 7 and 8) to 1.
 
-        Groups 7 and 8 already default to 1.0 under both weighting modes, so
-        this is belt and braces rather than load-bearing -- but a KORP run
-        inheriting a weight fitted for MCPU's contact term would be a quiet
-        way to get wrong numbers.
+        They already start at 1, so this only makes sure no weight meant for
+        an MCPU term applies to them. Call it after creating the simulation.
         """
         context.set_energy_weight(KORP_ENERGY_GROUP, 1.0)
         context.set_energy_weight(STERIC_ENERGY_GROUP, 1.0)
