@@ -16,8 +16,9 @@ explicitly::
 
 :class:`~pymcpu.sampling.ReplicaExchange` and
 :class:`~pymcpu.sampling.MPIReplicaExchange` construct the writer for
-you when ``run()`` is given ``analysis_path=`` (or ``hdf5_path=``), so
-most users only need the reader side of this module.
+you when ``run()`` is given ``analysis_path=`` (or ``hdf5_path=``); in a
+config, ``hdf5: FILE`` does the same. So most users only need the reader
+side of this module.
 
 .. note::
    Energies are unitless sums of knowledge-based potential table
@@ -27,10 +28,10 @@ most users only need the reader side of this module.
    other unit conventions, not a physical Boltzmann constant.
 
 .. note::
-   HDF5 output and input require ``h5py``
-   (``pip install "pymcpu[analysis]"``). Without it the writer falls
-   back to ``.npz`` plus ``<stem>_meta.json``, which the reader also
-   accepts.
+   ``h5py`` comes with pyMCPU. The writer picks the format from the file
+   name: ``.h5``, ``.hdf5`` or no extension for HDF5, ``.npz`` for NPZ plus
+   ``<stem>_meta.json``. It falls back to NPZ if ``h5py`` cannot be loaded,
+   and the reader accepts both.
 
 Sample records
 --------------
@@ -75,17 +76,7 @@ needs in order to rebuild ``u_kn``:
     Label for the biased collective variable stored in the file
     metadata; defaults to ``"hard_N"``.
 
-Three members carry no docstring of their own:
-
-``append(*, state_index, energy_unbiased, N, cycle, walker_id)``
-    Buffer one sample record. Raises ``RuntimeError`` once the writer
-    has been closed.
-``n_samples``
-    Number of records currently buffered (property).
-``close()``
-    Flush, then mark the writer closed, returning the path actually
-    written. ``RexSampleWriter`` is also a context manager and closes
-    itself on exit.
+``RexSampleWriter`` is also a context manager, and closes itself on exit.
 
 .. autoclass:: pymcpu.analysis.RexSampleWriter
    :members:
