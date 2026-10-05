@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <memory>
+#include <stdexcept>
 #include <utility>
 #include <vector>
 
@@ -17,6 +18,7 @@
 #include "pymcpu/System.h"
 #include "pymcpu/neighbor/NeighborConfig.h"
 #include "pymcpu/neighbor/OpenCellGrid.h"
+#include "pymcpu/neighbor/PairScratch.h"
 #include "pymcpu/neighbor/VerletList.h"
 #include "pymcpu/utils/CoordsSoA.h"
 #include "pymcpu/utils/CoordView.h"
@@ -118,8 +120,69 @@ public:
         mu_grid_->ensure_atom_capacity(n_atoms_);
         hb_o_grid_->ensure_atom_capacity(n_atoms_);
         hb_h_grid_->ensure_atom_capacity(hb_h_cap);
+        // The three built-in grids head the registry, at the fixed ids in
+        // PairScratch.h; register_subset_grid appends after them.
+        grids_.clear();
+        grids_.push_back(RegisteredGrid{"mu", &NeighborSystem::mu_grid_, &NeighborSystem::in_mu_, -1});
+        grids_.push_back(RegisteredGrid{"hb_o", &NeighborSystem::hb_o_grid_, &NeighborSystem::is_o_, -1});
+        grids_.push_back(RegisteredGrid{"hb_h", &NeighborSystem::hb_h_grid_, &NeighborSystem::is_h_, -1});
+        // Subset grids registered before a re-init (Context re-inits after
+        // an atom reorder) keep their ids: re-size them for the current
+        // atom count and put them back in the registry in the same order.
+        for (size_t k = 0; k < subset_grids_.size(); ++k) {
+            seed_subset_grid(subset_grids_[k]);
+            grids_.push_back(RegisteredGrid{subset_grids_[k].spec.name, nullptr, nullptr,
+                                            static_cast<int>(k)});
+        }
         dense_active_ = true;
         hb_fallback_ = false;
+    }
+
+    /// A grid over a subset of atoms, for a term that needs its own cell size.
+    struct GridSpec {
+        const char* name;
+        std::vector<int> members;   ///< atom ids the grid indexes
+        float cell_A;               ///< cell edge (A)
+        float max_cutoff_A;         ///< largest query radius the term uses (A)
+    };
+
+    /// Add a grid over spec.members. It is rebuilt with the others from the
+    /// accepted state and kept current by commit_accepted_move, which touches
+    /// it only when a move displaces one of its members. Returns its id
+    /// (an index into PairScratch::moved). O(N) once; call before the first
+    /// rebuild_from_accepted_state.
+    neighbor::GridId register_subset_grid(const GridSpec& spec) {
+        if (grids_.size() >= static_cast<size_t>(neighbor::kMaxGrids)) {
+            throw std::length_error("register_subset_grid: grid registry is full");
+        }
+        SubsetGrid g;
+        g.spec = spec;
+        seed_subset_grid(g);
+        subset_grids_.push_back(std::move(g));
+        grids_.push_back(RegisteredGrid{spec.name, nullptr, nullptr,
+                                        static_cast<int>(subset_grids_.size()) - 1});
+        return static_cast<neighbor::GridId>(grids_.size() - 1);
+    }
+    /// Rename the members of every registered subset grid after an atom
+    /// reorder: old id i becomes old_to_new[i]. Call before the re-init
+    /// that follows the reorder. O(total members).
+    void remap_subset_members(const std::vector<int>& old_to_new) {
+        for (SubsetGrid& g : subset_grids_) {
+            for (int& i : g.spec.members) {
+                if (i >= 0 && i < static_cast<int>(old_to_new.size())) {
+                    i = old_to_new[static_cast<size_t>(i)];
+                }
+            }
+        }
+    }
+    /// Number of registered grids, built-ins included. O(1).
+    int num_grids() const noexcept { return static_cast<int>(grids_.size()); }
+    /// A registered subset grid, or nullptr if `id` is a built-in or unknown
+    /// or the grid could not be built for the current bounds. O(1).
+    const CellListMC* subset_grid(neighbor::GridId id) const noexcept {
+        if (id >= grids_.size() || grids_[id].subset < 0) return nullptr;
+        const SubsetGrid& g = subset_grids_[static_cast<size_t>(grids_[id].subset)];
+        return g.active ? g.grid.get() : nullptr;
     }
 
     NeighborConfig& config() noexcept { return cfg_; }
@@ -359,6 +422,19 @@ public:
             ++stats_.num_dense_cap_fallback;
         }
 
+        // --- Registered subset grids ---
+        for (SubsetGrid& g : subset_grids_) {
+            NeighborConfig cfg_g = cfg_;
+            cfg_g.skin = 0.f;
+            g.active = compute_grid_shape(b, g.spec.cell_A, cfg_g, nx, ny, nz) &&
+                       g.grid->configure(b, cfg_g, 0.f, g.spec.cell_A);
+            if (!g.active) continue;
+            g.grid->reset(n_atoms_);
+            for (int i : g.spec.members) {
+                if (i >= 0 && i < n_atoms_) g.grid->insert(i, coords);
+            }
+        }
+
         maybe_rebuild_mu_verlet(coords);
         return dense_active_;
     }
@@ -400,18 +476,19 @@ public:
             return;
         }
 
-        for (size_t a = 0; a < patch.moving_atoms.size(); ++a) {
-            if (!patch.moving_atoms[a]) continue;
-            const int i = static_cast<int>(a);
-            if (dense_active_ && in_mu_[static_cast<size_t>(i)]) {
-                mu_grid_->update_position(i, coords_new);
-            }
-            if (!hb_fallback_) {
-                if (is_o_[static_cast<size_t>(i)]) hb_o_grid_->update_position(i, coords_new);
-                if (!virtual_amide_h_ && is_h_[static_cast<size_t>(i)]) {
-                    hb_h_grid_->update_position(i, coords_new);
-                }
-            }
+        // Each grid that takes position updates walks the moved atoms in
+        // ascending index order (the order slots are vacated and refilled in
+        // decides each cell's slot order, and so every later walk's order) and
+        // updates its members. Built from moved_indices: O(n_moved) per grid,
+        // no scan over all atoms.
+        const MovedOrder order = moved_ascending_(patch.moved_indices);
+        for (size_t id = 0; id < grids_.size(); ++id) {
+            CellListMC* grid = nullptr;
+            const std::uint8_t* member = nullptr;
+            if (!grid_takes_updates_(id, grid, member)) continue;
+            order.for_each([&](int i) {
+                if (member[static_cast<size_t>(i)]) grid->update_position(i, coords_new);
+            });
         }
 
         // Virtual amide H tracks backbone; refresh donor entries when BB moved.
@@ -864,6 +941,81 @@ private:
             hb_h_grid_->insert(static_cast<int>(r), hx, hy, hz);
         }
     }
+
+    /// Iterates a moved list in ascending order without sorting it when it
+    /// is already ascending or descending (the usual cases).
+    struct MovedOrder {
+        const int* p;
+        size_t n;
+        int dir;  // +1 ascending, -1 descending
+        template <class F>
+        void for_each(F&& f) const {
+            if (dir > 0) {
+                for (size_t k = 0; k < n; ++k) f(p[k]);
+            } else {
+                for (size_t k = n; k-- > 0;) f(p[k]);
+            }
+        }
+    };
+    MovedOrder moved_ascending_(const std::vector<int>& moved) {
+        const size_t n = moved.size();
+        if (std::is_sorted(moved.begin(), moved.end())) return {moved.data(), n, +1};
+        if (std::is_sorted(moved.rbegin(), moved.rend())) return {moved.data(), n, -1};
+        commit_order_.assign(moved.begin(), moved.end());
+        std::sort(commit_order_.begin(), commit_order_.end());
+        return {commit_order_.data(), n, +1};
+    }
+
+    /// Whether registered grid `id` takes position updates now, and if so
+    /// which grid and member mask. Built-ins follow the current mode flags.
+    bool grid_takes_updates_(size_t id, CellListMC*& grid, const std::uint8_t*& member) {
+        const RegisteredGrid& r = grids_[id];
+        if (r.subset >= 0) {
+            SubsetGrid& g = subset_grids_[static_cast<size_t>(r.subset)];
+            if (!g.active) return false;
+            grid = g.grid.get();
+            member = g.member.data();
+            return true;
+        }
+        switch (static_cast<neighbor::GridId>(id)) {
+            case neighbor::kMuGrid:     if (!dense_active_) return false; break;
+            case neighbor::kHBondOGrid: if (hb_fallback_) return false; break;
+            case neighbor::kHBondHGrid: if (hb_fallback_ || virtual_amide_h_) return false; break;
+            default: return false;
+        }
+        grid = (this->*r.grid).get();
+        member = (this->*r.member).data();
+        return true;
+    }
+
+    /// One entry per registered grid, indexed by GridId. Built-ins point at
+    /// their fields (member pointers, so a moved NeighborSystem stays valid);
+    /// subset grids index subset_grids_.
+    struct RegisteredGrid {
+        const char* name;
+        std::unique_ptr<CellListMC> NeighborSystem::* grid;
+        std::vector<uint8_t> NeighborSystem::* member;
+        int subset;
+    };
+    struct SubsetGrid {
+        GridSpec spec;
+        std::vector<uint8_t> member;
+        std::unique_ptr<CellListMC> grid;
+        bool active = false;
+    };
+    /// (Re)build g's membership mask and empty grid for n_atoms_. O(N).
+    void seed_subset_grid(SubsetGrid& g) const {
+        g.member.assign(static_cast<size_t>(n_atoms_), 0);
+        for (int i : g.spec.members) {
+            if (i >= 0 && i < n_atoms_) g.member[static_cast<size_t>(i)] = 1;
+        }
+        g.grid = std::make_unique<CellListMC>(g.spec.max_cutoff_A, n_atoms_);
+        g.grid->ensure_atom_capacity(n_atoms_);
+        g.active = false;
+    }
+    std::vector<RegisteredGrid> grids_;
+    std::vector<SubsetGrid> subset_grids_;
+    std::vector<int> commit_order_;
 
     NeighborConfig cfg_{};
     mutable NeighborStats stats_{};

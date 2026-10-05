@@ -6,6 +6,7 @@
 #include <string>
 
 #include "pymcpu/Context.h"
+#include "pymcpu/State.h"
 #include "pymcpu/System.h"
 
 namespace mcpu::forces {
@@ -157,6 +158,32 @@ float OrientationalPairPotential::calculateEnergy(
     return static_cast<float>(total);
 }
 
+double OrientationalPairPotential::fill_cache(const State& state) const
+{
+    const int n = num_residues();
+    KorpStateCache& cache = state.korp_cache;
+    cache.reset(n, this);
+    build_frames(state, cache.frames);
+    // Same frames, pairs and order as calculateEnergy, so the total is
+    // bit-identical to it.
+    double total = 0.0;
+    for (int i = 0; i < n; ++i) {
+        for (int j = i + 1; j < n; ++j) {
+            const double e = pair_energy(cache.frames, i, j);
+            total += e;
+            if (e != 0.0) cache.set(i, j, static_cast<float>(e));
+        }
+    }
+    return total;
+}
+
+float OrientationalPairPotential::resyncEnergy(
+    const Context& /*context*/, const State& state) const
+{
+    pending_.valid = false;
+    return static_cast<float>(fill_cache(state));
+}
+
 bool OrientationalPairPotential::classify(const ProposalPatch& patch) const
 {
     const int n = num_residues();
@@ -183,9 +210,8 @@ bool OrientationalPairPotential::classify(const ProposalPatch& patch) const
     for (int r = 0; r < n; ++r) {
         const std::size_t u = static_cast<std::size_t>(r);
         if (bits_[u] == 0) continue;
-        cls_[u] = (bits_[u] == kBitAll && patch.is_rigid && rigid_skip_enabled_)
-            ? FrameClass::RigidMoved
-            : FrameClass::Distorted;
+        cls_[u] = neighbor::moved_site_class(patch.is_rigid, rigid_skip_enabled_,
+                                             /*whole=*/bits_[u] == kBitAll);
         changed_.push_back(r);
     }
     return !changed_.empty();
@@ -197,52 +223,106 @@ EnergyChangeResult OrientationalPairPotential::calculateEnergyChange(
     const State& proposed_state,
     const ProposalPatch& patch) const
 {
+    KorpStateCache& cache = old_state.korp_cache;
+    pending_.valid = true;
+    pending_.old_state = &old_state;
+    pending_.proposed_state = &proposed_state;
+    pending_.num_moved = patch.moved_indices.size();
+    pending_.generation = cache.generation();
+    pending_.pairs.clear();
+
     // A sidechain-only move touches no N, CA or C, so KORP's energy cannot have
     // changed and there is nothing to compute. This is exact, not an
     // approximation -- the potential reads no other atom.
     if (!classify(patch)) return EnergyChangeResult::finite(0.f);
 
-    build_frames(old_state, frames_old_);
-    build_frames(proposed_state, frames_new_);
-
     const int n = num_residues();
+    if (!cache.ready_for(this, n)) {
+        fill_cache(old_state);
+        pending_.generation = cache.generation();
+    }
+
+    // New frames: the accepted ones, with only the changed residues rebuilt.
+    frames_new_ = cache.frames;
+    for (int r : changed_) {
+        frames_new_[static_cast<std::size_t>(r)] = frame_of(proposed_state, r);
+    }
+    const std::size_t un = static_cast<std::size_t>(n);
+    ox_.resize(un); oy_.resize(un); oz_.resize(un);
+    for (std::size_t r = 0; r < un; ++r) {
+        ox_[r] = frames_new_[r].origin.x();
+        oy_[r] = frames_new_[r].origin.y();
+        oz_[r] = frames_new_[r].origin.z();
+    }
+
+    // Prefilter on CA-CA distance with a little slack; pair_energy repeats the
+    // exact cutoff test, so a pair at the edge is scored exactly as before.
+    const double cut2 = static_cast<double>(map_->cutoff_sq()) * (1.0 + 1e-9);
+
+    // Each pair with at least one changed residue is visited once: changed x
+    // fixed from the changed side, changed x changed from the lower index.
+    // The old energy comes from the cache, and only pairs whose energy
+    // changed enter the sum and the pending update. Both sides are the float
+    // values the cache holds, so the running total stays the sum of the cache.
     double delta = 0.0;
-
-    const auto accumulate = [&](int a, int b) {
-        const int lo = a < b ? a : b;
-        const int hi = a < b ? b : a;
-        delta += pair_energy(frames_new_, lo, hi) - pair_energy(frames_old_, lo, hi);
-    };
-
-    const std::size_t n_changed = changed_.size();
-    for (std::size_t ia = 0; ia < n_changed; ++ia) {
-        const int a = changed_[ia];
-
-        // changed x fixed
+    for (int a : changed_) {
+        const std::size_t ua = static_cast<std::size_t>(a);
+        const float* old_row = cache.row(a);
+        // Rigid exists only with the rigid skip on; see the header.
+        const bool a_rigid = cls_[ua] == FrameClass::Rigid;
+        const double ax = ox_[ua], ay = oy_[ua], az = oz_[ua];
         for (int j = 0; j < n; ++j) {
-            if (cls_[static_cast<std::size_t>(j)] != FrameClass::Fixed) continue;
-            accumulate(a, j);
-        }
-
-        // changed x changed, each unordered pair once
-        for (std::size_t ib = ia + 1; ib < n_changed; ++ib) {
-            const int b = changed_[ib];
-            // Both partners carried by the SAME rigid motion: in real
-            // arithmetic every one of the six coordinates is invariant, because
-            // both frames transform together and a proper rotation commutes with
-            // the cross products the frame is built from. In float32 it is NOT
-            // exact -- a pair within rounding of a bin edge can change bin -- so
-            // this branch is reachable only when rigid_skip_enabled_ is set
-            // explicitly (default off; see the header).
-            if (cls_[static_cast<std::size_t>(a)] == FrameClass::RigidMoved &&
-                cls_[static_cast<std::size_t>(b)] == FrameClass::RigidMoved) {
-                continue;
+            const std::size_t uj = static_cast<std::size_t>(j);
+            const FrameClass cj = cls_[uj];
+            if (cj != FrameClass::Fixed) {
+                if (j <= a) continue;
+                if (a_rigid && cj == FrameClass::Rigid) continue;
             }
-            accumulate(a, b);
+            const double dx = ox_[uj] - ax;
+            const double dy = oy_[uj] - ay;
+            const double dz = oz_[uj] - az;
+            float e_new = 0.f;
+            if (dx * dx + dy * dy + dz * dz < cut2) {
+                e_new = static_cast<float>(a < j ? pair_energy(frames_new_, a, j)
+                                                 : pair_energy(frames_new_, j, a));
+            }
+            const float e_old = old_row[j];
+            if (e_new != e_old) {
+                delta += static_cast<double>(e_new) - static_cast<double>(e_old);
+                pending_.pairs.push_back(PendingPair{a, j, e_new});
+            }
         }
     }
 
     return EnergyChangeResult::finite(static_cast<float>(delta));
+}
+
+void OrientationalPairPotential::commitAcceptedMove(
+    const Context& /*context*/,
+    const State& state,
+    const State& proposed_state,
+    const ProposalPatch& patch) const
+{
+    KorpStateCache& cache = state.korp_cache;
+    const bool mine = pending_.valid && isEnabled() &&
+                      pending_.old_state == &state &&
+                      pending_.proposed_state == &proposed_state &&
+                      pending_.num_moved == patch.moved_indices.size() &&
+                      pending_.generation == cache.generation();
+    pending_.valid = false;
+    if (!cache.ready_for(this, num_residues())) return;
+    if (!mine) {
+        // The record is for some other move (or none): the cache no longer
+        // matches the coordinates and is rebuilt when next needed.
+        cache.invalidate();
+        return;
+    }
+    for (int r : changed_) {
+        const std::size_t u = static_cast<std::size_t>(r);
+        cache.frames[u] = frames_new_[u];
+    }
+    for (const PendingPair& p : pending_.pairs) cache.set(p.i, p.j, p.energy);
+    cache.note_commit();
 }
 
 } // namespace mcpu::forces

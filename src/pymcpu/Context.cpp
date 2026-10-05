@@ -28,6 +28,7 @@ Context::Context(std::shared_ptr<System> sys)
     // order are mapped like that Context's.
     if (system->atoms_reordered()) {
         atom_perm_ = system->applied_atom_permutation();
+        atom_perm_identity_ = atom_perm_.is_identity();
         atom_reorder_mode_ = AtomReorderMode::InitOnly;
         reorder_applied_ = true;
     }
@@ -71,7 +72,8 @@ void Context::maybe_apply_init_only_reorder_() {
         neighbors_.mu_cutoff_A(), ncfg.skin, ncfg);
     atom_perm_ = compute_init_only_atom_permutation(
         *system, state.coords_soa, ncfg.skin, mu_cell, &new_blocks);
-    if (atom_perm_.is_identity()) {
+    atom_perm_identity_ = atom_perm_.is_identity();
+    if (atom_perm_identity_) {
         reorder_applied_ = true;
         return;
     }
@@ -80,8 +82,10 @@ void Context::maybe_apply_init_only_reorder_() {
     // Also remaps every potential and records the permutation on the System.
     system->apply_residue_contiguous_blocks(std::move(new_blocks), atom_perm_);
     // Pair indices change meaning under a permutation -- drop the contact list.
-    state.mu_contact_invalidate();
+    state.invalidate_coordinate_caches();
     // NeighborSystem caches donor bb_starts from System — re-init + rebuild.
+    // Registered subset grids name atoms by their pre-reorder ids.
+    neighbors_.remap_subset_members(atom_perm_.ext_to_int);
     neighbors_.init(*system, neighbors_.config());
     sync_geometry();
     computeTorsions();
@@ -176,7 +180,7 @@ void Context::set_coords_from_python(const Eigen::Matrix3Xd& coords) {
     // setPositions always assumes build order, so it cannot be used here.
     // As in setPositions, the live contact list describes the old coordinates.
     const Eigen::Matrix3Xf engine = enter_frame_(coords, std::nullopt);
-    state.mu_contact_invalidate();
+    state.invalidate_coordinate_caches();
     if (output_internal_order_) {
         state.coords_soa.load_from_eigen(engine);
     } else {
@@ -219,7 +223,7 @@ void Context::setPositions(const Eigen::Matrix3Xd& new_coords,
     const Eigen::Matrix3Xf engine = enter_frame_(new_coords, frame_offset);
     // Coordinates are being replaced wholesale (load, REMD swap, restart), so
     // the live contact list describes a conformation that no longer exists.
-    state.mu_contact_invalidate();
+    state.invalidate_coordinate_caches();
     // Incoming coords are always treated as *external* (build) order.
     if (!reorder_applied_ || atom_perm_.is_identity()) {
         state.coords_soa.load_from_eigen(engine);
@@ -321,11 +325,8 @@ void Context::commit_accepted_move(const State& proposed_state, const ProposalPa
     // entries carry their own energies, so this needs nothing from the potential.
     if (mu_ws.pending_list_invalidate) {
         state.mu_contact_invalidate();
-    } else if (state.mu_contact_list_ready) {
-        for (const auto& p : mu_ws.pending_contact_drop)
-            state.mu_contact_remove(p.i, p.j);
-        for (const auto& p : mu_ws.pending_contact_add)
-            state.mu_contact_add(p.i, p.j, p.energy);
+    } else if (state.mu_contacts.ready()) {
+        mu_ws.pending_contacts.commit_into(state.mu_contacts);
         state.mu_list_drift += mu_ws.pending_list_drift;
     } else if (state.mu_contact_list_prebuilt) {
         // A move that did not adopt the prebuilt list changed the coordinates
@@ -333,6 +334,10 @@ void Context::commit_accepted_move(const State& proposed_state, const ProposalPa
         state.mu_contact_invalidate();
     }
     mu_ws.clear();
+
+    for (const auto& potential : system->getPotentials()) {
+        potential->commitAcceptedMove(*this, state, proposed_state, patch);
+    }
 
     // CHANGED: sparse — Verlet (skin>0) needs old xyz for moved atoms only.
     // NeighborSystem::commit_accepted_move ignores coords_old. Default skin=0

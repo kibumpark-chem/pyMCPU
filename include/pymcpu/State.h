@@ -10,6 +10,8 @@
 #include "pymcpu/utils/CoordsSoA.h"
 #include "pymcpu/utils/CoordSyncStats.h"
 #include "pymcpu/utils/CoordView.h"
+#include "pymcpu/neighbor/PairLedger.h"
+#include "pymcpu/forces/korp/common/KorpStateCache.h"
 
 namespace mcpu {
 
@@ -57,12 +59,8 @@ public:
     /// running energy (MuPotential::resyncEnergy). Discarded by anything that
     /// replaces the coordinates wholesale, by a move that cannot use it, and
     /// by such a reset under a residue energy mask.
-    struct MuContactEntry {
-        std::int32_t j;
-        float energy;
-    };
-    mutable std::vector<std::vector<MuContactEntry>> mu_contact_list;
-    mutable bool mu_contact_list_ready = false;
+    /// Pairs (j, energy) per atom; ready() once built.
+    mutable neighbor::PairLedger<float> mu_contacts;
     /// The list was filled by a full-energy resync while not ready. The next
     /// move that can use a list adopts it instead of rebuilding the same list
     /// (MuPotential::calculateEnergyChange); until then it reads as not ready,
@@ -75,43 +73,29 @@ public:
     /// never listed, so a list from another mask is stale.
     mutable std::uint64_t mu_list_mask_epoch = 0;
 
-    /// List the pair (i, j), worth `e` (0 for a near miss). O(1) amortized.
-    void mu_contact_add(int i, int j, float e) const {
-        mu_contact_list[static_cast<size_t>(i)].push_back(
-            MuContactEntry{static_cast<std::int32_t>(j), e});
-        mu_contact_list[static_cast<size_t>(j)].push_back(
-            MuContactEntry{static_cast<std::int32_t>(i), e});
-    }
-
-    /// Unlist the pair (i, j). O(degree).
-    void mu_contact_remove(int i, int j) const {
-        auto drop = [&](int a, int b) {
-            auto& v = mu_contact_list[static_cast<size_t>(a)];
-            for (size_t k = 0; k < v.size(); ++k) {
-                if (v[k].j == b) {
-                    v[k] = v.back();
-                    v.pop_back();
-                    return;
-                }
-            }
-        };
-        drop(i, j);
-        drop(j, i);
-    }
-
     /// Throw the list away; the Mu potential rebuilds it on next use. O(N).
     void mu_contact_invalidate() const {
-        mu_contact_list.clear();
-        mu_contact_list_ready = false;
+        mu_contacts.invalidate();
         mu_contact_list_prebuilt = false;
         mu_list_drift = 0.f;
     }
 
     [[nodiscard]] bool has_mu_contact_list() const noexcept {
-        return mu_contact_list_ready;
+        return mu_contacts.ready();
     }
     /// Hard-Q native pair cache (accepted state). Empty on proposal buffers.
     std::vector<uint8_t> q_pair_cache;
+
+    /// KORP frames and pair energies of this state (see KorpStateCache.h).
+    /// Dropped on copy, and by anything that replaces the coordinates.
+    mutable forces::KorpStateCache korp_cache;
+
+    /// Drop every cache that describes the current coordinates. Call this
+    /// when coordinates change outside an accepted move.
+    void invalidate_coordinate_caches() const {
+        mu_contact_invalidate();
+        korp_cache.invalidate();
+    }
 
     float getEnergy() const noexcept { return current_energy; }
 
@@ -144,7 +128,7 @@ public:
         }
         note_coords_eigen_write_back();
         coords_soa.load_from_eigen(m);
-        mu_contact_invalidate();
+        invalidate_coordinate_caches();
     }
     [[nodiscard]] Eigen::Matrix3Xf coords_as_eigen() const {
         note_coords_eigen_materialization();
@@ -162,6 +146,7 @@ public:
         backbone_torsions = src.backbone_torsions;
         sidechain_torsions = src.sidechain_torsions;
         current_energy = src.current_energy;
+        korp_cache.invalidate();
     }
 
 private:

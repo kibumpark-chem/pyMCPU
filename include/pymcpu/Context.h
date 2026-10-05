@@ -14,6 +14,10 @@
 #include "pymcpu/AtomPermutation.h"
 #include "pymcpu/AtomReorder.h"
 #include "pymcpu/utils/geometry_utils.h"
+#include "pymcpu/neighbor/Footprint.h"
+#include "pymcpu/neighbor/MovedCells.h"
+#include "pymcpu/neighbor/PairLedger.h"
+#include "pymcpu/neighbor/PairScratch.h"
 #include "pymcpu/neighbor/NeighborConfig.h"
 #include "pymcpu/neighbor/NeighborSystem.h"
 #include "pymcpu/neighbor/VerletList.h"
@@ -31,13 +35,8 @@ struct MuWorkspace {
     /// workspace, so replicas sharing one System (and hence one MuPotential)
     /// cannot tread on each other. Applied by Context::commit_accepted_move;
     /// simply discarded on rejection, because the next delta call clears them.
-    struct PendingContact {
-        std::int32_t i;
-        std::int32_t j;
-        float energy;
-    };
-    std::vector<PendingContact> pending_contact_drop;
-    std::vector<PendingContact> pending_contact_add;
+    using PendingContact = neighbor::PendingPairs<float>::Pair;
+    neighbor::PendingPairs<float> pending_contacts;
     /// The pending rigid move's bound on carried-distance change, added to
     /// State::mu_list_drift if it is accepted.
     float pending_list_drift = 0.f;
@@ -93,38 +92,11 @@ struct MuWorkspace {
     /// Scratch: cell_id → group index; size = n_cells. Filled with -1. O(1) reuse.
     std::vector<int> cell_to_group_scratch;
 
-    /// Contact-list delta: how many of the atoms a cell of the accepted Mu
-    /// grid lists does the pending move displace. Filled from the moved atoms'
-    /// cells at the start of the delta and zeroed again before it returns, so
-    /// it is all zeros between moves. Size >= n_cells.
-    std::vector<std::uint8_t> moved_per_cell;
-
-    /// Atoms that overlapped a fixed atom in recent rejected moves, most
-    /// recent first. Mu's clash-first pass tests the ones a move carries
-    /// before any other atom: overlaps recur on a few dozen atoms, so this
-    /// finds most of them on the first atom it tests. Only the ORDER of the
-    /// pass depends on it, never its answer, and an entry that is out of
-    /// range for the system is skipped. Survives clear().
-    static constexpr int kClashHotCap = 64;
-    int clash_hot[kClashHotCap] = {};
-    int clash_hot_n = 0;
-
-    /// Move `atom` to the front of clash_hot, dropping the oldest entry
-    /// when full. O(kClashHotCap).
-    void note_clash_atom(int atom) noexcept {
-        int k = 0;
-        while (k < clash_hot_n && clash_hot[k] != atom) ++k;
-        if (k == clash_hot_n) {
-            if (clash_hot_n < kClashHotCap) ++clash_hot_n;
-            k = clash_hot_n - 1;
-        }
-        for (; k > 0; --k) clash_hot[k] = clash_hot[k - 1];
-        clash_hot[0] = atom;
-    }
+    // The moved-cell counts and the clash_hot list live in Context's
+    // neighbor::PairScratch, shared by every term's pair walks.
 
     void clear() {
-        pending_contact_drop.clear();
-        pending_contact_add.clear();
+        pending_contacts.clear();
         pending_list_drift = 0.f;
         pending_list_invalidate = false;
     }
@@ -236,6 +208,9 @@ private:
     CoordsSoA commit_old_coords_scratch_;
 
     mutable MuWorkspace mu_workspace_;
+    /// Scratch for the shared pair walks (moved-cell counts per grid, clash
+    /// order hints). Per Context, so replicas never share it.
+    mutable neighbor::PairScratch pair_scratch_;
     mutable QBiasWorkspace q_bias_workspace_;
     mutable HBondWorkspace hbond_workspace_;
     float q_bias_k_ = 0.0f;
@@ -252,6 +227,9 @@ private:
 
     AtomReorderMode atom_reorder_mode_ = AtomReorderMode::Off;
     AtomPermutation atom_perm_ = AtomPermutation::identity(0);
+    // atom_perm_.is_identity(), kept in step with atom_perm_ so the move
+    // hot path does not walk the permutation on every pivot.
+    bool atom_perm_identity_ = true;
     bool output_internal_order_ = false;
     bool positions_set_ = false;
     bool reorder_applied_ = false;
@@ -313,6 +291,7 @@ public:
         return atom_reorder_mode_to_string(atom_reorder_mode_);
     }
     [[nodiscard]] const AtomPermutation& atom_permutation() const noexcept { return atom_perm_; }
+    [[nodiscard]] bool atom_permutation_is_identity() const noexcept { return atom_perm_identity_; }
 
     /// Snapshot for Python / perf packets.
     struct AtomPermutationInfo {
@@ -515,6 +494,7 @@ public:
 
     MuWorkspace& getWorkspace() noexcept { return mu_workspace_; }
     const MuWorkspace& getMuWorkspace() const { return mu_workspace_; }
+    neighbor::PairScratch& pairScratch() const noexcept { return pair_scratch_; }
     QBiasWorkspace& getQBiasWorkspace() noexcept { return q_bias_workspace_; }
     const QBiasWorkspace& getQBiasWorkspace() const { return q_bias_workspace_; }
     HBondWorkspace& getHBondWorkspace() noexcept { return hbond_workspace_; }

@@ -222,7 +222,7 @@ int resolve_rama_category(const System& system, int r) {
 // the only mode any production caller uses today.
 std::vector<std::pair<int, int>> compute_pivot_c_term_ranges(
     const System& system, const Context& context, int r, bool is_phi) {
-    if (!context.atom_permutation().is_identity()) return {};
+    if (!context.atom_permutation_is_identity()) return {};
 
     const auto& blocks = system.getBlockIndices();
     const int bb_start_contig = is_phi ? blocks[static_cast<size_t>(r)].c_atom()
@@ -545,7 +545,7 @@ void MCIntegrator::apply_pivot_at(Context& context, State& proposal, ProposalPat
     int num_residues = system.getNumResidues();
     const auto& blocks = system.getBlockIndices();
     const bool residue_contig = system.residueContiguousLayout();
-    const bool scattered = !context.atom_permutation().is_identity();
+    const bool scattered = !context.atom_permutation_is_identity();
 
     // ── Direction selection: N-term vs C-term pivot ─────────────────
     // C-term pivot rotates residues [r+1, num_residues).

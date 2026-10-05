@@ -475,6 +475,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   could read past its end.
   Trajectories are unchanged bit for bit. KIC-only steps: T4L 125k -> 120k
   cycles (-4%), CA2 106k -> 100k (-5%); actin default mix 88.8k -> 87.1k.
+- **KORP moves are about twice as fast.** `OrientationalPairPotential` now
+  keeps the accepted state's residue frames and pair energies on the `State`
+  (`KorpStateCache`) and folds each accepted move into them through a new
+  `Potential::commitAcceptedMove` hook. A move rebuilds frames only for the
+  residues whose N, CA or C moved, takes the old side of each pair from the
+  cache instead of scoring it again, and skips pairs beyond the cutoff with a
+  plain distance test before any trigonometry. The CA excluded-volume check
+  first asks, per moved residue and without branches, whether any partner is
+  near the cutoff, and runs the exact test only then.
+
+  Interleaved A/B, pivot + KIC, user-space cycles per step (n = 3): actin
+  2.23M -> 1.13M (1.97x), PGK1 2.53M -> 1.29M (1.97x), beta-galactosidase
+  (AF-P00722, 8222 atoms) 8.35M -> 3.73M (2.24x). Trajectories are unchanged
+  on every run checked: the same final energies and accept sequences in the
+  A/B runs, the same running and recomputed energies after 1M pivot-only steps
+  on T4 lysozyme, and `scripts/tolerance_check.py` passes. The cache is
+  rebuilt by a full-energy resync and dropped whenever the coordinates are
+  replaced, and a copied `State` starts without one.
+
+- **The pair-search layer gains per-replica scratch, a grid registry, a
+  pair ledger and a shared move footprint.** Internal refactor,
+  bit-identical. The per-cell moved-atom counts and the clash_hot list move
+  from Mu's workspace to a `PairScratch` on each Context, with one set of
+  counts per registered grid. `NeighborSystem::register_subset_grid` lets a
+  term add a grid over its own atoms; the Mu and H-bond grids sit at fixed
+  ids in the same registry, and an accepted move now updates each grid from
+  the move's moved-atom list instead of scanning every atom; a re-init
+  after an atom reorder keeps the registered grids and their ids.
+  `OpenCellGrid` is `BasicOpenCellGrid<48>`, with the per-cell capacity a
+  template parameter; every grid, subset grids included, still uses 48.
+  Mu's contact list is a `PairLedger<float>` with
+  `PendingPairs` for the changes a move stages, ready for the H-bond and
+  KORP pair energies. `SiteClass` (Fixed, Rigid, Flex) is the one
+  definition of how a move affects a site: Mu's rigid moved-moved skip and
+  KORP's frame classes both use it.
+  The Context now keeps whether its atom permutation is the identity, so
+  a pivot no longer walks the permutation to find out. Cycles per step
+  against the parent, interleaved, n=3: 0.9-2.6% faster on the default
+  move mix and 1.4-3.3% faster pivot-only on T4 lysozyme, CA2, LDH-A,
+  actin and PGK1. The commit step's share of an actin default run drops
+  from 4.0% to 1.9%.
+
+- **Mu's contact-list delta walks its pairs through a shared pair-search
+  layer, and is 5-9% faster.** Internal refactor, bit-identical. The cell
+  walks that Mu's contact-list delta wrote out by hand (the clash-first
+  pass, the moved-vs-grid contact walk, the moved-moved loop), the 8-slot
+  distance prefilter, the per-cell moved-atom counts and the clash_hot
+  list now live in header-only templates under
+  `include/pymcpu/neighbor/` (`SpanMask.h`, `MovedCells.h`,
+  `PairSearch.h`), for the H-bond and KORP terms to use next. Each walk
+  is an always-inlined template that takes the term's callback by
+  forwarding reference, and the exact distance test stays in Mu's
+  callback, so the pairs, their order and every rounding are unchanged.
+  The contact walk's per-cell callback, which the compiler had kept out of
+  line, is now inlined: cycles per step -4.9% to -5.7% on the default move
+  mix and -7.6% to -8.6% pivot-only on T4 lysozyme, CA2, LDH-A, actin and
+  PGK1 (interleaved, n=3, against the parent). `scripts/check_inlining.py` disassembles the built extension and
+  fails if the hot functions call into the layer or a lambda.
 
 - **Ordinary runs no longer print a Mu contact-list NOTE.** The engine
   printed "NOTE: Mu move #1 that cannot use the contact list ..." to stderr
@@ -550,6 +608,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   on actin and PGK1. The accept sequence is unchanged, but the running
   energy can differ from earlier versions in the last bits (up to 6e-4 in
   50,000 steps) because the move's pairs are summed in a different order.
+
+- **Mu checks a move that falls back to the all-pairs delta for overlaps on
+  the grid first, and its clash-first pass stops after the atoms that
+  overlapped recently, which makes pivot-only runs 1.8-2.0x faster on actin
+  and LDH-A.** Trajectories are unchanged bit for bit.
+
+  * A move that leaves the Mu grid, or carries too far for the contact
+    list, takes the all-pairs delta, which tests every moved atom against
+    every atom and does not stop at an overlap. Only 0.4-0.6% of pivots on
+    actin and LDH-A take it, but they cost over a third of a pivot-only
+    step, and nearly all of them end in a steric rejection. Such a move now
+    runs the clash-first pass on the grid first; an overlap found there is
+    one the delta finds too. `MCPU_FALLBACK_PRECHECK=0` turns it off.
+  * 98.6-99.4% of the pivots that overlap are caught on an atom that
+    overlapped in a recent rejected move, so the clash-first pass now tests
+    only those (`MCPU_CLASH_FIRST=2` restores the full pass). The contact
+    walk still rejects any overlap the pass misses, and records the atom it
+    stopped on for the next pass.
+
+  Cycles per step before and after, interleaved, n=3, 20,000 steps,
+  pivot-only: -45.3% actin, -50.8% LDH-A, -9.3% T4 lysozyme, -5.5% PGK1,
+  -5.3% CA2; default move mix: -2.2% LDH-A, -2.2% T4 lysozyme, -0.9% PGK1,
+  -0.3% actin, +0.4% CA2.
 
 - **`scripts/job_template.slurm` no longer activates a particular conda
   environment.** It activated `mcpu_dev`, a conda environment from one
