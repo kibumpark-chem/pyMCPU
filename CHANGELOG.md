@@ -461,6 +461,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   developer diagnostic, and it showed up inside notebook cells. It is now
   printed only with `MCPU_VERBOSE=1`, like the engine's other diagnostics.
 
+- **`ProposalPatch` checks moved-atom lists set from Python.** Setting
+  `moved_indices` to a list with an index outside `[0, num_atoms)` raises
+  `IndexError`, and a list that names an atom twice raises `ValueError`;
+  `mark_moved` raises `IndexError` for an out-of-range index and ignores an
+  atom that is already marked, where it used to append it again. Mu's delta
+  compares each grid cell's count of moved atoms with its occupancy, so a
+  duplicate made a cell that still held an unmoved atom look fully moved and
+  dropped its pairs, and an out-of-range index wrote past `moving_atoms`. The
+  engine's own moves never build such a list, so the release engine does not
+  check and its results are unchanged; debug builds assert the contract.
 - **Release builds pad branches against Intel's JCC erratum.** On Skylake
   through Cascade Lake, a jump that crosses or ends on a 32-byte boundary
   cannot be served from the decoded-uop cache, and about half of the

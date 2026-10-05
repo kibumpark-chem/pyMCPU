@@ -207,8 +207,40 @@ PYBIND11_MODULE(mcpu_core, m) {
         .def_readwrite("o_atom_moved", &ProposalPatch::o_atom_moved)
         .def_readwrite("h_atom_moved", &ProposalPatch::h_atom_moved)
         .def_readwrite("moving_atoms", &ProposalPatch::moving_atoms)
-        .def_readwrite("moved_indices", &ProposalPatch::moved_indices)
-        .def("mark_moved", &ProposalPatch::mark_moved)
+        // moved_indices and mark_moved are the two ways Python can hand the
+        // engine a moved-atom list, so both are checked here, off the engine's
+        // hot path: an index outside [0, num_atoms) would write past
+        // moving_atoms, and a duplicate breaks the per-cell moved counts in
+        // Mu's delta (see ProposalPatch::mark_moved).
+        .def_property(
+            "moved_indices",
+            [](const ProposalPatch& p) { return p.moved_indices; },
+            [](ProposalPatch& p, const std::vector<int>& idx) {
+                std::vector<std::uint8_t> seen(p.moving_atoms.size(), 0);
+                for (int i : idx) {
+                    if (i < 0 || static_cast<size_t>(i) >= seen.size())
+                        throw py::index_error(
+                            "moved_indices: atom index " + std::to_string(i) +
+                            " is outside [0, " + std::to_string(seen.size()) + ")");
+                    if (seen[static_cast<size_t>(i)]++)
+                        throw py::value_error(
+                            "moved_indices: atom index " + std::to_string(i) +
+                            " is listed twice; the list must not hold duplicates");
+                }
+                p.moved_indices = idx;
+            })
+        .def(
+            "mark_moved",
+            [](ProposalPatch& p, int i) {
+                if (i < 0 || static_cast<size_t>(i) >= p.moving_atoms.size())
+                    throw py::index_error(
+                        "mark_moved: atom index " + std::to_string(i) +
+                        " is outside [0, " + std::to_string(p.moving_atoms.size()) + ")");
+                // Marking an atom twice is a no-op, as the mask already was.
+                if (p.moving_atoms[static_cast<size_t>(i)] == 0) p.mark_moved(i);
+            },
+            py::arg("i"),
+            "Mark atom i as moved. Marking an already-marked atom does nothing.")
         .def("add_distorted_bb_residue", &ProposalPatch::add_distorted_bb_residue)
         .def("add_distorted_sc_residue", &ProposalPatch::add_distorted_sc_residue);
 
