@@ -75,15 +75,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   not exist.
 
 - **Checkpoint flags override only the settings they are given.**
-  `--cloud-sync-cmd` defaulted to `aws s3 cp` on the command line, so
-  `mcpu run`, `mcpu validate` and `scripts/run_mcpu_replica_exchange.py
-  --config` replaced a config's own `cloud_sync_cmd` on every run, and
   `examples/gromacs_style/run.py` replaced the YAML's checkpoint directory,
-  interval, keep count and cloud settings with the flags' defaults. A flag
-  left out now keeps the config's setting. The shared
-  `pymcpu.utils.cli.apply_checkpoint_args` applies the flags for all of
-  them. An empty `--cloud-bucket` or `--cloud-sync-cmd` is now an error
-  rather than ignored.
+  interval and keep count with the flags' defaults. A flag left out now
+  keeps the config's setting. `mcpu run`, `mcpu validate`,
+  `scripts/run_mcpu_replica_exchange.py --config` and the example now share
+  `pymcpu.utils.cli.apply_checkpoint_args` to apply the flags.
 
 - **`mcpu validate` checks that the structure files exist.** For a YAML
   config it reported OK when `pdb`, or a replica exchange config's
@@ -680,6 +676,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the only hard-rejecting term.
 
 ### Removed
+
+- **Checkpoint upload: `cloud_sync`, `cloud_bucket` and `cloud_sync_cmd`.**
+  After each save it started `<cloud_sync_cmd> last.chk
+  <cloud_bucket>/last.chk` in the background and never checked the result.
+  A failed upload printed nothing, the run did not wait for the last upload,
+  so ending the job could cut it off, and only `last.chk` was copied, never
+  the trajectories or logs. Checkpoints are now written only to
+  `checkpoint_dir`; copying them elsewhere is left to the user. The
+  `--cloud-sync`, `--cloud-bucket` and `--cloud-sync-cmd` flags are gone,
+  as are the matching arguments of the runners and `FoldingRunner` /
+  `MPIReplicaExchange`, and the `config` argument of `save_checkpoint`. A
+  config that still has the keys at their defaults, as copies of the old
+  template do, loads with a warning; `cloud_sync: true` is an error.
 
 - `BoxPolicy` with its unreachable `Fixed` and `AutoRecenter` modes,
   `CoordsSoA::recenter` and the always-zero `num_reject_out_of_box` entry of

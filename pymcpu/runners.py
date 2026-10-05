@@ -56,9 +56,6 @@ def run_folding(
     checkpoint_interval: int = 50,
     resume: str | Path | bool | None = None,
     keep_last_n: int | None = 3,
-    cloud_sync: bool = False,
-    cloud_bucket: str = "",
-    cloud_sync_cmd: str = "aws s3 cp",
 ) -> Path:
     """Run a single-temperature MC folding trajectory (OpenMM-style)."""
     from pymcpu.sampling.folding import FoldingRunner
@@ -75,9 +72,6 @@ def run_folding(
         checkpoint_interval=int(checkpoint_interval),
         resume=resume if resume is not None else False,
         keep_last_n=keep_last_n,
-        cloud_sync=bool(cloud_sync),
-        cloud_bucket=str(cloud_bucket or ""),
-        cloud_sync_cmd=str(cloud_sync_cmd or "aws s3 cp"),
     )
     resume_path = ckpt_cfg.resolved_resume_path()
     ckpt_cfg.resume = True if resume_path else False
@@ -108,9 +102,6 @@ def run_folding(
         checkpoint_interval=int(checkpoint_interval),
         keep_last_n=keep_last_n,
         resume=ckpt_cfg.resume,
-        cloud_sync=bool(cloud_sync),
-        cloud_bucket=str(cloud_bucket or ""),
-        cloud_sync_cmd=str(cloud_sync_cmd or "aws s3 cp"),
     )
 
 
@@ -143,9 +134,6 @@ def run_replica_exchange_2d(
     checkpoint_interval: int = 50,
     resume: str | Path | bool | None = None,
     keep_last_n: int | None = 3,
-    cloud_sync: bool = False,
-    cloud_bucket: str = "",
-    cloud_sync_cmd: str = "aws s3 cp",
     exchange_log: str = "none",
     state_log_interval: int = 0,
     log_walker_in_data_csv: bool = True,
@@ -185,9 +173,6 @@ def run_replica_exchange_2d(
         checkpoint_interval=int(checkpoint_interval),
         resume=resume if resume is not None else False,
         keep_last_n=keep_last_n,
-        cloud_sync=bool(cloud_sync),
-        cloud_bucket=str(cloud_bucket or ""),
-        cloud_sync_cmd=str(cloud_sync_cmd or "aws s3 cp"),
     )
     resume_path = ckpt_cfg.resolved_resume_path()
 
@@ -278,9 +263,6 @@ def run_mpi_replica_exchange_2d(
     checkpoint_interval: int = 50,
     resume: str | Path | bool | None = None,
     keep_last_n: int | None = 3,
-    cloud_sync: bool = False,
-    cloud_bucket: str = "",
-    cloud_sync_cmd: str = "aws s3 cp",
     temp_min: float = 0.1,
     temp_step: float = 0.05,
     n_temps: int = 4,
@@ -332,9 +314,6 @@ def run_mpi_replica_exchange_2d(
         checkpoint_interval=int(checkpoint_interval),
         resume=resume if resume is not None else False,
         keep_last_n=keep_last_n,
-        cloud_sync=bool(cloud_sync),
-        cloud_bucket=str(cloud_bucket or ""),
-        cloud_sync_cmd=str(cloud_sync_cmd or "aws s3 cp"),
     )
     # Resolve resume to a concrete path/bool before constructing RE
     resume_path = ckpt_cfg.resolved_resume_path()
@@ -399,9 +378,6 @@ def run_mpi_replica_exchange_2d(
         checkpoint_interval=int(checkpoint_interval),
         keep_last_n=keep_last_n,
         resume=ckpt_cfg.resume,
-        cloud_sync=bool(cloud_sync),
-        cloud_bucket=str(cloud_bucket or ""),
-        cloud_sync_cmd=str(cloud_sync_cmd or "aws s3 cp"),
     )
 
 
@@ -446,9 +422,6 @@ def run_from_config(
             checkpoint_interval=cfg.checkpoint.checkpoint_interval,
             resume=cfg.checkpoint.resume,
             keep_last_n=cfg.checkpoint.keep_last_n,
-            cloud_sync=cfg.checkpoint.cloud_sync,
-            cloud_bucket=cfg.checkpoint.cloud_bucket,
-            cloud_sync_cmd=cfg.checkpoint.cloud_sync_cmd,
         )
 
     if cfg.mode == "replica_exchange_2d":
@@ -481,9 +454,6 @@ def run_from_config(
             checkpoint_interval=cfg.checkpoint.checkpoint_interval,
             resume=cfg.checkpoint.resume,
             keep_last_n=cfg.checkpoint.keep_last_n,
-            cloud_sync=cfg.checkpoint.cloud_sync,
-            cloud_bucket=cfg.checkpoint.cloud_bucket,
-            cloud_sync_cmd=cfg.checkpoint.cloud_sync_cmd,
             exchange_log=rex.exchange_log,
             state_log_interval=rex.state_log_interval,
             log_walker_in_data_csv=rex.log_walker_in_data_csv,

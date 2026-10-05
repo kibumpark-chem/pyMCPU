@@ -180,9 +180,6 @@ class MPIReplicaExchange:
         checkpoint_interval: int | None = None,
         keep_last_n: int | None = None,
         resume: str | bool | None = None,
-        cloud_sync: bool | None = None,
-        cloud_bucket: str | None = None,
-        cloud_sync_cmd: str | None = None,
         exchange_log: str = "none",
         state_log_interval: int = 0,
         log_walker_in_data_csv: bool = True,
@@ -251,12 +248,6 @@ class MPIReplicaExchange:
             cfg.keep_last_n = keep_last_n
         if resume is not None:
             cfg.resume = resume
-        if cloud_sync is not None:
-            cfg.cloud_sync = bool(cloud_sync)
-        if cloud_bucket is not None:
-            cfg.cloud_bucket = str(cloud_bucket)
-        if cloud_sync_cmd is not None:
-            cfg.cloud_sync_cmd = str(cloud_sync_cmd)
         self.checkpoint_config = cfg
 
         if output_dir is not None:
@@ -640,16 +631,14 @@ class MPIReplicaExchange:
                 filename=cycle_name,
                 cycle=int(cycle),
                 keep_last_n=self.checkpoint_config.keep_last_n,
-                config=None,  # cloud sync only on last.chk
             )
-            # Always refresh last.chk as the canonical resume pointer (+ cloud sync).
+            # Always refresh last.chk as the canonical resume pointer.
             save_checkpoint(
                 state,
                 out_dir,
                 filename="last.chk",
                 cycle=int(cycle),
                 keep_last_n=None,
-                config=self.checkpoint_config,
             )
             logger.info(
                 "MPI checkpoint saved cycle=%s file=%s",
@@ -1172,9 +1161,6 @@ class MPIReplicaExchange:
         checkpoint_interval: int | None = None,
         keep_last_n: int | None = None,
         resume: str | bool | None = None,
-        cloud_sync: bool | None = None,
-        cloud_bucket: str | None = None,
-        cloud_sync_cmd: str | None = None,
     ) -> RunSummary | None:
         # Merge run-time checkpoint kwargs into config.
         cfg = self.checkpoint_config
@@ -1186,12 +1172,6 @@ class MPIReplicaExchange:
             cfg.keep_last_n = keep_last_n
         if resume is not None:
             cfg.resume = resume
-        if cloud_sync is not None:
-            cfg.cloud_sync = bool(cloud_sync)
-        if cloud_bucket is not None:
-            cfg.cloud_bucket = str(cloud_bucket)
-        if cloud_sync_cmd is not None:
-            cfg.cloud_sync_cmd = str(cloud_sync_cmd)
 
         self._mc_replica_steps = int(mc_replica_steps)
 

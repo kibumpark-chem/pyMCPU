@@ -141,20 +141,6 @@ it either. See :doc:`checkpointing`.
 
    Resume from the latest checkpoint in the checkpoint directory.
 
-.. option:: --cloud-sync
-
-   Upload ``last.chk`` after every save. It needs a bucket, from
-   :option:`--cloud-bucket` or the config.
-
-.. option:: --cloud-bucket URI
-
-   Where to upload, for example ``s3://my-bucket/run-01/``.
-
-.. option:: --cloud-sync-cmd CMD
-
-   Upload command, for example ``gsutil cp``. Default: the config's, else
-   ``aws s3 cp``.
-
 ``mcpu validate``
 -----------------
 

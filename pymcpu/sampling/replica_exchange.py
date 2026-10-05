@@ -387,7 +387,6 @@ class ReplicaExchange:
         filename=name,
         is_best=is_best,
         keep_last_n=self.keep_last_n if keep_last_n is None else keep_last_n,
-        config=self.checkpoint_config if name == "last.chk" else None,
       )
       # Always refresh last.chk as the canonical resume pointer.
       if name != "last.chk":
@@ -396,7 +395,6 @@ class ReplicaExchange:
           out_dir,
           filename="last.chk",
           is_best=False,
-          config=self.checkpoint_config,
         )
       return path
 

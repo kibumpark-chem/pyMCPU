@@ -136,10 +136,9 @@ def test_config_path_applies_hdf5_and_checkpoint_cli_overrides(
 def test_config_path_keeps_the_config_checkpoint_settings_without_flags(
     script: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A checkpoint flag left out keeps the config's setting. --cloud-sync-cmd
-    used to default to 'aws s3 cp', which replaced the config's own command."""
+    """A checkpoint flag left out keeps the config's setting."""
     config_path = _write_config(
-        tmp_path, checkpoint={"checkpoint_interval": 7, "cloud_sync_cmd": "gsutil cp"}
+        tmp_path, checkpoint={"checkpoint_interval": 7, "keep_last_n": 2}
     )
     called = MagicMock(return_value=None)
     monkeypatch.setattr(script, "run_from_config", called)
@@ -148,7 +147,7 @@ def test_config_path_keeps_the_config_checkpoint_settings_without_flags(
     script.main()
 
     checkpoint = called.call_args.args[0].checkpoint
-    assert (checkpoint.checkpoint_interval, checkpoint.cloud_sync_cmd) == (7, "gsutil cp")
+    assert (checkpoint.checkpoint_interval, checkpoint.keep_last_n) == (7, 2)
 
 
 def test_config_path_rejects_config_missing_replica_exchange(

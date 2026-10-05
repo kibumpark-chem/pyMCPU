@@ -120,7 +120,6 @@ def _config_with_checkpointing(tmp_path: Path) -> Path:
         "  checkpoint_dir: mine\n"
         "  checkpoint_interval: 7\n"
         "  keep_last_n: 2\n"
-        "  cloud_sync_cmd: gsutil cp\n"
     )
     return config
 
@@ -131,19 +130,13 @@ def _checkpoint_settings(checkpoint) -> tuple:
         checkpoint.checkpoint_interval,
         checkpoint.keep_last_n,
         checkpoint.resume,
-        checkpoint.cloud_sync_cmd,
     )
 
 
 # A checkpoint flag left out keeps the config's setting; a flag given wins.
-# --cloud-sync-cmd used to default to 'aws s3 cp' on the command line, which
-# replaced a config's own upload command on every run.
 _CHECKPOINT_FLAG_CASES = [
-    ([], ("mine", 7, 2, False, "gsutil cp")),
-    (
-        ["--checkpoint-interval", "3", "--resume", "--cloud-sync-cmd", "rclone copyto"],
-        ("mine", 3, 2, True, "rclone copyto"),
-    ),
+    ([], ("mine", 7, 2, False)),
+    (["--checkpoint-interval", "3", "--resume"], ("mine", 3, 2, True)),
 ]
 
 
@@ -182,10 +175,3 @@ def test_gromacs_example_checkpoint_flags_override_only_what_they_set(
         runpy.run_path(str(REPO_ROOT / "examples" / "gromacs_style" / "run.py"), run_name="__main__")
     assert exit_info.value.code == 0
     assert _checkpoint_settings(described[0].checkpoint) == expected
-
-
-@pytest.mark.parametrize("flag", ["--cloud-bucket", "--cloud-sync-cmd"])
-def test_empty_cloud_flags_are_rejected(flag: str, capsys: pytest.CaptureFixture[str]) -> None:
-    with pytest.raises(SystemExit):
-        build_parser().parse_args(["run", "config.yaml", flag, ""])
-    assert "must not be empty" in capsys.readouterr().err

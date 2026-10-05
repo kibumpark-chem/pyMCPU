@@ -85,7 +85,7 @@ def test_mpi_re_accepts_checkpoint_config() -> None:
 
 
 def test_mpi_re_run_accepts_checkpoint_kwargs() -> None:
-    """MPIReplicaExchange.run() must accept all 7 checkpoint kwargs."""
+    """MPIReplicaExchange.run() must accept all 4 checkpoint kwargs."""
     MPIReplicaExchange = _import_mpi_re()
     params = set(inspect.signature(MPIReplicaExchange.run).parameters)
     required = {
@@ -93,16 +93,13 @@ def test_mpi_re_run_accepts_checkpoint_kwargs() -> None:
         "checkpoint_interval",
         "keep_last_n",
         "resume",
-        "cloud_sync",
-        "cloud_bucket",
-        "cloud_sync_cmd",
     }
     missing = required - params
     assert not missing, f"MPIReplicaExchange.run() missing checkpoint params: {missing}"
 
 
 def test_runner_mpi_accepts_checkpoint_params() -> None:
-    """run_mpi_replica_exchange_2d must accept the 7 checkpoint parameters."""
+    """run_mpi_replica_exchange_2d must accept the 4 checkpoint parameters."""
     from pymcpu import runners
 
     params = set(inspect.signature(runners.run_mpi_replica_exchange_2d).parameters)
@@ -111,9 +108,6 @@ def test_runner_mpi_accepts_checkpoint_params() -> None:
         "checkpoint_interval",
         "keep_last_n",
         "resume",
-        "cloud_sync",
-        "cloud_bucket",
-        "cloud_sync_cmd",
     }
     missing = required - params
     assert not missing, f"runner missing checkpoint params: {missing}"

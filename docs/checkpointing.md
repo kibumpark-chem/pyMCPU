@@ -96,9 +96,6 @@ checkpointing:
   checkpoint_interval: 50        # save every 50 cycles
   keep_last_n: 3                 # retain the last 3 versioned files
   resume: false
-  cloud_sync: false
-  cloud_bucket: ""               # e.g. s3://my-bucket/run-name/
-  cloud_sync_cmd: "aws s3 cp"    # or "gsutil cp" / "rclone copy"
 ```
 
 ## MPI runs
@@ -106,14 +103,6 @@ checkpointing:
 Under MPI replica exchange, only rank 0 writes checkpoints. The state it saves
 covers every replica, so a resumed job reconstructs the whole ladder from that
 one file — there is no per-rank checkpoint to keep consistent.
-
-## Cloud sync
-
-With `cloud_sync: true`, `last.chk` is uploaded to `cloud_bucket` after every
-save. The upload runs in a background subprocess and does not block sampling,
-so a slow or failing upload costs throughput but not correctness. The
-corresponding CLI tool (`aws`, `gsutil` or `rclone`) must be installed and
-authenticated.
 
 ## Reproducibility caveat
 

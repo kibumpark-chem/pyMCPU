@@ -202,9 +202,6 @@ def _rex_kwargs(args: argparse.Namespace) -> dict:
         else 50,
         keep_last_n=int(args.keep_last_n) if args.keep_last_n is not None else 3,
         resume=bool(args.resume),
-        cloud_sync=bool(args.cloud_sync),
-        cloud_bucket=str(args.cloud_bucket or ""),
-        cloud_sync_cmd=str(args.cloud_sync_cmd or "aws s3 cp"),
     )
 
     return kwargs
@@ -273,12 +270,6 @@ def _run_from_legacy_flags(args: argparse.Namespace) -> None:
             ckpt.keep_last_n = int(args.keep_last_n)
         if args.resume:
             ckpt.resume = True
-        if args.cloud_sync:
-            ckpt.cloud_sync = True
-        if args.cloud_bucket:
-            ckpt.cloud_bucket = args.cloud_bucket
-        if args.cloud_sync_cmd:
-            ckpt.cloud_sync_cmd = args.cloud_sync_cmd
 
         rex.run(
             num_cycles,
@@ -288,9 +279,6 @@ def _run_from_legacy_flags(args: argparse.Namespace) -> None:
             checkpoint_interval=ckpt.checkpoint_interval,
             keep_last_n=ckpt.keep_last_n,
             resume=ckpt.resolved_resume_path(),
-            cloud_sync=ckpt.cloud_sync,
-            cloud_bucket=ckpt.cloud_bucket,
-            cloud_sync_cmd=ckpt.cloud_sync_cmd,
         )
         return
 

@@ -524,9 +524,13 @@ def config_from_dict(data: Mapping[str, Any]) -> SimulationConfig:
     constraints = _merge_dataclass(
         ConstraintsConfig, data.get("constraints"), label="constraints"
     )
-    checkpoint = _merge_dataclass(
-        CheckpointConfig, data.get("checkpoint"), label="checkpoint"
-    )
+    checkpoint_data = data.get("checkpoint")
+    if isinstance(checkpoint_data, Mapping):
+        _check_removed_cloud_keys(checkpoint_data, "the checkpoint block")
+        checkpoint_data = {
+            k: v for k, v in checkpoint_data.items() if k not in _REMOVED_CLOUD_KEYS
+        }
+    checkpoint = _merge_dataclass(CheckpointConfig, checkpoint_data, label="checkpoint")
 
     rex: ReplicaExchangeConfig | None = None
     if mode == "replica_exchange_2d":
@@ -662,8 +666,7 @@ def _infer_output_dir_and_prefix(output_prefix: str) -> tuple[str, str]:
 # Keys of a YAML config's ``checkpointing`` block. They are also accepted at
 # the top level of the flat schema.
 _YAML_CHECKPOINT_KEYS = frozenset({
-    "checkpoint_dir", "checkpoint_interval", "keep_last_n", "resume",
-    "cloud_sync", "cloud_bucket", "cloud_sync_cmd", "enabled",
+    "checkpoint_dir", "checkpoint_interval", "keep_last_n", "resume", "enabled",
 })
 
 # Every top-level key of the flat YAML schema (see yaml_dict_to_config).
@@ -721,6 +724,27 @@ _YAML_KEY_HINTS = {
     "swap_interval": "the YAML name is 'mc_replica_steps'",
 }
 
+# Settings of the checkpoint upload, which was removed. Copies of the old
+# template still carry them at their defaults, so they load with a warning;
+# `cloud_sync: true` is an error, because nothing would be uploaded.
+_REMOVED_CLOUD_KEYS = frozenset({"cloud_sync", "cloud_bucket", "cloud_sync_cmd"})
+
+
+def _check_removed_cloud_keys(block: Mapping[str, Any], where: str) -> None:
+    if block.get("cloud_sync"):
+        raise ValueError(
+            f"'cloud_sync' is on in {where}, but pyMCPU no longer uploads "
+            "checkpoints; it writes them only to checkpoint_dir. Delete the "
+            "cloud keys."
+        )
+    for key in sorted(_REMOVED_CLOUD_KEYS.intersection(block)):
+        warnings.warn(
+            f"{key!r} in {where} has no effect (checkpoint upload was removed); "
+            "you can delete it",
+            UserWarning,
+            stacklevel=1,
+        )
+
 
 def _unknown_keys(data: Mapping[str, Any], known: frozenset[str], prefix: str = "") -> list[str]:
     found = []
@@ -741,7 +765,8 @@ def check_yaml_keys(data: Mapping[str, Any], source: str = "the YAML config") ->
     unknown key at once, with the closest known key or what to write instead,
     so that a misspelled key is reported instead of silently ignored. Keys
     that older configs carry and that do nothing (``output_layout``,
-    ``mode``) only warn. ``source`` names the config in the messages.
+    ``mode``, and the removed ``cloud_*`` settings) only warn, except
+    ``cloud_sync: true``. ``source`` names the config in the messages.
     """
     for key, reason in _RETIRED_YAML_KEYS.items():
         if key in data:
@@ -750,13 +775,19 @@ def check_yaml_keys(data: Mapping[str, Any], source: str = "the YAML config") ->
                 UserWarning,
                 stacklevel=1,
             )
-    unknown = _unknown_keys(data, _YAML_KEYS | frozenset(_RETIRED_YAML_KEYS))
+    known = _YAML_KEYS | frozenset(_RETIRED_YAML_KEYS) | _REMOVED_CLOUD_KEYS
+    unknown = _unknown_keys(data, known)
     block = data.get("checkpointing")
     if isinstance(block, Mapping):
-        unknown += _unknown_keys(block, _YAML_CHECKPOINT_KEYS, prefix="checkpointing.")
+        unknown += _unknown_keys(
+            block, _YAML_CHECKPOINT_KEYS | _REMOVED_CLOUD_KEYS, prefix="checkpointing."
+        )
     if unknown:
         noun = "key" if len(unknown) == 1 else "keys"
         raise ValueError(f"Unknown {noun} in {source}: {', '.join(unknown)}")
+    _check_removed_cloud_keys(data, source)
+    if isinstance(block, Mapping):
+        _check_removed_cloud_keys(block, f"the checkpointing block of {source}")
     if block is not None and not isinstance(block, Mapping):
         raise ValueError(
             f"'checkpointing' in {source} must be a mapping of checkpoint "
@@ -781,17 +812,6 @@ def _checkpoint_from_yaml(data: Mapping[str, Any]) -> CheckpointConfig:
         ),
         keep_last_n=src.get("keep_last_n", flat_fallback.get("keep_last_n", 3)),
         resume=src.get("resume", flat_fallback.get("resume", False)),
-        cloud_sync=bool(src.get("cloud_sync", flat_fallback.get("cloud_sync", False))),
-        cloud_bucket=str(
-            src.get("cloud_bucket", flat_fallback.get("cloud_bucket", "")) or ""
-        ),
-        cloud_sync_cmd=str(
-            src.get(
-                "cloud_sync_cmd",
-                flat_fallback.get("cloud_sync_cmd", "aws s3 cp"),
-            )
-            or "aws s3 cp"
-        ),
         enabled=bool(src.get("enabled", flat_fallback.get("enabled", True))),
     )
 

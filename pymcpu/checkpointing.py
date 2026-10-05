@@ -12,7 +12,6 @@ import logging
 import os
 import pickle
 import re
-import subprocess
 import tempfile
 import warnings
 from dataclasses import asdict, dataclass, field
@@ -33,15 +32,12 @@ _CYCLE_NAME_RE = re.compile(r"^checkpoint_cycle_(\d+)\.chk$")
 
 @dataclass
 class CheckpointConfig:
-    """Checkpointing / resume / optional cloud-sync settings."""
+    """Checkpointing and resume settings."""
 
     checkpoint_dir: str | None = "checkpoints"
     checkpoint_interval: int = 50
     resume: str | bool | None = False
     keep_last_n: int | None = 3
-    cloud_sync: bool = False
-    cloud_bucket: str = ""
-    cloud_sync_cmd: str = "aws s3 cp"
     enabled: bool = True
 
     def __post_init__(self) -> None:
@@ -171,7 +167,6 @@ def save_checkpoint(
     is_best: bool = False,
     keep_last_n: int | None = None,
     cycle: int | None = None,
-    config: CheckpointConfig | None = None,
 ) -> Path:
     """Safely save a checkpoint using an atomic write.
 
@@ -190,8 +185,6 @@ def save_checkpoint(
         (``last.chk`` / ``best.chk`` are always kept).
     cycle
         Optional cycle override written into the payload.
-    config
-        Optional :class:`CheckpointConfig` used for cloud sync of ``last.chk``.
     """
     state = _coerce_checkpoint_mapping(state)
     if cycle is not None:
@@ -243,57 +236,7 @@ def save_checkpoint(
     if keep_last_n is not None:
         prune_cycle_checkpoints(checkpoint_dir, keep_last_n=int(keep_last_n))
 
-    # Cloud-sync only last.chk (not every versioned cycle file).
-    last_chk_path = checkpoint_dir / DEFAULT_FILENAME
-    if config is not None and filename == DEFAULT_FILENAME and last_chk_path.exists():
-        _maybe_cloud_sync(str(last_chk_path), config)
-
     return filepath
-
-
-def _maybe_cloud_sync(local_path: str, config: CheckpointConfig) -> None:
-    """
-    Fire-and-forget background upload of local_path to cloud_bucket.
-
-    - Runs only when config.cloud_sync is True.
-    - Spawns a subprocess with Popen (non-blocking, does NOT stall the sim).
-    - Only syncs last.chk (not versioned files) to avoid bandwidth waste.
-    - Logs a warning if the sync command binary is not found.
-    - Never raises — a sync failure must not crash the simulation.
-
-    Supported cloud_sync_cmd examples:
-        "aws s3 cp"       (AWS CLI)
-        "gsutil cp"       (Google Cloud)
-        "rclone copy"     (rclone — any backend)
-    """
-    if not config.cloud_sync:
-        return
-
-    if not config.cloud_bucket:
-        logger.warning(
-            "[Checkpoint] cloud_sync=True but cloud_bucket is empty — "
-            "skipping sync. Set cloud_bucket in config or YAML."
-        )
-        return
-
-    dest = config.cloud_bucket.rstrip("/") + "/" + os.path.basename(local_path)
-    cmd = config.cloud_sync_cmd.split() + [local_path, dest]
-
-    try:
-        subprocess.Popen(
-            cmd,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-        logger.info("[Checkpoint] Cloud sync started -> %s", dest)
-    except FileNotFoundError:
-        logger.warning(
-            "[Checkpoint] Cloud sync command not found: '%s'. "
-            "Install aws-cli / gsutil / rclone, or set cloud_sync: false.",
-            cmd[0],
-        )
-    except Exception as e:
-        logger.warning("[Checkpoint] Cloud sync failed to start: %s", e)
 
 
 def load_checkpoint(checkpoint_path: str | Path) -> dict[str, Any]:

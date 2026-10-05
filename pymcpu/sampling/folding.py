@@ -88,9 +88,6 @@ class FoldingRunner:
         checkpoint_interval: int | None = None,
         keep_last_n: int | None = None,
         resume: str | bool | None = None,
-        cloud_sync: bool | None = None,
-        cloud_bucket: str | None = None,
-        cloud_sync_cmd: str | None = None,
         verbose: bool = True,
     ) -> None:
         self.pdb_path = Path(pdb)
@@ -159,12 +156,6 @@ class FoldingRunner:
             cfg.keep_last_n = keep_last_n
         if resume is not None:
             cfg.resume = resume
-        if cloud_sync is not None:
-            cfg.cloud_sync = bool(cloud_sync)
-        if cloud_bucket is not None:
-            cfg.cloud_bucket = str(cloud_bucket)
-        if cloud_sync_cmd is not None:
-            cfg.cloud_sync_cmd = str(cloud_sync_cmd)
         self.checkpoint_config = cfg
 
         self.output_dir = Path(output_dir)
@@ -786,7 +777,6 @@ class FoldingRunner:
             filename=cycle_name,
             cycle=int(cycle),
             keep_last_n=self.checkpoint_config.keep_last_n,
-            config=None,
         )
         _save_checkpoint(
             state,
@@ -794,7 +784,6 @@ class FoldingRunner:
             filename="last.chk",
             cycle=int(cycle),
             keep_last_n=None,
-            config=self.checkpoint_config,
         )
         logger.info("[Folding] checkpoint saved cycle=%s file=%s", cycle, cycle_name)
 
@@ -888,9 +877,6 @@ class FoldingRunner:
         checkpoint_interval: int | None = None,
         keep_last_n: int | None = None,
         resume: bool | str | None = None,
-        cloud_sync: bool | None = None,
-        cloud_bucket: str | None = None,
-        cloud_sync_cmd: str | None = None,
     ) -> Path:
         """
         Run folding MC in report-sized cycles with optional checkpoint/resume.
@@ -907,12 +893,6 @@ class FoldingRunner:
             cfg.keep_last_n = keep_last_n
         if resume is not None:
             cfg.resume = resume
-        if cloud_sync is not None:
-            cfg.cloud_sync = bool(cloud_sync)
-        if cloud_bucket is not None:
-            cfg.cloud_bucket = str(cloud_bucket)
-        if cloud_sync_cmd is not None:
-            cfg.cloud_sync_cmd = str(cloud_sync_cmd)
 
         if steps is not None:
             self._total_steps_target = int(steps)
