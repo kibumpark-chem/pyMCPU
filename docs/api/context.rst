@@ -8,24 +8,10 @@ the running energy, and evaluates the registered
 does.
 
 .. note::
-   ``Context`` is a compiled ``pymcpu.mcpu_core`` class. The
-   documentation build mocks that module, so the directives on this
-   page are hand-authored; the signatures were read off the built
-   extension.
-
-.. note::
-   ``Context`` exposes 68 public members. This page documents the
-   user-facing subset. The remainder -- neighbour-list cell sizing and
-   Verlet skin knobs (``mu_cell_size_angstrom``, ``mu_skin``,
-   ``mu_verlet_enabled``, ``verlet_moved_threshold``,
-   ``verlet_partial_threshold``, ``use_cell_pair``,
-   ``cell_pair_min_moved``, ``clash_first_min_moved``,
-   ``skip_rigid_mm`` and their setters), rebuild counters (``neighbor_aabb_rebuilds``,
-   ``neighbor_dense_cap_fallbacks``, ``neighbor_proxy_stats``,
-   ``print_neighbor_audit``) and the atom-permutation internals -- are
-   **performance and diagnostic knobs and are not part of the stable
-   API**. They exist for benchmarking and bug reproduction, they change
-   between releases, and correct results must never depend on them.
+   This page documents the user-facing members. The rest, such as the
+   neighbour-list settings and rebuild counters, are performance and
+   diagnostic knobs: they are not part of the stable API, they can change
+   between releases, and results never depend on them.
 
 .. py:currentmodule:: pymcpu
 
@@ -146,7 +132,7 @@ coordinates as ``float64`` to keep the rest: a ``float32`` copy of a shifted
 run rounds them at the far position again. A later placement of a different structure, or one with an explicit
 ``frame_offset`` that breaks the conditions above, is rounded to ``float32``
 once, in the engine frame. Structures within 64 Å of the origin, or
-straddling it on every axis, run unshifted, exactly as before.
+straddling it on every axis, run unshifted.
 
 Rounding still grows with the distance from the origin inside the engine
 frame. If the coordinates still reach 256 Å or more there (a structure
@@ -178,9 +164,9 @@ Energy
 
 .. py:method:: Context.energy_breakdown(weighted=True) -> dict
 
-   Return per-term energies. ``weighted=True`` uses legacy outer
-   weights (incl. HBond ``RDTHREE_CON``); ``weighted=False`` returns
-   raw per-potential energies.
+   Return per-term energies. ``weighted=True`` multiplies each term by its
+   weight (2.7 for the hydrogen-bond term by default); ``weighted=False``
+   returns the raw energies.
 
    The returned dict has keys ``raw_total``, ``weighted_total``,
    ``by_group`` (a ``dict[int, float]`` keyed by energy group),
