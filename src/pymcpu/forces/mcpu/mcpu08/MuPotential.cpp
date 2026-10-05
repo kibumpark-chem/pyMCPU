@@ -82,6 +82,133 @@ namespace {
 // Relative slack of span_mask8's cutoff over the exact one; see there.
 constexpr float kSpanMaskSlack = 1.0f + 1.0e-4f;
 
+/// MCPU_CONTACT_LIST=0 turns the live contact list off; read once.
+bool contact_list_enabled() {
+    static const bool on = [] {
+        const char* e = std::getenv("MCPU_CONTACT_LIST");
+        return !(e && e[0] == '0');
+    }();
+    return on;
+}
+
+/// The atoms the Mu pair loops visit, in increasing order: every atom but the
+/// amide hydrogens. Iterating this list visits the same pairs in the same
+/// order as testing System::is_amide_h_atom on both atoms of every pair.
+void mu_pair_atoms(const System& sys, int n, std::vector<int>& out) {
+    out.clear();
+    out.reserve(static_cast<size_t>(n));
+    for (int i = 0; i < n; ++i)
+        if (!sys.is_amide_h_atom(i)) out.push_back(i);
+}
+
+/// Calls visit(i, j, r2) for every pair i = atoms[a], j = atoms[b] (a < b)
+/// whose r2 = cv.dist2(i, j) is not greater than cutoff_sq (NaN counts as
+/// kept), in the order of the all-pairs loop over `atoms`, and stops at the
+/// first visit that returns true (the result is then true).
+///
+/// The candidates come from a cell binning of these coordinates, cells wider
+/// than the cutoff, so every pair within it lies in neighbouring cells; each
+/// atom's later partners are collected in a bitmap and taken in increasing
+/// index. Same pairs, same r2, same order as the O(n^2) loop, which is kept
+/// for short lists and coordinates that are not finite. The cells start 1%
+/// wider than the cutoff (dist2 rounds |dx| by far less) and widen further
+/// when the box would need more than max(32768, 16 n) of them, so an
+/// extended chain costs O(n) memory. Scratch is per call: full energies are
+/// rare, and are also taken on states that are not accepted.
+template <class Visit>
+bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
+                           float cutoff_sq, Visit&& visit) {
+    const size_t n = atoms.size();
+    auto all_pairs = [&]() {
+        for (size_t a = 0; a < n; ++a) {
+            const int i = atoms[a];
+            for (size_t b = a + 1; b < n; ++b) {
+                const int j = atoms[b];
+                const float r2 = cv.dist2(i, j);
+                if (r2 > cutoff_sq) continue;
+                if (visit(i, j, r2)) return true;
+            }
+        }
+        return false;
+    };
+    const double cutoff = std::sqrt(static_cast<double>(cutoff_sq));
+    if (n < 128 || !(cutoff > 0.0) || !std::isfinite(cutoff)) return all_pairs();
+    double lo[3] = {HUGE_VAL, HUGE_VAL, HUGE_VAL};
+    double hi[3] = {-HUGE_VAL, -HUGE_VAL, -HUGE_VAL};
+    for (const int i : atoms) {
+        const double p[3] = {cv.x(i), cv.y(i), cv.z(i)};
+        for (int d = 0; d < 3; ++d) {
+            if (!std::isfinite(p[d])) return all_pairs();
+            lo[d] = std::min(lo[d], p[d]);
+            hi[d] = std::max(hi[d], p[d]);
+        }
+    }
+    const double max_cells = std::max(32768.0, 16.0 * static_cast<double>(n));
+    double cell = cutoff * 1.01 + 1e-3;
+    double ncd[3];
+    for (;;) {
+        double total = 1.0;
+        for (int d = 0; d < 3; ++d) {
+            ncd[d] = std::floor((hi[d] - lo[d]) / cell) + 1.0;
+            total *= ncd[d];
+        }
+        if (total <= max_cells) break;
+        cell *= std::cbrt(total / max_cells) * 1.01;
+    }
+    const int nc[3] = {static_cast<int>(ncd[0]), static_cast<int>(ncd[1]),
+                       static_cast<int>(ncd[2])};
+    const size_t n_cells = static_cast<size_t>(nc[0]) * static_cast<size_t>(nc[1]) *
+                           static_cast<size_t>(nc[2]);
+    auto bin = [&](int d, double v) {
+        return std::min(static_cast<int>((v - lo[d]) / cell), nc[d] - 1);
+    };
+    // Atoms by cell, each cell's list in increasing list position.
+    std::vector<int> cell_of(n), start(n_cells + 1, 0), sorted(n);
+    for (size_t a = 0; a < n; ++a) {
+        const int i = atoms[a];
+        cell_of[a] = (bin(0, cv.x(i)) * nc[1] + bin(1, cv.y(i))) * nc[2] + bin(2, cv.z(i));
+        ++start[static_cast<size_t>(cell_of[a]) + 1];
+    }
+    for (size_t c = 0; c < n_cells; ++c) start[c + 1] += start[c];
+    {
+        std::vector<int> fill(start.begin(), start.end() - 1);
+        for (size_t a = 0; a < n; ++a)
+            sorted[static_cast<size_t>(fill[static_cast<size_t>(cell_of[a])]++)] =
+                static_cast<int>(a);
+    }
+    std::vector<uint64_t> bits((n + 63) / 64, 0);
+    for (size_t a = 0; a + 1 < n; ++a) {
+        const int c = cell_of[a];
+        const int cz = c % nc[2], cy = (c / nc[2]) % nc[1], cx = c / (nc[1] * nc[2]);
+        size_t w_hi = (a + 1) >> 6;
+        for (int x = std::max(cx - 1, 0); x <= std::min(cx + 1, nc[0] - 1); ++x)
+            for (int y = std::max(cy - 1, 0); y <= std::min(cy + 1, nc[1] - 1); ++y)
+                for (int z = std::max(cz - 1, 0); z <= std::min(cz + 1, nc[2] - 1); ++z) {
+                    const size_t cc = static_cast<size_t>((x * nc[1] + y) * nc[2] + z);
+                    for (int k = start[cc + 1] - 1; k >= start[cc]; --k) {
+                        const size_t b = static_cast<size_t>(sorted[static_cast<size_t>(k)]);
+                        if (b <= a) break;
+                        bits[b >> 6] |= uint64_t{1} << (b & 63);
+                        w_hi = std::max(w_hi, b >> 6);
+                    }
+                }
+        const int i = atoms[a];
+        for (size_t w = (a + 1) >> 6; w <= w_hi; ++w) {
+            uint64_t m = bits[w];
+            bits[w] = 0;
+            while (m) {
+                const size_t b = (w << 6) + static_cast<size_t>(__builtin_ctzll(m));
+                m &= m - 1;
+                const int j = atoms[b];
+                const float r2 = cv.dist2(i, j);
+                if (r2 > cutoff_sq) continue;
+                if (visit(i, j, r2)) return true;
+            }
+        }
+    }
+    return false;
+}
+
 static_assert(OpenCellGrid::CELL_CAPACITY % 8 == 0,
               "span_mask8 loads whole 8-slot blocks of a cell span");
 
@@ -853,10 +980,7 @@ inline __attribute__((always_inline)) unsigned span_mask8(
         // DEFAULT ON (1.35-1.45x on chignolin/1igd/actin when introduced).
         // MCPU_CONTACT_LIST=0 restores the re-measure path, which does not
         // re-decide pairs a rigid pivot carries.
-        static const bool kContactList = [] {
-            const char* e = std::getenv("MCPU_CONTACT_LIST");
-            return !(e && e[0] == '0');
-        }();
+        const bool kContactList = contact_list_enabled();
         float delta;
         if (kContactList) {
             // A rigid move adds to the drift budget of the pairs it carries
@@ -877,6 +1001,14 @@ inline __attribute__((always_inline)) unsigned span_mask8(
                 !masked &&
                 carry_bound <= budget;
             if (usable) {
+                if (!old_state.mu_contact_list_ready &&
+                    old_state.mu_contact_list_prebuilt) {
+                    // Filled by the last full-energy resync from these same
+                    // coordinates: the list rebuild_contact_list would make.
+                    old_state.mu_contact_list_prebuilt = false;
+                    old_state.mu_contact_list_ready = true;
+                    ++contact_list_rebuilds_;
+                }
                 if (!old_state.mu_contact_list_ready ||
                     old_state.mu_list_drift + carry_bound > budget) {
                     rebuild_contact_list(context, old_state);
@@ -2116,25 +2248,23 @@ inline __attribute__((always_inline)) unsigned span_mask8(
         setup_mask_cache(sys);
         const int N = sys.getNumAtoms();
         state.mu_contact_list.assign(static_cast<size_t>(N), {});
+        state.mu_contact_list_prebuilt = false;
         const CoordView cv(state.coord_view());
-        for (int i = 0; i < N; ++i) {
-            if (sys.is_amide_h_atom(i)) continue;
-            for (int j = i + 1; j < N; ++j) {
-                if (sys.is_amide_h_atom(j)) continue;
+        std::vector<int> atoms;
+        mu_pair_atoms(sys, N, atoms);
+        mu_for_each_near_pair(cv, atoms, contact_cutoff_sq_, [&](int i, int j, float r2) {
                 const size_t idx = static_cast<size_t>(i) *
                                        static_cast<size_t>(N) +
                                    static_cast<size_t>(j);
-                if (!topo_contact_mask_[idx]) continue;
-                const float r2 = cv.dist2(i, j);
-                if (r2 > contact_cutoff_sq_) continue;
+                if (!topo_contact_mask_[idx]) return false;
                 // No clash test (ClashCutoff::None): a pair that rounding
                 // carried under its hard-core cutoff is listed with the
                 // contact energy the running energy holds for it.
                 bool near = false;
                 const float e = eval_pair<ClashCutoff::None>(i, j, r2, nullptr, &near);
                 if (e != 0.0f || near) state.mu_contact_add(i, j, e);
-            }
-        }
+                return false;
+        });
         state.mu_contact_list_ready = true;
         state.mu_list_drift = 0.f;
         ++contact_list_rebuilds_;
@@ -2427,8 +2557,8 @@ inline __attribute__((always_inline)) unsigned span_mask8(
     ) const {
         // Full energy for an arbitrary State must use that state's coordinates.
         // NeighborSystem Mu index reflects accepted coords only — do not query it here
-        // for proposed/trial states (PhysicsVerifier). Production total energy is
-        // called on the accepted state; O(n_mu^2) is acceptable for that path.
+        // for proposed/trial states (PhysicsVerifier), so the pairs come from a
+        // cell binning of this state's own coordinates (mu_for_each_near_pair).
         const System& sys = context.getSystem();
         setup_mask_cache(sys);
         float total_energy = 0.0f;
@@ -2441,7 +2571,13 @@ inline __attribute__((always_inline)) unsigned span_mask8(
         // do not use the list, so it is dropped instead and rebuilt by the
         // first move that needs it. Clearing in place keeps each atom's
         // allocation.
+        //
+        // A list that is not ready (dropped by set_positions, a restore or a
+        // move that could not follow it) is filled too, and kept as prebuilt:
+        // the first move that can use a list adopts it instead of paying the
+        // O(N^2) rebuild after every replica swap. A clash drops it as above.
         bool refill_contacts = false;
+        bool prebuild = false;
         if (resync && state.mu_contact_list_ready) {
             if (sys.has_energy_mask()) {
                 state.mu_contact_invalidate();
@@ -2451,22 +2587,26 @@ inline __attribute__((always_inline)) unsigned span_mask8(
                 for (auto& partners : state.mu_contact_list) partners.clear();
                 state.mu_list_drift = 0.f;
             }
+        } else if (resync && !sys.has_energy_mask() && contact_list_enabled()) {
+            refill_contacts = true;
+            prebuild = true;
+            state.mu_contact_list.assign(static_cast<size_t>(num_atoms), {});
+            state.mu_contact_list_prebuilt = false;
+            state.mu_list_drift = 0.f;
         }
         const CoordView cv(state.coord_view());
-        for (int i = 0; i < num_atoms; ++i) {
-            if (sys.is_amide_h_atom(i)) continue;
-            for (int j = i + 1; j < num_atoms; ++j) {
-                if (sys.is_amide_h_atom(j)) continue;
+        std::vector<int> atoms;
+        mu_pair_atoms(sys, num_atoms, atoms);
+        // No pair clashes, makes a contact or is a near miss beyond the Mu
+        // cutoff (see mu_exact_cutoff_), so only pairs within it are visited.
+        const bool clashed = mu_for_each_near_pair(
+            cv, atoms, contact_cutoff_sq_, [&](int i, int j, float dist_sq) {
                 const int matrix_idx = i * num_atoms + j;
 
                 if (!topo_contact_mask_[static_cast<size_t>(matrix_idx)] &&
                     !topo_clash_mask_[static_cast<size_t>(matrix_idx)]) {
-                    continue;
+                    return false;
                 }
-                const float dist_sq = cv.dist2(i, j);
-                // No pair clashes, makes a contact or is a near miss beyond
-                // the Mu cutoff (see mu_exact_cutoff_).
-                if (dist_sq > contact_cutoff_sq_) continue;
                 bool local_clash = false, near = false;
                 // The state cutoff: see ClashCutoff.
                 const float e = eval_pair<ClashCutoff::State>(
@@ -2475,7 +2615,7 @@ inline __attribute__((always_inline)) unsigned span_mask8(
                     // ClashOnly: full energy stays contact-only (legacy
                     // CLASH_WEIGHT=0). Delta path still StericClash-rejects.
                     if (energy_mask_mode_cached_ == EnergyMaskMode::ClashOnly) {
-                        continue;
+                        return false;
                     }
                     // DIAGNOSTIC (MCPU_CLASH_REPORT=1): identify the pair that
                     // trips the sentinel. No move can put a pair under the
@@ -2519,12 +2659,14 @@ inline __attribute__((always_inline)) unsigned span_mask8(
                     // A clashing state's list is half rewritten; drop it, and
                     // the next move rebuilds it.
                     if (refill_contacts) state.mu_contact_invalidate();
-                    return kHardCorePenalty;
+                    return true;
                 }
                 if (e != 0.0f) total_energy += e;
                 if (refill_contacts && (e != 0.0f || near)) state.mu_contact_add(i, j, e);
-            }
-        }
+                return false;
+            });
+        if (clashed) return kHardCorePenalty;
+        if (prebuild) state.mu_contact_list_prebuilt = true;
 
         return total_energy;
     }
