@@ -1,15 +1,11 @@
 Reporters
 =========
 
-Reporters observe a running simulation at a fixed step interval and write to
-disk. The library writes files rather than printing: under replica exchange a
-single run has many ``step()`` calls across many MPI ranks, so anything going
-to stdout interleaves into noise.
-
-All three reporter classes live in the compiled extension, so they are
-documented here with explicit signatures rather than by ``autoclass`` — Read
-the Docs cannot compile the C++ extension, and a mocked pybind11 class renders
-as an empty stub.
+Reporters observe a running simulation at a fixed step interval.
+:py:class:`EnergyReporter` and :py:class:`XtcReporter` write files;
+:py:class:`SimulationReporter` prints progress, for interactive use. Files
+are the default because under replica exchange many processes run at once,
+and their printed output would interleave.
 
 Attach a reporter either through the ``Simulation`` helpers, which construct
 and register it in one call, or by constructing it yourself and calling
@@ -124,16 +120,15 @@ XtcReporter
       detaching reporters, so the on-disk frame count matches
       ``n_frames_written``.
 
-XTC is the preferred trajectory format: it is compressed, and it is one of the
-four formats correctly truncated when a run resumes. See :doc:`../checkpointing`
-— DCD is **not** truncated on resume.
+XTC is compressed, and a resumed run cuts it, like the energy CSV, back to the
+checkpoint before appending; see :doc:`../checkpointing`.
 
 SimulationReporter
 ------------------
 
 .. py:class:: SimulationReporter(report_interval)
 
-   Prints a short human-readable progress line to stdout every
+   Prints the move counts and the energy to standard output every
    ``report_interval`` steps.
 
    :param int report_interval: Steps between lines.

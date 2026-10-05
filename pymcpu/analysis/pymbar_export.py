@@ -192,6 +192,7 @@ class RexSampleWriter:
         cycle: int,
         walker_id: int,
     ) -> None:
+        """Buffer one sample record. Raises ``RuntimeError`` once closed."""
         if self._closed:
             raise RuntimeError("RexSampleWriter is closed")
         self._buf.state_index.append(int(state_index))
@@ -203,6 +204,7 @@ class RexSampleWriter:
 
     @property
     def n_samples(self) -> int:
+        """Number of records buffered so far."""
         return len(self._buf.state_index)
 
     def n_frames_written(self) -> int:
@@ -297,6 +299,7 @@ class RexSampleWriter:
         return target
 
     def close(self) -> Path:
+        """Flush, mark the writer closed, and return the path written."""
         out = self.flush()
         self._closed = True
         return out

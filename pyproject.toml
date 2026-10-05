@@ -222,6 +222,11 @@ wheel.exclude = [
 # Accepted values: v2 | v3 (default) | v4 | native | none | a raw -march
 # string. See the tier table in CMakeLists.txt.
 MCPU_ARCH = { env = "MCPU_ARCH", default = "v3" }
+# AUTO (default): pad branches against the Skylake JCC erratum when the
+# toolchain can do it (GCC with binutils >= 2.34; with LTO, GCC >= 11).
+# ON makes "cannot" a configure error -- the wheel job sets it so a wheel
+# never ships without the padding. OFF never pads. See CMakeLists.txt.
+MCPU_JCC_PAD = { env = "MCPU_JCC_PAD", default = "AUTO" }
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

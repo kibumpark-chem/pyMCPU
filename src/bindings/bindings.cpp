@@ -649,8 +649,9 @@ PYBIND11_MODULE(mcpu_core, m) {
     py::class_<mcpu::MCIntegrator>(m, "Integrator",
         "Metropolis Monte Carlo move engine: backbone pivot, continuous\n"
         "sidechain, rotamer-library and kinematic-closure loop moves.\n\n"
-        "temperature is required: a DIMENSIONLESS reduced parameter, roughly\n"
-        "0.3 (cold, folded) to 0.6 (hot, unfolded) -- it is not Kelvin.\n\n"
+        "temperature is required: a DIMENSIONLESS reduced parameter, not Kelvin.\n"
+        "Where a protein unfolds depends on the protein; chignolin melts at\n"
+        "about 0.65 to 0.7.\n\n"
         "Call set_seed(): the same seed, input and build reproduce a run exactly.")
         .def(py::init<float, float, float>(), py::arg("temperature"),
              py::arg("step_size_rad") = 0.1f,
@@ -1131,7 +1132,7 @@ PYBIND11_MODULE(mcpu_core, m) {
     // generated BuildConfig.h, which CMake fills from the same variables that
     // produced the flags. There are deliberately NO fallback literals: a
     // missing define is a #error, not a plausible-looking default.
-#if !defined(MCPU_BUILD_ARCH_TIER) || !defined(MCPU_BUILD_LTO)
+#if !defined(MCPU_BUILD_ARCH_TIER) || !defined(MCPU_BUILD_LTO) || !defined(MCPU_BUILD_JCC_PAD)
 #error "BuildConfig.h was not generated; configure through CMake."
 #endif
 #if !defined(MCPU_USE_POOLED_PROPOSAL)
@@ -1218,6 +1219,11 @@ PYBIND11_MODULE(mcpu_core, m) {
             py::dict build;
             build["type"] = MCPU_BUILD_TYPE;
             build["lto"] = (MCPU_BUILD_LTO != 0);
+            // EFFECTIVE, like lto: on only when CMake's probes showed the
+            // assembler that emits the shipped code honours the option.
+            build["jcc_pad"] = (MCPU_BUILD_JCC_PAD != 0);
+            build["jcc_pad_mode"] = MCPU_BUILD_JCC_PAD_MODE;
+            build["jcc_pad_reason"] = MCPU_BUILD_JCC_PAD_REASON;
             build["cmake_version"] = MCPU_BUILD_CMAKE_VERSION;
             // Two independent facts a single "Release" string cannot express:
             // RelWithDebInfo sets both, and a CXXFLAGS=-O0 override sets only

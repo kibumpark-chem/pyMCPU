@@ -11,8 +11,10 @@ the other:
 - ``korp``, built by :class:`~pymcpu.KORPForceField`: backbone-only, with the
   KORP 6D orientational potential and a steric filter.
 
-A config picks one with ``forcefield:`` (default ``mcpu08``). Both classes
-follow :class:`~pymcpu.forcefields.base.BaseForceField`.
+A config names one with ``forcefield:`` (default ``mcpu08``), but so far
+only an :doc:`EngineSession <../integrating_pymcpu>` reads it: ``mcpu run``
+and the :doc:`sampling` drivers always build mcpu08. Both classes follow
+:class:`~pymcpu.forcefields.base.BaseForceField`.
 
 MCPUForceField (mcpu08)
 =======================
