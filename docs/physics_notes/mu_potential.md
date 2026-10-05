@@ -1,110 +1,54 @@
-# Mu contact potential (KERNEL-1)
+# Mu contact potential (mcpu08)
 
-**Python API:** :class:`~pymcpu.MuPotential` (see :doc:`/api/forces`).
+**Python API:** {class}`~pymcpu.MuPotential`; see {doc}`/api/forces`.
 
-## What is modeled
+The Mu potential scores contacts between pairs of atoms. Each heavy atom has
+one of 84 atom types, and each pair of types has a contact energy, a table
+value derived from the statistics of known protein structures. A pair of atoms
+in contact adds its types' energy; a pair closer than its hard-core distance
+is a clash, and a move that makes one is rejected. The term's weight is 0.4
+(energy group 1).
 
-The μ-potential is a **knowledge-based pairwise contact energy**.
-For each atom-type pair that falls within a contact shell (and
-outside the hard-core clash distance), the energy contribution
-is a table entry derived from protein structure statistics.
-Temperature in the Metropolis criterion that accepts or rejects
-moves is a **dimensionless** reduced parameter (typical 0.3–0.6);
-μ energies themselves are **unitless** table values.
+## Contact and clash distances
 
-## Inputs
+Each atom type has a radius. For atoms with radii r_i and r_j:
 
-- Cartesian coordinates (Å, double) for all atoms
-- Per-atom MCPU type indices (including the residue-independent
-  backbone types)
-- Precomputed pair tables: `can_contact`, `can_clash`,
-  `contact_r2`, `hardcore_r2`, `mu_energy`
-- Default contact parameters: α = 0.75, λ = 1.8
-  (see Implementation Notes)
+| Cutoff | Distance |
+|--------|----------|
+| Hard core | r_hard = α (r_i + r_j) |
+| Contact | r_contact = λ α (r_i + r_j) |
 
-## Energy contribution
+with α = 0.75 and λ = 1.8, which `MCPUForceField` fixes. A pair is in contact
+when it is closer than r_contact and does not clash.
 
-When atom pair (i, j) is a live contact:
+A move is rejected if it puts a pair under r_hard, rounded to 0.001 Å, less
+0.0015 Å, so that noise at the precision of a PDB file cannot decide a clash.
+A whole state (`calculate_total_energy`, `Context.has_steric_clash()`) is
+judged against a cutoff 0.001 Å looser, `mcpu_core.STATE_CLASH_BUFFER_A`; see
+the hard-core section of {doc}`mc_acceptance`. Pairs that already overlap in
+the starting structure are exempt from the clash test for the whole run.
 
-```
-E_pair = mu_energy[i, j]     # unitless table entry
-```
+## Which pairs count
 
-The MC delta for a move is the sum of energies of newly formed
-contacts minus energies of broken contacts. A hard-core clash returns a
-sentinel energy that rejects the move before the Metropolis test is reached;
-`Context.has_steric_clash()` reports whether the *current* state contains one.
+- Contacts count only between atoms whose residues are more than four apart
+  in sequence, and never between two backbone atoms (N, CA, C, O, OXT).
+- Clashes are tested between almost all pairs. The exceptions are pairs that
+  covalent geometry holds close, mostly within a residue and across the
+  peptide bond.
+- Two cysteine SG atoms more than four residues apart count as a contact and
+  never as a clash, which allows a disulfide.
+- Explicit hydrogens (`virtual_amide_h=False`) take no part.
 
-The default outer weight for this group is **0.4** (energy group 1). Weights
-live on `EnergyWeights`, not on the potential object -- read them with
-`Context.get_energy_weights()` and set one with
-`Context.set_energy_weight(group, w)`.
+## Atom types
 
-## Implementation notes
+Backbone atoms have the same type whatever their residue: N 79, CA 80, C 81,
+O 82, and the terminal OXT 83. Glycine's CA has a type of its own, 78.
+Sidechain atoms have a type for each residue and atom name. The types and
+radii are listed in `atom_types.csv` in the mcpu08 parameter set.
 
-### Coordinates are floating point
+## Energy changes
 
-Legacy MCPU stored coordinates as integers scaled by a factor of 100 and did
-its distance comparisons in integer arithmetic. pyMCPU does not: coordinates
-are floating point in Ångströms throughout. The legacy scale factor survives
-only where a legacy integer cutoff has to be converted at table-build time.
-
-### Contact and clash distance cutoffs
-
-For each atom-type pair (i, j) with van der Waals
-radii $r_i$ and $r_j$:
-
-```
-Hard-core clash:  r_hard = α × (r_i + r_j)
-Contact upper:    r_contact = λ × α × (r_i + r_j)
-```
-
-Default parameter values (`_MU_ALPHA_DEFAULT` / `_MU_LAMBDA_DEFAULT` in
-`pymcpu/forcefields/mcpu.py`, applied by
-`pymcpu/forcefields/builders/mu_builder.py`):
-
-```
-α (MU_ALPHA_DEFAULT)  = 0.75
-λ (MU_LAMBDA_DEFAULT) = 1.8
-```
-
-These are configurable at System creation time.
-
-A move is rejected if it brings a pair under `r_hard` rounded to 0.001 Å,
-less 0.0015 Å (so PDB-precision noise cannot decide it). A whole state --
-`calculate_total_energy`, `has_steric_clash` -- is judged against a cutoff
-0.001 Å looser, `mcpu_core.STATE_CLASH_BUFFER_A`, because a rigid pivot
-carries pairs without re-checking them and its rounding can leave one a few
-1e-6 Å under the move cutoff; see the hard-core section of the MC acceptance
-notes.
-
-### Neighbour enumeration
-
-Candidate pairs come from a cell grid rather than an all-pairs sweep. The Mu
-term uses typed grids over backbone/oxygen and sidechain atoms -- the backend
-reports itself as `opencell_mu_BBO_SC`, readable at run time via
-`Context.mu_backend_name()`.
-
-A Verlet list is available on top of the grid but is **off by default**: the
-`mu_skin` parameter is 0, which selects the grid's dense candidate list
-directly. Setting a positive skin (`Context.set_mu_skin`) engages the Verlet
-path, which trades rebuild work against per-step traversal. Both paths are
-required to give identical energies, and `scripts/parity_verlet_vs_cellonly.py`
-is the oracle that checks it.
-
-### Backbone atom type encoding
-
-Backbone atoms N, CA, C, O use residue-independent
-type indices regardless of which amino acid they belong to:
-
-| Atom | Type | Lookup key |
-|------|------|------------|
-| N | 79 | `("XXX", "N")` in `atom_types.csv` |
-| CA | 80 | `("XXX", "CA")`; GLY CA = type 78 |
-| C | 81 | `("XXX", "C")` |
-| O | 82 | `("XXX", "O")` |
-
-An earlier revision assigned type −1 (unknown) to backbone atoms of non-GLY
-residues, which gave them wrong clash radii; the residue-independent `"XXX"`
-lookup above is the fix. GLY CA keeps its own type because its radius and
-energy row differ from the generic CA.
+A move changes the Mu energy by the energy of the contacts it makes minus that
+of the contacts it breaks. Pairs in which neither atom moved keep their
+energy, so the cost of a move grows with the atoms it moves; candidate
+partners come from a cell grid, not a search over every atom.
