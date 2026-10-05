@@ -1,3 +1,4 @@
+#include <atomic>
 #include "pymcpu/System.h"
 #include "pymcpu/Context.h"
 #include "pymcpu/AtomPermutation.h"
@@ -83,6 +84,15 @@ System::System(int atoms, int residues)
       num_residues(residues)
 {}
 
+namespace {
+// Process-wide, so two Systems never hand out the same epoch. 0 is the
+// unmasked state every System starts in.
+std::uint64_t next_energy_mask_epoch() noexcept {
+    static std::atomic<std::uint64_t> counter{0};
+    return counter.fetch_add(1, std::memory_order_relaxed) + 1;
+}
+}  // namespace
+
 void System::set_energy_ignored_residues(const std::vector<int>& residues,
                                          EnergyMaskMode mode) {
     energy_ignored_mask_.assign(static_cast<size_t>(num_residues), 0);
@@ -95,12 +105,14 @@ void System::set_energy_ignored_residues(const std::vector<int>& residues,
     }
     energy_mask_mode_ = mode;
     has_energy_mask_ = true;
+    energy_mask_epoch_ = next_energy_mask_epoch();
 }
 
 void System::clear_energy_ignored_residues() noexcept {
     energy_ignored_mask_.clear();
     energy_mask_mode_ = EnergyMaskMode::IgnoreAll;
     has_energy_mask_ = false;
+    energy_mask_epoch_ = next_energy_mask_epoch();
 }
 
 bool System::is_residue_energy_ignored(int res) const noexcept {

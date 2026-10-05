@@ -991,14 +991,21 @@ inline __attribute__((always_inline)) unsigned span_mask8(
                 carries ? carry_bound_A(context, new_state, patch) : 0.f;
             const float budget = kContactBandA - kContactBandSlackA;
             // The live list is only valid where the dense contiguous grid sees
-            // every candidate pair, no residue is energy-masked, and the
-            // carry fits the drift budget.
-            const bool masked = context.getSystem().has_energy_mask();
+            // every candidate pair and the carry fits the drift budget. Under
+            // an energy mask it holds no masked pair (eval_pair scores them 0
+            // and the clash tests still see ClashOnly ones), so it is valid
+            // for the mask it was built under; a mask change drops it, or a
+            // prebuilt one.
+            const System& sys_m = context.getSystem();
+            if ((old_state.mu_contact_list_ready ||
+                 old_state.mu_contact_list_prebuilt) &&
+                old_state.mu_list_mask_epoch != sys_m.energy_mask_epoch()) {
+                old_state.mu_contact_invalidate();
+            }
             const bool usable =
                 context.denseGridsActive() &&
                 context.neighbors().muGrid().grid().use_contiguous() &&
                 context.trial_in_bounds(new_state, patch) &&
-                !masked &&
                 carry_bound <= budget;
             if (usable) {
                 if (!old_state.mu_contact_list_ready &&
@@ -1022,25 +1029,23 @@ inline __attribute__((always_inline)) unsigned span_mask8(
                 // Until then it still says which carried pairs are near
                 // their cutoff.
                 const bool list_exact =
-                    !masked && old_state.mu_contact_list_ready &&
+                    old_state.mu_contact_list_ready &&
                     old_state.mu_list_drift + carry_bound <= budget;
                 delta = calculateEnergyChange_fast(
                     context, old_state, new_state, patch, list_exact);
                 const_cast<mcpu::MuWorkspace&>(context.getMuWorkspace())
                     .pending_list_invalidate = true;
-                if (!masked) {
-                    ++clist_fallbacks_;
-                    // A developer diagnostic; clist_fallbacks() counts it
-                    // either way.
-                    if (mcpu_verbose_enabled() &&
-                        (clist_fallbacks_ == 1 || (clist_fallbacks_ % 1000) == 0)) {
-                        std::fprintf(stderr,
-                            "NOTE: Mu move #%llu that cannot use the contact "
-                            "list (it leaves the neighbour grid, or there is "
-                            "none). An accepted one costs an O(N^2) list "
-                            "rebuild.\n",
-                            static_cast<unsigned long long>(clist_fallbacks_));
-                    }
+                ++clist_fallbacks_;
+                // A developer diagnostic; clist_fallbacks() counts it
+                // either way.
+                if (mcpu_verbose_enabled() &&
+                    (clist_fallbacks_ == 1 || (clist_fallbacks_ % 1000) == 0)) {
+                    std::fprintf(stderr,
+                        "NOTE: Mu move #%llu that cannot use the contact "
+                        "list (it leaves the neighbour grid, or there is "
+                        "none). An accepted one costs an O(N^2) list "
+                        "rebuild.\n",
+                        static_cast<unsigned long long>(clist_fallbacks_));
                 }
             }
         } else {
@@ -2267,6 +2272,7 @@ inline __attribute__((always_inline)) unsigned span_mask8(
         });
         state.mu_contact_list_ready = true;
         state.mu_list_drift = 0.f;
+        state.mu_list_mask_epoch = sys.energy_mask_epoch();
         ++contact_list_rebuilds_;
     }
 
@@ -2556,32 +2562,30 @@ inline __attribute__((always_inline)) unsigned span_mask8(
         // A resync (Potential::resyncEnergy) also rewrites the state's live
         // contact list, near misses included, from this pass and resets its
         // drift budget, so the list and the running energy are reset
-        // together. Under an energy mask, masked pairs score 0 here and moves
-        // do not use the list, so it is dropped instead and rebuilt by the
-        // first move that needs it. Clearing in place keeps each atom's
-        // allocation.
+        // together. Masked pairs score 0 here and are not listed, as in
+        // rebuild_contact_list, so the refilled list belongs to the current
+        // mask. Clearing in place keeps each atom's allocation.
         //
         // A list that is not ready (dropped by set_positions, a restore or a
         // move that could not follow it) is filled too, and kept as prebuilt:
         // the first move that can use a list adopts it instead of paying the
-        // O(N^2) rebuild after every replica swap. A clash drops it as above.
+        // O(N^2) rebuild after every replica swap. A clash, or a ClashOnly
+        // overlap, drops it.
         bool refill_contacts = false;
         bool prebuild = false;
         if (resync && state.mu_contact_list_ready) {
-            if (sys.has_energy_mask()) {
-                state.mu_contact_invalidate();
-            } else {
-                refill_contacts = true;
-                state.mu_contact_list.resize(static_cast<size_t>(num_atoms));
-                for (auto& partners : state.mu_contact_list) partners.clear();
-                state.mu_list_drift = 0.f;
-            }
-        } else if (resync && !sys.has_energy_mask() && contact_list_enabled()) {
+            refill_contacts = true;
+            state.mu_contact_list.resize(static_cast<size_t>(num_atoms));
+            for (auto& partners : state.mu_contact_list) partners.clear();
+            state.mu_list_drift = 0.f;
+            state.mu_list_mask_epoch = sys.energy_mask_epoch();
+        } else if (resync && contact_list_enabled()) {
             refill_contacts = true;
             prebuild = true;
             state.mu_contact_list.assign(static_cast<size_t>(num_atoms), {});
             state.mu_contact_list_prebuilt = false;
             state.mu_list_drift = 0.f;
+            state.mu_list_mask_epoch = sys.energy_mask_epoch();
         }
         const CoordView cv(state.coord_view());
         std::vector<int> atoms;
@@ -2604,6 +2608,13 @@ inline __attribute__((always_inline)) unsigned span_mask8(
                     // ClashOnly: full energy stays contact-only (legacy
                     // CLASH_WEIGHT=0). Delta path still StericClash-rejects.
                     if (energy_mask_mode_cached_ == EnergyMaskMode::ClashOnly) {
+                        // rebuild_contact_list would list an unmasked one of
+                        // these with its contact energy; leave that to it.
+                        if (refill_contacts) {
+                            state.mu_contact_invalidate();
+                            refill_contacts = false;
+                            prebuild = false;
+                        }
                         return false;
                     }
                     // DIAGNOSTIC (MCPU_CLASH_REPORT=1): identify the pair that

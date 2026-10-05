@@ -476,6 +476,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     above, an accepted swap plus a full recompute costs one replica 2.8% of
     10,000 MC steps on actin and 3.0% on PGK1, down from 15.2% and 15.4%.
 
+- **Runs with a residue energy mask use the Mu contact list.** A mask used
+  to switch the Mu term off the list, so every masked move took the slower
+  per-atom or cell-pair walk. Masked pairs score 0, so a list built under a
+  mask never holds them; the list is now kept under a mask and rebuilt when
+  the mask is set or cleared. Masked runs take 44-64% fewer cycles per step
+  on actin and PGK1. The accept sequence is unchanged, but the running
+  energy can differ from earlier versions in the last bits (up to 6e-4 in
+  50,000 steps) because the move's pairs are summed in a different order.
+
 - **`scripts/job_template.slurm` no longer activates a particular conda
   environment.** It activated `mcpu_dev`, a conda environment from one
   developer's setup, and used that environment's `mpirun`. The job now
