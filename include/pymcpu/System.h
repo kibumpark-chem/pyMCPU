@@ -165,6 +165,10 @@ private:
     std::vector<uint8_t> energy_ignored_mask_;
     EnergyMaskMode energy_mask_mode_ = EnergyMaskMode::IgnoreAll;
     bool has_energy_mask_ = false;
+    /// Changes whenever the mask is set or cleared, and is unique across every
+    /// System in the process, so a contact list built under one mask is never
+    /// reused under another (State::mu_list_mask_epoch).
+    std::uint64_t energy_mask_epoch_ = 0;
 
     KicReference kic_reference_;  // KIC FIX: start-structure closure targets (setKicReference)
 
@@ -255,6 +259,9 @@ public:
     void clear_energy_ignored_residues() noexcept;
     [[nodiscard]] bool is_residue_energy_ignored(int res) const noexcept;
     [[nodiscard]] bool has_energy_mask() const noexcept { return has_energy_mask_; }
+    [[nodiscard]] std::uint64_t energy_mask_epoch() const noexcept {
+        return energy_mask_epoch_;
+    }
     [[nodiscard]] EnergyMaskMode energy_mask_mode() const noexcept {
         return energy_mask_mode_;
     }

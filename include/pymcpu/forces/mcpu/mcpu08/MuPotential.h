@@ -584,8 +584,7 @@ namespace mcpu::forces::mcpu08 {
         // state.mu_contact_list and stages changes in the per-Context
         // MuWorkspace, which Context::commit_accepted_move applies.
 
-        /// Count of moves that could not use the list, energy-masked ones
-        /// aside (diagnostic only).
+        /// Count of moves that could not use the list (diagnostic only).
         mutable std::uint64_t clist_fallbacks_ = 0;
         /// Count of rebuild_contact_list calls (diagnostic only).
         mutable std::uint64_t contact_list_rebuilds_ = 0;

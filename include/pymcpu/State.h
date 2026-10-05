@@ -71,6 +71,9 @@ public:
     /// Upper bound (A) on how far any pair's distance can have changed through
     /// accepted rigid carries since the list was last measured from coordinates.
     mutable float mu_list_drift = 0.f;
+    /// System::energy_mask_epoch() the list was built under. Masked pairs are
+    /// never listed, so a list from another mask is stale.
+    mutable std::uint64_t mu_list_mask_epoch = 0;
 
     /// List the pair (i, j), worth `e` (0 for a near miss). O(1) amortized.
     void mu_contact_add(int i, int j, float e) const {

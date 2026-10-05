@@ -203,20 +203,44 @@ def _far_move(heavy, overlap, *, use_cell_pair: bool):
     return sim, new_coords, moved
 
 
-@pytest.mark.parametrize("use_cell_pair", [False, True])
-def test_a_rigid_move_does_not_recheck_the_overlap_it_carries(heavy, overlap, use_cell_pair: bool) -> None:
+def test_a_rigid_move_does_not_recheck_the_overlap_it_carries(heavy, overlap) -> None:
     """The carried pair keeps its distance, so the move is scored like any
-    other: its incremental change matches the full energy's. Masked runs
-    take the per-atom or cell-pair path."""
-    sim, new_coords, moved = _far_move(heavy, overlap, use_cell_pair=use_cell_pair)
-    visits_before = sim.context.neighbor_proxy_stats()["neighbor_num_cell_visits"]
+    other: its incremental change matches the full energy's. Masked runs use
+    the contact list like unmasked ones; the per-atom and cell-pair paths are
+    checked below."""
+    sim, new_coords, moved = _far_move(heavy, overlap, use_cell_pair=False)
     check = _check_rigid(sim.context, new_coords, moved)
-    # The per-atom walk counts cell visits and the cell-pair path does not,
-    # so this confirms which path ran (MCPU_USE_CELL_PAIR would override it).
-    walked = sim.context.neighbor_proxy_stats()["neighbor_num_cell_visits"] > visits_before
-    assert walked == (not use_cell_pair)
     assert check.passed, check.message
     assert abs(check.delta_incremental) < CLASH
+
+
+@pytest.mark.parametrize("use_cell_pair", [False, True])
+def test_without_the_contact_list_the_carried_overlap_agrees(use_cell_pair: bool) -> None:
+    """The same move on the per-atom walk or the cell-pair path, which a move
+    the contact list cannot follow falls back to. MCPU_CONTACT_LIST is read
+    once per process, so this runs in a fresh one."""
+    code = textwrap.dedent(f"""
+        from tests.physics.forcefield import test_mu_energy_mask_clash as t
+        heavy = t._load_heavy()
+        sim, new_coords, moved = t._far_move(heavy, t._make_overlap(heavy),
+                                             use_cell_pair={use_cell_pair})
+        stats = sim.context.neighbor_proxy_stats
+        before = stats()["neighbor_num_cell_visits"]
+        check = t._check_rigid(sim.context, new_coords, moved)
+        walked = stats()["neighbor_num_cell_visits"] > before
+        print("CHECK", check.passed, check.delta_incremental, walked)
+    """)
+    repo = Path(__file__).resolve().parents[3]
+    env = dict(os.environ, MCPU_CONTACT_LIST="0")
+    run = subprocess.run([sys.executable, "-c", code], cwd=repo, env=env,
+                         capture_output=True, text=True, check=True)
+    passed, delta, walked = [line.split()[1:] for line in run.stdout.splitlines()
+                             if line.startswith("CHECK ")][-1]
+    # The per-atom walk counts cell visits and the cell-pair path does not,
+    # so this confirms which path ran (MCPU_USE_CELL_PAIR would override it).
+    assert walked == str(not use_cell_pair)
+    assert passed == "True"
+    assert abs(float(delta)) < CLASH
 
 
 def test_the_pivot_breakdown_diagnostic_agrees() -> None:

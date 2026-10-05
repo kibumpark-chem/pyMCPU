@@ -176,7 +176,7 @@ def test_an_accepted_move_out_of_the_grid_drops_the_list() -> None:
     assert mu.contact_list_rebuilds - rebuilds >= 3  # the first, then one per drop
 
 
-@pytest.mark.parametrize("mask", [None, "ignore_all"], ids=["list", "no-list"])
+@pytest.mark.parametrize("mask", [None, "ignore_all"], ids=["list", "masked"])
 def test_a_pair_under_its_hard_core_keeps_its_contact_energy(mask) -> None:
     """Carried pairs are not re-checked for overlap, and far from the origin,
     where a float step is large, rounding can carry one under its hard-core
@@ -188,9 +188,9 @@ def test_a_pair_under_its_hard_core_keeps_its_contact_energy(mask) -> None:
     GLY6 CA is put 0.0005 A under the state cutoff of its pair with TYR1 CD2
     (2.7275 A; the full energy calls that a clash), and then moved alone to
     2.8 A. The Mu change must be the full energy's change from the same pair
-    just outside the cutoff. ``list``: the delta reads a list rebuilt from the
-    overlapping state; ``no-list``: under a mask on another residue it
-    re-measures."""
+    just outside the cutoff. The delta reads a list rebuilt from the
+    overlapping state; ``masked``: the same under a mask on another residue,
+    which the list is built for."""
     traj = md.load(str(default_example_pdb()))
     heavy = traj.atom_slice(traj.topology.select("not element H"))
     ff = MCPUForceField(heavy)
@@ -236,7 +236,7 @@ def test_a_pair_under_its_hard_core_keeps_its_contact_energy(mask) -> None:
     patch.is_valid = True
     rebuilds = mu.contact_list_rebuilds
     delta = mu.calculate_energy_change(ctx, old, new, patch)
-    assert mu.contact_list_rebuilds == rebuilds + (mask is None)
+    assert mu.contact_list_rebuilds == rebuilds + 1
     assert delta == pytest.approx(e_new - e_outside, abs=1e-4)
 
 
