@@ -107,6 +107,17 @@ public:
         const ProposalPatch& patch
     ) const = 0;
 
+    /// Called by Context::commit_accepted_move for every potential, enabled or
+    /// not, once a proposal is accepted. A term that keeps incremental bookkeeping on the State
+    /// folds the accepted move into it here, from what its last
+    /// calculateEnergyChange recorded; if that record does not belong to this
+    /// move, the term must drop its bookkeeping instead.
+    virtual void commitAcceptedMove(
+        const Context& /*context*/,
+        const State& /*state*/,
+        const State& /*proposed_state*/,
+        const ProposalPatch& /*patch*/) const {}
+
     /// Override when this potential can hard-reject via a clash energy sentinel.
     virtual bool canHardReject() const noexcept { return false; }
 

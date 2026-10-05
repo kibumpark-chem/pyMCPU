@@ -80,6 +80,17 @@ public:
 
     float calculateEnergy(const Context& context, const State& state) const override;
 
+    /// Full energy, and rebuilds state.korp_cache from the same pass, so a
+    /// running total reset here starts from a cache with no accumulated drift.
+    float resyncEnergy(const Context& context, const State& state) const override;
+
+    /// Folds the last calculateEnergyChange into the accepted state's cache:
+    /// new frames for the changed residues, new energies for the pairs whose
+    /// energy changed. Drops the cache if that record is for another move.
+    void commitAcceptedMove(const Context& context, const State& state,
+                            const State& proposed_state,
+                            const ProposalPatch& patch) const override;
+
     EnergyChangeResult calculateEnergyChange(
         const Context& context,
         const State& old_state,
@@ -98,6 +109,10 @@ private:
         const std::vector<ResidueFrame>& frames, int lo, int hi) const noexcept;
 
     void build_frames(const State& state, std::vector<ResidueFrame>& out) const;
+
+    /// Build state.korp_cache from scratch and return the total energy, summed
+    /// in double exactly as calculateEnergy does.
+    double fill_cache(const State& state) const;
 
     /// atom index -> (residue, which frame-atom bit), so classifying a move is
     /// linear in the moved-atom count instead of scanning every residue for
@@ -122,12 +137,33 @@ private:
 
     /// Per-call scratch. Single-threaded within one calculate* call and fully
     /// rewritten at the top of it, which is the same arrangement MuPotential
-    /// uses for its per-call mask state. Nothing here survives a call, so two
-    /// replicas sharing this object cannot desynchronise through it.
+    /// uses for its per-call mask state. The one exception is that
+    /// commitAcceptedMove reads changed_ and frames_new_ with pending_, which
+    /// records the state and proposal they were computed for, so two replicas
+    /// sharing this object cannot desynchronise through it.
     mutable std::vector<ResidueFrame> frames_old_, frames_new_;
     mutable std::vector<FrameClass> cls_;
     mutable std::vector<std::uint8_t> bits_;
     mutable std::vector<int> changed_, touched_;
+
+    /// Origins of frames_new_ as separate x/y/z arrays, for the distance
+    /// prefilter in calculateEnergyChange.
+    mutable std::vector<double> ox_, oy_, oz_;
+
+    /// What the last calculateEnergyChange would change in the accepted
+    /// state's cache. Unlike the scratch above it survives until the next
+    /// commitAcceptedMove, which applies it only if it was computed against
+    /// that same state, proposal and cache generation.
+    struct PendingPair { std::int32_t i, j; float energy; };
+    struct Pending {
+        bool valid = false;
+        const State* old_state = nullptr;
+        const State* proposed_state = nullptr;
+        std::uint64_t generation = 0;
+        std::size_t num_moved = 0;
+        std::vector<PendingPair> pairs;
+    };
+    mutable Pending pending_;
 };
 
 } // namespace mcpu::forces
