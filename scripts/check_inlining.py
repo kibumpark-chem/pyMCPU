@@ -85,7 +85,10 @@ def forbidden(demangled: str) -> bool:
         elif ch == "(" and depth == 0:
             break
         head.append(ch)
-    return LAYER_NS in "".join(head)
+    # The callee is the last token; anything before it is a return type
+    # (std::vector<neighbor::X>::emplace_back returns a neighbor::X&).
+    parts = "".join(head).split()
+    return bool(parts) and parts[-1].startswith(LAYER_NS)
 
 CALL_RE = re.compile(r"\b(call|callq|jmp|jmpq)\s+[0-9a-f]+\s+<(.+)>\s*$")
 

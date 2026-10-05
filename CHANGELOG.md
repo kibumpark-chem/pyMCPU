@@ -454,6 +454,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The pair-search layer gains per-replica scratch, a grid registry, a
+  pair ledger and a shared move footprint.** Internal refactor,
+  bit-identical. The per-cell moved-atom counts and the clash_hot list move
+  from Mu's workspace to a `PairScratch` on each Context, with one set of
+  counts per registered grid. `NeighborSystem::register_subset_grid` lets a
+  term add a grid over its own atoms; the Mu and H-bond grids sit at fixed
+  ids in the same registry, and an accepted move now updates each grid from
+  the move's moved-atom list instead of scanning every atom; a re-init
+  after an atom reorder keeps the registered grids and their ids.
+  `OpenCellGrid` is `BasicOpenCellGrid<48>`, with the per-cell capacity a
+  template parameter; every grid, subset grids included, still uses 48.
+  Mu's contact list is a `PairLedger<float>` with
+  `PendingPairs` for the changes a move stages, ready for the H-bond and
+  KORP pair energies. `SiteClass` (Fixed, Rigid, Flex) is the one
+  definition of how a move affects a site: Mu's rigid moved-moved skip and
+  KORP's frame classes both use it.
+  The Context now keeps whether its atom permutation is the identity, so
+  a pivot no longer walks the permutation to find out. Cycles per step
+  against the parent, interleaved, n=3: 0.9-2.6% faster on the default
+  move mix and 1.4-3.3% faster pivot-only on T4 lysozyme, CA2, LDH-A,
+  actin and PGK1. The commit step's share of an actin default run drops
+  from 4.0% to 1.9%.
+
 - **Mu's contact-list delta walks its pairs through a shared pair-search
   layer, and is 5-9% faster.** Internal refactor, bit-identical. The cell
   walks that Mu's contact-list delta wrote out by hand (the clash-first

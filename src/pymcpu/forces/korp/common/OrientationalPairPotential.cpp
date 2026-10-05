@@ -183,9 +183,8 @@ bool OrientationalPairPotential::classify(const ProposalPatch& patch) const
     for (int r = 0; r < n; ++r) {
         const std::size_t u = static_cast<std::size_t>(r);
         if (bits_[u] == 0) continue;
-        cls_[u] = (bits_[u] == kBitAll && patch.is_rigid && rigid_skip_enabled_)
-            ? FrameClass::RigidMoved
-            : FrameClass::Distorted;
+        cls_[u] = neighbor::moved_site_class(patch.is_rigid, rigid_skip_enabled_,
+                                             /*whole=*/bits_[u] == kBitAll);
         changed_.push_back(r);
     }
     return !changed_.empty();
@@ -234,8 +233,8 @@ EnergyChangeResult OrientationalPairPotential::calculateEnergyChange(
             // exact -- a pair within rounding of a bin edge can change bin -- so
             // this branch is reachable only when rigid_skip_enabled_ is set
             // explicitly (default off; see the header).
-            if (cls_[static_cast<std::size_t>(a)] == FrameClass::RigidMoved &&
-                cls_[static_cast<std::size_t>(b)] == FrameClass::RigidMoved) {
+            if (cls_[static_cast<std::size_t>(a)] == FrameClass::Rigid &&
+                cls_[static_cast<std::size_t>(b)] == FrameClass::Rigid) {
                 continue;
             }
             accumulate(a, b);

@@ -968,7 +968,8 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
             // A rigid move adds to the drift budget of the pairs it carries
             // unseen (see the contact-list notes in the header).
             const bool carries =
-                patch.is_rigid && context.neighborConfig().skip_rigid_mm;
+                neighbor::MoveFootprint::of(patch, context.neighborConfig().skip_rigid_mm)
+                .moved_rigid();
             const float carry_bound =
                 carries ? carry_bound_A(context, new_state, patch) : 0.f;
             const float budget = kContactBandA - kContactBandSlackA;
@@ -979,7 +980,7 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
             // for the mask it was built under; a mask change drops it, or a
             // prebuilt one.
             const System& sys_m = context.getSystem();
-            if ((old_state.mu_contact_list_ready ||
+            if ((old_state.mu_contacts.ready() ||
                  old_state.mu_contact_list_prebuilt) &&
                 old_state.mu_list_mask_epoch != sys_m.energy_mask_epoch()) {
                 old_state.mu_contact_invalidate();
@@ -990,15 +991,15 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
                 context.trial_in_bounds(new_state, patch) &&
                 carry_bound <= budget;
             if (usable) {
-                if (!old_state.mu_contact_list_ready &&
+                if (!old_state.mu_contacts.ready() &&
                     old_state.mu_contact_list_prebuilt) {
                     // Filled by the last full-energy resync from these same
                     // coordinates: the list rebuild_contact_list would make.
                     old_state.mu_contact_list_prebuilt = false;
-                    old_state.mu_contact_list_ready = true;
+                    old_state.mu_contacts.set_ready(true);
                     ++contact_list_rebuilds_;
                 }
-                if (!old_state.mu_contact_list_ready ||
+                if (!old_state.mu_contacts.ready() ||
                     old_state.mu_list_drift + carry_bound > budget) {
                     rebuild_contact_list(context, old_state);
                 }
@@ -1011,7 +1012,7 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
                 // Until then it still says which carried pairs are near
                 // their cutoff.
                 const bool list_exact =
-                    old_state.mu_contact_list_ready &&
+                    old_state.mu_contacts.ready() &&
                     old_state.mu_list_drift + carry_bound <= budget;
                 // Nearly every move that lands here overlaps something (99%
                 // of them on actin pivots, 94% on LDH-A), and the all-pairs
@@ -1033,7 +1034,7 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
                 if (overlap >= 0) {
                     auto& ws = const_cast<mcpu::MuWorkspace&>(
                         context.getMuWorkspace());
-                    ws.clash_hot.note(overlap);
+                    context.pairScratch().clash_hot.note(overlap);
                     ws.clear();
                     delta = kHardCorePenalty;
                 } else {
@@ -1071,7 +1072,6 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
             bool hot_only) const {
         const float rq = clash_query_radius();
         if (!(rq > 0.f)) return -1;
-        const auto& ws = context.getMuWorkspace();
         const OpenCellGrid& grid = context.neighbors().muGrid().grid();
         const std::vector<uint8_t>& is_moved = patch.moving_atoms;
         const std::vector<int>& moved = patch.moved_indices;
@@ -1084,7 +1084,7 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
             clash_first_mode() != 1 ? neighbor::Cells::WithinRadius
                                     : neighbor::Cells::StencilWithinRadius};
         return neighbor::hot_then_moved<neighbor::Cells::FromArgs>(
-            grid, cnew, ws.clash_hot, moved.data(),
+            grid, cnew, context.pairScratch().clash_hot, moved.data(),
             hot_only ? 0 : static_cast<int>(moved.size()), wa,
             [&](const neighbor::Probe& p, int j, const neighbor::CellSpan& s,
                 int m) {
@@ -1102,11 +1102,11 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
                                            const State& new_state,
                                            const ProposalPatch& patch) const {
         setup_mask_cache(context.getSystem());
-        auto& ws = const_cast<mcpu::MuWorkspace&>(context.getMuWorkspace());
         const OpenCellGrid& grid = context.neighbors().muGrid().grid();
         const std::vector<int>& moved = patch.moved_indices;
         const neighbor::MovedCellScope<OpenCellGrid> moved_cells(
-            ws.moved_per_cell, grid, moved.data(), static_cast<int>(moved.size()));
+            context.pairScratch().moved[neighbor::kMuGrid], grid, moved.data(),
+            static_cast<int>(moved.size()));
         return first_grid_overlap(context, new_state, patch,
                                   moved_cells.counts(), /*hot_only=*/false);
     }
@@ -1149,7 +1149,8 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
             return j >= h_begin && !is_moved[static_cast<size_t>(j)];
         };
         const bool skip_rigid_mm =
-            patch.is_rigid && context.neighborConfig().skip_rigid_mm;
+            neighbor::MoveFootprint::of(patch, context.neighborConfig().skip_rigid_mm)
+                .moved_rigid();
         float delta_E = 0.0f;
         bool clash = false;
         auto& nstats = const_cast<NeighborStats&>(context.neighborStats());
@@ -1164,10 +1165,10 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
             if (list_exact) {
                 const CoordView cnew_mm(new_state.coord_view());
                 for (int i : moved_indices) {
-                    for (const auto& c : old_state.mu_contact_list[static_cast<size_t>(i)]) {
+                    for (const auto& c : old_state.mu_contacts.partners(i)) {
                         const int j = c.j;
                         if (i > j || !is_moved[static_cast<size_t>(j)]) continue;
-                        delta_E += listed_contact_energy(i, j, cnew_mm.dist2(i, j)) - c.energy;
+                        delta_E += listed_contact_energy(i, j, cnew_mm.dist2(i, j)) - c.payload;
                     }
                 }
             } else {
@@ -1322,7 +1323,8 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
         bool clash = false;
 
         const bool skip_rigid_mm =
-            patch.is_rigid && context.neighborConfig().skip_rigid_mm;
+            neighbor::MoveFootprint::of(patch, context.neighborConfig().skip_rigid_mm)
+                .moved_rigid();
 
         // Hot pair loop #3: Fallback moved-vs-all (out-of-box / no dense grid).
         // Out-of-bounds trial under AUTO_EXPAND: no dense-grid rebuild; moved-vs-all fallback.
@@ -2305,7 +2307,7 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
         const System& sys = context.getSystem();
         setup_mask_cache(sys);
         const int N = sys.getNumAtoms();
-        state.mu_contact_list.assign(static_cast<size_t>(N), {});
+        state.mu_contacts.reset(N);
         state.mu_contact_list_prebuilt = false;
         const CoordView cv(state.coord_view());
         std::vector<int> atoms;
@@ -2320,10 +2322,10 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
                 // contact energy the running energy holds for it.
                 bool near = false;
                 const float e = eval_pair<ClashCutoff::None>(i, j, r2, nullptr, &near);
-                if (e != 0.0f || near) state.mu_contact_add(i, j, e);
+                if (e != 0.0f || near) state.mu_contacts.add(i, j, e);
                 return false;
         });
-        state.mu_contact_list_ready = true;
+        state.mu_contacts.set_ready(true);
         state.mu_list_drift = 0.f;
         state.mu_list_mask_epoch = sys.energy_mask_epoch();
         ++contact_list_rebuilds_;
@@ -2348,7 +2350,8 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
         const CoordView cnew(new_state.coord_view());
         const CoordView cold(old_state.coord_view());
         const bool skip_mm =
-            patch.is_rigid && context.neighborConfig().skip_rigid_mm;
+            neighbor::MoveFootprint::of(patch, context.neighborConfig().skip_rigid_mm)
+                .moved_rigid();
 
         double dE = 0.0;
         bool clash = false;
@@ -2373,7 +2376,8 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
         }
 #endif
         const neighbor::MovedCellScope<OpenCellGrid> moved_cells(
-            ws.moved_per_cell, grid, moved.data(), static_cast<int>(moved.size()));
+            context.pairScratch().moved[neighbor::kMuGrid], grid, moved.data(),
+            static_cast<int>(moved.size()));
         const std::uint8_t* const mpc = moved_cells.counts();
 
         // ---- OPTIONAL PASS 0: answer "does this move overlap?" on its own ----
@@ -2405,7 +2409,7 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
             const int found = first_grid_overlap(context, new_state, patch, mpc,
                                                  clash_first_mode() == 3);
             if (found >= 0) {
-                ws.clash_hot.note(found);
+                context.pairScratch().clash_hot.note(found);
                 ws.clear();
                 return kHardCorePenalty;
             }
@@ -2416,7 +2420,7 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
         // to re-decide, so all of them come off the books here; the NEW half
         // puts back the ones that are still in contact or in the band.
         for (int i : moved) {
-            for (const auto& c : old_state.mu_contact_list[static_cast<size_t>(i)]) {
+            for (const auto& c : old_state.mu_contacts.partners(i)) {
                 const int j = c.j;
                 if (is_moved[static_cast<size_t>(j)]) {
                     if (i > j) continue;  // once per pair, by the lower index
@@ -2427,20 +2431,20 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
                         // coordinates, and update the entry if it flipped.
                         const float e =
                             listed_contact_energy(i, j, cnew.dist2(i, j));
-                        if (e != c.energy) {
+                        if (e != c.payload) {
                             dE += static_cast<double>(e) -
-                                  static_cast<double>(c.energy);
-                            ws.pending_contact_drop.push_back(
-                                mcpu::MuWorkspace::PendingContact{i, j, c.energy});
-                            ws.pending_contact_add.push_back(
+                                  static_cast<double>(c.payload);
+                            ws.pending_contacts.drop.push_back(
+                                mcpu::MuWorkspace::PendingContact{i, j, c.payload});
+                            ws.pending_contacts.add.push_back(
                                 mcpu::MuWorkspace::PendingContact{i, j, e});
                         }
                         continue;
                     }
                 }
-                dE -= static_cast<double>(c.energy);
-                ws.pending_contact_drop.push_back(
-                    mcpu::MuWorkspace::PendingContact{i, j, c.energy});
+                dE -= static_cast<double>(c.payload);
+                ws.pending_contacts.drop.push_back(
+                    mcpu::MuWorkspace::PendingContact{i, j, c.payload});
             }
         }
 
@@ -2469,7 +2473,7 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
                 }
                 if (e != 0.0f || near) {
                     dE += static_cast<double>(e);
-                    ws.pending_contact_add.push_back(
+                    ws.pending_contacts.add.push_back(
                         mcpu::MuWorkspace::PendingContact{p.i, j, e});
                 }
                 return neighbor::Visit::Continue;
@@ -2489,7 +2493,7 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
                     if (local_clash) return neighbor::Visit::Stop;
                     if (e != 0.0f || near) {
                         dE += static_cast<double>(e);
-                        ws.pending_contact_add.push_back(
+                        ws.pending_contacts.add.push_back(
                             mcpu::MuWorkspace::PendingContact{i, j, e});
                     }
                     return neighbor::Visit::Continue;
@@ -2497,7 +2501,7 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
         }
 
         if (clash) {
-            if (clash_first && clash_atom >= 0) ws.clash_hot.note(clash_atom);
+            if (clash_first && clash_atom >= 0) context.pairScratch().clash_hot.note(clash_atom);
             ws.clear();
             return kHardCorePenalty;
         }
@@ -2539,16 +2543,15 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
         // overlap, drops it.
         bool refill_contacts = false;
         bool prebuild = false;
-        if (resync && state.mu_contact_list_ready) {
+        if (resync && state.mu_contacts.ready()) {
             refill_contacts = true;
-            state.mu_contact_list.resize(static_cast<size_t>(num_atoms));
-            for (auto& partners : state.mu_contact_list) partners.clear();
+            state.mu_contacts.clear_rows(num_atoms);
             state.mu_list_drift = 0.f;
             state.mu_list_mask_epoch = sys.energy_mask_epoch();
         } else if (resync && contact_list_enabled()) {
             refill_contacts = true;
             prebuild = true;
-            state.mu_contact_list.assign(static_cast<size_t>(num_atoms), {});
+            state.mu_contacts.reset(num_atoms);
             state.mu_contact_list_prebuilt = false;
             state.mu_list_drift = 0.f;
             state.mu_list_mask_epoch = sys.energy_mask_epoch();
@@ -2628,7 +2631,7 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
                     return true;
                 }
                 if (e != 0.0f) total_energy += e;
-                if (refill_contacts && (e != 0.0f || near)) state.mu_contact_add(i, j, e);
+                if (refill_contacts && (e != 0.0f || near)) state.mu_contacts.add(i, j, e);
                 return false;
             });
         if (clashed) return kHardCorePenalty;
@@ -2645,7 +2648,8 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
         setup_mask_cache(sys);
         const int num_atoms = sys.getNumAtoms();
         const bool skip_carried =
-            patch.is_rigid && context.neighborConfig().skip_rigid_mm;
+            neighbor::MoveFootprint::of(patch, context.neighborConfig().skip_rigid_mm)
+                .moved_rigid();
         const std::vector<uint8_t>& is_moved = patch.moving_atoms;
         // Same moved set as the delta path: moved_indices, or a scan of
         // moving_atoms when a hand-built patch left it empty.

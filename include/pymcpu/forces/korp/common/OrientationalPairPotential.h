@@ -17,6 +17,7 @@
 #include "pymcpu/Potential.h"
 #include "pymcpu/forces/korp/common/OrientationalPairMap.h"
 #include "pymcpu/forces/korp/common/ResidueFrame.h"
+#include "pymcpu/neighbor/Footprint.h"
 
 namespace mcpu::forces {
 
@@ -87,11 +88,10 @@ public:
 
 private:
     /// How a residue's frame is affected by the proposed move.
-    enum class FrameClass : std::uint8_t {
-        Fixed = 0,     ///< none of N/CA/C moved
-        RigidMoved,    ///< all three moved, under a rigid move
-        Distorted,     ///< anything else: the frame changed shape
-    };
+    /// The shared site classes: Fixed (none of N/CA/C moved), Rigid (all
+    /// three moved, under a rigid move), Flex (anything else: the frame
+    /// changed shape).
+    using FrameClass = neighbor::SiteClass;
 
     /// Energy of the ordered pair (lo, hi), lo < hi, or 0 if it does not count.
     [[nodiscard]] double pair_energy(
