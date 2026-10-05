@@ -112,6 +112,10 @@ private:
     std::vector<int> residue_of_ca_;
     mutable std::vector<std::uint8_t> moved_;
     mutable std::vector<int> moved_residues_;
+    /// Proposed CA coordinates gathered into x/y/z arrays, and chain ids
+    /// widened to int, for the branch-free prefilter in clashesAtMoveCutoff.
+    mutable std::vector<float> cx_, cy_, cz_;
+    std::vector<int> chain_int_;
 
     void rebuild_atom_lookup();
 };

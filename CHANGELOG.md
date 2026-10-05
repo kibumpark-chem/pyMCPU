@@ -454,6 +454,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **KORP moves are about twice as fast.** `OrientationalPairPotential` now
+  keeps the accepted state's residue frames and pair energies on the `State`
+  (`KorpStateCache`) and folds each accepted move into them through a new
+  `Potential::commitAcceptedMove` hook. A move rebuilds frames only for the
+  residues whose N, CA or C moved, takes the old side of each pair from the
+  cache instead of scoring it again, and skips pairs beyond the cutoff with a
+  plain distance test before any trigonometry. The CA excluded-volume check
+  first asks, per moved residue and without branches, whether any partner is
+  near the cutoff, and runs the exact test only then.
+
+  Interleaved A/B, pivot + KIC, user-space cycles per step (n = 3): actin
+  2.23M -> 1.13M (1.97x), PGK1 2.53M -> 1.29M (1.97x), beta-galactosidase
+  (AF-P00722, 8222 atoms) 8.35M -> 3.73M (2.24x). Trajectories are unchanged
+  on every run checked: the same final energies and accept sequences in the
+  A/B runs, the same running and recomputed energies after 1M pivot-only steps
+  on T4 lysozyme, and `scripts/tolerance_check.py` passes. The cache is
+  rebuilt by a full-energy resync and dropped whenever the coordinates are
+  replaced, and a copied `State` starts without one.
+
 - **The pair-search layer gains per-replica scratch, a grid registry, a
   pair ledger and a shared move footprint.** Internal refactor,
   bit-identical. The per-cell moved-atom counts and the clash_hot list move
