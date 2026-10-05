@@ -340,3 +340,8 @@ Korp6Dv1*.txz
 # pins this.
 !pymcpu/data/params/**
 !src/pymcpu/parameters/pretrained/*/constants/*.csv
+
+# Files the tutorial notebooks write when run from docs/tutorials
+docs/tutorials/tutorial_output/
+docs/tutorials/remd_output/
+docs/tutorials/remd.yaml

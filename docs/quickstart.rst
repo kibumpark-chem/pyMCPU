@@ -3,8 +3,10 @@ Quickstart
 
 Two conventions to know before you start:
 
-* **Temperature is dimensionless** — a reduced parameter, roughly ``0.3``
-  (cold, folded) to ``0.6`` (hot, unfolded). It is not in Kelvin.
+* **Temperature is dimensionless** — a reduced parameter, not Kelvin. Where a
+  protein unfolds depends on the protein: chignolin, the example structure
+  below, melts at about ``0.65`` to ``0.7`` (see
+  :doc:`tutorials/02_replica_exchange`).
 * **Energies are unitless** — sums of knowledge-based table entries scaled by a
   dimensionless per-group weight.
 
@@ -166,8 +168,10 @@ knowledge-based tables, not fitted to a particular structure.
 Where to go next
 ----------------
 
-* :doc:`tutorials/01_single_trajectory` — the same material as a runnable
-  notebook, with commentary
+* :doc:`tutorials/01_single_trajectory` — a guided first simulation, with
+  plots of the energy, the structure and the effect of temperature
+* :doc:`tutorials/02_replica_exchange` — a small replica exchange, its swap
+  rates and a melting curve
 * :doc:`running_remd` — replica exchange, serial and MPI
 * :doc:`checkpointing` — surviving a scheduler timeout
 * :doc:`cli` — the ``mcpu`` command line

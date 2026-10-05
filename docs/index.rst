@@ -9,8 +9,8 @@ simple, composable Python interface.
 
 .. note::
    **Temperature** in pyMCPU is a dimensionless reduced
-   parameter, not in physical units. Typical values:
-   0.3 (cold/folded) to 0.6 (hot/unfolded).
+   parameter, not in physical units. Where a protein unfolds
+   depends on the protein; chignolin melts at about 0.65 to 0.7.
    **Energy** values are unitless sums of knowledge-based
    potential table entries.
 
@@ -35,6 +35,7 @@ simple, composable Python interface.
    :caption: Tutorials
 
    tutorials/01_single_trajectory
+   tutorials/02_replica_exchange
 
 .. toctree::
    :maxdepth: 2
