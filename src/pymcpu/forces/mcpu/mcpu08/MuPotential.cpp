@@ -91,6 +91,42 @@ bool contact_list_enabled() {
     return on;
 }
 
+// MCPU_CLASH_FIRST picks the clash-first pass of the contact-list delta:
+// 0 = off; 1 = the 27-offset + point-to-box cull variant (measured slower,
+// kept so the comparison can be reproduced); 2 = direct reachable-cell
+// enumeration over every moved atom; 3 (default) = the same, over the
+// clash_hot atoms the move carries only.
+int clash_first_mode() noexcept {
+    static const int mode = [] {
+        const char* e = std::getenv("MCPU_CLASH_FIRST");
+        if (!e || !e[0]) return 3;
+        if (e[0] == '0') return 0;
+        if (e[0] == '1') return 1;
+        if (e[0] == '2') return 2;
+        return 3;
+    }();
+    return mode;
+}
+
+int clash_first_min_moved_env() noexcept {
+    static const int v = [] {
+        const char* e = std::getenv("MCPU_CLASH_FIRST_MIN_MOVED");
+        if (!e || !e[0]) return -1;
+        return std::atoi(e);
+    }();
+    return v;
+}
+
+// MCPU_FALLBACK_PRECHECK=0 skips the grid overlap check that runs ahead of
+// the all-pairs fallback delta.
+bool fallback_precheck_enabled() noexcept {
+    static const bool on = [] {
+        const char* e = std::getenv("MCPU_FALLBACK_PRECHECK");
+        return !(e && e[0] == '0');
+    }();
+    return on;
+}
+
 /// The atoms the Mu pair loops visit, in increasing order: every atom but the
 /// amide hydrogens. Iterating this list visits the same pairs in the same
 /// order as testing System::is_amide_h_atom on both atoms of every pair.
@@ -1031,8 +1067,33 @@ inline __attribute__((always_inline)) unsigned span_mask8(
                 const bool list_exact =
                     old_state.mu_contact_list_ready &&
                     old_state.mu_list_drift + carry_bound <= budget;
-                delta = calculateEnergyChange_fast(
-                    context, old_state, new_state, patch, list_exact);
+                // Nearly every move that lands here overlaps something (99%
+                // of them on actin pivots, 94% on LDH-A), and the all-pairs
+                // delta below spends ~2 x n_moved x N distance tests, ~8 ms
+                // on actin, to say so. The grid still holds every atom that
+                // delta's new half tests against (all unmoved atoms but the
+                // fixed amide H, which it skips too), so ask the clash-first
+                // question there first: an overlap it finds is one the delta
+                // would find, and the move is rejected the same way. A move
+                // it clears goes through the delta as before.
+                int overlap = -1;
+                if (!context.getSystem().has_energy_mask() &&
+                    fallback_precheck_enabled() &&
+                    context.denseGridsActive() &&
+                    context.neighbors().muGrid().grid().use_contiguous() &&
+                    !patch.moved_indices.empty()) {
+                    overlap = fallback_grid_overlap(context, new_state, patch);
+                }
+                if (overlap >= 0) {
+                    auto& ws = const_cast<mcpu::MuWorkspace&>(
+                        context.getMuWorkspace());
+                    ws.note_clash_atom(overlap);
+                    ws.clear();
+                    delta = kHardCorePenalty;
+                } else {
+                    delta = calculateEnergyChange_fast(
+                        context, old_state, new_state, patch, list_exact);
+                }
                 const_cast<mcpu::MuWorkspace&>(context.getMuWorkspace())
                     .pending_list_invalidate = true;
                 ++clist_fallbacks_;
@@ -1056,6 +1117,89 @@ inline __attribute__((always_inline)) unsigned span_mask8(
             return EnergyChangeResult::rejected(delta, RejectReason::StericClash);
         }
         return EnergyChangeResult::finite(delta);
+    }
+
+    __attribute__((always_inline)) inline int MuPotential::first_grid_overlap(
+            const Context& context, const State& new_state,
+            const ProposalPatch& patch, const std::uint8_t* mpc,
+            bool hot_only) const {
+        const float rq = clash_query_radius();
+        if (!(rq > 0.f)) return -1;
+        const auto& ws = context.getMuWorkspace();
+        const OpenCellGrid& grid = context.neighbors().muGrid().grid();
+        const std::vector<uint8_t>& is_moved = patch.moving_atoms;
+        const std::vector<int>& moved = patch.moved_indices;
+        const CoordView cnew(new_state.coord_view());
+        const float clash_lim2 = clash_prefilter_r2_ * kSpanMaskSlack;
+        const bool reachable_cells = clash_first_mode() != 1;
+        const int n_hot = ws.clash_hot_n;
+        const int n_mv = static_cast<int>(moved.size());
+        int found = -1;
+        const int n_scan = hot_only ? n_hot : n_hot + n_mv;
+        for (int s = 0; s < n_scan; ++s) {
+            int i;
+            if (s < n_hot) {
+                i = ws.clash_hot[s];
+                if (static_cast<size_t>(i) >= is_moved.size() ||
+                    !is_moved[static_cast<size_t>(i)])
+                    continue;
+            } else {
+                i = moved[static_cast<size_t>(n_mv - 1 - (s - n_hot))];
+            }
+            const float nx = cnew.x(i), ny = cnew.y(i), nz = cnew.z(i);
+            auto clash_cell = [&](const int* __restrict__ cids,
+                    const float* __restrict__ cx,
+                    const float* __restrict__ cy,
+                    const float* __restrict__ cz, int count) {
+                    for (int m0 = 0; m0 < count; m0 += 8) {
+                        unsigned bits = span_mask8(nx, ny, nz, cids, cx, cy,
+                                                   cz, m0, count, i, clash_lim2);
+                        while (bits) {
+                            const int m = m0 + __builtin_ctz(bits);
+                            bits &= bits - 1u;
+                            const int j = cids[m];
+                            if (is_moved[static_cast<size_t>(j)]) continue;
+                            const float dx = nx - cx[m];
+                            const float dy = ny - cy[m];
+                            const float dz = nz - cz[m];
+                            const float r2 = dx * dx + dy * dy + dz * dz;
+                            if (overlaps_at_move_cutoff(i, j, r2)) return false;
+                        }
+                    }
+                    return true;
+                };
+            const bool ok =
+                reachable_cells
+                    ? grid.for_each_cell_span_within_fast_unmoved(
+                          nx, ny, nz, rq, mpc, clash_cell)
+                    : grid.for_each_neighbor_cell_span_while_within(
+                          nx, ny, nz, rq, clash_cell);
+            if (!ok) { found = i; break; }
+        }
+        return found;
+    }
+
+    int MuPotential::fallback_grid_overlap(const Context& context,
+                                           const State& new_state,
+                                           const ProposalPatch& patch) const {
+        setup_mask_cache(context.getSystem());
+        auto& ws = const_cast<mcpu::MuWorkspace&>(context.getMuWorkspace());
+        const OpenCellGrid& grid = context.neighbors().muGrid().grid();
+        const std::vector<int>& moved = patch.moved_indices;
+        auto& mpc = ws.moved_per_cell;
+        if (mpc.size() < grid.num_cells())
+            mpc.assign(static_cast<size_t>(grid.num_cells()), 0);
+        for (int i : moved) {
+            const int c = grid.atom_cell(i);
+            if (c >= 0) ++mpc[static_cast<size_t>(c)];
+        }
+        const int found = first_grid_overlap(context, new_state, patch,
+                                             mpc.data(), /*hot_only=*/false);
+        for (int i : moved) {
+            const int c = grid.atom_cell(i);
+            if (c >= 0) mpc[static_cast<size_t>(c)] = 0;
+        }
+        return found;
     }
 
     float MuPotential::carry_bound_A(const Context& context, const State& new_state,
@@ -2347,101 +2491,30 @@ inline __attribute__((always_inline)) unsigned span_mask8(
         // cells -- a box ~6x larger in volume. Asking it first, with a stencil
         // sized to the question, rejects those moves without doing any contact
         // work at all. Costs one extra tight pass on moves that do NOT overlap.
-        // MCPU_CLASH_FIRST=1.
-        // DEFAULT 2 (direct reachable-cell enumeration). Measured a further
-        // 1.16x on actin / 1.11x on 1igd on top of the contact list, and
-        // neutral on chignolin thanks to the moved-atom gate below.
-        // 0 = off, 1 = the 27-offset + point-to-box cull variant (MEASURED
-        // SLOWER, kept only so the comparison can be reproduced).
-        static const int kClashFirst = [] {
-            const char* e = std::getenv("MCPU_CLASH_FIRST");
-            if (!e || !e[0]) return 2;
-            if (e[0] == '0') return 0;
-            if (e[0] == '1') return 1;
-            return 2;
-        }();
-        // Only worth it for moves big enough that skipping the contact walk pays
-        // for the extra pass. A small move examines few pairs anyway, so the
-        // pre-pass is nearly pure overhead -- measured -10% on chignolin, whose
-        // largest move touches ~25 atoms, against +14% on actin, whose pivots
-        // touch ~740. Threshold is on MOVED ATOMS, not system size, so one
-        // number covers every move kind and every protein.
-        // Threshold now lives on NeighborConfig (settable from Python via
-        // Context::set_clash_first_min_moved); the env var stays as an override
-        // so an A/B sweep can be driven without touching the caller.
-        static const int kClashFirstEnv = [] {
-            const char* e = std::getenv("MCPU_CLASH_FIRST_MIN_MOVED");
-            if (!e || !e[0]) return -1;
-            return std::atoi(e);
-        }();
+        // Mode 2 (direct reachable-cell enumeration, the default) measured
+        // a further 1.16x on actin / 1.11x on 1igd on top of the contact
+        // list, and neutral on chignolin thanks to the moved-atom gate below.
+        // See clash_first_mode() and first_grid_overlap().
         const int kClashFirstMinMoved =
-            (kClashFirstEnv >= 0) ? kClashFirstEnv
-                                  : context.neighborConfig().clash_first_min_moved;
-        if (kClashFirst &&
-            static_cast<int>(moved.size()) >= kClashFirstMinMoved) {
-            const float rq = clash_query_radius();
-            const float clash_lim2 = clash_prefilter_r2_ * kSpanMaskSlack;
-            if (rq > 0.f) {
-                // Visiting order. The answer is the same in any order; the
-                // cost of a rejected move is how many atoms are tested before
-                // the first overlap. MEASURED (actin, 1500 pivot-only steps):
-                // in moved_indices order that is 30% of the moved atoms on
-                // average (237 of ~790), because moved_indices lists backbone,
-                // then O, then side chains, and 63% of overlapping atoms are
-                // side-chain atoms. So: first the atoms that overlapped in
-                // recent rejected moves (ws.clash_hot; ~50 distinct atoms
-                // cover every rejection of that run), then the moved atoms
-                // back to front. Simulated on the same moves: ~9 atoms per
-                // rejection instead of 237. A hot atom the move carries is
-                // tested twice when it does not overlap; that costs one atom.
-                const int n_hot = ws.clash_hot_n;
-                const int n_mv = static_cast<int>(moved.size());
-                int found = -1;
-                for (int s = 0; s < n_hot + n_mv; ++s) {
-                    int i;
-                    if (s < n_hot) {
-                        i = ws.clash_hot[s];
-                        if (static_cast<size_t>(i) >= is_moved.size() ||
-                            !is_moved[static_cast<size_t>(i)])
-                            continue;
-                    } else {
-                        i = moved[static_cast<size_t>(n_mv - 1 - (s - n_hot))];
-                    }
-                    const float nx = cnew.x(i), ny = cnew.y(i), nz = cnew.z(i);
-                    auto clash_cell = [&](const int* __restrict__ cids,
-                            const float* __restrict__ cx,
-                            const float* __restrict__ cy,
-                            const float* __restrict__ cz, int count) {
-                            for (int m0 = 0; m0 < count; m0 += 8) {
-                                unsigned bits = span_mask8(nx, ny, nz, cids, cx, cy,
-                                                           cz, m0, count, i, clash_lim2);
-                                while (bits) {
-                                    const int m = m0 + __builtin_ctz(bits);
-                                    bits &= bits - 1u;
-                                    const int j = cids[m];
-                                    if (is_moved[static_cast<size_t>(j)]) continue;
-                                    const float dx = nx - cx[m];
-                                    const float dy = ny - cy[m];
-                                    const float dz = nz - cz[m];
-                                    const float r2 = dx * dx + dy * dy + dz * dz;
-                                    if (overlaps_at_move_cutoff(i, j, r2)) return false;
-                                }
-                            }
-                            return true;
-                        };
-                    const bool ok =
-                        (kClashFirst == 2)
-                            ? grid.for_each_cell_span_within_fast_unmoved(
-                                  nx, ny, nz, rq, mpc, clash_cell)
-                            : grid.for_each_neighbor_cell_span_while_within(
-                                  nx, ny, nz, rq, clash_cell);
-                    if (!ok) { found = i; break; }
-                }
-                if (found >= 0) {
-                    ws.note_clash_atom(found);
-                    ws.clear();
-                    return kHardCorePenalty;
-                }
+            (clash_first_min_moved_env() >= 0)
+                ? clash_first_min_moved_env()
+                : context.neighborConfig().clash_first_min_moved;
+        const bool clash_first =
+            clash_first_mode() != 0 &&
+            static_cast<int>(moved.size()) >= kClashFirstMinMoved;
+        // By default the pass tests only the clash_hot atoms. They catch
+        // 98.6-99.4% of the pivots that overlap (actin, LDH-A, PGK1), while
+        // testing every moved atom cost the pivots that do NOT overlap a
+        // full extra pass, 6-9% of a pivot-only step. The contact walk below
+        // rejects the few overlaps the hot atoms miss, and feeds clash_hot.
+        int clash_atom = -1;
+        if (clash_first) {
+            const int found = first_grid_overlap(context, new_state, patch, mpc,
+                                                 clash_first_mode() == 3);
+            if (found >= 0) {
+                ws.note_clash_atom(found);
+                ws.clear();
+                return kHardCorePenalty;
             }
         }
 
@@ -2506,7 +2579,11 @@ inline __attribute__((always_inline)) unsigned span_mask8(
                             if (r2 > contact_cutoff_sq_) continue;
                             bool local_clash = false, near = false;
                             const float e = eval_pair(i, j, r2, &local_clash, &near);
-                            if (local_clash) { clash = true; return false; }
+                            if (local_clash) {
+                                clash = true;
+                                clash_atom = i;
+                                return false;
+                            }
                             if (e != 0.0f || near) {
                                 dE += static_cast<double>(e);
                                 ws.pending_contact_add.push_back(
@@ -2543,6 +2620,7 @@ inline __attribute__((always_inline)) unsigned span_mask8(
         }
 
         if (clash) {
+            if (clash_first && clash_atom >= 0) ws.note_clash_atom(clash_atom);
             ws.clear();
             return kHardCorePenalty;
         }

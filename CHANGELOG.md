@@ -529,6 +529,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   energy can differ from earlier versions in the last bits (up to 6e-4 in
   50,000 steps) because the move's pairs are summed in a different order.
 
+- **Mu checks a move that falls back to the all-pairs delta for overlaps on
+  the grid first, and its clash-first pass stops after the atoms that
+  overlapped recently, which makes pivot-only runs 1.8-2.0x faster on actin
+  and LDH-A.** Trajectories are unchanged bit for bit.
+
+  * A move that leaves the Mu grid, or carries too far for the contact
+    list, takes the all-pairs delta, which tests every moved atom against
+    every atom and does not stop at an overlap. Only 0.4-0.6% of pivots on
+    actin and LDH-A take it, but they cost over a third of a pivot-only
+    step, and nearly all of them end in a steric rejection. Such a move now
+    runs the clash-first pass on the grid first; an overlap found there is
+    one the delta finds too. `MCPU_FALLBACK_PRECHECK=0` turns it off.
+  * 98.6-99.4% of the pivots that overlap are caught on an atom that
+    overlapped in a recent rejected move, so the clash-first pass now tests
+    only those (`MCPU_CLASH_FIRST=2` restores the full pass). The contact
+    walk still rejects any overlap the pass misses, and records the atom it
+    stopped on for the next pass.
+
+  Cycles per step before and after, interleaved, n=3, 20,000 steps,
+  pivot-only: -45.3% actin, -50.8% LDH-A, -9.3% T4 lysozyme, -5.5% PGK1,
+  -5.3% CA2; default move mix: -2.2% LDH-A, -2.2% T4 lysozyme, -0.9% PGK1,
+  -0.3% actin, +0.4% CA2.
+
 - **`scripts/job_template.slurm` no longer activates a particular conda
   environment.** It activated `mcpu_dev`, a conda environment from one
   developer's setup, and used that environment's `mpirun`. The job now
