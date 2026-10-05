@@ -1,47 +1,53 @@
 Force fields
 ============
 
-A force field turns an MDTraj topology into a simulatable
-``mcpu_core.System``. Two are available, and they are alternatives
-rather than layers: :class:`~pymcpu.MCPUForceField` (all-atom, the five
-MCPU knowledge-based terms) and :class:`~pymcpu.KORPForceField`
-(backbone-only, the KORP 6D orientational potential plus a steric
-filter). Both implement the one-method
-:class:`~pymcpu.forcefields.base.BaseForceField` contract.
+A force field turns an MDTraj structure into a ``mcpu_core.System`` the
+engine can simulate: it brings the potentials (the energy terms), their
+parameters, and the atom order they need. There are two, and you use one or
+the other:
 
-MCPUForceField
-==============
+- ``mcpu08``, built by :class:`~pymcpu.MCPUForceField`: all-atom, with the
+  five MCPU knowledge-based potentials.
+- ``korp``, built by :class:`~pymcpu.KORPForceField`: backbone-only, with the
+  KORP 6D orientational potential and a steric filter.
 
-:class:`~pymcpu.MCPUForceField` is the bridge between an MDTraj
-topology and the C++ engine: it is the only object that turns a
-topology into a simulatable ``mcpu_core.System``, so every simulation
-starts here. It is constructed once from a trajectory -- which loads
-the parameter set, canonicalises residue names, validates the topology,
-and reorders atoms into the engine's global layout -- and then builds
-one or more systems with
-:meth:`~pymcpu.MCPUForceField.create_system`.
+A config picks one with ``forcefield:`` (default ``mcpu08``). Both classes
+follow :class:`~pymcpu.forcefields.base.BaseForceField`.
+
+MCPUForceField (mcpu08)
+=======================
+
+:class:`~pymcpu.MCPUForceField` builds the mcpu08 force field from a
+structure. The constructor loads the mcpu08 parameter set, renames
+protonation variants to the standard residues, checks the structure, and
+puts the atoms in the order the engine works in.
+:meth:`~pymcpu.MCPUForceField.create_system` then builds a system from it, as
+many times as you need.
 
 .. code-block:: python
 
    import mdtraj as md
    import numpy as np
    import pymcpu as mc
+   from pymcpu.runners import default_example_pdb
 
-   traj = md.load("examples/data/1uao.pdb")
+   traj = md.load(str(default_example_pdb()))
    heavy = traj.atom_slice(traj.topology.select("not element H"))
 
    ff = mc.MCPUForceField(heavy, param_set="mcpu08")
    system = ff.create_system(heavy.topology)
 
-   # Engine coordinates: Angstrom, shape (3, n_atoms), float32.
+   # Engine coordinates: Å, shape (3, n_atoms), float32.
    positions = (ff.coords[0] * 10.0).T.astype(np.float32)
 
-.. note::
-   The parameter set is read in the constructor, so a missing or
-   incomplete parameter directory fails there rather than in
-   :meth:`~pymcpu.MCPUForceField.create_system`. When ``param_dir`` is
-   omitted the set named by ``param_set`` is resolved through
-   ``pymcpu.params.ensure_params``.
+The parameters are read in the constructor, so a missing or incomplete
+parameter directory fails there. Without ``param_dir``, the set named by
+``param_set`` is found as described under "MCPU parameter lookup" in
+:doc:`../installation`.
+
+The structure must be one continuous chain of at least three residues, with
+every heavy atom present; "Using your own structure" in :doc:`../quickstart`
+says what happens otherwise.
 
 Class reference
 ---------------
@@ -51,75 +57,75 @@ Class reference
    :member-order: bysource
    :special-members: __init__
 
-The public surface is deliberately small: one method
-(:meth:`~pymcpu.MCPUForceField.create_system`) and one property
-(:attr:`~pymcpu.MCPUForceField.inverse_mapping`). Everything else a
-caller needs is an attribute set during construction; the useful ones
-are listed below.
+Besides :meth:`~pymcpu.MCPUForceField.create_system`, the class has the
+:attr:`~pymcpu.MCPUForceField.inverse_mapping` and
+:attr:`~pymcpu.MCPUForceField.output_topology` properties and
+:meth:`~pymcpu.MCPUForceField.prepare_trajectory`, which drops hydrogens. The
+attributes worth reading are listed under `Attributes`_.
 
-Atom ordering, ``coords`` and ``inverse_mapping``
--------------------------------------------------
+Atom order, ``coords`` and ``inverse_mapping``
+----------------------------------------------
 
-The engine requires a single global atom order: all backbone
-``N``/``CA``/``C`` for every residue, then all backbone oxygens
-(``O``, ``OXT``, ``OCT``), then all sidechain atoms in template order.
-``MCPUForceField`` builds that order at construction time, records the
-originating MDTraj index for each atom, and exposes the result as
-:attr:`~pymcpu.MCPUForceField.coords` (reordered coordinates) and
-:attr:`~pymcpu.MCPUForceField.inverse_mapping` (internal index ->
-topology index).
+The engine keeps all atoms in one order: the backbone ``N``, ``CA`` and ``C``
+of every residue, then all backbone oxygens (``O``, ``OXT``, ``OCT``), then
+all side-chain atoms. ``MCPUForceField`` builds that order and records where
+each atom came from: :attr:`~pymcpu.MCPUForceField.coords` holds the
+coordinates in engine order, and
+:attr:`~pymcpu.MCPUForceField.inverse_mapping` gives the topology index of
+each engine atom.
 
-Each heavy atom has one engine slot, so with the default virtual amide
-hydrogens the engine atom count equals the topology's: 77 for the shipped
-``1uao.pdb``. Glycine, which has no sidechain, simply has an empty
-sidechain block. Only ``virtual_amide_h=False`` adds slots, one explicit
-amide hydrogen per non-proline residue after the first; the topology has
-no such atoms, so :attr:`~pymcpu.MCPUForceField.inverse_mapping` holds
-``-1`` for them, which tells ``XtcReporter`` to skip them. Pass
-``inverse_mapping`` to the reporter so frames come out in topology order.
+With the default virtual amide hydrogens, the engine has one slot per heavy
+atom, so its atom count equals the topology's: 77 for the bundled chignolin.
+Glycine, which has no side chain, has no side-chain atoms in that order. Only
+``virtual_amide_h=False`` adds slots, one explicit amide hydrogen per
+non-proline residue after the first; the topology has no such atoms, so
+:attr:`~pymcpu.MCPUForceField.inverse_mapping` holds ``-1`` for them, and the
+XTC reporter skips them.
 
-Units and layout differ between MDTraj and the engine, and the
-conversion is the caller's job:
+Pass :attr:`~pymcpu.MCPUForceField.inverse_mapping` to a reporter so that
+frames come out in topology order. To go the other way, index a frame in
+topology order with the same mapping: ``xyz[ff.inverse_mapping]`` is in
+engine order, as a collective variable needs it (with the default virtual
+hydrogens).
+
+Units and layout differ between MDTraj and the engine, and converting is up
+to you:
 
 ============================  ====================================
 ``ff.coords``                 nanometres, ``(n_frames, n_atoms, 3)``
-``Context.set_positions``     Angstrom, ``(3, n_atoms)``
+``Context.set_positions``     Å, ``(3, n_atoms)``
 ============================  ====================================
 
-so the first frame is passed as
-``(ff.coords[0] * 10.0).T.astype(np.float32)``. The engine stores float32,
-which this enters exactly; a structure far from the origin runs in a
-shifted frame (``Context.frame_offset``, see :ref:`context-frame`).
+so the first frame goes in as
+``(ff.coords[0] * 10.0).T.astype(np.float32)``. A structure far from the
+origin runs in a shifted frame; see :ref:`context-frame`.
 
-What ``create_system`` installs
--------------------------------
+The mcpu08 terms and weights
+----------------------------
 
-:meth:`~pymcpu.MCPUForceField.create_system` transfers the per-residue
-bookkeeping (block indices, torsion counts, chi atom indices, downstream
-cache, amino-acid indices, proline flags, secondary structure) onto a
-fresh ``mcpu_core.System``, installs the rotamer library, and adds
-exactly five potentials, one per energy group:
+:meth:`~pymcpu.MCPUForceField.create_system` adds the five mcpu08 potentials
+to a new system, one per energy group, and installs the rotamer library. Each
+group's energy is multiplied by its weight:
 
-=====  =============================  ====================
-Group  Potential                      Legacy outer weight
-=====  =============================  ====================
-1      ``MuPotential``                0.4
-2      ``TripletPotential``           1.35
-3      ``SidechainTripletPotential``  2.5
-4      ``HBondPotential``             1.35 (effective 2.7)
-5      ``AromaticPotential``          5.0
-=====  =============================  ====================
+=====  =====================  =============================  ======
+Group  Term                   Potential                      Weight
+=====  =====================  =============================  ======
+1      ``mu``                 ``MuPotential``                0.4
+2      ``backbone_torsion``   ``TripletPotential``           1.35
+3      ``sidechain_torsion``  ``SidechainTripletPotential``  2.5
+4      ``hydrogen_bond``      ``HBondPotential``             2.7
+5      ``aromatic``           ``AromaticPotential``          5.0
+=====  =====================  =============================  ======
 
-The hydrogen-bond row is the subtle one: 1.35 is the configured weight,
-but the group's effective multiplier is 2.7, because the legacy
-``RDTHREE_CON`` factor of 2.0 is folded in. Energies are unitless sums
-of knowledge-based table entries, so these weights are dimensionless.
+The hydrogen-bond weight is set as 1.35, and the term is doubled as in legacy
+MCPU, so it counts 2.7. The weights are dimensionless, like the energies.
+These are the mcpu08 values; another MCPU parameter set can change the
+weights or a potential.
 
-The Ramachandran mixture library is loaded as well when the parameter
-set ships ``constants/rama_mixture.json``; it is optional, because the
-knowledge-based backbone pivot it serves is off by default
-(``pivot_rama_probability = 0.0``). Without it that move is unavailable
-and construction still succeeds.
+The Ramachandran mixture library is loaded too when the parameter set has one
+(``constants/rama_mixture.json``). Only the ``rama_pivot`` backbone move uses
+it, and that move is off by default, so a set without the library still
+loads.
 
 Attributes
 ----------
@@ -209,14 +215,10 @@ Set during construction and safe to read:
    ``mcpu_params/``.
 
 The constructor arguments ``param_set``, ``virtual_amide_h``,
-``compute_dssp``, ``dssp_coil_state`` and ``allow_provisional_rama`` are
-also retained as attributes of the same name. Everything else on the
-instance -- the loaded parameter tables (``mu_energies``, ``bb_triplet``,
-``sc_triplet``, ``hbond``, ``hbond_seq_dep``, ``aromatic``,
-``rotamer_lib_raw``, ``rama_mixture_raw``), the residue template
-``ff_template``, and the block bookkeeping ``blocks``, ``downstream``,
-``chi_atom_indices``, ``chi_moved_atom_ranges`` -- is internal and may
-change without notice.
+``compute_dssp``, ``dssp_coil_state`` and ``allow_provisional_rama`` are kept
+as attributes of the same name. Everything else on the instance, such as the
+loaded parameter tables and the per-residue bookkeeping, is internal and may
+change.
 
 Supporting types
 ----------------
@@ -224,52 +226,47 @@ Supporting types
 .. autoclass:: pymcpu.forcefields.mcpu.MCPUAtom
    :members:
 
-KORPForceField
-==============
+KORPForceField (korp)
+=====================
 
-:class:`~pymcpu.KORPForceField` is a **backbone-only** force field built
-on KORP's 6D orientational potential. KORP reads only N, CA and C -- the
-pair coordinate is CA-CA -- so rather than carry sidechains along unused
-this force field drops them: the engine sees N, CA, C and O only, with O
-kept purely so the existing move machinery and segment bookkeeping work
-unchanged.
+:class:`~pymcpu.KORPForceField` is a backbone-only force field built on
+KORP's 6D orientational potential. KORP reads only N, CA and C, so this force
+field drops the side chains: the engine holds N, CA, C and O, with O kept
+only so that the moves work as they do for MCPU.
 
 .. warning::
 
-   **The trajectory you get back is not the trajectory you put in.**
-   Sidechain atoms are gone, so an XTC written from this force field
-   must be loaded against
-   :attr:`~pymcpu.KORPForceField.output_topology`, not against your
-   input PDB's topology. Save that topology next to the trajectory::
+   **The trajectory you get back has no side chains.** Load a trajectory
+   written from this force field against
+   :attr:`~pymcpu.KORPForceField.output_topology`, not against your input's
+   topology. Save that topology next to the trajectory::
 
        import mdtraj as md
        md.Trajectory(ff.coords[:1], ff.output_topology).save_pdb("top.pdb")
 
 .. warning::
 
-   **Sidechain moves must be switched off.** These residues have no chi
-   angles, so every sidechain proposal would return without proposing
-   anything. Call ``integrator.set_move_weights(pivot, kic, 0.0)``;
-   :py:meth:`Integrator.run` raises rather than silently discarding that
-   share of the run.
+   **Switch the side-chain moves off.** These residues have no side-chain
+   torsions, so call ``integrator.set_move_weights(pivot, kic, 0.0)``;
+   :py:meth:`Integrator.run` raises an error otherwise.
 
-The energy map is **not distributed with pyMCPU**: at 316 MiB it is well
-over PyPI's per-file limit. Obtain it once and point ``KORP_MAP_PATH`` at
-it; the error raised when it is missing says exactly how. See the
-project README for the download and checksum.
+The energy map is not shipped with pyMCPU: at 316 MiB it is over PyPI's file
+size limit. Download it once and point ``KORP_MAP_PATH`` at it, as described
+in :ref:`korp-map`.
 
 .. code-block:: python
 
-   import mdtraj as md, numpy as np, pymcpu as mc
-   from pymcpu import mcpu_core
+   import mdtraj as md
+   import numpy as np
+   import pymcpu as mc
    from pymcpu.forcefields.korp import KORPForceField
 
    traj = md.load("protein.pdb")
-   ff = KORPForceField(traj)                 # or map_path=...
+   ff = KORPForceField(traj)                       # or map_path=...
    system = ff.create_system(traj.topology)
 
-   integrator = mcpu_core.Integrator(temperature=0.6, step_size_rad=0.05)
-   integrator.set_move_weights(0.5, 0.5, 0.0)     # backbone moves only
+   integrator = mc.Integrator(temperature=0.6, step_size_rad=0.05)
+   integrator.set_move_weights(0.5, 0.5, 0.0)      # backbone moves only
    sim = mc.Simulation(ff.output_topology, system, integrator)
    sim.context.set_positions((ff.coords[0] * 10.0).T.astype(np.float32))
    ff.apply_energy_weights(sim.context)
