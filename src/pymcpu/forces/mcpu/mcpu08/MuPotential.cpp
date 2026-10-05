@@ -2175,6 +2175,17 @@ inline __attribute__((always_inline)) unsigned span_mask8(
         auto& moved_per_cell = ws.moved_per_cell;
         if (moved_per_cell.size() < grid.num_cells())
             moved_per_cell.assign(static_cast<size_t>(grid.num_cells()), 0);
+#ifndef NDEBUG
+        // The skip test (count == moved_per_cell[c]) is only right when each
+        // moved atom is listed once: a duplicate makes a cell that still holds
+        // an unmoved atom look fully moved. See ProposalPatch::mark_moved.
+        {
+            std::size_t n_marked = 0;
+            for (std::uint8_t m : is_moved) n_marked += (m != 0);
+            assert(n_marked == moved.size() &&
+                   "moved_indices must list each atom moving_atoms marks exactly once");
+        }
+#endif
         for (int i : moved) {
             const int c = grid.atom_cell(i);
             if (c >= 0) ++moved_per_cell[static_cast<size_t>(c)];
