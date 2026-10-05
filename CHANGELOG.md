@@ -452,6 +452,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   developer diagnostic, and it showed up inside notebook cells. It is now
   printed only with `MCPU_VERBOSE=1`, like the engine's other diagnostics.
 
+- **The H-bond energy change skips donor-acceptor pairs that are far apart
+  in both the old and the new state, which makes 164-417 residue proteins
+  2-8% faster.** On pivot moves the H-bond delta was 13-24% of the step and
+  the one term whose cost grows with how much of the chain moves. Pairs
+  that can score are evaluated at the same point in the same order, so
+  trajectories are unchanged bit for bit; only the parity dump's work
+  counters drop. Cycles per step, default move mix / pivot-only: T4
+  lysozyme -3.3% / -6.2%, CA2 -4.1% / -2.3%, LDH-A -4.4% / -5.6%, actin
+  -5.8% / -5.5%, PGK1 -5.2% / -8.2%.
+
 - **`scripts/job_template.slurm` no longer activates a particular conda
   environment.** It activated `mcpu_dev`, a conda environment from one
   developer's setup, and used that environment's `mpirun`. The job now
