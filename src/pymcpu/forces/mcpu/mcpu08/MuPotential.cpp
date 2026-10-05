@@ -898,7 +898,10 @@ inline __attribute__((always_inline)) unsigned span_mask8(
                     .pending_list_invalidate = true;
                 if (!masked) {
                     ++clist_fallbacks_;
-                    if (clist_fallbacks_ == 1 || (clist_fallbacks_ % 1000) == 0) {
+                    // A developer diagnostic; clist_fallbacks() counts it
+                    // either way.
+                    if (mcpu_verbose_enabled() &&
+                        (clist_fallbacks_ == 1 || (clist_fallbacks_ % 1000) == 0)) {
                         std::fprintf(stderr,
                             "NOTE: Mu move #%llu that cannot use the contact "
                             "list (it leaves the neighbour grid, or there is "

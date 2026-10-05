@@ -445,6 +445,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Ordinary runs no longer print a Mu contact-list NOTE.** The engine
+  printed "NOTE: Mu move #1 that cannot use the contact list ..." to stderr
+  on the first move that could not use the list, and on every thousandth,
+  which happens in normal runs, for example chignolin at T = 0.8. It is a
+  developer diagnostic, and it showed up inside notebook cells. It is now
+  printed only with `MCPU_VERBOSE=1`, like the engine's other diagnostics.
+
 - **`scripts/job_template.slurm` no longer activates a particular conda
   environment.** It activated `mcpu_dev`, a conda environment from one
   developer's setup, and used that environment's `mpirun`. The job now
