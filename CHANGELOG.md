@@ -452,6 +452,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   developer diagnostic, and it showed up inside notebook cells. It is now
   printed only with `MCPU_VERBOSE=1`, like the engine's other diagnostics.
 
+- **A replica swap no longer pays for a second O(N^2) Mu pass or a full grid
+  clear, and the aromatic energy change computes each ring's geometry once.**
+  Trajectories are unchanged bit for bit, including across a two-replica
+  swap run compared step by step.
+
+  * The full-energy resync after a swap now fills the Mu contact list even
+    when the swap dropped it, and the first move that can use a list adopts
+    it instead of rebuilding it. The first 50 steps after a swap take
+    48.6 -> 4.5 Mcycles per replica on actin and 55.5 -> 5.4 on PGK1 (417
+    residues); `calculate_total_energy(-1)` takes 67.8 -> 62.7 and
+    77.2 -> 71.9, partly because the O(N^2) Mu loops now iterate a list of
+    the non-amide-H atoms.
+  * `set_positions` no longer zeroes the whole neighbour grid when it
+    reconfigures it: 33.4 -> 8.1 Mcycles on actin, 29.4 -> 5.0 on PGK1. A
+    swap calls it on both replicas.
+  * The aromatic term computes every ring's geometry once per state instead
+    of inside its pair loop, and returns 0 for a move that touches no ring
+    atom. 10,000 steps: -3.2% on actin, -4.7% on PGK1.
+
 - **`scripts/job_template.slurm` no longer activates a particular conda
   environment.** It activated `mcpu_dev`, a conda environment from one
   developer's setup, and used that environment's `mpirun`. The job now

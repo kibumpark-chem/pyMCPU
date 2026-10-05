@@ -3,6 +3,8 @@
 #include "pymcpu/State.h"
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
+#include <vector>
 #include "pymcpu/utils/numbers_compat.h"
 
 namespace mcpu::forces {
@@ -92,10 +94,97 @@ namespace mcpu::forces {
         const Context& context,
         const State& old_state,
         const State& proposed_state,
-        const ProposalPatch& /*patch*/
+        const ProposalPatch& patch
     ) const {
-        const float de =
-            calculateEnergy(context, proposed_state) - calculateEnergy(context, old_state);
-        return EnergyChangeResult::finite(de);
+        // Same result as calculateEnergy(new) - calculateEnergy(old), bit for
+        // bit: both sums are accumulated pair by pair in the same order with
+        // the same float operations. Each ring's geometry is computed once
+        // instead of once per pair, a pair of rings the move left in place is
+        // binned once and added to both sums, and a move that touches no ring
+        // atom returns 0 (the two sums would be equal).
+        constexpr float RAD2DEG = 180.0f / mcpu::PI_F;
+        constexpr float EPS = 1e-6f;
+        const std::size_t n = aromatic_atom_indices.size();
+        const std::vector<uint8_t>& moving = patch.moving_atoms;
+        const auto& sys = context.getSystem();
+        const auto& a2r = sys.atom_to_residue;
+
+        struct Ring {
+            Eigen::Vector3f center, normal;
+            float norm;
+        };
+        thread_local std::vector<Ring> old_g, new_g;
+        thread_local std::vector<uint8_t> moved, live;
+        old_g.resize(n);
+        new_g.resize(n);
+        moved.assign(n, 0);
+        live.assign(n, 0);
+        bool any_moved = false;
+        for (std::size_t i = 0; i < n; ++i) {
+            const auto& ring = aromatic_atom_indices[i];
+            bool m = moving.empty();  // no patch: treat every ring as moved
+            for (int a : ring) {
+                if (a >= 0 && static_cast<std::size_t>(a) < moving.size() &&
+                    moving[static_cast<std::size_t>(a)])
+                    m = true;
+            }
+            moved[i] = m;
+            any_moved |= m;
+        }
+        if (!any_moved) return EnergyChangeResult::finite(0.0f);
+
+        for (std::size_t i = 0; i < n; ++i) {
+            const int res_i = a2r[static_cast<std::size_t>(aromatic_atom_indices[i][0])];
+            if (sys.is_residue_energy_ignored(res_i)) continue;
+            live[i] = 1;
+            const RingGeometry go = computeRingGeometry(old_state, aromatic_atom_indices[i]);
+            old_g[i] = Ring{go.center, go.normal, go.normal.norm()};
+            if (moved[i]) {
+                const RingGeometry gn =
+                    computeRingGeometry(proposed_state, aromatic_atom_indices[i]);
+                new_g[i] = Ring{gn.center, gn.normal, gn.normal.norm()};
+            } else {
+                new_g[i] = old_g[i];
+            }
+        }
+
+        // calculateEnergy's pair term: false when the pair scores nothing.
+        auto pair_term = [&](const Ring& ri, const Ring& rj, float& e) {
+            const float distance_sq = (ri.center - rj.center).squaredNorm();
+            if (distance_sq >= DISTANCE_CUTOFF_SQ) return false;
+            if (rj.norm < EPS) return false;
+            float cos_angle = ri.normal.dot(rj.normal) / (ri.norm * rj.norm);
+            cos_angle = std::clamp(cos_angle, -1.0f, 1.0f);
+            float angle = std::acos(cos_angle) * RAD2DEG;
+            if (angle > 90.0f) angle = 180.0f - angle;
+            if (angle > MAX_ANGLE_DEG) angle = MAX_ANGLE_DEG;
+            int bin = static_cast<int>(angle / ANGLE_BIN_SIZE_DEG);
+            if (bin < 0) bin = 0;
+            if (bin >= NUM_ANGLE_BINS) bin = NUM_ANGLE_BINS - 1;
+            e = get(bin);
+            return true;
+        };
+
+        float total_old = 0.0f, total_new = 0.0f;
+        for (std::size_t i = 0; i < n; ++i) {
+            if (!live[i]) continue;
+            const bool row_old = !(old_g[i].norm < EPS);
+            const bool row_new = !(new_g[i].norm < EPS);
+            if (!row_old && !row_new) continue;
+            for (std::size_t j = i + 1; j < n; ++j) {
+                if (!live[j]) continue;
+                float e = 0.0f;
+                if (!moved[i] && !moved[j]) {
+                    if (row_old && pair_term(old_g[i], old_g[j], e)) {
+                        total_old += e;
+                        total_new += e;
+                    }
+                    continue;
+                }
+                if (row_old && pair_term(old_g[i], old_g[j], e)) total_old += e;
+                if (row_new && pair_term(new_g[i], new_g[j], e)) total_new += e;
+            }
+        }
+        return EnergyChangeResult::finite(total_new / 1000.0f - total_old / 1000.0f);
     }
 }
