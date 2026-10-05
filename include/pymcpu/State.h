@@ -63,6 +63,11 @@ public:
     };
     mutable std::vector<std::vector<MuContactEntry>> mu_contact_list;
     mutable bool mu_contact_list_ready = false;
+    /// The list was filled by a full-energy resync while not ready. The next
+    /// move that can use a list adopts it instead of rebuilding the same list
+    /// (MuPotential::calculateEnergyChange); until then it reads as not ready,
+    /// so every other path behaves as if it did not exist.
+    mutable bool mu_contact_list_prebuilt = false;
     /// Upper bound (A) on how far any pair's distance can have changed through
     /// accepted rigid carries since the list was last measured from coordinates.
     mutable float mu_list_drift = 0.f;
@@ -95,6 +100,7 @@ public:
     void mu_contact_invalidate() const {
         mu_contact_list.clear();
         mu_contact_list_ready = false;
+        mu_contact_list_prebuilt = false;
         mu_list_drift = 0.f;
     }
 

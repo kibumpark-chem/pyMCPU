@@ -327,6 +327,10 @@ void Context::commit_accepted_move(const State& proposed_state, const ProposalPa
         for (const auto& p : mu_ws.pending_contact_add)
             state.mu_contact_add(p.i, p.j, p.energy);
         state.mu_list_drift += mu_ws.pending_list_drift;
+    } else if (state.mu_contact_list_prebuilt) {
+        // A move that did not adopt the prebuilt list changed the coordinates
+        // it was measured from.
+        state.mu_contact_invalidate();
     }
     mu_ws.clear();
 

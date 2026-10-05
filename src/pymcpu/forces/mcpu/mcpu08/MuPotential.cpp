@@ -82,6 +82,25 @@ namespace {
 // Relative slack of span_mask8's cutoff over the exact one; see there.
 constexpr float kSpanMaskSlack = 1.0f + 1.0e-4f;
 
+/// MCPU_CONTACT_LIST=0 turns the live contact list off; read once.
+bool contact_list_enabled() {
+    static const bool on = [] {
+        const char* e = std::getenv("MCPU_CONTACT_LIST");
+        return !(e && e[0] == '0');
+    }();
+    return on;
+}
+
+/// The atoms the Mu pair loops visit, in increasing order: every atom but the
+/// amide hydrogens. Iterating this list visits the same pairs in the same
+/// order as testing System::is_amide_h_atom on both atoms of every pair.
+void mu_pair_atoms(const System& sys, int n, std::vector<int>& out) {
+    out.clear();
+    out.reserve(static_cast<size_t>(n));
+    for (int i = 0; i < n; ++i)
+        if (!sys.is_amide_h_atom(i)) out.push_back(i);
+}
+
 static_assert(OpenCellGrid::CELL_CAPACITY % 8 == 0,
               "span_mask8 loads whole 8-slot blocks of a cell span");
 
@@ -853,10 +872,7 @@ inline __attribute__((always_inline)) unsigned span_mask8(
         // DEFAULT ON (1.35-1.45x on chignolin/1igd/actin when introduced).
         // MCPU_CONTACT_LIST=0 restores the re-measure path, which does not
         // re-decide pairs a rigid pivot carries.
-        static const bool kContactList = [] {
-            const char* e = std::getenv("MCPU_CONTACT_LIST");
-            return !(e && e[0] == '0');
-        }();
+        const bool kContactList = contact_list_enabled();
         float delta;
         if (kContactList) {
             // A rigid move adds to the drift budget of the pairs it carries
@@ -877,6 +893,14 @@ inline __attribute__((always_inline)) unsigned span_mask8(
                 !masked &&
                 carry_bound <= budget;
             if (usable) {
+                if (!old_state.mu_contact_list_ready &&
+                    old_state.mu_contact_list_prebuilt) {
+                    // Filled by the last full-energy resync from these same
+                    // coordinates: the list rebuild_contact_list would make.
+                    old_state.mu_contact_list_prebuilt = false;
+                    old_state.mu_contact_list_ready = true;
+                    ++contact_list_rebuilds_;
+                }
                 if (!old_state.mu_contact_list_ready ||
                     old_state.mu_list_drift + carry_bound > budget) {
                     rebuild_contact_list(context, old_state);
@@ -2116,11 +2140,15 @@ inline __attribute__((always_inline)) unsigned span_mask8(
         setup_mask_cache(sys);
         const int N = sys.getNumAtoms();
         state.mu_contact_list.assign(static_cast<size_t>(N), {});
+        state.mu_contact_list_prebuilt = false;
         const CoordView cv(state.coord_view());
-        for (int i = 0; i < N; ++i) {
-            if (sys.is_amide_h_atom(i)) continue;
-            for (int j = i + 1; j < N; ++j) {
-                if (sys.is_amide_h_atom(j)) continue;
+        std::vector<int> atoms;
+        mu_pair_atoms(sys, N, atoms);
+        const size_t n_atoms = atoms.size();
+        for (size_t a = 0; a < n_atoms; ++a) {
+            const int i = atoms[a];
+            for (size_t b = a + 1; b < n_atoms; ++b) {
+                const int j = atoms[b];
                 const size_t idx = static_cast<size_t>(i) *
                                        static_cast<size_t>(N) +
                                    static_cast<size_t>(j);
@@ -2430,7 +2458,13 @@ inline __attribute__((always_inline)) unsigned span_mask8(
         // do not use the list, so it is dropped instead and rebuilt by the
         // first move that needs it. Clearing in place keeps each atom's
         // allocation.
+        //
+        // A list that is not ready (dropped by set_positions, a restore or a
+        // move that could not follow it) is filled too, and kept as prebuilt:
+        // the first move that can use a list adopts it instead of paying the
+        // O(N^2) rebuild after every replica swap. A clash drops it as above.
         bool refill_contacts = false;
+        bool prebuild = false;
         if (resync && state.mu_contact_list_ready) {
             if (sys.has_energy_mask()) {
                 state.mu_contact_invalidate();
@@ -2440,12 +2474,21 @@ inline __attribute__((always_inline)) unsigned span_mask8(
                 for (auto& partners : state.mu_contact_list) partners.clear();
                 state.mu_list_drift = 0.f;
             }
+        } else if (resync && !sys.has_energy_mask() && contact_list_enabled()) {
+            refill_contacts = true;
+            prebuild = true;
+            state.mu_contact_list.assign(static_cast<size_t>(num_atoms), {});
+            state.mu_contact_list_prebuilt = false;
+            state.mu_list_drift = 0.f;
         }
         const CoordView cv(state.coord_view());
-        for (int i = 0; i < num_atoms; ++i) {
-            if (sys.is_amide_h_atom(i)) continue;
-            for (int j = i + 1; j < num_atoms; ++j) {
-                if (sys.is_amide_h_atom(j)) continue;
+        std::vector<int> atoms;
+        mu_pair_atoms(sys, num_atoms, atoms);
+        const size_t n_atoms = atoms.size();
+        for (size_t a = 0; a < n_atoms; ++a) {
+            const int i = atoms[a];
+            for (size_t b = a + 1; b < n_atoms; ++b) {
+                const int j = atoms[b];
                 const int matrix_idx = i * num_atoms + j;
 
                 if (!topo_contact_mask_[static_cast<size_t>(matrix_idx)] &&
@@ -2514,6 +2557,7 @@ inline __attribute__((always_inline)) unsigned span_mask8(
                 if (refill_contacts && (e != 0.0f || near)) state.mu_contact_add(i, j, e);
             }
         }
+        if (prebuild) state.mu_contact_list_prebuilt = true;
 
         return total_energy;
     }
