@@ -341,6 +341,13 @@ if(NOT MCPU_FP_CONTRACT STREQUAL "" AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang
     target_compile_options(mcpu_core PRIVATE -ffp-contract=${MCPU_FP_CONTRACT})
     set(MCPU_FP_CONTRACT_REPORT "${MCPU_FP_CONTRACT}")
     message(STATUS "FP contraction: -ffp-contract=${MCPU_FP_CONTRACT}")
+    # Code with explicit FMA intrinsics (SturmSolver.h) matches the scalar
+    # loops only when those contract to FMAs too, so it falls back to them
+    # here. GCC treats `on` like `off`, hence "anything but fast".
+    if(NOT MCPU_FP_CONTRACT STREQUAL "fast")
+        target_compile_definitions(MCPU_lib  PRIVATE MCPU_FP_CONTRACT_OFF=1)
+        target_compile_definitions(mcpu_core PRIVATE MCPU_FP_CONTRACT_OFF=1)
+    endif()
 else()
     set(MCPU_FP_CONTRACT_REPORT "compiler-default")
     message(STATUS "FP contraction: compiler default (GCC C++: fast)")
