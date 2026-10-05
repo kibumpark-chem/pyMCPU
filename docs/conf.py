@@ -100,8 +100,20 @@ exclude_patterns = [
     "make.bat",
 ]
 
-# nbsphinx: never re-execute notebooks at build time
+# nbsphinx: never re-execute notebooks at build time. The pages show the
+# outputs stored in the notebooks, so after changing a tutorial, run it again
+# from docs/tutorials (it needs a built pyMCPU), for example with
+#   jupyter nbconvert --to notebook --execute --inplace 01_single_trajectory.ipynb
 nbsphinx_execute = "never"
+# Shown at the top of each notebook page.
+nbsphinx_prolog = r"""
+{% set name = env.docname.split('/')|last %}
+.. note::
+
+   This page is a Jupyter notebook. :download:`Download it <{{ name }}.ipynb>`
+   to run it yourself; besides pyMCPU it needs matplotlib and Jupyter
+   (``pip install matplotlib jupyterlab``).
+"""
 nbsphinx_allow_errors = True
 
 # Mock the compiled extension and its heavy runtime deps so the docs build
