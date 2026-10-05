@@ -455,6 +455,61 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   uses the environment it is submitted from, and a marked block shows how
   to load one instead. `scripts/submit.sh` now requires the config
   argument; it defaulted to `inputs/template.yaml`, which does not exist.
+- **Mu's energy change does less work per moved atom, which makes actin
+  1.7x faster on the default move mix and 2.3x pivot-only.** Each part
+  scores the same pairs in the same order and returns the same answer, so
+  trajectories are unchanged bit for bit. Cycles per step on actin's default
+  move mix (3000 steps), actin pivot-only (1500) and chignolin (30000), each
+  against the step before:
+
+  * Both walks over a moved atom's new neighbours (the clash-first pass and
+    the contact walk) skip the cells that hold only atoms the move
+    displaced. The grid holds accepted coordinates, so those atoms were
+    skipped one by one anyway; on an actin pivot they filled about three
+    quarters of the cells visited. -25%, -37% and -7%.
+  * The clash-first pass tests first the atoms that overlapped in recent
+    rejected moves, then the moved atoms from the end of the move's list
+    (for a pivot, side chains before backbone). It used to test about 30%
+    of a rejected actin pivot's atoms before it found the overlap. -12% and -20% on actin; chignolin's moves
+    are too small for the pass.
+  * Both walks test eight slots of a cell at once against the cutoff (AVX2,
+    in the default `v3` build) and look at the survivors one by one, as
+    before; they used to branch on every slot. They also gather the cells
+    to visit before visiting them, without a branch per cell. -11%, -13%
+    and -6%. Builds without AVX2 run a scalar loop with the same result.
+
+  All three together: -41% cycles per step on actin's default move mix,
+  -57% pivot-only and -12% on chignolin.
+
+- **KIC moves find their closures 2.5x faster, which makes chignolin 11%
+  faster on the default move mix.** Most of a closure's time went to the
+  Sturm root counts of its degree-16 polynomial, and most of those to the
+  bisection that finishes a root. With AVX2 and FMA (the default `v3`
+  build) a count evaluates four polynomials of the Sturm sequence per
+  vector, with the same fused multiply-adds as before, and the bisection
+  takes two steps per round from counts computed together. 37k to 15k
+  cycles per solve; every root is unchanged bit for bit, so trajectories
+  are too. Cycles per step: -11% on chignolin's default move mix, -4% on
+  actin's. Builds without AVX2, and builds with `MCPU_FP_CONTRACT` set to
+  anything but `fast`, run the scalar code as before.
+
+  The packed counts hold the cores at a lower AVX clock. With every core of
+  a socket running a simulation (22 processes on a Xeon 8268) the clock
+  drops from 3.44 to 2.97 GHz, so actin's default move mix makes 3.4% fewer
+  steps per second across the socket than with the scalar counts, while
+  chignolin, where closures are a larger share of the step, still makes
+  11% more. A single process gains on both: 7% on actin, 17% on chignolin.
+
+- **An accepted move copies only the atoms it moved, and the step timers
+  read the CPU's time-stamp counter.** Committing a move scanned the whole
+  moved-atom mask, one entry per atom of the system; it now walks the list
+  of moved atoms (-2% cycles per step on actin's default move mix, -3%
+  pivot-only). The per-step timers behind `Integrator.step_stats()` read
+  the time-stamp counter on x86, calibrated once against `steady_clock`
+  in a 2 ms wait the first time a timer runs, instead of `steady_clock`
+  itself (-3% on actin, -5% on chignolin); they report the same times, and
+  other platforms keep `steady_clock`.
+  Trajectories are unchanged bit for bit.
 
 - **A YAML config with an unknown key is an error.** The flat YAML schema
   ignored any key it did not read, so a misspelled key such as `num_cylces`
