@@ -135,6 +135,8 @@ jobs:
           )
           assert info["fp"]["fast_math"] is False
           assert info["arch"]["tier"], "no CPU baseline recorded"
+          # ubuntu-latest: GCC 13 + binutils 2.42, so AUTO must resolve to on.
+          assert info["build"]["jcc_pad"] is True, info["build"]["jcc_pad_reason"]
           PY
 
       - name: Test

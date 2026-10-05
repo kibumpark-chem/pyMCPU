@@ -452,6 +452,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   developer diagnostic, and it showed up inside notebook cells. It is now
   printed only with `MCPU_VERBOSE=1`, like the engine's other diagnostics.
 
+- **Release builds pad branches against Intel's JCC erratum.** On Skylake
+  through Cascade Lake, a jump that crosses or ends on a 32-byte boundary
+  cannot be served from the decoded-uop cache, and about half of the
+  engine's uops were coming from the slower legacy decoder. The build now
+  passes `-Wa,-mbranches-within-32B-boundaries` to the compile and the LTO
+  link when the toolchain honours it. On a Cascade Lake Xeon with GCC 13 it
+  cut cycles per step by 4.6% on actin and by 3.3-7.5% on an 8222-atom
+  protein (8.5-13.6% compared with a GCC 8 build), and runs stay
+  bit-identical. It also removes a code-layout effect that made speed swing
+  by about 5% after unrelated edits. The new `MCPU_JCC_PAD` option (`AUTO`,
+  the default; `ON`; `OFF`) controls it, and `build_info()["build"]` reports
+  `jcc_pad`, `jcc_pad_mode` and `jcc_pad_reason`. `AUTO` turns padding off
+  when the assembler is older than binutils 2.34, or when the GCC LTO link
+  drops `-Wa` options. GCC 8 drops them without a warning, so CMake now
+  tests for this instead of assuming. Wheels are built with
+  `MCPU_JCC_PAD=ON`.
+
 - **`scripts/job_template.slurm` no longer activates a particular conda
   environment.** It activated `mcpu_dev`, a conda environment from one
   developer's setup, and used that environment's `mpirun`. The job now

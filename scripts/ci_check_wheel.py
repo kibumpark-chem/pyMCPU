@@ -103,6 +103,14 @@ def _build_info() -> None:
     assert info["fp"]["fast_math"] is False, "wheel built with -ffast-math"
     assert info["fp"]["associative_math"] is False
     assert info["fp"]["reciprocal_math"] is False
+    # The wheel job configures with MCPU_JCC_PAD=ON, so a toolchain that
+    # cannot pad already failed the build; this catches the option being
+    # dropped on its way into the container (CIBW_ENVIRONMENT) instead.
+    assert info["build"]["jcc_pad"] is True, (
+        "wheel built without JCC-erratum branch padding: "
+        f"mode={info['build']['jcc_pad_mode']!r}, "
+        f"reason={info['build']['jcc_pad_reason']!r}"
+    )
 
 
 @check("the CPU baseline is portable (no AVX-512 in a published wheel)")

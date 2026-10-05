@@ -64,7 +64,11 @@ jobs:
           # cibuildwheel builds inside the manylinux container and forwards only
           # its own CIBW_* configuration; a host env var is dropped, leaving
           # pyproject.toml's `default = "v3"` to supply the value by coincidence.
-          CIBW_ENVIRONMENT: MCPU_ARCH=v3
+          # MCPU_JCC_PAD=ON turns "this toolchain cannot pad branches" into a
+          # configure error instead of a silently slower wheel (6-13% on
+          # Skylake-family Intel). manylinux_2_28 ships gcc-toolset >= 12,
+          # whose binutils (>= 2.38) and LTO driver both support it.
+          CIBW_ENVIRONMENT: MCPU_ARCH=v3 MCPU_JCC_PAD=ON
 
           CIBW_BUILD_VERBOSITY: "1"
 
