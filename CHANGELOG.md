@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `scripts/tolerance_check.py`: accepts or rejects a build that is correct
+  but not bit-identical to a reference, for speedups that change float
+  rounding. It compares per-group static energies (1e-5 relative), checks
+  the running energy against a full recompute after long runs
+  (max(1e-3, 1e-5·|E|); float32 accumulation already drifts past a flat
+  1e-3 on main), compares sampling statistics over several seeds within
+  statistical error, and checks KORP against the reference `korpe`
+  energies. `CONTRIBUTING.md` says when to use it instead of
+  `arch_parity_dump.py`.
 - `Integrator.set_move_weights(pivot, kic, sidechain)` and
   `Integrator.move_weights()`, plus a `move_weights` key on `IntegratorConfig`
   and `EngineSpec`. The Pivot/KIC/Sidechain mix was previously three
