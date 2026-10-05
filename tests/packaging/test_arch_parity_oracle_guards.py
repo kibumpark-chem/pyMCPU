@@ -374,3 +374,40 @@ def test_weighted_energy_difference_is_detected(oracle, capsys):
                   cases=[_case(weighted_total_after=float(-1.5).hex())])
     assert oracle._compare(ref, cur) == 1
     assert "DIVERGED in weighted_total_after" in capsys.readouterr().out
+
+
+def test_work_counter_difference_alone_still_passes(oracle, capsys):
+    """Less work for the same trajectory is a pass, reported as a note."""
+    ref = _record(sha="aaaa", fma=22, fp_contract="off")
+    cur = _record(
+        sha="bbbb",
+        fma=22,
+        fp_contract="off",
+        cases=[_case(
+            proxy_stats={"neighbor_num_cell_visits": 5},
+            mu_by_kind={"pivot": {"eval_pair_nonzero": 2}},
+            step_ints={"n_steps": 10, "verlet_rebuilds": 3},
+        )],
+    )
+    assert oracle._compare(ref, cur) == 0
+    out = capsys.readouterr().out
+    assert "IDENTICAL" in out
+    assert "proxy_stats[neighbor_num_cell_visits]: ref 7 vs cur 5" in out
+    assert "informational" in out
+    assert "PASS" in out
+
+
+def test_step_totals_stay_strict(oracle, capsys):
+    ref = _record(sha="aaaa", fma=22, fp_contract="off")
+    cur = _record(sha="bbbb", fma=22, fp_contract="off",
+                  cases=[_case(step_ints={"n_steps": 11})])
+    assert oracle._compare(ref, cur) == 1
+    assert "DIVERGED in step_ints" in capsys.readouterr().out
+
+
+def test_coordinate_hash_difference_is_detected(oracle, capsys):
+    ref = _record(sha="aaaa", fma=22, fp_contract="off")
+    cur = _record(sha="bbbb", fma=22, fp_contract="off",
+                  cases=[_case(coords_sha256="abd")])
+    assert oracle._compare(ref, cur) == 1
+    assert "DIVERGED in coords_sha256" in capsys.readouterr().out

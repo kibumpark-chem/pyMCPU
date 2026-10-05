@@ -37,7 +37,10 @@ python scripts/arch_parity_dump.py --compare /tmp/before.json   # exit 0 require
 `arch_parity_dump.py` compares accept-bit streams, per-group energies as hex
 floats, coordinate hashes, weights and move counters between two builds, with
 no tolerance. Exit 0 = bit-identical, 1 = divergence, 2 = the harness itself
-failed.
+failed. Internal work counters (candidates iterated, cells visited, list
+rebuilds) are printed when they differ but do not fail the comparison: a
+change that skips work the answer does not depend on passes with smaller
+counters.
 
 If your change *should* alter results, say so in the PR, re-derive the affected
 goldens as an explicit and dated capture (see the capture history at the top of

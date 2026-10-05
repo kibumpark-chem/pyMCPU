@@ -16,6 +16,15 @@ compare against build B::
     # ... rebuild with a different flag ...
     python scripts/arch_parity_dump.py --compare ref.json
 
+What fails the comparison
+-------------------------
+Energies (hex floats), the accept-bit stream, the coordinate hash, the
+per-move accept counts and the step totals must match exactly. Internal work
+counters (``proxy_stats``, ``mu_by_kind`` and the Verlet/pair-call entries of
+``step_ints``) are printed when they differ but do not fail the run: a change
+that skips provably irrelevant work reaches the same trajectory with smaller
+counters, and that is a pass.
+
 Why the numbers are stored as hex floats
 ----------------------------------------
 Nothing else in this repo prints a bit-faithful float -- every parity script
@@ -493,12 +502,46 @@ _PHYSICS_FIELDS = (
     "accept_bits",
     "coords_sha256",
     "move_stats",
-    "proxy_stats",
     "step_ints",
-    "mu_by_kind",
     "mu_backend",
     "hbond_backend",
 )
+
+#: Internal work counters: how many candidates, cells, geometry checks and
+#: rebuilds the engine spent getting to the answer. They are reported when
+#: they differ but do not fail the comparison, so a change that reaches the
+#: same energies, accept bits and coordinates with less work still passes.
+#: ``proxy_stats`` and ``mu_by_kind`` are informational as a whole;
+#: ``step_ints`` stays strict except for the keys in ``_STEP_WORK_KEYS``.
+_WORK_COUNTER_FIELDS = ("proxy_stats", "mu_by_kind")
+_STEP_WORK_KEYS = frozenset({
+    "mu_eval_pair_calls",
+    "verlet_used",
+    "verlet_fallback_cell",
+    "verlet_rebuilds",
+    "verlet_partial_rebuilds",
+    "verlet_partial_affected_sum",
+})
+
+
+def _split_step_ints(case: dict[str, Any]) -> tuple[dict, dict]:
+    """``step_ints`` split into (strict, work-counter) parts."""
+    step = case.get("step_ints") or {}
+    strict = {k: v for k, v in step.items() if k not in _STEP_WORK_KEYS}
+    work = {k: v for k, v in step.items() if k in _STEP_WORK_KEYS}
+    return strict, work
+
+
+def _work_counter_diffs(ref_case: dict[str, Any], cur_case: dict[str, Any]) -> list[str]:
+    """One line per work counter that differs between the two cases."""
+    lines = []
+    pairs = [(f, ref_case.get(f) or {}, cur_case.get(f) or {}) for f in _WORK_COUNTER_FIELDS]
+    pairs.append(("step_ints", _split_step_ints(ref_case)[1], _split_step_ints(cur_case)[1]))
+    for field, ra, rb in pairs:
+        for key in sorted(set(ra) | set(rb)):
+            if ra.get(key) != rb.get(key):
+                lines.append(f"{field}[{key}]: ref {ra.get(key)} vs cur {rb.get(key)}")
+    return lines
 
 
 def _compare(ref: dict[str, Any], cur: dict[str, Any]) -> int:
@@ -592,6 +635,7 @@ def _compare(ref: dict[str, Any], cur: dict[str, Any]) -> int:
     harness_errors = 0
     compared = 0
     skipped = 0
+    work_only = 0
     for cur_case in cur.get("cases", []):
         label = cur_case.get("label")
         ref_case = ref_cases.get(label)
@@ -610,10 +654,21 @@ def _compare(ref: dict[str, Any], cur: dict[str, Any]) -> int:
             continue
 
         compared += 1
-        diffs = [f for f in _PHYSICS_FIELDS if ref_case.get(f) != cur_case.get(f)]
+        diffs = [
+            f for f in _PHYSICS_FIELDS
+            if f != "step_ints" and ref_case.get(f) != cur_case.get(f)
+        ]
+        if _split_step_ints(ref_case)[0] != _split_step_ints(cur_case)[0]:
+            diffs.append("step_ints")
+        work = _work_counter_diffs(ref_case, cur_case)
         if not diffs:
             print(f"  {label:18} IDENTICAL  ({cur_case['steps']} steps, "
                   f"{cur_case['n_atoms']} atoms, {cur_case['n_accepts']} accepts)")
+            if work:
+                work_only += 1
+                print("      work counters differ (informational, not a failure):")
+                for line in work:
+                    print(f"        {line}")
             continue
 
         failures += 1
@@ -640,11 +695,15 @@ def _compare(ref: dict[str, Any], cur: dict[str, Any]) -> int:
                     print(f"      {field} group {group}:")
                     print(f"        ref {ra.get(group)}")
                     print(f"        cur {rb.get(group)}")
-        for field in ("move_stats", "proxy_stats"):
+        for field in ("move_stats", "step_ints"):
             ra, rb = ref_case.get(field, {}), cur_case.get(field, {})
+            if field == "step_ints":
+                ra, rb = _split_step_ints(ref_case)[0], _split_step_ints(cur_case)[0]
             for key in sorted(set(ra) | set(rb)):
                 if ra.get(key) != rb.get(key):
                     print(f"      {field}[{key}]: ref {ra.get(key)} vs cur {rb.get(key)}")
+        for line in work:
+            print(f"      (work counter) {line}")
 
     print()
     # Exit codes are distinct on purpose. Every existing parity_*.py conflates
@@ -682,6 +741,9 @@ def _compare(ref: dict[str, Any], cur: dict[str, Any]) -> int:
             "matter are accept_bits, the hex-float energies and coords_sha256."
         )
         return 1
+    if work_only:
+        print(f"note: {work_only} case(s) reached identical results with "
+              "different internal work counters (informational)")
     if same_build:
         print("PASS: every case bit-identical (same build -- null test only)")
     else:

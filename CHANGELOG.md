@@ -458,6 +458,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   uses the environment it is submitted from, and a marked block shows how
   to load one instead. `scripts/submit.sh` now requires the config
   argument; it defaulted to `inputs/template.yaml`, which does not exist.
+
+- **`scripts/arch_parity_dump.py` no longer fails a comparison on internal
+  work counters alone.** Counters such as `hbond_num_candidates_iterated`,
+  `neighbor_num_cell_visits` and the Mu candidate and Verlet counters are
+  printed as a note when they differ; energies, accept bits, coordinate
+  hashes, move counts and step totals stay strict. A speedup that skips work
+  the result does not depend on used to read as a parity failure.
+
 - **Mu's energy change does less work per moved atom, which makes actin
   1.7x faster on the default move mix and 2.3x pivot-only.** Each part
   scores the same pairs in the same order and returns the same answer, so
