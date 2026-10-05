@@ -207,9 +207,6 @@ def test_folding_runner_run_accepts_checkpoint_kwargs() -> None:
         "checkpoint_interval",
         "keep_last_n",
         "resume",
-        "cloud_sync",
-        "cloud_bucket",
-        "cloud_sync_cmd",
     }
     missing = required - set(sig.parameters)
     assert not missing, f"FoldingRunner.run() missing checkpoint params: {missing}"
@@ -224,9 +221,6 @@ def test_run_folding_module_function_accepts_checkpoint_kwargs() -> None:
         "checkpoint_interval",
         "keep_last_n",
         "resume",
-        "cloud_sync",
-        "cloud_bucket",
-        "cloud_sync_cmd",
     }
     missing = required - set(sig.parameters)
     assert not missing, f"run_folding missing checkpoint params: {missing}"

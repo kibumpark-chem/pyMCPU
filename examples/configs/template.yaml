@@ -63,9 +63,6 @@ checkpointing:
   checkpoint_interval: 50  # cycles between checkpoints
   keep_last_n: 3
   resume: false
-  cloud_sync: false
-  cloud_bucket: ""
-  cloud_sync_cmd: "aws s3 cp"
 
 # ── Simulation launch ─────────────────────────────────────────
 # MPI parallelism is configured in the launch script (scripts/submit.sh),

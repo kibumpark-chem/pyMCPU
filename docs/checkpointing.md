@@ -1,128 +1,84 @@
 # Checkpointing and resume
 
-Long pyMCPU runs — production replica exchange in particular — are expected to
-outlive a single scheduler allocation. Every runner can therefore snapshot its
-full state and resume from it.
+Long runs, replica exchange in particular, often outlast one job allocation.
+Every runner can save its state to a checkpoint and continue from it later.
+Checkpointing is on by default.
 
-## What a checkpoint is
+## Settings
 
-Checkpoints are `.chk` files written into `checkpoint_dir`:
-
-| File | Meaning |
-|---|---|
-| `checkpoint_cycle_000050.chk` | Versioned snapshot taken at cycle 50 |
-| `last.chk` | Always the most recent save |
-| `best.chk` | Best-metric snapshot, when a metric is being tracked |
-
-Older versioned files are pruned automatically; `keep_last_n` (default `3`)
-sets how many to retain. `last.chk` and `best.chk` are never pruned.
-
-### Crash safety
-
-A checkpoint is written to a temporary file in the destination directory,
-`fsync`'d, and then moved into place with `os.replace`. Because that final move
-is atomic on POSIX filesystems, a crash part-way through a write cannot leave a
-truncated or partially-written `.chk` behind: either the old snapshot survives
-intact or the new one does.
-
-### Payload
-
-`CheckpointState` carries 27 fields — enough to reconstruct a run bit-exactly
-rather than merely approximately. Grouped by purpose:
-
-- **Position in the run** — `cycle`, `global_step`, `epoch`, `current_steps`
-- **Configuration needed to rebuild the system** — `pdb_path`,
-  `reference_pdb`, `temperatures`, `n_targets`, `k_bias`, `contact_cutoff`,
-  `min_seq_sep`, `contact_atom_mode`, `native_contact_pairs`,
-  `fixed_residues`, `linker_residues`, `linker_energy_mode`, `n_replicas`
-- **Coordinates and replica bookkeeping** — `replica_coords`,
-  `walker_at_state`
-- **Random state** — `seed`, `exchange_rng`, `exchange_rng_state` (the NumPy
-  BitGenerator state driving exchange decisions) and `integrator_rng_states`
-  (one serialized `std::mt19937` state string per replica)
-- **Move statistics** — `integrator_move_counters` (one dict per replica from
-  `Integrator.get_move_counters()`), so the cumulative `<kind>_accepted` /
-  `<kind>_attempted` columns of the energy CSV keep counting after a resume.
-  Older checkpoints have none; their replicas count from 0 again.
-- **Output alignment** — `traj_frame_indices`, `format_version`, `kind`
-
-Capturing both RNG streams is what makes a resumed trajectory a continuation
-of the original rather than a new sample from the same ensemble.
-
-## Resuming
-
-On resume the run continues from the cycle *after* the saved checkpoint, and
-trajectory files are first truncated back to the frame count recorded in
-`traj_frame_indices`. Without that truncation, any frames written after the
-last checkpoint but before the crash would be duplicated when appending
-resumes.
-
-Truncation is implemented for XTC, CSV, HDF5 and NPZ outputs.
-
-```{warning}
-**DCD is the one exception.** `truncate_all_trajectories_on_resume` emits a
-warning and skips DCD files, because `truncate_dcd_to_frame()` is not
-implemented. If you resume a run that wrote DCD, delete the DCD manually first
-or you will get duplicated frames. Prefer XTC.
-```
-
-### Checkpoints from other versions
-
-Every checkpoint records its `format_version`, and a file newer than the
-installed pyMCPU understands is refused. Before restoring anything, every
-resume path also checks that the stored coordinates have the system's atom
-count. A checkpoint written with a different atom layout stops with an error
-that names both counts, instead of loading with its atoms shifted.
-
-Format version 2 changed the layout. Version 1 gave each glycine CA a second
-slot, so a version 1 checkpoint of a protein with glycine cannot be resumed:
-start the run again from its input structure. Version 1 checkpoints of
-glycine-free proteins, and of KORP runs, still resume.
-
-### From the command line
-
-```bash
-mcpu run config.yaml
-```
-
-with `resume: true` in the config's `checkpointing` block.
-
-### From YAML
+A YAML config takes the settings in a `checkpointing` block, or at its top
+level; a JSON config takes them in a `checkpoint` block:
 
 ```yaml
 checkpointing:
-  enabled: true
-  checkpoint_dir: "checkpoints"
-  checkpoint_interval: 50        # save every 50 cycles
-  keep_last_n: 3                 # retain the last 3 versioned files
-  resume: false
-  cloud_sync: false
-  cloud_bucket: ""               # e.g. s3://my-bucket/run-name/
-  cloud_sync_cmd: "aws s3 cp"    # or "gsutil cp" / "rclone copy"
+  checkpoint_dir: checkpoints   # where the files go
+  checkpoint_interval: 50       # save every 50 cycles
+  keep_last_n: 3                # numbered checkpoints to keep
+  resume: false                 # true to continue from the last checkpoint
 ```
 
-## MPI runs
+A cycle is one round of MC steps and swaps in replica exchange, and one report
+interval in a folding run (`log_interval` in YAML, `report_interval` in JSON).
+To turn checkpointing off, set `checkpoint_dir: null`; `enabled: false` is
+accepted but has no effect under `mcpu run`. The `mcpu run` options
+`--checkpoint-dir`, `--checkpoint-interval`, `--keep-last-n` and `--resume`
+override these settings; see [Command-line interface](cli.rst).
 
-Under MPI replica exchange, only rank 0 writes checkpoints. The state it saves
-covers every replica, so a resumed job reconstructs the whole ladder from that
-one file — there is no per-rank checkpoint to keep consistent.
+## When a run saves
 
-## Cloud sync
+- Every `checkpoint_interval` cycles.
+- At the end of the run, except under MPI, where only the interval applies.
+- Replica exchange also saves when it receives SIGTERM or SIGINT, as from
+  `scancel`, a job time limit or Ctrl-C: it finishes the current cycle, saves
+  and stops. A folding run does not, and resumes from its last regular save.
 
-With `cloud_sync: true`, `last.chk` is uploaded to `cloud_bucket` after every
-save. The upload runs in a background subprocess and does not block sampling,
-so a slow or failing upload costs throughput but not correctness. The
-corresponding CLI tool (`aws`, `gsutil` or `rclone`) must be installed and
-authenticated.
+## Files
 
-## Reproducibility caveat
+| File | Contents |
+|---|---|
+| `checkpoint_cycle_000050.chk` | Saved at cycle 50 |
+| `last.chk` | The most recent save |
 
-Exact MC RNG restore requires resuming with an `mcpu_core` whose
-`Integrator::getRngState` / `setRngState` serialization is compatible with the
-binary that wrote the checkpoint — that is, the same build, or one built
-against a compatible `libstdc++`. The RNG state is serialized through
-`std::mt19937`'s stream operators, so it is a text format produced by the C++
-standard library rather than a pyMCPU-defined one.
+Only the newest `keep_last_n` numbered files are kept; `last.chk` always is.
+Each file is written under a temporary name and then renamed, so a crash
+during a save leaves the previous checkpoint intact.
 
-Coordinates, cycle counters and exchange state restore correctly regardless;
-only the *continuation* of the exact random stream depends on the binary.
+A checkpoint holds what the run needs to continue exactly: the coordinates of
+every replica, its position in the run, the random number streams of the MC
+moves and of the exchanges, the move counters, and how much of each output
+file had been written.
+
+## Resuming
+
+```bash
+mcpu run config.yaml --resume
+```
+
+or set `resume: true` in the config. The run continues after the state in
+`last.chk` in `checkpoint_dir`. Output files are first cut back to what had
+been written at that checkpoint and then appended to, so nothing written after
+the last save is duplicated. This works for XTC, CSV, HDF5 and NPZ files; a
+DCD file is left as it is and must be deleted by hand.
+
+If there is no checkpoint yet, folding and MPI replica exchange start from the
+beginning, while single-process replica exchange stops with an error.
+
+Under MPI, rank 0 writes and reads the checkpoint, which covers every replica.
+
+### Checkpoints from other versions
+
+Every checkpoint records its format version, and a file newer than the
+installed pyMCPU understands is refused. A checkpoint whose atom count does
+not match the system stops with an error that names both counts. Format
+version 2 stores each glycine CA once, so a version 1 checkpoint of a protein
+with glycine cannot be resumed; start that run again from its input
+structure. Version 1 checkpoints of glycine-free proteins, and of KORP runs,
+still resume.
+
+### Exact continuation
+
+The MC random state is saved as text written by the C++ standard library, so
+the same random stream continues only with the same pyMCPU build, or one built
+against a compatible libstdc++. With another build, the coordinates, cycle
+count and exchange state still restore, but the run continues with a
+different random stream.

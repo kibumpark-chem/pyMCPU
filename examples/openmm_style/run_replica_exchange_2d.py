@@ -120,9 +120,6 @@ def main(argv: list[str] | None = None) -> None:
         checkpoint_interval=args.checkpoint_interval,
         resume=args.resume,
         keep_last_n=args.keep_last_n,
-        cloud_sync=args.cloud_sync,
-        cloud_bucket=args.cloud_bucket,
-        cloud_sync_cmd=args.cloud_sync_cmd,
     )
 
 

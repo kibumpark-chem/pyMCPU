@@ -17,7 +17,14 @@ import pytest
 
 from pymcpu import checkpointing
 from pymcpu.checkpointing import save_checkpoint
-from pymcpu.config import CheckpointConfig, IntegratorConfig, OutputsConfig, SimulationConfig
+from pymcpu.config import (
+    CheckpointConfig,
+    IntegratorConfig,
+    OutputsConfig,
+    SimulationConfig,
+    config_from_dict,
+    yaml_dict_to_config,
+)
 from pymcpu.runners import run_replica_exchange_2d
 from pymcpu.sampling.replica_exchange import ReplicaExchange
 from pymcpu.utils.yaml_parser import SimulationHandle
@@ -72,3 +79,35 @@ def test_simulation_handle_load_checkpoint_validates_and_wires_resume(tmp_path: 
     # load_checkpoint must resolve a directory to its last.chk and record
     # that resolved path onto config.checkpoint.resume for the runner to use.
     assert handle.config.checkpoint.resume == str(ckpt)
+
+
+# The checkpoint upload (cloud_sync / cloud_bucket / cloud_sync_cmd) was
+# removed. Copies of the old template carry those keys at their defaults, so
+# they load with a warning; turning the upload on is an error.
+_CLOUD_DEFAULTS = {"cloud_sync": False, "cloud_bucket": "", "cloud_sync_cmd": "aws s3 cp"}
+
+
+@pytest.mark.parametrize("nested", [True, False])
+def test_removed_cloud_keys_load_with_a_warning(nested: bool) -> None:
+    data: dict = {"pdb": "dummy.pdb", "temperatures": [0.5]}
+    data.update({"checkpointing": dict(_CLOUD_DEFAULTS)} if nested else _CLOUD_DEFAULTS)
+    with pytest.warns(UserWarning, match="checkpoint upload was removed"):
+        cfg = yaml_dict_to_config(data)
+    assert not hasattr(cfg.checkpoint, "cloud_sync")
+
+
+@pytest.mark.parametrize("nested", [True, False])
+def test_cloud_sync_on_is_an_error(nested: bool) -> None:
+    data: dict = {"pdb": "dummy.pdb", "temperatures": [0.5]}
+    data.update({"checkpointing": {"cloud_sync": True}} if nested else {"cloud_sync": True})
+    with pytest.raises(ValueError, match="no longer uploads checkpoints"):
+        yaml_dict_to_config(data)
+
+
+def test_json_config_handles_the_removed_cloud_keys() -> None:
+    base = {"mode": "folding", "pdb": "dummy.pdb"}
+    with pytest.warns(UserWarning, match="checkpoint upload was removed"):
+        cfg = config_from_dict({**base, "checkpoint": {**_CLOUD_DEFAULTS, "checkpoint_interval": 7}})
+    assert cfg.checkpoint.checkpoint_interval == 7
+    with pytest.raises(ValueError, match="no longer uploads checkpoints"):
+        config_from_dict({**base, "checkpoint": {"cloud_sync": True}})
