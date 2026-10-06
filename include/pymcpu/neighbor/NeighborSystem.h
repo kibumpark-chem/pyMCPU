@@ -238,6 +238,32 @@ public:
                          const ProposalPatch& patch) const {
         if (!bounds_.valid) return true;
         if (!patch.moved_indices.empty()) {
+            // moved_indices holds no duplicates, so when its span max - min + 1
+            // equals its size it is exactly the range [min, max] (every pivot
+            // move): test that range with one branch-free, vectorisable pass
+            // instead of a gather and six branches per atom. Same predicate
+            // (a NaN coordinate still fails), so the same answer.
+            int imin = patch.moved_indices.front(), imax = imin;
+            for (int i : patch.moved_indices) {   // branch-free min/max reduction
+                imin = std::min(imin, i);
+                imax = std::max(imax, i);
+            }
+            const size_t lo = static_cast<size_t>(imin);
+            const size_t hi = static_cast<size_t>(imax);
+            if (imin >= 0 && hi - lo + 1 == patch.moved_indices.size()) {
+                const float* x = trial_coords.x.data();
+                const float* y = trial_coords.y.data();
+                const float* z = trial_coords.z.data();
+                const float lx = bounds_.lo.x(), ly = bounds_.lo.y(), lz = bounds_.lo.z();
+                const float hx = bounds_.hi.x(), hy = bounds_.hi.y(), hz = bounds_.hi.z();
+                int ok = 1;
+                for (size_t k = lo; k <= hi; ++k) {
+                    ok &= static_cast<int>(x[k] >= lx) & static_cast<int>(x[k] < hx)
+                        & static_cast<int>(y[k] >= ly) & static_cast<int>(y[k] < hy)
+                        & static_cast<int>(z[k] >= lz) & static_cast<int>(z[k] < hz);
+                }
+                return ok != 0;
+            }
             for (int i : patch.moved_indices) {
                 const size_t k = static_cast<size_t>(i);
                 if (!point_in_bounds(trial_coords.x[k], trial_coords.y[k],
