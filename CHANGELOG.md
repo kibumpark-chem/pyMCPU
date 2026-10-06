@@ -454,6 +454,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **KORP moves cost about a fifth less.** On builds with AVX2 and FMA
+  (the default `-DMCPU_ARCH=v3`), the pair binning counts the distance
+  shell and the two polar rings with vector compares and finds the three
+  angle bins (psi_a, psi_b, chi) together, one per vector lane, with no
+  data-dependent branch. The bins are the same as before by construction,
+  in every build mode: the counts are the same comparisons, and the edge
+  tests that decide each angle bin are rounded the same way in both paths
+  (one fused multiply-subtract by default, the form GCC already compiled
+  the scalar test to; two rounded products under `MCPU_FP_CONTRACT=off`).
+
+  Interleaved A/B against main, pivot + KIC, user-space cycles per step
+  (n = 3): actin 557k -> 436k (-22%), PGK1 612k -> 482k (-21%),
+  beta-galactosidase (AF-P00722) 1.81M -> 1.46M (-19%). Branch mispredicts
+  per step fell about tenfold (actin 4726 -> 486). Every run ended on the
+  same energy and accept sequence as main, as did a 200k-step pivot-only
+  actin run, whose running and recomputed energies also match main's.
 - **The Mu contact walk is about 5-7% faster per step.** The walk over a
   moved atom's new neighbours now keeps the distance its 8-slot prefilter
   computed: each kept slot's partner id and r2 are compressed into two
