@@ -104,12 +104,12 @@ private:
     /// changed shape).
     using FrameClass = neighbor::SiteClass;
 
-    /// Energy of the ordered pair (lo, hi), lo < hi, or 0 if it does not count.
     /// The table entry and slice weight of the pair (lo < hi): false when the
     /// pair scores zero (beyond the cutoff, too close in sequence, or under
     /// min_r). pair_energy is weight * entry, in double.
     bool pair_entry(const std::vector<ResidueFrame>& frames, int lo, int hi,
                     std::size_t& index, float& weight) const noexcept;
+    /// Energy of the ordered pair (lo, hi), lo < hi, or 0 if it does not count.
     [[nodiscard]] double pair_energy(
         const std::vector<ResidueFrame>& frames, int lo, int hi) const noexcept;
 
@@ -157,6 +157,8 @@ private:
     // Per changed residue: the partners to visit (index, or ~index when
     // beyond the prefilter cutoff), and each one's table entry and weight.
     mutable std::vector<int> cand_;
+    // Fixed and Rigid residues of the current proposal, one bit each.
+    mutable std::vector<std::uint64_t> fixed_bits_, rigid_bits_;
     mutable std::vector<std::size_t> entry_;
     mutable std::vector<float> weight_;
 

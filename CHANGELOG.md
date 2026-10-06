@@ -454,6 +454,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **KORP moves are about 1.3x faster again, bit-identical.** The pair
+  angles psi_a, psi_b and chi are no longer computed: each is binned by
+  testing its (y, x) vector against precomputed bin-edge directions, after
+  a rough float angle has picked the bin (the libm-free atan2 and the
+  divisions by the bin widths were about 35% of KORP cycles). The shell
+  and ring are counted against padded boundary arrays instead of found by
+  loops with data-dependent exits, and the candidate pass over a changed
+  residue's partners runs eight at a time with AVX2. Interleaved A/B,
+  pivot + KIC, user-space cycles per step (n = 3): actin 720k -> 547k
+  (-24%), PGK1 832k -> 628k (-24%), beta-galactosidase (AF-P00722)
+  2.51M -> 1.75M (-30%); pivot-only actin 1.31M -> 972k. Every run ended
+  with the same energy, coordinates and accept count as before,
+  `arch_parity_dump` is unchanged, and the checks of
+  `scripts/tolerance_check.py --mode full` (including `korpe`) pass; a bin
+  can differ only for an angle within a few ulp of a bin edge.
+
 - **Pivot bookkeeping runs over index ranges, and the rotation is
   vectorised; bit-identical.** A pivot moves one contiguous block of each
   atom kind, and `ProposalPatch::mark_moved_range` now records those

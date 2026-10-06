@@ -8,6 +8,11 @@
 #include "pymcpu/Context.h"
 #include "pymcpu/State.h"
 #include "pymcpu/System.h"
+#include "pymcpu/neighbor/PairSearch.h"
+
+#if defined(__AVX2__)
+#include <immintrin.h>
+#endif
 
 namespace mcpu::forces {
 
@@ -134,10 +139,10 @@ bool OrientationalPairPotential::pair_entry(
     const int slice = map_->slice_for_separation(separation);
     if (slice < 0) return false;   // too close in sequence to be scored at all
 
-    const PairCoordinates pc = pair_coordinates(frames[a], frames[b]);
-    if (pc.d <= static_cast<double>(map_->min_r())) return false;
+    const PairVectors pv = pair_vectors(frames[a], frames[b]);
+    if (pv.d <= static_cast<double>(map_->min_r())) return false;
 
-    index = map_->entry_index(slice, korp_type_[a], korp_type_[b], map_->bins(pc));
+    index = map_->entry_index(slice, korp_type_[a], korp_type_[b], map_->bins(pv));
     weight = map_->slice_weight(slice);
     return true;
 }
@@ -280,7 +285,18 @@ EnergyChangeResult OrientationalPairPotential::calculateEnergyChange(
     // the prefilter, or holding a nonzero cached energy); the second computes
     // their table entries and prefetches them; the third reads the entries
     // and folds the changes in, in the same order as a single pass would.
-    cand_.resize(un);
+    cand_.resize(un + 8);   // the 8-wide pass stores a full block past k
+#if defined(__AVX2__)
+    // Fixed and Rigid residues as bit sets, for the 8-wide candidate pass.
+    const std::size_t words = (un + 63) / 64 + 1;
+    fixed_bits_.assign(words, ~std::uint64_t{0});
+    rigid_bits_.assign(words, 0);
+    for (int r : changed_) {
+        const std::size_t u = static_cast<std::size_t>(r);
+        fixed_bits_[u >> 6] &= ~(std::uint64_t{1} << (u & 63));
+        if (cls_[u] == FrameClass::Rigid) rigid_bits_[u >> 6] |= std::uint64_t{1} << (u & 63);
+    }
+#endif
     entry_.resize(un);
     weight_.resize(un);
     constexpr std::size_t kNoEntry = ~std::size_t{0};
@@ -292,7 +308,58 @@ EnergyChangeResult OrientationalPairPotential::calculateEnergyChange(
         const bool a_rigid = cls_[ua] == FrameClass::Rigid;
         const double ax = ox_[ua], ay = oy_[ua], az = oz_[ua];
         std::size_t k = 0;
-        for (int j = 0; j < n; ++j) {
+        int j0 = 0;
+#if defined(__AVX2__)
+        // Eight partners at a time, the same tests and the same order as the
+        // scalar loop below (which finishes the last n % 8): the kept
+        // partners are left-packed with the PairSearch lane table.
+        {
+            const __m256d vax = _mm256_set1_pd(ax);
+            const __m256d vay = _mm256_set1_pd(ay);
+            const __m256d vaz = _mm256_set1_pd(az);
+            const __m256d vcut = _mm256_set1_pd(cut2);
+            const __m256i lane = _mm256_setr_epi32(0, 1, 2, 3, 4, 5, 6, 7);
+            const __m256i lane_bit = _mm256_setr_epi32(1, 2, 4, 8, 16, 32, 64, 128);
+            const auto near4 = [&](std::size_t j) {
+                const __m256d dx = _mm256_sub_pd(_mm256_loadu_pd(&ox_[j]), vax);
+                const __m256d dy = _mm256_sub_pd(_mm256_loadu_pd(&oy_[j]), vay);
+                const __m256d dz = _mm256_sub_pd(_mm256_loadu_pd(&oz_[j]), vaz);
+                const __m256d d2 = _mm256_add_pd(
+                    _mm256_add_pd(_mm256_mul_pd(dx, dx), _mm256_mul_pd(dy, dy)),
+                    _mm256_mul_pd(dz, dz));
+                return static_cast<unsigned>(
+                    _mm256_movemask_pd(_mm256_cmp_pd(d2, vcut, _CMP_LT_OQ)));
+            };
+            for (; j0 + 8 <= n; j0 += 8) {
+                const std::size_t u0 = static_cast<std::size_t>(j0);
+                const unsigned near = near4(u0) | (near4(u0 + 4) << 4);
+                const unsigned nonzero = static_cast<unsigned>(_mm256_movemask_ps(
+                    _mm256_cmp_ps(_mm256_loadu_ps(old_row + j0), _mm256_setzero_ps(),
+                                  _CMP_NEQ_UQ)));
+                const unsigned fixed = static_cast<unsigned>(
+                    fixed_bits_[u0 >> 6] >> (u0 & 63)) & 0xFFu;
+                const unsigned rigid = static_cast<unsigned>(
+                    rigid_bits_[u0 >> 6] >> (u0 & 63)) & 0xFFu;
+                int shift = a - j0 + 1;   // lanes above a: j0 + l > a
+                shift = shift < 0 ? 0 : (shift > 8 ? 8 : shift);
+                const unsigned above = (0xFFu << shift) & 0xFFu;
+                const unsigned visit = fixed | (above & ~(a_rigid ? rigid : 0u));
+                const unsigned keep = visit & (near | nonzero);
+                const __m256i idx = _mm256_add_epi32(_mm256_set1_epi32(j0), lane);
+                const __m256i near_lanes = _mm256_cmpeq_epi32(
+                    _mm256_and_si256(_mm256_set1_epi32(static_cast<int>(near)), lane_bit),
+                    lane_bit);
+                const __m256i val = _mm256_blendv_epi8(
+                    _mm256_xor_si256(idx, _mm256_set1_epi32(-1)), idx, near_lanes);
+                const __m256i perm = _mm256_cvtepu8_epi32(_mm_loadl_epi64(
+                    reinterpret_cast<const __m128i*>(&neighbor::detail::kHitLanes.lanes[keep])));
+                _mm256_storeu_si256(reinterpret_cast<__m256i*>(cand_.data() + k),
+                                    _mm256_permutevar8x32_epi32(val, perm));
+                k += static_cast<std::size_t>(__builtin_popcount(keep));
+            }
+        }
+#endif
+        for (int j = j0; j < n; ++j) {
             const std::size_t uj = static_cast<std::size_t>(j);
             const FrameClass cj = cls_[uj];
             const bool visit = (cj == FrameClass::Fixed)
