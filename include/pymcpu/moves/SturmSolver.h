@@ -46,6 +46,16 @@ namespace TripeptideLoopClosure {
 // relative tolerance. That takes about 6 Horner passes per root where regula falsi plus
 // sign halvings took about 50. The Sturm-count bisection runs only when the bracket
 // ends have the same sign.
+//
+// Bookkeeping (roots bit-identical on every input measured): isolation first collects
+// every single-root bracket, then newton4 finishes up to four of them at once in AVX
+// lanes, each lane making newton()'s decisions with the same operations, so a solve pays
+// for its slowest root's iterations rather than the sum. pack() writes the known-order
+// layout without per-entry order lookups, and modp() reads each step's leading remainder
+// coefficient once so its update loop vectorises. MEASURED on 3,240 KIC polynomials (T4L
+// windows, 5,880 roots, all bit-identical): 13.0k -> 9.1k TSC ticks per solve. The lanes
+// match the old scalar loop only while the compiler contracts its Horner step to an FMA
+// (GCC's default).
 class SturmSolver {
 private:
     static constexpr int MAX_ORDER = 16;
@@ -79,13 +89,17 @@ private:
         if (v.coef[v.ord] < 0.0) {
             for (int k = u.ord - v.ord - 1; k >= 0; k -= 2) 
                 r.coef[k] = -r.coef[k];
-            for (int k = u.ord - v.ord; k >= 0; k--)
+            for (int k = u.ord - v.ord; k >= 0; k--) {
+                const double lead = r.coef[v.ord + k];
                 for (int j = v.ord + k - 1; j >= k; j--)
-                    r.coef[j] = -r.coef[j] - r.coef[v.ord + k] * v.coef[j - k];
+                    r.coef[j] = -r.coef[j] - lead * v.coef[j - k];
+            }
         } else {
-            for (int k = u.ord - v.ord; k >= 0; k--)
+            for (int k = u.ord - v.ord; k >= 0; k--) {
+                const double lead = r.coef[v.ord + k];
                 for (int j = v.ord + k - 1; j >= k; j--)
-                    r.coef[j] -= r.coef[v.ord + k] * v.coef[j - k];
+                    r.coef[j] -= lead * v.coef[j - k];
+            }
         }
 
         int k = v.ord - 1;
@@ -143,17 +157,26 @@ private:
     }
 
 #if MCPU_STURM_SIMD
+    // np == MAX_ORDER means every remainder dropped exactly one degree, so member k has
+    // order MAX_ORDER - k; group g is read from row MAX_ORDER - 4g down. Writing only
+    // those rows with compile-time zero padding replaced a 340-entry loop that looked up
+    // each member's order (about a fifth of a solve with roots). Same values, same layout.
     static void pack(int np, const std::array<Poly, MAX_ORDER * 2>& sseq, Packed& P) {
         P.ok = (np == MAX_ORDER);
         if (!P.ok) return;
-        for (int g = 0; g < 5; ++g)
-            for (int j = 0; j <= MAX_ORDER; ++j)
+#pragma GCC unroll 4
+        for (int g = 0; g < 4; ++g) {
+#pragma GCC unroll 17
+            for (int j = 0; j <= MAX_ORDER - 4 * g; ++j)
+#pragma GCC unroll 4
                 for (int l = 0; l < 4; ++l) {
                     const int k = 4 * g + l;
-                    P.T[g][j][l] = (k <= np && j <= sseq[static_cast<size_t>(k)].ord)
-                                       ? sseq[static_cast<size_t>(k)].coef[static_cast<size_t>(j)]
-                                       : 0.0;
+                    P.T[g][j][l] = (j <= MAX_ORDER - k)
+                                       ? sseq[static_cast<size_t>(k)].coef[static_cast<size_t>(j)] : 0.0;
                 }
+        }
+        P.T[4][0][0] = sseq[MAX_ORDER].coef[0];
+        P.T[4][0][1] = P.T[4][0][2] = P.T[4][0][3] = 0.0;
     }
 
     // Sign changes between consecutive members f_0..f_16 held in F[0..16].
@@ -305,49 +328,44 @@ private:
         return std::abs(max - min) < rel_error;
     }
 
-    void sbisect(int np, const std::array<Poly, MAX_ORDER * 2>& sseq, const Packed& P, double min, double max, int atmin, int atmax, std::vector<double>& roots) const {
-        double mid = 0.0;
-        int nroot = atmin - atmax;
-        
-        if (nroot == 1) {
-            double val = 0.0;
-            if (newton(sseq[0].ord, sseq[0].coef, min, max, val)) { roots.push_back(val); return; }
-            int its = 0;
-#if MCPU_STURM_SIMD
-            // Two of the loop below per round; see the class comment.
-            while (P.ok && its + 2 <= max_it) {
-                mid = (min + max) / 2.0;
-                if (bisect_done(min, max, mid)) { roots.push_back(mid); return; }
-                const double xs[3] = {mid, (mid + max) / 2.0, (min + mid) / 2.0};
-                int c[3];
-                numchanges_simd<3>(P, xs, c);
-                double mid2;
-                int at2;
-                if ((atmin - c[0]) == 0) { min = mid; mid2 = xs[1]; at2 = c[1]; }
-                else                     { max = mid; mid2 = xs[2]; at2 = c[2]; }
-                mid = mid2;
-                if (bisect_done(min, max, mid)) { roots.push_back(mid); return; }
-                if ((atmin - at2) == 0) min = mid;
-                else max = mid;
-                its += 2;
+    // Isolated roots, in ascending order. A leaf is either a bracket holding exactly one
+    // root (have == false until it is finished) or a value the isolation already settled
+    // (have == true: a multi-root interval that hit max_it). A polynomial of degree 16
+    // has at most 16 roots, but with tightly clustered roots the floating-point Sturm
+    // counts stop being monotone and isolation can emit hundreds of leaves (837 seen on a
+    // synthetic input). The first 17 live in the inline array; past that the leaves move
+    // to a heap vector, so every leaf is kept and the output matches the old solver.
+    struct Leaf {
+        double min, max, val;
+        int atmin;
+        bool have;
+    };
+    struct Leaves {
+        std::array<Leaf, MAX_ORDER + 1> inl;
+        std::vector<Leaf> spill;
+        Leaf* v = inl.data();
+        int n = 0;
+        Leaves() = default;
+        Leaves(const Leaves&) = delete;
+        Leaves& operator=(const Leaves&) = delete;
+        void add(double mn, double mx, int at, double val, bool have) {
+            if (n < static_cast<int>(inl.size())) {
+                inl[static_cast<size_t>(n++)] = Leaf{mn, mx, val, at, have};
+                return;
             }
-#endif
-            for (; its < max_it; its++) {
-                mid = (min + max) / 2.0;
-                int atmid = numchanges(np, sseq, P, mid);
-                
-                if (std::abs(mid) > rel_error) {
-                    if (std::abs((max - min) / mid) < rel_error) { roots.push_back(mid); return; }
-                } else if (std::abs(max - min) < rel_error) {
-                    roots.push_back(mid); return;
-                }
-
-                if ((atmin - atmid) == 0) min = mid;
-                else max = mid;
-            }
-            roots.push_back(mid);
-            return;
+            // Not taken on any real KIC input measured.
+            if (spill.empty()) spill.assign(inl.begin(), inl.end());
+            spill.push_back(Leaf{mn, mx, val, at, have});
+            v = spill.data();
+            ++n;
         }
+    };
+
+    // Isolation only: records each single-root bracket instead of finishing it, so that
+    // finish() can run Newton on up to four brackets at once.
+    void sbisect(int np, const std::array<Poly, MAX_ORDER * 2>& sseq, const Packed& P, double min, double max, int atmin, int atmax, Leaves& out) const {
+        double mid = 0.0;
+        if (atmin - atmax == 1) { out.add(min, max, atmin, 0.0, false); return; }
 
         for (int its = 0; its < max_it; its++) {
             mid = (min + max) / 2.0;
@@ -356,15 +374,189 @@ private:
             int n2 = atmid - atmax;
 
             if (n1 != 0 && n2 != 0) {
-                sbisect(np, sseq, P, min, mid, atmin, atmid, roots);
-                sbisect(np, sseq, P, mid, max, atmid, atmax, roots);
+                sbisect(np, sseq, P, min, mid, atmin, atmid, out);
+                sbisect(np, sseq, P, mid, max, atmid, atmax, out);
                 return;
             }
             if (n1 == 0) min = mid;
             else max = mid;
         }
 
-        for (int n1 = atmax; n1 < atmin; n1++) roots.push_back(mid);
+        for (int n1 = atmax; n1 < atmin; n1++) out.add(min, max, atmin, mid, true);
+    }
+
+    // Sturm-count bisection of a single-root bracket whose ends have the same sign
+    // (Newton cannot start there).
+    double bisect_one(int np, const std::array<Poly, MAX_ORDER * 2>& sseq, const Packed& P, double min, double max, int atmin) const {
+        double mid = 0.0;
+        int its = 0;
+#if MCPU_STURM_SIMD
+        // Two of the loop below per round; see the class comment.
+        while (P.ok && its + 2 <= max_it) {
+            mid = (min + max) / 2.0;
+            if (bisect_done(min, max, mid)) return mid;
+            const double xs[3] = {mid, (mid + max) / 2.0, (min + mid) / 2.0};
+            int c[3];
+            numchanges_simd<3>(P, xs, c);
+            double mid2;
+            int at2;
+            if ((atmin - c[0]) == 0) { min = mid; mid2 = xs[1]; at2 = c[1]; }
+            else                     { max = mid; mid2 = xs[2]; at2 = c[2]; }
+            mid = mid2;
+            if (bisect_done(min, max, mid)) return mid;
+            if ((atmin - at2) == 0) min = mid;
+            else max = mid;
+            its += 2;
+        }
+#endif
+        for (; its < max_it; its++) {
+            mid = (min + max) / 2.0;
+            int atmid = numchanges(np, sseq, P, mid);
+            
+            if (std::abs(mid) > rel_error) {
+                if (std::abs((max - min) / mid) < rel_error) return mid;
+            } else if (std::abs(max - min) < rel_error) {
+                return mid;
+            }
+
+            if ((atmin - atmid) == 0) min = mid;
+            else max = mid;
+        }
+        return mid;
+    }
+
+#if MCPU_STURM_SIMD
+    // newton() on up to four brackets at once, one per AVX lane. Each lane makes the
+    // decisions newton() makes, with the same operations: the Horner steps are the fused
+    // multiply-adds the scalar loop contracts to, the bracket set-up is newton()'s own
+    // scalar code, and a finished lane is frozen by blends. A solve with several roots
+    // then pays for the slowest root's iterations once instead of every root's in turn;
+    // each iteration is one dependent Horner chain (~16 FMA latencies) either way.
+    void newton4(int ord, const std::array<double, MAX_ORDER + 1>& coef, Leaves& L, const int* idx, int m) const {
+        alignas(32) double A[4], B[4], FA[4], FB[4], X[4], LO[4], HI[4], DX[4], R[4];
+        for (int l = 0; l < 4; ++l) {
+            const Leaf& lf = L.v[static_cast<size_t>(idx[l < m ? l : 0])];
+            A[l] = lf.min;
+            B[l] = lf.max;
+        }
+        {
+            const __m256d a = _mm256_load_pd(A), b = _mm256_load_pd(B);
+            __m256d fa = _mm256_set1_pd(coef[static_cast<size_t>(ord)]), fb = fa;
+            for (int i = ord - 1; i >= 0; i--) {
+                const __m256d c = _mm256_set1_pd(coef[static_cast<size_t>(i)]);
+                fa = _mm256_fmadd_pd(a, fa, c);
+                fb = _mm256_fmadd_pd(b, fb, c);
+            }
+            _mm256_store_pd(FA, fa);
+            _mm256_store_pd(FB, fb);
+        }
+        alignas(32) long long act[4] = {0, 0, 0, 0};
+        for (int l = 0; l < 4; ++l) { X[l] = 0.5; LO[l] = 0.0; HI[l] = 1.0; DX[l] = 1.0; }
+        for (int l = 0; l < m; ++l) {
+            Leaf& lf = L.v[static_cast<size_t>(idx[l])];
+            const double a = A[l], b = B[l], fa = FA[l], fb = FB[l];
+            if (fa * fb > 0.0) continue;                 // left for bisect_one
+            if (fa == 0.0) { lf.val = a; lf.have = true; continue; }
+            if (fb == 0.0) { lf.val = b; lf.have = true; continue; }
+            double lo = a, hi = b;
+            if (fa > 0.0) std::swap(lo, hi);
+            double x = (fb * a - fa * b) / (fb - fa);
+            if (!(x > std::min(a, b) && x < std::max(a, b))) x = 0.5 * (a + b);
+            X[l] = x; LO[l] = lo; HI[l] = hi; DX[l] = std::abs(b - a);
+            act[l] = -1;
+        }
+        __m256d active = _mm256_castsi256_pd(_mm256_load_si256(reinterpret_cast<const __m256i*>(act)));
+        if (_mm256_movemask_pd(active) == 0) return;
+
+        const __m256d zero = _mm256_setzero_pd(), sign = _mm256_set1_pd(-0.0);
+        const __m256d half = _mm256_set1_pd(0.5), two = _mm256_set1_pd(2.0);
+        const __m256d tiny = _mm256_set1_pd(1.0e-4), rel = _mm256_set1_pd(rel_error);
+        const __m256d ones = _mm256_castsi256_pd(_mm256_set1_epi64x(-1));
+        auto vabs = [&](__m256d v) { return _mm256_andnot_pd(sign, v); };
+        auto done = [&](__m256d mn, __m256d mx, __m256d mid) {   // bisect_done per lane
+            const __m256d d = _mm256_sub_pd(mx, mn);
+            const __m256d big = _mm256_cmp_pd(vabs(mid), rel, _CMP_GT_OQ);
+            const __m256d r1 = _mm256_cmp_pd(vabs(_mm256_div_pd(d, mid)), rel, _CMP_LT_OQ);
+            const __m256d r2 = _mm256_cmp_pd(vabs(d), rel, _CMP_LT_OQ);
+            return _mm256_blendv_pd(r2, r1, big);
+        };
+        __m256d x = _mm256_load_pd(X), lo = _mm256_load_pd(LO), hi = _mm256_load_pd(HI);
+        __m256d dx = _mm256_load_pd(DX), dxold = dx, nl = zero, root = x;
+        const __m256d top = _mm256_set1_pd(coef[static_cast<size_t>(ord)]);
+        for (int its = 0; its < max_it && _mm256_movemask_pd(active) != 0; its++) {
+            __m256d f = top, df = zero;
+            for (int i = ord - 1; i >= 0; i--) {
+                df = _mm256_fmadd_pd(x, df, f);
+                f = _mm256_fmadd_pd(x, f, _mm256_set1_pd(coef[static_cast<size_t>(i)]));
+            }
+            const __m256d f0 = _mm256_and_pd(active, _mm256_cmp_pd(f, zero, _CMP_EQ_OQ));
+            root = _mm256_blendv_pd(root, x, f0);
+            active = _mm256_andnot_pd(f0, active);
+            const __m256d neg = _mm256_cmp_pd(f, zero, _CMP_LT_OQ);
+            lo = _mm256_blendv_pd(lo, x, _mm256_and_pd(active, neg));
+            hi = _mm256_blendv_pd(hi, x, _mm256_andnot_pd(neg, active));
+            const __m256d step = _mm256_div_pd(f, df);
+            const __m256d xn = _mm256_sub_pd(x, step);
+            const __m256d d1 = _mm256_and_pd(active, done(zero, step, x));
+            root = _mm256_blendv_pd(root, xn, d1);
+            active = _mm256_andnot_pd(d1, active);
+            const __m256d mn = _mm256_blendv_pd(lo, hi, _mm256_cmp_pd(hi, lo, _CMP_LT_OQ));   // std::min
+            const __m256d mx = _mm256_blendv_pd(lo, hi, _mm256_cmp_pd(lo, hi, _CMP_LT_OQ));   // std::max
+            const __m256d ok = _mm256_and_pd(
+                _mm256_cmp_pd(vabs(_mm256_mul_pd(two, f)), vabs(_mm256_mul_pd(dxold, df)), _CMP_LT_OQ),
+                _mm256_and_pd(_mm256_cmp_pd(xn, mn, _CMP_GT_OQ), _mm256_cmp_pd(xn, mx, _CMP_LT_OQ)));
+            __m256d bis = _mm256_andnot_pd(ok, active);
+            const __m256d d2 = _mm256_and_pd(bis, _mm256_and_pd(nl, done(zero, _mm256_mul_pd(tiny, dx), x)));
+            root = _mm256_blendv_pd(root, x, d2);
+            active = _mm256_andnot_pd(d2, active);
+            bis = _mm256_andnot_pd(d2, bis);
+            const __m256d newt = _mm256_and_pd(ok, active);
+            const __m256d hdx = _mm256_mul_pd(half, _mm256_sub_pd(hi, lo));
+            dxold = _mm256_blendv_pd(dxold, dx, active);
+            dx = _mm256_blendv_pd(_mm256_blendv_pd(dx, hdx, bis), step, newt);
+            x = _mm256_blendv_pd(_mm256_blendv_pd(x, _mm256_add_pd(lo, hdx), bis), xn, newt);
+            nl = _mm256_blendv_pd(_mm256_blendv_pd(nl, zero, bis), ones, newt);
+            const __m256d d3 = _mm256_and_pd(active, _mm256_or_pd(done(zero, dx, x),
+                                                     done(lo, hi, _mm256_mul_pd(half, _mm256_add_pd(lo, hi)))));
+            root = _mm256_blendv_pd(root, x, d3);
+            active = _mm256_andnot_pd(d3, active);
+        }
+        root = _mm256_blendv_pd(root, x, active);         // max_it reached: newton() keeps x
+        _mm256_store_pd(R, root);
+        for (int l = 0; l < m; ++l)
+            if (act[l]) {
+                Leaf& lf = L.v[static_cast<size_t>(idx[l])];
+                lf.val = R[l];
+                lf.have = true;
+            }
+    }
+#endif
+
+    // Finishes every single-root bracket by Newton (four at a time with AVX2), falls back
+    // to Sturm bisection where the bracket ends have the same sign, and emits the roots in
+    // isolation order.
+    void finish(int np, const std::array<Poly, MAX_ORDER * 2>& sseq, const Packed& P, Leaves& L, std::vector<double>& roots) const {
+        const int ord = sseq[0].ord;
+#if MCPU_STURM_SIMD
+        int idx[4];
+        int m = 0;
+        for (int i = 0; i < L.n; ++i) {
+            if (L.v[static_cast<size_t>(i)].have) continue;
+            idx[m++] = i;
+            if (m == 4) { newton4(ord, sseq[0].coef, L, idx, m); m = 0; }
+        }
+        if (m) newton4(ord, sseq[0].coef, L, idx, m);
+#else
+        for (int i = 0; i < L.n; ++i) {
+            Leaf& lf = L.v[static_cast<size_t>(i)];
+            if (!lf.have) lf.have = newton(ord, sseq[0].coef, lf.min, lf.max, lf.val);
+        }
+#endif
+        for (int i = 0; i < L.n; ++i) {
+            Leaf& lf = L.v[static_cast<size_t>(i)];
+            if (!lf.have) lf.val = bisect_one(np, sseq, P, lf.min, lf.max, lf.atmin);
+            roots.push_back(lf.val);
+        }
     }
 
 public:
@@ -404,7 +596,9 @@ public:
         }
         atmax = nchanges;
 
-        sbisect(np, sseq, P, min, max, atmin, atmax, roots);
+        Leaves leaves;
+        sbisect(np, sseq, P, min, max, atmin, atmax, leaves);
+        finish(np, sseq, P, leaves, roots);
     }
 };
 

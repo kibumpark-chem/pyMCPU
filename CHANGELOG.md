@@ -454,6 +454,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The KIC root solver does less bookkeeping per solve.** The Sturm
+  sequence is packed for vector evaluation without looking up each
+  member's order per entry (that loop was about a fifth of a solve with
+  roots), each remainder step reads its leading coefficient once so the
+  update vectorises, and the Newton finish runs on up to four isolated
+  roots at once in AVX lanes, each lane making the scalar loop's
+  decisions with the same operations. On 3,240 T4L closure polynomials
+  a standalone solve went from 13.0k to 9.1k TSC ticks. Interleaved A/B
+  against the previous main (n=3, user cycles/step) on T4L, CA2, LDH-A,
+  actin and PGK1: KIC-only -2% to -4%, default mix -1% to -2%.
+  Bit-identical in every check (the parity dump, the closure coordinates
+  of 21,230 KIC solutions in the T4L and actin dumps, the A/B energies),
+  though not by construction: the lanes repeat the scalar loop's FMAs, so
+  this relies on the compiler contracting the scalar Horner step the same
+  way. Passes `scripts/tolerance_check.py`. The non-AVX2 build runs the
+  scalar Newton loop as before. Polynomials with tightly clustered roots,
+  whose floating-point Sturm counts are not monotone, still return every
+  value isolation produces (hundreds in synthetic tests), as before.
 - **KORP moves cost about a fifth less.** On builds with AVX2 and FMA
   (the default `-DMCPU_ARCH=v3`), the pair binning counts the distance
   shell and the two polar rings with vector compares and finds the three
