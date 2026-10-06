@@ -68,10 +68,12 @@ struct Probe {
     const unsigned is_self = static_cast<unsigned>(_mm256_movemask_ps(
         _mm256_castsi256_ps(_mm256_cmpeq_epi32(ids, _mm256_set1_epi32(self)))));
     keep &= ~is_self;
-    const int left = count - m0;
     // left <= 0 (a block past the span, see probe_static_collect) keeps none.
-    const unsigned valid =
-        left >= 8 ? 0xFFu : (left <= 0 ? 0u : ((1u << left) - 1u));
+    // Clamped with min/max rather than a conditional: GCC turned the
+    // conditional into a branch on the cell's occupancy, which mispredicted
+    // on 14-18% of all mispredicts of a Mu move (actin, PGK1).
+    const int left = std::min(std::max(count - m0, 0), 8);
+    const unsigned valid = (1u << left) - 1u;
     return keep & valid;
 #else
     unsigned keep = 0;

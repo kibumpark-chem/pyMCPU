@@ -642,8 +642,6 @@ public:
         return true;
     }
 
-    /// for_each_neighbor_cell_span_while minus the cells whose atoms all
-    /// moved; see for_each_cell_span_within_fast_unmoved.
     /// The live stencil cells of the last probe a walk collected, keyed by
     /// that probe's home cell. Consecutive moved atoms of a chain mostly
     /// share a home cell, and their stencils are then the same cells: the
@@ -658,6 +656,8 @@ public:
         int live[128];
     };
 
+    /// for_each_neighbor_cell_span_while minus the cells whose atoms all
+    /// moved; see for_each_cell_span_within_fast_unmoved.
     template <typename CellFunc>
     bool for_each_neighbor_cell_span_while_unmoved(float x, float y, float z,
                                                    const std::uint8_t* moved_per_cell,
