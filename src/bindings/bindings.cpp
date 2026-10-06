@@ -126,7 +126,16 @@ PYBIND11_MODULE(mcpu_core, m) {
         .def(py::init<>())
         .def_readwrite("log_weight", &mcpu::RotamerComponent::log_weight)
         .def_readwrite("mean", &mcpu::RotamerComponent::mean)
-        .def_readwrite("sigma", &mcpu::RotamerComponent::sigma);
+        // log_mixture_density reads log_sigma, cached from sigma at load; a
+        // write through row(...).sigma must refresh it or the density would
+        // keep using the old sigma while the proposal samples the new one.
+        .def_property(
+            "sigma",
+            [](const mcpu::RotamerComponent& c) { return c.sigma; },
+            [](mcpu::RotamerComponent& c, const std::array<float, 4>& sigma) {
+                c.sigma = sigma;
+                for (size_t i = 0; i < 4; ++i) c.log_sigma[i] = std::log(sigma[i]);
+            });
 
     py::class_<mcpu::RotamerLibrary>(m, "RotamerLibrary")
         .def(py::init<>())

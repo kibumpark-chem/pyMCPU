@@ -2,9 +2,9 @@
 #include "pymcpu/System.h"
 #include "pymcpu/Context.h"
 #include "pymcpu/AtomPermutation.h"
+#include "pymcpu/utils/Profiler.h"
 
 #include <algorithm>
-#include <chrono>
 #include <cmath>
 #include <map>
 #include <stdexcept>
@@ -470,13 +470,11 @@ EnergyChangeResult System::evaluateDeltaEnergy(
         std::uint64_t* slot = ctx.energy_delta_ns_slot(g);
         EnergyChangeResult r;
         if (slot) {
-            const auto t0 = std::chrono::steady_clock::now();
+            // TSC-based (see Profiler.h): two steady_clock::now() vDSO calls
+            // per potential per move cost ~0.7% of an actin step.
+            ScopedTimer timer(slot);
             r = potential->calculateEnergyChange(
                 ctx, old_state, proposed_state, patch);
-            const auto t1 = std::chrono::steady_clock::now();
-            *slot += static_cast<std::uint64_t>(
-                std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0)
-                    .count());
         } else {
             r = potential->calculateEnergyChange(
                 ctx, old_state, proposed_state, patch);

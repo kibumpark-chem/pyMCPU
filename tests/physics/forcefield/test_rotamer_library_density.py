@@ -130,3 +130,19 @@ def test_row_out_of_range_raises() -> None:
         lib.row(0, 1)
     with pytest.raises(Exception):
         lib.row(1, 0)
+
+
+def test_density_follows_sigma_written_through_row() -> None:
+    """Writing ``row(...).sigma`` must change the density, not only sampling.
+
+    The library caches log(sigma) at load; the binding's sigma setter has to
+    refresh it, or the Hastings term would use the old sigma while
+    ``apply_rotamer_at`` samples with the new one.
+    """
+    lib = _lib_single_component(0.0, 1.0)
+    lib.row(0, 0).sigma = [2.0, 2.0, 2.0, 2.0]
+    assert list(lib.row(0, 0).sigma) == [2.0, 2.0, 2.0, 2.0]
+    x = 0.5
+    expected = _normal_log_pdf(x, 0.0, 2.0)
+    actual = lib.log_mixture_density(0, 1, [x, 0.0, 0.0, 0.0])
+    assert actual == pytest.approx(expected, abs=1e-5), (expected, actual)

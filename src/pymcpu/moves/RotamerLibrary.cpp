@@ -34,6 +34,9 @@ void RotamerLibrary::add_residue_type(int amino_idx,
         components[i].log_weight = std::log(weights[i]);
         components[i].mean = means[i];
         components[i].sigma = sigmas[i];
+        for (size_t c = 0; c < 4; ++c) {
+            components[i].log_sigma[c] = std::log(sigmas[i][c]);
+        }
         running += weights[i];
         cumulative[i] = running;
     }
@@ -81,23 +84,34 @@ float RotamerLibrary::log_mixture_density(int amino_idx, int ntorsions,
     }
     const int nt = std::clamp(ntorsions, 0, 4);
 
-    std::vector<float> log_terms(components.size());
-    for (size_t k = 0; k < components.size(); ++k) {
+    // The per-component terms live on the stack for every library row count
+    // seen in practice (bbind02 has at most 81 rows per type); larger tables
+    // fall back to the heap. Same arithmetic in the same order either way.
+    constexpr size_t kStackTerms = 128;
+    std::array<float, kStackTerms> stack_terms;
+    std::vector<float> heap_terms;
+    float* log_terms = stack_terms.data();
+    if (components.size() > kStackTerms) {
+        heap_terms.resize(components.size());
+        log_terms = heap_terms.data();
+    }
+    const size_t n = components.size();
+    for (size_t k = 0; k < n; ++k) {
         const RotamerComponent& c = components[k];
         float log_p = c.log_weight;
         for (int i = 0; i < nt; ++i) {
-            const float d = wrap_angle_to_pi(
-                chi[static_cast<size_t>(i)] - c.mean[static_cast<size_t>(i)]);
-            const float s = c.sigma[static_cast<size_t>(i)];
-            log_p += -0.5f * (d / s) * (d / s) - std::log(s) - kHalfLog2Pi;
+            const size_t ui = static_cast<size_t>(i);
+            const float d = wrap_angle_to_pi(chi[ui] - c.mean[ui]);
+            const float s = c.sigma[ui];
+            log_p += -0.5f * (d / s) * (d / s) - c.log_sigma[ui] - kHalfLog2Pi;
         }
         log_terms[k] = log_p;
     }
 
-    const float max_log = *std::max_element(log_terms.begin(), log_terms.end());
+    const float max_log = *std::max_element(log_terms, log_terms + n);
     if (!std::isfinite(max_log)) return max_log; // all components degenerate/unreachable
     float sum_exp = 0.0f;
-    for (float lt : log_terms) sum_exp += std::exp(lt - max_log);
+    for (size_t k = 0; k < n; ++k) sum_exp += std::exp(log_terms[k] - max_log);
     return max_log + std::log(sum_exp);
 }
 

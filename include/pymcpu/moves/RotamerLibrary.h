@@ -9,18 +9,29 @@ namespace mcpu {
 /// Wraps an angle (radians) into (-PI, PI]. Used throughout the rotamer-library
 /// move since chi angles are periodic and both proposal deltas and the mixture
 /// log-density must use the minimal (wrapped) angular difference.
+///
+/// The quotient is rounded half away from zero, as std::round does, but via
+/// std::trunc plus a fix-up: GCC calls libm for std::round while it inlines
+/// std::trunc as one roundss on SSE4.1. q - trunc(q) is exact, so the result
+/// matches std::round bit for bit, including signed zeros, NaN and infinity.
 inline float wrap_angle_to_pi(float a) noexcept {
     constexpr float kTwoPi = 2.0f * mcpu::PI_F;
-    return a - kTwoPi * std::round(a / kTwoPi);
+    const float q = a / kTwoPi;
+    float n = std::trunc(q);
+    // Branch-free: adding a zero signed like q leaves n (and its sign) as is.
+    n += std::copysign(std::fabs(q - n) >= 0.5f ? 1.0f : 0.0f, q);
+    return a - kTwoPi * n;
 }
 
 /// One Dunbrack-style backbone-independent rotamer "row" for a residue type:
 /// a weight plus a per-chi (mean, sigma) pair, all in radians. `log_weight` is
-/// precomputed once so the log-sum-exp hot path never re-calls log() on it.
+/// precomputed once so the log-sum-exp hot path never re-calls log() on it;
+/// `log_sigma` likewise holds log(sigma[i]), filled by add_residue_type.
 struct RotamerComponent {
     float log_weight = 0.0f;
     std::array<float, 4> mean{0.0f, 0.0f, 0.0f, 0.0f};
     std::array<float, 4> sigma{1.0f, 1.0f, 1.0f, 1.0f};
+    std::array<float, 4> log_sigma{0.0f, 0.0f, 0.0f, 0.0f};
 };
 
 /// Per-amino-acid-type table of rotamer rows (bbind02.May.lib, parsed
