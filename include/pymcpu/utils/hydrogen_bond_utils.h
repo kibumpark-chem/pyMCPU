@@ -149,24 +149,14 @@ namespace HydrogenBondUtils {
         return true;
     }
 
-    /// legacy hbonds.h ~395-432: donor phi/psi and acceptor phi/psi, in degrees,
-    /// shifted +180 (legacy convention, matching TripletPotential's `phi + pi`).
-    /// All eight atoms are already loaded into HBondDonors/HBondAcceptors.
-    inline void donor_acceptor_rama_angles(const HBondDonors& d, const HBondAcceptors& a,
-                                            float& Dphi, float& Dpsi, float& Aphi, float& Apsi) {
-        constexpr float RAD2DEG = 180.0f / mcpu::PI_F;
-        Dphi = GeometryUtils::calculate_dihedral(d.prev_C, d.N, d.CA, d.C) * RAD2DEG + 180.0f;
-        Dpsi = GeometryUtils::calculate_dihedral(d.prev_N, d.prev_CA, d.prev_C, d.N) * RAD2DEG + 180.0f;
-        Aphi = GeometryUtils::calculate_dihedral(a.C, a.next_N, a.next_CA, a.next_C) * RAD2DEG + 180.0f;
-        Apsi = GeometryUtils::calculate_dihedral(a.N, a.CA, a.C, a.next_N) * RAD2DEG + 180.0f;
-    }
-
     /// legacy hbonds.h ~433-460: hard Ramachandran-quadrant rejections (not a soft
     /// penalty -- an excluded pair contributes exactly 0, same as NO_HBOND).
     inline bool passes_ramachandran_gate(const HBondDonors& donor, const HBondAcceptors& acceptor) {
-        // Each angle is the same expression donor_acceptor_rama_angles() uses, but
-        // it is computed only when a test reads it, in the order the tests run:
-        // most pairs leave after one or two atan2 calls instead of four.
+        // legacy hbonds.h ~395-432: donor phi/psi and acceptor phi/psi, in
+        // degrees, shifted +180 (legacy convention, matching TripletPotential's
+        // `phi + pi`). Each angle is computed only when a test reads it, in the
+        // order the tests run: most pairs leave after one or two atan2 calls
+        // instead of four.
         constexpr float RAD2DEG = 180.0f / mcpu::PI_F;
         const HBondDonors& d = donor;
         const HBondAcceptors& a = acceptor;
