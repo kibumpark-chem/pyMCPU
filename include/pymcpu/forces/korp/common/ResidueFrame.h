@@ -83,12 +83,40 @@ struct PairCoordinates {
     return c;
 }
 
-/// Angle between two vectors. Still needed for psi, which is used as an angle
-/// rather than only compared against one.
-[[nodiscard]] inline double korp_angle(
-    const Eigen::Vector3d& a, const Eigen::Vector3d& b) noexcept
+/// atan2 without libm, for the psi and chi bins.
+///
+/// glibc's correctly rounded atan2 and acos were about a third of all cycles
+/// in a KORP run. This is the Cephes double-precision atan (argument reduced to
+/// [0, 0.66] with the pi/4 shift above that, then a 4/5 rational in x^2),
+/// extended to all four quadrants. Its error on [0, 1] is about 1e-16, so a bin
+/// can change only for an angle within a few ulp of a bin edge, where the old
+/// acos form (ill-conditioned near 0 and pi) was already less precise.
+[[nodiscard]] inline double korp_atan2(double y, double x) noexcept
 {
-    return std::acos(korp_cos_angle(a, b));
+    const double ay = std::fabs(y);
+    const double ax = std::fabs(x);
+    const double hi = ay > ax ? ay : ax;
+    if (!(hi > 0.0)) return 0.0;   // atan2(0, 0) = 0, as libm gives for +0
+    const double lo = ay > ax ? ax : ay;
+    const double t = lo / hi;      // [0, 1]
+    const bool big = t > 0.66;
+    const double r = big ? (t - 1.0) / (t + 1.0) : t;
+    const double z = r * r;
+    const double p = (((-8.750608600031904122785E-1 * z
+                        - 1.615753718733365076637E1) * z
+                       - 7.500855792314704667340E1) * z
+                      - 1.228866684490136173410E2) * z
+                     - 6.485021904942025371773E1;
+    const double q = ((((z + 2.485846490142306297962E1) * z
+                        + 1.650270098316988542046E2) * z
+                       + 4.328810604912902668951E2) * z
+                      + 4.853903996359136964868E2) * z
+                     + 1.945506571482613964425E2;
+    double a = r + r * z * p / q;
+    if (big) a += 0.25 * M_PI;
+    if (ay > ax) a = 0.5 * M_PI - a;
+    if (x < 0.0) a = M_PI - a;
+    return y < 0.0 ? -a : a;      // -0 counts as +0, as the old psi sign test did
 }
 
 /// `dihedral3DunitN`: the dihedral of three consecutive unit vectors, with the
@@ -101,7 +129,7 @@ struct PairCoordinates {
     const Eigen::Vector3d v1 = -ua.cross(ub);
     const Eigen::Vector3d v2 = ub.cross(uc);
     const Eigen::Vector3d v3 = v1.cross(ub);
-    return std::atan2(v3.dot(v2), v1.dot(v2));
+    return korp_atan2(v3.dot(v2), v1.dot(v2));
 }
 
 /// The six coordinates for the ordered pair (a, b).
@@ -109,29 +137,30 @@ struct PairCoordinates {
 /// `a` must be the residue with the LOWER index: the map is not symmetric under
 /// swapping the partners (upstream's own phrasing is that it is not the same to
 /// have a proline before an alanine as after).
+///
+/// The frame axes are orthonormal (make_residue_frame), so the angles come from
+/// dot products with them: cos(theta) is vz.r / |r|, and psi, upstream's angle
+/// between vx and r projected into the xy-plane, signed by vy, is
+/// atan2(vy.r, vx.r) shifted by pi. These agree with the projected-vector form
+/// to round-off.
 [[nodiscard]] inline PairCoordinates pair_coordinates(
     const ResidueFrame& a, const ResidueFrame& b) noexcept
 {
     const Eigen::Vector3d rab = b.origin - a.origin;
-    const Eigen::Vector3d rba = -rab;
 
     PairCoordinates pc;
     pc.d = rab.norm();
-    pc.cos_theta_a = korp_cos_angle(a.vz, rab);
-    pc.cos_theta_b = korp_cos_angle(b.vz, rba);
-
-    // psi: project the connecting vector into the frame's xy-plane, measure
-    // against vx, and take the sign from vy.
-    const auto psi_of = [](const Eigen::Vector3d& r, const ResidueFrame& f) noexcept {
-        const Eigen::Vector3d v2 = r - f.vz * (r.dot(f.vz) / f.vz.dot(f.vz));
-        double psi = korp_angle(f.vx, v2);
-        if (f.vy.dot(v2) < 0.0) psi = -psi;
-        return psi + M_PI;
+    const double inv_d = pc.d > 0.0 ? 1.0 / pc.d : 0.0;
+    const auto clamp1 = [](double c) noexcept {
+        return c > 1.0 ? 1.0 : (c < -1.0 ? -1.0 : c);
     };
-    pc.psi_a = psi_of(rab, a);
-    pc.psi_b = psi_of(rba, b);
+    pc.cos_theta_a = pc.d > 0.0 ? clamp1(a.vz.dot(rab) * inv_d) : 1.0;
+    pc.cos_theta_b = pc.d > 0.0 ? clamp1(-b.vz.dot(rab) * inv_d) : 1.0;
 
-    pc.chi = M_PI + korp_dihedral_negated(a.vz, rab / pc.d, b.vz);
+    pc.psi_a = M_PI + korp_atan2(a.vy.dot(rab), a.vx.dot(rab));
+    pc.psi_b = M_PI + korp_atan2(-b.vy.dot(rab), -b.vx.dot(rab));
+
+    pc.chi = M_PI + korp_dihedral_negated(a.vz, rab * inv_d, b.vz);
     return pc;
 }
 
