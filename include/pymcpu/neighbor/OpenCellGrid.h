@@ -7,10 +7,15 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <limits>
 #include <unordered_set>
 #include <vector>
 #include <chrono>
+
+#if defined(__AVX2__)
+#include <immintrin.h>
+#endif
 
 #include "pymcpu/neighbor/NeighborConfig.h"
 #include "pymcpu/utils/CoordsSoA.h"
@@ -698,6 +703,32 @@ public:
                 const int c0 = (ix0 * ny_ + iy0) * nz_ + iz0;
                 const int* const lin = neighbor_lin_.data();
                 const int n_off = static_cast<int>(neighbor_lin_.size());
+#if defined(__AVX2__)
+                if (R == 1 && n_off == 27 && iz0 + 2 < nz_) {
+                    // The 27 cells are nine runs of three along z. Compare
+                    // each run four cells at a time (the fourth, iz0 + 2, is
+                    // still in the grid and is masked off), then list the
+                    // live cells in offset order, as the loop below does.
+                    std::uint32_t mask = 0;
+                    for (int row = 0; row < 9; ++row) {
+                        const int rb = c0 + lin[3 * row];
+                        const __m128i cnt = _mm_loadu_si128(
+                            reinterpret_cast<const __m128i*>(cell_count_.data() + rb));
+                        std::uint32_t mv4;
+                        std::memcpy(&mv4, moved_per_cell + rb, sizeof(mv4));
+                        const __m128i mv = _mm_cvtepu8_epi32(
+                            _mm_cvtsi32_si128(static_cast<int>(mv4)));
+                        const std::uint32_t eq = static_cast<std::uint32_t>(
+                            _mm_movemask_ps(_mm_castsi128_ps(_mm_cmpeq_epi32(cnt, mv))));
+                        mask |= ((~eq) & 7u) << (3 * row);
+                    }
+                    while (mask) {
+                        const int k = __builtin_ctz(mask);
+                        mask &= mask - 1;
+                        live[n_live++] = c0 + lin[k];
+                    }
+                } else
+#endif
                 for (int k = 0; k < n_off; ++k) {
                     const int c = c0 + lin[k];
                     live[n_live] = c;
@@ -1070,13 +1101,12 @@ public:
     void update_packed_coords(int atom, int cell, float px, float py, float pz) {
         const size_t base = static_cast<size_t>(cell) * CELL_CAPACITY;
         const int count = cell_count_[static_cast<size_t>(cell)];
-        for (int k = 0; k < count; ++k) {
-            if (cell_atoms_[base + static_cast<size_t>(k)] == atom) {
-                cell_x_[base + static_cast<size_t>(k)] = px;
-                cell_y_[base + static_cast<size_t>(k)] = py;
-                cell_z_[base + static_cast<size_t>(k)] = pz;
-                return;
-            }
+        const int k = find_slot_(cell_atoms_.data() + base, count, atom);
+        if (k < count) {
+            cell_x_[base + static_cast<size_t>(k)] = px;
+            cell_y_[base + static_cast<size_t>(k)] = py;
+            cell_z_[base + static_cast<size_t>(k)] = pz;
+            return;
         }
         std::fprintf(stderr,
             "ERROR: update_packed_coords: atom %d not found in cell %d\n", atom,
@@ -1371,6 +1401,32 @@ private:
     }
 
     /// Remove atom from contiguous cell, preserving relative order. O(occ).
+    /// First slot of a cell's packed id list that holds atom, or count when
+    /// none does. Eight ids per compare: a cell's slots are CELL_CAPACITY
+    /// wide, so a load of eight never leaves the cell, and lanes at or past
+    /// count are masked off.
+    static int find_slot_(const int* ids, int count, int atom) noexcept {
+        int k = 0;
+#if defined(__AVX2__)
+        if constexpr (CELL_CAPACITY % 8 == 0) {
+            const __m256i key = _mm256_set1_epi32(atom);
+            for (; k < count; k += 8) {
+                const __m256i w =
+                    _mm256_loadu_si256(reinterpret_cast<const __m256i*>(ids + k));
+                unsigned bits = static_cast<unsigned>(_mm256_movemask_ps(
+                    _mm256_castsi256_ps(_mm256_cmpeq_epi32(w, key))));
+                const int left = count - k;
+                if (left < 8) bits &= (1u << left) - 1u;
+                if (bits) return k + __builtin_ctz(bits);
+            }
+            return count;
+        }
+#endif
+        for (; k < count; ++k)
+            if (ids[k] == atom) return k;
+        return count;
+    }
+
     void contiguous_remove_(int atom, int cell) {
         const size_t base = static_cast<size_t>(cell) * CELL_CAPACITY;
         int* id_base = cell_atoms_.data() + base;
@@ -1378,7 +1434,7 @@ private:
         float* y_base = cell_y_.data() + base;
         float* z_base = cell_z_.data() + base;
         int& count = cell_count_[static_cast<size_t>(cell)];
-        for (int k = 0; k < count; ++k) {
+        for (int k = find_slot_(id_base, count, atom); k < count; ++k) {
             if (id_base[k] == atom) {
                 for (int j = k; j < count - 1; ++j) {
                     id_base[j] = id_base[j + 1];

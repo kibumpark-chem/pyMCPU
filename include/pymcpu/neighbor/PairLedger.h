@@ -5,6 +5,10 @@
 #include <cstdint>
 #include <vector>
 
+#if defined(__AVX2__)
+#include <immintrin.h>
+#endif
+
 namespace mcpu::neighbor {
 
 /// For each site, the partners it is listed with and the payload of each pair.
@@ -56,13 +60,36 @@ public:
 private:
     void drop_(int a, int b) {
         auto& v = rows_[static_cast<std::size_t>(a)];
-        for (std::size_t k = 0; k < v.size(); ++k) {
-            if (v[k].j == b) {
-                v[k] = v.back();
-                v.pop_back();
-                return;
+        const std::size_t k = find_(v, b);
+        if (k < v.size()) {
+            v[k] = v.back();
+            v.pop_back();
+        }
+    }
+
+    /// Index of the first entry listing partner b, or v.size(). Four 8-byte
+    /// entries per compare when an entry is two 32-bit words; the first match
+    /// is the one the scalar scan returns, so the row order after a drop is
+    /// unchanged.
+    static std::size_t find_(const std::vector<Entry>& v, int b) {
+        const std::size_t n = v.size();
+        std::size_t k = 0;
+#if defined(__AVX2__)
+        if constexpr (sizeof(Entry) == 8 && offsetof(Entry, j) == 0) {
+            const __m256i key = _mm256_set1_epi32(b);
+            const char* base = reinterpret_cast<const char*>(v.data());
+            for (; k + 4 <= n; k += 4) {
+                const __m256i w = _mm256_loadu_si256(
+                    reinterpret_cast<const __m256i*>(base + k * sizeof(Entry)));
+                const unsigned bits = static_cast<unsigned>(_mm256_movemask_ps(
+                    _mm256_castsi256_ps(_mm256_cmpeq_epi32(w, key)))) & 0x55u;
+                if (bits) return k + (static_cast<unsigned>(__builtin_ctz(bits)) >> 1);
             }
         }
+#endif
+        for (; k < n; ++k)
+            if (v[k].j == b) return k;
+        return n;
     }
 
     std::vector<std::vector<Entry>> rows_;
