@@ -454,6 +454,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **KORP moves are about 1.6x faster again.** Two costs dominated a KORP
+  step after the pair cache: glibc's correctly rounded `acos` and `atan2`
+  (34% of cycles), and table lookups that miss the TLB and the caches (the
+  ~330 MB map is read through 4 KB file-backed pages). The pair angles now
+  come from dot products with the orthonormal residue frame and a libm-free
+  atan2 (the Cephes double atan, error ~1e-16), and each changed residue's
+  partners are scored in three passes: a branch-free pass picks the pairs
+  that can contribute, a second computes and prefetches their table
+  entries, and a third reads them in the original order.
+
+  Interleaved A/B, pivot + KIC, user-space cycles per step (n = 3): actin
+  1.19M -> 735k (-38%), PGK1 1.32M -> 818k (-38%), beta-galactosidase
+  (AF-P00722) 4.18M -> 2.66M (-36%). Every A/B run ended with the same
+  energy and accept count as before; a bin can now differ only for an
+  angle within a few ulp of a bin edge. The KORP checks of
+  `scripts/tolerance_check.py --mode full` (including `korpe`) pass.
+
 - **The Mu contact walk collects a probe's candidates before scoring
   them.** Each moved atom's stencil walk now reuses the live cell list of
   the previous probe when both sit in the same home cell, and collects
