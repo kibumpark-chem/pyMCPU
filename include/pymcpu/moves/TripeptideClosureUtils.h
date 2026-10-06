@@ -7,120 +7,85 @@
 namespace TripeptideLoopClosure {
 
     // ---------------------------------------------------------
-    // 1-Dimensional Polynomial Functions
+    // Polynomial products for the closure polynomial
     // ---------------------------------------------------------
-    template <typename D1, typename D2, typename DOut>
-    inline void poly_mul1(const Eigen::MatrixBase<D1>& u1, const Eigen::MatrixBase<D2>& u2, 
-                          int p1, int p2, const Eigen::MatrixBase<DOut>& out_const, int& p3) {
-        Eigen::MatrixBase<DOut>& out = const_cast<Eigen::MatrixBase<DOut>&>(out_const);
-        p3 = p1 + p2;
-        out.derived().setZero();
-        for (int i1 = 0; i1 <= p1; ++i1) {
-            for (int i2 = 0; i2 <= p2; ++i2) {
-                out.derived()(i1 + i2) += u1(i1) * u2(i2);
+    // Every degree is a template argument: the closure polynomial is always built from the
+    // same chain of products (get_poly_coeff), so the degrees are known when compiling and
+    // each product unrolls into straight-line code with no zero-filled 17-entry scratch
+    // vectors. Each output coefficient sums its terms in the order of the loops below (outer
+    // factor index first), which is the order the run-time-degree versions used, so the
+    // coefficients are bit-identical to theirs.
+
+    // out[0..P1+P2] = u1 * u2 (coefficient k of u is u[k]).
+    template <int P1, int P2>
+    inline void poly_mul1(const double* u1, const double* u2, double* out) {
+#pragma GCC unroll 32
+        for (int k = 0; k <= P1 + P2; ++k) out[k] = 0.0;
+#pragma GCC unroll 32
+        for (int i1 = 0; i1 <= P1; ++i1)
+#pragma GCC unroll 32
+            for (int i2 = 0; i2 <= P2; ++i2)
+                out[i1 + i2] += u1[i1] * u2[i2];
+    }
+
+    // out[0..max(P1, P2)] = u1 - u2.
+    template <int P1, int P2>
+    inline void poly_sub1(const double* u1, const double* u2, double* out) {
+        constexpr int P = (P1 > P2) ? P1 : P2;
+#pragma GCC unroll 32
+        for (int k = 0; k <= P; ++k)
+            out[k] = ((k <= P1) ? u1[k] : 0.0) - ((k <= P2) ? u2[k] : 0.0);
+    }
+
+    // out = u1 * u2 - u3 * u4.
+    template <int P1, int P2, int P3, int P4>
+    inline void poly_mul_sub1(const double* u1, const double* u2,
+                              const double* u3, const double* u4, double* out) {
+        double d1[P1 + P2 + 1], d2[P3 + P4 + 1];
+        poly_mul1<P1, P2>(u1, u2, d1);
+        poly_mul1<P3, P4>(u3, u4, d2);
+        poly_sub1<P1 + P2, P3 + P4>(d1, d2, out);
+    }
+
+    // Two variables: u(j, i) is the coefficient of x^j y^i; a polynomial of degree (R, C)
+    // has R in x and C in y.
+    using Poly2 = Eigen::Matrix<double, 5, 5>;
+
+    template <int R1, int C1, int R2, int C2>
+    inline void poly_mul2(const Poly2& u1, const Poly2& u2, Poly2& out) {
+#pragma GCC unroll 8
+        for (int i = 0; i <= C1 + C2; ++i)
+#pragma GCC unroll 8
+            for (int j = 0; j <= R1 + R2; ++j) out(j, i) = 0.0;
+#pragma GCC unroll 8
+        for (int i1 = 0; i1 <= C1; ++i1)
+#pragma GCC unroll 8
+            for (int j1 = 0; j1 <= R1; ++j1) {
+                const double u1ij = u1(j1, i1);
+#pragma GCC unroll 8
+                for (int i2 = 0; i2 <= C2; ++i2)
+#pragma GCC unroll 8
+                    for (int j2 = 0; j2 <= R2; ++j2)
+                        out(j1 + j2, i1 + i2) += u1ij * u2(j2, i2);
             }
-        }
     }
 
-    template <typename D1, typename D2, typename DOut>
-    inline void poly_sub1(const Eigen::MatrixBase<D1>& u1, const Eigen::MatrixBase<D2>& u2, 
-                          int p1, int p2, const Eigen::MatrixBase<DOut>& out_const, int& p3) {
-        Eigen::MatrixBase<DOut>& out = const_cast<Eigen::MatrixBase<DOut>&>(out_const);
-        p3 = std::max(p1, p2);
-        out.derived().setZero();
-        for (int i = 0; i <= p3; ++i) {
-            double val1 = (i <= p1) ? u1(i) : 0.0;
-            double val2 = (i <= p2) ? u2(i) : 0.0;
-            out.derived()(i) = val1 - val2;
-        }
-    }
-
-    template <typename D1, typename D2, typename D3, typename D4, typename DOut>
-    inline void poly_mul_sub1(const Eigen::MatrixBase<D1>& u1, const Eigen::MatrixBase<D2>& u2, 
-                              const Eigen::MatrixBase<D3>& u3, const Eigen::MatrixBase<D4>& u4,
-                              int p1, int p2, int p3, int p4, const Eigen::MatrixBase<DOut>& out, int& p5) {
-        Eigen::Matrix<double, 17, 1> d1 = Eigen::Matrix<double, 17, 1>::Zero();
-        Eigen::Matrix<double, 17, 1> d2 = Eigen::Matrix<double, 17, 1>::Zero();
-        int pd1, pd2;
-        poly_mul1(u1, u2, p1, p2, d1, pd1);
-        poly_mul1(u3, u4, p3, p4, d2, pd2);
-        poly_sub1(d1, d2, pd1, pd2, out, p5);
-    }
-
-    // Overloads for fixed-size vectors (used in initialize)
-    template <typename D1, typename D2, typename DOut>
-    inline void poly_mul1(const Eigen::MatrixBase<D1>& u1, const Eigen::MatrixBase<D2>& u2, 
-                          const Eigen::MatrixBase<DOut>& out_const) {
-        Eigen::MatrixBase<DOut>& out = const_cast<Eigen::MatrixBase<DOut>&>(out_const);
-        out.derived().setZero();
-        for (int i1 = 0; i1 < u1.size(); ++i1) {
-            for (int i2 = 0; i2 < u2.size(); ++i2) {
-                out.derived()(i1 + i2) += u1(i1) * u2(i2);
-            }
-        }
-    }
-
-    template <typename D1, typename D2, typename DOut>
-    inline void poly_sub1(const Eigen::MatrixBase<D1>& u1, const Eigen::MatrixBase<D2>& u2, 
-                          const Eigen::MatrixBase<DOut>& out_const) {
-        Eigen::MatrixBase<DOut>& out = const_cast<Eigen::MatrixBase<DOut>&>(out_const);
-        out.derived().setZero();
-        out.derived().head(u1.size()) += u1;
-        out.derived().head(u2.size()) -= u2;
-    }
-
-    // ---------------------------------------------------------
-    // 2-Dimensional Polynomial Functions
-    // ---------------------------------------------------------
-    template <typename D1, typename D2, typename DOut>
-    inline void poly_mul2(const Eigen::MatrixBase<D1>& u1, const Eigen::MatrixBase<D2>& u2, 
-                          const std::array<int, 2>& p1, const std::array<int, 2>& p2, 
-                          const Eigen::MatrixBase<DOut>& out_const, std::array<int, 2>& p3) {
-        Eigen::MatrixBase<DOut>& out = const_cast<Eigen::MatrixBase<DOut>&>(out_const);
-        p3[0] = p1[0] + p2[0];
-        p3[1] = p1[1] + p2[1];
-        out.derived().setZero();
-        for (int i1 = 0; i1 <= p1[1]; ++i1) {
-            for (int j1 = 0; j1 <= p1[0]; ++j1) {
-                double u1ij = u1(j1, i1);
-                for (int i2 = 0; i2 <= p2[1]; ++i2) {
-                    for (int j2 = 0; j2 <= p2[0]; ++j2) {
-                        out.derived()(j1 + j2, i1 + i2) += u1ij * u2(j2, i2);
-                    }
-                }
-            }
-        }
-    }
-
-    template <typename D1, typename D2, typename DOut>
-    inline void poly_sub2(const Eigen::MatrixBase<D1>& u1, const Eigen::MatrixBase<D2>& u2, 
-                          const std::array<int, 2>& p1, const std::array<int, 2>& p2, 
-                          const Eigen::MatrixBase<DOut>& out_const, std::array<int, 2>& p3) {
-        Eigen::MatrixBase<DOut>& out = const_cast<Eigen::MatrixBase<DOut>&>(out_const);
-        p3[0] = std::max(p1[0], p2[0]);
-        p3[1] = std::max(p1[1], p2[1]);
-        out.derived().setZero();
-        for (int i = 0; i <= p3[1]; ++i) {
-            for (int j = 0; j <= p3[0]; ++j) {
-                double val1 = (i <= p1[1] && j <= p1[0]) ? u1(j, i) : 0.0;
-                double val2 = (i <= p2[1] && j <= p2[0]) ? u2(j, i) : 0.0;
-                out.derived()(j, i) = val1 - val2;
-            }
-        }
-    }
-
-    template <typename D1, typename D2, typename D3, typename D4, typename DOut>
-    inline void poly_mul_sub2(const Eigen::MatrixBase<D1>& u1, const Eigen::MatrixBase<D2>& u2, 
-                              const Eigen::MatrixBase<D3>& u3, const Eigen::MatrixBase<D4>& u4,
-                              const std::array<int, 2>& p1, const std::array<int, 2>& p2, 
-                              const std::array<int, 2>& p3, const std::array<int, 2>& p4, 
-                              const Eigen::MatrixBase<DOut>& out, std::array<int, 2>& p5) {
-        Eigen::Matrix<double, 5, 5> d1 = Eigen::Matrix<double, 5, 5>::Zero();
-        Eigen::Matrix<double, 5, 5> d2 = Eigen::Matrix<double, 5, 5>::Zero();
-        std::array<int, 2> pd1, pd2;
-        poly_mul2(u1, u2, p1, p2, d1, pd1);
-        poly_mul2(u3, u4, p3, p4, d2, pd2);
-        poly_sub2(d1, d2, pd1, pd2, out, p5);
+    // out = u1 * u2 - u3 * u4, degrees (R1, C1) ... (R4, C4); only the result's degree
+    // block of out is written.
+    template <int R1, int C1, int R2, int C2, int R3, int C3, int R4, int C4>
+    inline void poly_mul_sub2(const Poly2& u1, const Poly2& u2,
+                              const Poly2& u3, const Poly2& u4, Poly2& out) {
+        constexpr int RA = R1 + R2, CA = C1 + C2, RB = R3 + R4, CB = C3 + C4;
+        constexpr int R = (RA > RB) ? RA : RB, C = (CA > CB) ? CA : CB;
+        Poly2 d1, d2;
+        poly_mul2<R1, C1, R2, C2>(u1, u2, d1);
+        poly_mul2<R3, C3, R4, C4>(u3, u4, d2);
+#pragma GCC unroll 8
+        for (int i = 0; i <= C; ++i)
+#pragma GCC unroll 8
+            for (int j = 0; j <= R; ++j)
+                out(j, i) = ((i <= CA && j <= RA) ? d1(j, i) : 0.0)
+                          - ((i <= CB && j <= RB) ? d2(j, i) : 0.0);
     }
 
     // ========================================================================
