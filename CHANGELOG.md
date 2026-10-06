@@ -454,6 +454,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **H-bond moves score each changed pair once.** `HBondPotential` now keeps
+  the accepted state's nonzero (donor, acceptor) pair energies on the
+  `State` (`HBondStateCache`) and folds each accepted move into it through
+  `Potential::commitAcceptedMove`. The old side of the delta is read from
+  it, so a move no longer walks the grids at the old H and O positions or
+  scores every candidate pair a second time; the affected x affected scan
+  now looks only at proposed positions. On an accepted backbone move the
+  virtual amide H grid moves only the donors whose N, CA or previous C
+  moved, instead of being cleared and refilled for every donor. The set of
+  pairs whose energy changes is the same as before on every move checked:
+  `Context.set_hbond_ledger_check(True)` re-scores both states the old way
+  on every delta and counts disagreements (0 over pivot, KIC, side-chain
+  and masked runs on actin, T4L, LDH-A, CA2 and PGK1;
+  `tests/physics/test_hbond_ledger_check.py`). The delta is summed in
+  double, so it can differ from main in the last bits;
+  `scripts/tolerance_check.py` passes, and the interleaved A/B runs below
+  ended on the same energies and accept sequences as main. Geometry checks
+  per step fall about 3.5x. User-space cycles per step, main -> this
+  (n = 3, 40k steps): default mix T4L 68.2k -> 62.1k, CA2 68.5k -> 64.2k,
+  LDH-A 84.0k -> 73.9k, actin 76.5k -> 67.9k, PGK1 77.9k -> 68.0k
+  (1.07-1.15x); pivot-only 1.05-1.12x; KIC-only 1.09-1.17x; actin with 40
+  residues masked 109k -> 101k.
+
 - **KORP moves are about 1.6x faster again.** Two costs dominated a KORP
   step after the pair cache: glibc's correctly rounded `acos` and `atan2`
   (34% of cycles), and table lookups that miss the TLB and the caches (the
@@ -479,6 +502,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   mispredicts per step drop 17-27%; cycles/step: default mix 1.05-1.07x
   (actin, T4L, CA2, LDH-A, PGK1), pivot-only 1.08-1.10x, masked actin
   1.03x.
+
 
 - **KIC root refinement no longer falls back to Sturm-count bisection.**
   About 40% of the roots of the closure polynomial never meet the

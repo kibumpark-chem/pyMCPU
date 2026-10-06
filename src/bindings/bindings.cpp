@@ -419,6 +419,15 @@ PYBIND11_MODULE(mcpu_core, m) {
              [](const Context& c) {
                  return c.neighbors().count_hbond_candidate_mismatches(c.getState().coords_soa) == 0;
              })
+        .def("set_hbond_ledger_check",
+             [](Context& c, bool on) { c.getHBondWorkspace().ledger_check = on; },
+             "Debug: on every H-bond delta, re-score both states over all pairs "
+             "touching an affected residue and count disagreements with the ledger.")
+        .def("hbond_ledger_check_counts",
+             [](Context& c) {
+                 const auto& w = c.getHBondWorkspace();
+                 return py::make_tuple(w.ledger_checks, w.ledger_mismatches);
+             })
         .def("hbond_uses_fallback",
              [](const Context& c) { return c.neighbors().hbondUsesFallback(); })
         .def("print_neighbor_audit",

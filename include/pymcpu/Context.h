@@ -152,6 +152,27 @@ struct HBondWorkspace {
     std::vector<float> acc_old_x, acc_old_y, acc_old_z;
     std::vector<float> acc_new_x, acc_new_y, acc_new_z;
 
+    // What the last calculateEnergyChange would fold into the accepted
+    // state's HBondStateCache: the new energy of every evaluated pair that is
+    // nonzero, against the cache generation it read. aff_list (above) names
+    // the residues whose pairs it replaces. Checked and consumed by
+    // HBondPotential::commitAcceptedMove.
+    struct PendingPair { int d, a; float e; };
+    std::vector<PendingPair> pending;
+    bool pending_valid = false;
+    const void* pending_old_state = nullptr;
+    const void* pending_proposed_state = nullptr;
+    std::size_t pending_num_moved = 0;
+    std::uint64_t pending_generation = 0;
+
+    // Debug check (off by default; Context.set_hbond_ledger_check): on every
+    // delta, recompute both states over all pairs that touch an affected
+    // residue and count pairs whose nonzero-delta status or old energy
+    // disagrees with the ledger path.
+    bool ledger_check = false;
+    std::uint64_t ledger_checks = 0;
+    std::uint64_t ledger_mismatches = 0;
+
     void ensure_capacity(int num_residues) {
         if (num_residues == n_res &&
             static_cast<int>(pair_stamp.size()) == num_residues * num_residues) {

@@ -59,6 +59,7 @@ Context.has_hard_constraint_violation
 Context.has_steric_clash
 Context.hbond_backend_name
 Context.hbond_index_ok
+Context.hbond_ledger_check_counts
 Context.hbond_uses_fallback
 Context.invalidate_verlet_on_pivot_accept
 Context.invalidate_verlet_pivot_accept
@@ -86,6 +87,7 @@ Context.set_cell_pair_min_moved
 Context.set_clash_first_min_moved
 Context.set_coords_from_python
 Context.set_energy_weight
+Context.set_hbond_ledger_check
 Context.set_invalidate_verlet_on_pivot_accept
 Context.set_mu_cell_size_angstrom
 Context.set_mu_cell_size_min_angstrom
