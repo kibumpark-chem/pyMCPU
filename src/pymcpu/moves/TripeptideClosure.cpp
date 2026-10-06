@@ -244,13 +244,6 @@ void TripeptideSolver::test_two_cone_existence_soln(
 
 void TripeptideSolver::get_poly_coeff(Eigen::Matrix<double, 17, 1>& poly_coeff)
 {
-    using Matrix5d = Eigen::Matrix<double, 5, 5>;
-    using Vector17d = Eigen::Matrix<double, 17, 1>;
-
-    Matrix5d u11, u12, u13, u31, u32, u33;
-    u11.setZero(); u12.setZero(); u13.setZero();
-    u31.setZero(); u32.setZero(); u33.setZero();
-
     Eigen::Vector3d B0, B1, B2, B3, B4, B5, B6, B7, B8;
 
     for (int i = 0; i < 3; ++i) {
@@ -290,6 +283,9 @@ void TripeptideSolver::get_poly_coeff(Eigen::Matrix<double, 17, 1>& poly_coeff)
         C2.col(i) << B5[i], B7[i], B8[i];
     }
 
+    // u1j holds C_j(., 0) as a polynomial of degree (2, 0), u3j holds C_j(., 1) as one of
+    // degree (0, 2). Only those blocks are read, so the rest is left unset.
+    Poly2 u11, u12, u13, u31, u32, u33;
     for (int i = 0; i < 3; ++i) {
         u11(i, 0) = C0(i, 0); 
         u12(i, 0) = C1(i, 0);
@@ -300,70 +296,68 @@ void TripeptideSolver::get_poly_coeff(Eigen::Matrix<double, 17, 1>& poly_coeff)
         u33(0, i) = C2(i, 1);
     }
 
-    std::array<int, 2> p1 = {2, 0};
-    std::array<int, 2> p3 = {0, 2};
-    
-    Matrix5d um1, um2, um3, um4, um5, um6, q_tmp;
-    std::array<int, 2> p_um1, p_um2, p_um3, p_um4, p_um5, p_um6, p_Q;
-
-    poly_mul_sub2(u32, u32, u31, u33, p3, p3, p3, p3, um1, p_um1);
-    poly_mul_sub2(u12, u32, u11, u33, p1, p3, p1, p3, um2, p_um2);
-    poly_mul_sub2(u12, u33, u13, u32, p1, p3, p1, p3, um3, p_um3);
-    poly_mul_sub2(u11, u33, u31, u13, p1, p3, p3, p1, um4, p_um4);
-    poly_mul_sub2(u13, um1, u33, um2, p1, p_um1, p3, p_um2, um5, p_um5);
-    poly_mul_sub2(u13, um4, u12, um3, p1, p_um4, p1, p_um3, um6, p_um6);
-    poly_mul_sub2(u11, um5, u31, um6, p1, p_um5, p3, p_um6, q_tmp, p_Q);
+    // Degrees: (2, 0) for u1j, (0, 2) for u3j; um1 (0, 4); um2, um3, um4 (2, 2); um5 (2, 4);
+    // um6 (4, 2); q_tmp (4, 4).
+    Poly2 um1, um2, um3, um4, um5, um6, q_tmp;
+    poly_mul_sub2<0, 2, 0, 2, 0, 2, 0, 2>(u32, u32, u31, u33, um1);
+    poly_mul_sub2<2, 0, 0, 2, 2, 0, 0, 2>(u12, u32, u11, u33, um2);
+    poly_mul_sub2<2, 0, 0, 2, 2, 0, 0, 2>(u12, u33, u13, u32, um3);
+    poly_mul_sub2<2, 0, 0, 2, 0, 2, 2, 0>(u11, u33, u31, u13, um4);
+    poly_mul_sub2<2, 0, 0, 4, 0, 2, 2, 2>(u13, um1, u33, um2, um5);
+    poly_mul_sub2<2, 0, 2, 2, 2, 0, 2, 2>(u13, um4, u12, um3, um6);
+    poly_mul_sub2<2, 0, 2, 4, 0, 2, 4, 2>(u11, um5, u31, um6, q_tmp);
     
     Q.block<5,5>(0,0) = q_tmp;
-
-    R.setZero();
     R.block<3, 1>(0, 0) = C0.col(2); 
     R.block<3, 1>(0, 1) = C1.col(2);
     R.block<3, 1>(0, 2) = C2.col(2);
 
-    int p2 = 2;
-    int p4 = 4;
-    int p_f1, p_f2, p_f3, p_f4, p_f5, p_f6, p_f7, p_f8, p_f9, p_f10;
-    int p_f11, p_f12, p_f13, p_f14, p_f15, p_f16, p_f17, p_f18, p_f19, p_f20;
-    int p_f21, p_f22, p_f23, p_f24, p_f25, p_f26, p_final;
+    // Q_k: column k of q_tmp (degree 4); R_k: column k of R (degree 2). f_n has the degree
+    // in its size.
+    const double* Q0 = q_tmp.col(0).data(); const double* Q1 = q_tmp.col(1).data();
+    const double* Q2 = q_tmp.col(2).data(); const double* Q3 = q_tmp.col(3).data();
+    const double* Q4 = q_tmp.col(4).data();
+    const double* R0 = R.col(0).data(); const double* R1 = R.col(1).data();
+    const double* R2 = R.col(2).data();
 
-    Vector17d f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12, f13, f14, f15, f16;
-    Vector17d f17, f18, f19, f20, f21, f22, f23, f24, f25, f26;
+    double f1[5], f2[5], f3[7], f4[7], f5[9], f6[7], f7[9], f8[11], f9[13];
+    double f10[7], f11[9], f12[11], f13[7], f14[9], f15[7], f16[9], f17[13];
+    double f18[7], f19[7], f20[11], f21[7], f22[11], f23[11], f24[13], f25[13], f26[15];
 
-    poly_mul_sub1(R.col(1), R.col(1), R.col(0), R.col(2), p2, p2, p2, p2, f1, p_f1);
-    poly_mul1(R.col(1), R.col(2), p2, p2, f2, p_f2);
-    poly_mul_sub1(R.col(1), f1, R.col(0), f2, p2, p_f1, p2, p_f2, f3, p_f3);
-    poly_mul1(R.col(2), f1, p2, p_f1, f4, p_f4);
-    poly_mul_sub1(R.col(1), f3, R.col(0), f4, p2, p_f3, p2, p_f4, f5, p_f5);
+    poly_mul_sub1<2, 2, 2, 2>(R1, R1, R0, R2, f1);
+    poly_mul1<2, 2>(R1, R2, f2);
+    poly_mul_sub1<2, 4, 2, 4>(R1, f1, R0, f2, f3);
+    poly_mul1<2, 4>(R2, f1, f4);
+    poly_mul_sub1<2, 6, 2, 6>(R1, f3, R0, f4, f5);
 
-    poly_mul_sub1(Q.col(1), R.col(1), Q.col(0), R.col(2), p4, p2, p4, p2, f6, p_f6);
-    poly_mul_sub1(Q.col(2), f1, R.col(2), f6, p4, p_f1, p2, p_f6, f7, p_f7);
-    poly_mul_sub1(Q.col(3), f3, R.col(2), f7, p4, p_f3, p2, p_f7, f8, p_f8);
-    poly_mul_sub1(Q.col(4), f5, R.col(2), f8, p4, p_f5, p2, p_f8, f9, p_f9);
+    poly_mul_sub1<4, 2, 4, 2>(Q1, R1, Q0, R2, f6);
+    poly_mul_sub1<4, 4, 2, 6>(Q2, f1, R2, f6, f7);
+    poly_mul_sub1<4, 6, 2, 8>(Q3, f3, R2, f7, f8);
+    poly_mul_sub1<4, 8, 2, 10>(Q4, f5, R2, f8, f9);
 
-    poly_mul_sub1(Q.col(3), R.col(1), Q.col(4), R.col(0), p4, p2, p4, p2, f10, p_f10);
-    poly_mul_sub1(Q.col(2), f1, R.col(0), f10, p4, p_f1, p2, p_f10, f11, p_f11);
-    poly_mul_sub1(Q.col(1), f3, R.col(0), f11, p4, p_f3, p2, p_f11, f12, p_f12);
+    poly_mul_sub1<4, 2, 4, 2>(Q3, R1, Q4, R0, f10);
+    poly_mul_sub1<4, 4, 2, 6>(Q2, f1, R0, f10, f11);
+    poly_mul_sub1<4, 6, 2, 8>(Q1, f3, R0, f11, f12);
 
-    poly_mul_sub1(Q.col(2), R.col(1), Q.col(1), R.col(2), p4, p2, p4, p2, f13, p_f13);
-    poly_mul_sub1(Q.col(3), f1, R.col(2), f13, p4, p_f1, p2, p_f13, f14, p_f14);
-    poly_mul_sub1(Q.col(3), R.col(1), Q.col(2), R.col(2), p4, p2, p4, p2, f15, p_f15);
-    poly_mul_sub1(Q.col(4), f1, R.col(2), f15, p4, p_f1, p2, p_f15, f16, p_f16);
-    poly_mul_sub1(Q.col(1), f14, Q.col(0), f16, p4, p_f14, p4, p_f16, f17, p_f17);
+    poly_mul_sub1<4, 2, 4, 2>(Q2, R1, Q1, R2, f13);
+    poly_mul_sub1<4, 4, 2, 6>(Q3, f1, R2, f13, f14);
+    poly_mul_sub1<4, 2, 4, 2>(Q3, R1, Q2, R2, f15);
+    poly_mul_sub1<4, 4, 2, 6>(Q4, f1, R2, f15, f16);
+    poly_mul_sub1<4, 8, 4, 8>(Q1, f14, Q0, f16, f17);
 
-    poly_mul_sub1(Q.col(2), R.col(2), Q.col(3), R.col(1), p4, p2, p4, p2, f18, p_f18);
-    poly_mul_sub1(Q.col(1), R.col(2), Q.col(3), R.col(0), p4, p2, p4, p2, f19, p_f19);
-    poly_mul_sub1(Q.col(3), f19, Q.col(2), f18, p4, p_f19, p4, p_f18, f20, p_f20);
+    poly_mul_sub1<4, 2, 4, 2>(Q2, R2, Q3, R1, f18);
+    poly_mul_sub1<4, 2, 4, 2>(Q1, R2, Q3, R0, f19);
+    poly_mul_sub1<4, 6, 4, 6>(Q3, f19, Q2, f18, f20);
     
-    poly_mul_sub1(Q.col(1), R.col(1), Q.col(2), R.col(0), p4, p2, p4, p2, f21, p_f21);
-    poly_mul1(Q.col(4), f21, p4, p_f21, f22, p_f22);
-    poly_sub1(f20, f22, p_f20, p_f22, f23, p_f23);
+    poly_mul_sub1<4, 2, 4, 2>(Q1, R1, Q2, R0, f21);
+    poly_mul1<4, 6>(Q4, f21, f22);
+    poly_sub1<10, 10>(f20, f22, f23);
     
-    poly_mul1(R.col(0), f23, p2, p_f23, f24, p_f24);
-    poly_sub1(f17, f24, p_f17, p_f24, f25, p_f25);
+    poly_mul1<2, 10>(R0, f23, f24);
+    poly_sub1<12, 12>(f17, f24, f25);
     
-    poly_mul_sub1(Q.col(4), f12, R.col(2), f25, p4, p_f12, p2, p_f25, f26, p_f26);
-    poly_mul_sub1(Q.col(0), f9, R.col(0), f26, p4, p_f9, p2, p_f26, poly_coeff, p_final);
+    poly_mul_sub1<4, 10, 2, 12>(Q4, f12, R2, f25, f26);
+    poly_mul_sub1<4, 12, 2, 14>(Q0, f9, R0, f26, poly_coeff.data());
 
     if (poly_coeff[16] < 0.0) {
         poly_coeff = -poly_coeff; 
