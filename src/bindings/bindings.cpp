@@ -228,6 +228,7 @@ PYBIND11_MODULE(mcpu_core, m) {
                             " is listed twice; the list must not hold duplicates");
                 }
                 p.moved_indices = idx;
+                p.clear_moved_ranges();
             })
         .def(
             "mark_moved",

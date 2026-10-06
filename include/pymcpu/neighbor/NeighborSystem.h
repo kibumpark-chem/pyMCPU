@@ -1,4 +1,7 @@
 #pragma once
+#if defined(__AVX2__) && defined(__FMA__)
+#include <immintrin.h>
+#endif
 /// NeighborSystem: single lifecycle owner for Mu + HBond spatial indices (NO PBC).
 ///
 /// Desync is prevented by construction: potentials never insert/remove/update grids.
@@ -237,6 +240,26 @@ public:
     bool trial_in_bounds(const CoordsSoA& trial_coords,
                          const ProposalPatch& patch) const {
         if (!bounds_.valid) return true;
+        if (patch.moved_as_ranges()) {
+            // A pivot marks its atoms as a few index ranges (one per atom
+            // kind), so test each range with the branch-free pass below; the
+            // ranges are exactly the moved atoms, so the answer is the same.
+            const float* x = trial_coords.x.data();
+            const float* y = trial_coords.y.data();
+            const float* z = trial_coords.z.data();
+            const float lx = bounds_.lo.x(), ly = bounds_.lo.y(), lz = bounds_.lo.z();
+            const float hx = bounds_.hi.x(), hy = bounds_.hi.y(), hz = bounds_.hi.z();
+            int ok = 1;
+            for (const auto& rg : patch.moved_ranges) {
+                for (size_t k = static_cast<size_t>(rg.first);
+                     k < static_cast<size_t>(rg.second); ++k) {
+                    ok &= static_cast<int>(x[k] >= lx) & static_cast<int>(x[k] < hx)
+                        & static_cast<int>(y[k] >= ly) & static_cast<int>(y[k] < hy)
+                        & static_cast<int>(z[k] >= lz) & static_cast<int>(z[k] < hz);
+                }
+            }
+            return ok != 0;
+        }
         if (!patch.moved_indices.empty()) {
             // moved_indices holds no duplicates, so when its span max - min + 1
             // equals its size it is exactly the range [min, max] (every pivot
@@ -295,7 +318,38 @@ public:
             const float d2 = dx * dx + dy * dy + dz * dz;
             if (d2 > d2max) d2max = d2;
         };
-        if (!patch.moved_indices.empty()) {
+        if (patch.moved_as_ranges()) {
+            // Same atoms as moved_indices, read contiguously. The scalar loop
+            // is bound by the latency of its running max; eight lanes each
+            // keep their own max and are folded at the end. Each lane applies
+            // the scalar rule (d2 > max ? d2 : max, which vmaxps is) to the
+            // same d2 (fma(dz, dz, fma(dy, dy, dx*dx)), as GCC contracts the
+            // scalar expression), and the max of non-NaN values does not
+            // depend on order, so the result is the same bit for bit.
+            for (const auto& rg : patch.moved_ranges) {
+                int i = rg.first;
+#if defined(__AVX2__) && defined(__FMA__)
+                __m256 vmax = _mm256_setzero_ps();
+                for (; i + 8 <= rg.second; i += 8) {
+                    const size_t k = static_cast<size_t>(i);
+                    const __m256 dx = _mm256_sub_ps(_mm256_loadu_ps(trial.x.data() + k),
+                                                    _mm256_loadu_ps(accepted.x.data() + k));
+                    const __m256 dy = _mm256_sub_ps(_mm256_loadu_ps(trial.y.data() + k),
+                                                    _mm256_loadu_ps(accepted.y.data() + k));
+                    const __m256 dz = _mm256_sub_ps(_mm256_loadu_ps(trial.z.data() + k),
+                                                    _mm256_loadu_ps(accepted.z.data() + k));
+                    const __m256 d2 = _mm256_fmadd_ps(dz, dz,
+                                                      _mm256_fmadd_ps(dy, dy, _mm256_mul_ps(dx, dx)));
+                    vmax = _mm256_max_ps(d2, vmax);
+                }
+                alignas(32) float lanes[8];
+                _mm256_store_ps(lanes, vmax);
+                for (float d2 : lanes)
+                    if (d2 > d2max) d2max = d2;
+#endif
+                for (; i < rg.second; ++i) consider(i);
+            }
+        } else if (!patch.moved_indices.empty()) {
             for (int i : patch.moved_indices) consider(i);
         } else {
             for (size_t i = 0; i < patch.moving_atoms.size(); ++i) {
