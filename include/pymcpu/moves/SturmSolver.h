@@ -53,9 +53,12 @@ private:
     static constexpr int MAXPOW = 32;
     static constexpr double SMALL_ENOUGH = 1.0e-18;
 
+    // coef is left uninitialised: every reader stops at ord, and modp copies
+    // only coef[0..u.ord]. Zero-filling the 32-member sequence in solve() was a
+    // 4.6 KB memset per solve (about 2% of T4L KIC-only cycles).
     struct Poly {
         int ord = 0;
-        std::array<double, MAX_ORDER + 1> coef = {0.0};
+        std::array<double, MAX_ORDER + 1> coef;
     };
 
     double rel_error = 1.0e-15;
@@ -73,7 +76,7 @@ private:
     };
 
     int modp(const Poly& u, const Poly& v, Poly& r) const {
-        r.coef = u.coef;
+        std::copy_n(u.coef.begin(), u.ord + 1, r.coef.begin());
         
         if (v.coef[v.ord] < 0.0) {
             for (int k = u.ord - v.ord - 1; k >= 0; k -= 2) 
