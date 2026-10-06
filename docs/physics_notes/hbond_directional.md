@@ -1,116 +1,63 @@
-# Directional hydrogen-bond kernel (KERNEL-4)
+# Hydrogen-bond potential (mcpu08)
 
-**Python API:** :class:`~pymcpu.HBondPotential` (see :doc:`/api/forces`).
+**Python API:** {class}`~pymcpu.HBondPotential`; see {doc}`/api/forces`.
 
-Temperature in the Metropolis criterion is a **dimensionless**
-reduced parameter (typical 0.3–0.6); H-bond energies are
-**unitless** table lookups.
+The hydrogen-bond term scores backbone hydrogen bonds: the N–H of one residue,
+the donor i, to the C=O of another, the acceptor j. Each bond's energy is a
+table value looked up from seven quantities describing its geometry, scaled by
+a factor for the two residue types. The weight is 2.7 (energy group 4): 1.35
+times a fixed factor of 2.0 carried over from legacy MCPU.
 
-## Overview
+## Which pairs count
 
-Knowledge-based backbone hydrogen bonds use a **7-dimensional** geometric descriptor per donor–acceptor pair. Energy is table lookup multiplied by sequence-dependent weights, with long-range `beta_favor` and optional H–O distance penalty.
+A pair forms a hydrogen bond when all of these hold:
 
-## Atom roles
+- Neither residue is the first or last of the chain, and the donor is not a
+  proline, which has no amide hydrogen.
+- They are at least four residues apart in sequence.
+- The amide H of i is within 2.5 Å of the O of j.
+- CA(i−1) and CA(i) each have CA(j) or CA(j+1) within 5.8 Å, and the closest
+  of these four CA–CA pairs is within 5.5 Å. For pairs more than four apart,
+  the limits are 6.0 Å and 5.4 Å.
+- For pairs more than four apart, the backbone at both ends is β-like: φ of i
+  and of j+1 at most −30°, and ψ of i−1 and of j outside −150° to 30°.
 
-For donor residue `i` and acceptor residue `j`:
+With secondary structure from DSSP (`MCPUForceField(compute_dssp=True)`),
+helix residues also cannot form bonds more than four apart, and strand
+residues cannot form i, i+4 bonds with helix-like φ and ψ. By default every
+residue counts as coil, and these two checks never apply.
 
-| Role | Atoms |
-|------|--------|
-| Donor N | `N(i)` |
-| Donor CA | `CA(i)` |
-| Donor C | `C(i)` |
-| C_prev | `C(i-1)` — previous residue carbon for H estimation and φ |
-| Acceptor O | `O(j)` |
-| Acceptor N, CA, C | `N(j)`, `CA(j)`, `C(j)` |
-| Neighbors | `CA(i±1)`, `N(j+1)`, etc. for CA–CA filters and antiparallel angles |
+## The hydrogen
 
-**H is not stored.** It is estimated inline from backbone atoms (legacy `hbonds.h:395–401`):
+By default the amide H is not stored. It is placed 1.0 Å from N, opposite the
+sum of the N→CA and N→C(i−1) bond vectors, whenever it is needed. With
+`MCPUForceField(virtual_amide_h=False)` the hydrogens are explicit atoms that
+move with the chain.
 
-```
-vec_NCA = normalize(CA_don - N_don)
-vec_NC  = normalize(C_prev - N_don)
-h_dir   = -normalize(vec_NCA + vec_NC)
-H_pos   = N_don + 1.0 Å × h_dir
-```
+## The seven quantities
 
-## 7D descriptor and binning
+| # | Quantity |
+|---|----------|
+| 1 | Class: 0 for a pair four apart (helix-like); otherwise 1 (parallel) if the chain directions at the two ends, CA(i−1)→CA(i+1) and CA(j−1)→CA(j+1), are less than 90° apart, and 2 (antiparallel) if not. |
+| 2, 3 | The angle between the planes of residues i and j, each through N, CA and C, and the angle between their N–CA–C bisectors. |
+| 4, 5 | The same two angles for residues i−1 and j+1. |
+| 6, 7 | The same two angles for the planes around the N–H and C=O groups: C(i−1), N(i), CA(i), and CA(j), C(j), N(j+1). |
 
-Table shape: `hbond_E[3][9][9][9][9][9][9]` (flat 1,594,323 entries). Dimension order:
+Each angle lies between 0° and 180° and is binned in 20° bins, 9 per angle, so
+the table has 3 × 9⁶ = 1,594,323 entries.
 
-`[helix_sheet][pCA_d][bCA_d][pCA_a][bCA_a][PH][bH]`
-
-| Index | Meaning |
-|-------|---------|
-| `helix_sheet` (jj1) | 0 = i−4 helix pair; 1 = parallel β; 2 = antiparallel β |
-| jj2–jj5 | Plane / bisector angles between donor and acceptor peptide planes (20° bins, 9 bins each) |
-| jj6–jj7 | PH and bH plane/bisector angles (20° bins) |
-
-Binning uses **`safe_bin(angle_deg, 20.0f, 9)`** from `torsion_bin.hpp` (truncation + clamp). No chi-style epsilon, `fmod`, or half-bin offset.
-
-**Helix/sheet classification (jj1):**
-
-- `|res_don − res_acc| == 4` → jj1 = 0
-- Else: angle between `CA(i−1)→CA(i+1)` and `CA(j+1)→CA(j−1)`; if `< 90°` → 1 (parallel), else 2 (antiparallel)
-
-## Energy formula
-
-Per pair (after all filters):
+## Energy
 
 ```
-raw = seq_hb[hs][aa_don][aa_acc] × hbond_E[hs][jj2..jj7]
-
-if |res_don − res_acc| > 4:
-    raw ×= kBetaFavor    // 3.0f
-
-if d_HO² > kHbInnerSq:
-    raw ×= kHbPenalty    // 1.0f at default (no effect)
-
-E_pair = raw / 1000.0f × kRdthreeCon    // kRdthreeCon = 2.0f
+E_pair = table[class][six bins] × s[class][donor type][acceptor type] × f
 ```
 
-Weighted MC delta:
+s is a factor for the two residue types, and f is 3.0 for a pair more than
+four apart (parallel or antiparallel) and 1.0 for a helix-like pair. The term
+is the sum over pairs divided by 1000; the weight of 2.7 then applies.
 
-```
-delta_hbond = kHbondWeight × Σ_pairs (E_new − E_old)    // kHbondWeight = 1.35f
-```
+## Energy changes
 
-Constants from legacy `define.h` / `backbone.c`.
-
-## Filters (application order)
-
-1. **Terminal residue:** donor or acceptor at chain terminus → skip
-2. **Sequence separation:** `|res_don − res_acc| < 4` → skip
-3. **H–O distance:** estimated H to acceptor O; `d_HO² > kHbCutoffSq` (6.25 Å²) → skip
-4. **CA–CA precheck:** seq_sep-dependent minima over four CA–CA pairs (5.8²/5.5² for sep=4; 6.0²/5.4² for sep>4)
-5. **Helix filter (sep>4):** `secstr[donor]=='H'` or `secstr[acceptor]=='H'` → skip
-6. **Ramachandran filter:** seq_sep-dependent φ/ψ and secondary-structure checks (legacy `hbonds.h:462–495`)
-
-For benchmark 1uao, `secstr` is all `'C'`; filters 5–6 never trigger.
-
-## SWE-1 Option A — delta over affected pairs only
-
-Legacy `FoldHydrogenBonds()` recomputes all pairs. pyMCPU computes:
-
-```
-delta = kHbondWeight × Σ_{affected (don,acc)} [E_new(don,acc) − E_old(don,acc)]
-```
-
-Unmoved pairs cancel. Complexity is **O(moved × shell_neighbors)** via `grid_h` / `grid_o` neighbor gating, not O(N²).
-
-Pair deduplication uses `hbond_pair_stamp` in `MCWorkspace` (epoch reset). No read/write of `hbond_frame_cache`.
-
-Sidechain-only moves return **0** (backbone H-bonds unchanged).
-
-## Regression tolerance
-
-CASE-2 uses **rel_error < 1e−4** (not 1e−5). Trigonometric geometry (cross products, normalizations) with mixed float/double accumulation is a known precision source versus legacy.
-
-## Constants summary
-
-| Name | Value |
-|------|-------|
-| `kHbondWeight` | 1.35f |
-| `kRdthreeCon` | 2.0f |
-| `kBetaFavor` | 3.0f |
-| `kHbInnerSq` / `kHbCutoffSq` | 6.25f (2.5 Å)² |
-| `kHbPenalty` | 1.0f |
+A move re-evaluates only the pairs near residues it moved, finding partners
+within 2.5 Å on a grid. A sidechain move cannot change this term, which reads
+only backbone atoms.

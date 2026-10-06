@@ -1,60 +1,46 @@
-# Aromatic stacking (KERNEL-5)
+# Aromatic orientation potential (mcpu08)
 
-**Python API:** :class:`~pymcpu.AromaticPotential` (see :doc:`/api/forces`).
+**Python API:** {class}`~pymcpu.AromaticPotential`; see {doc}`/api/forces`.
 
-Temperature in the Metropolis criterion is a **dimensionless**
-reduced parameter (typical 0.3–0.6); aromatic energies are
-**unitless** (`aromatic_E[bin] / 1000` × `ARO_WEIGHT`).
+The aromatic term scores how pairs of aromatic rings are oriented. Only PHE
+and TRP take part; TYR and HIS do not. The weight is 5.0 (energy group 5).
 
-## Aromatic residue types
+## Rings
 
-Only **PHE** and **TRP** participate in aromatic stacking. **TYR** and **HIS** are excluded at code level (never registered in `aromatic_residues`). The parameter file `aromatic_noTYR.energy` matches this behavior.
+Each ring is represented by three atoms:
 
-## Ring atom definitions
+| Residue | Ring atoms |
+|---------|------------|
+| PHE | CG, CE1, CE2 |
+| TRP | CG, CZ2, CZ3 |
 
-| Residue | Ring center atoms | Normal vectors |
-|---------|-------------------|----------------|
-| PHE | CG, CE1, CE2 | (CG→CE1) × (CG→CE2) |
-| TRP | CG, CZ2, CZ3 | (CG→CZ2) × (CG→CZ3) |
+The ring centre is the mean of the three atoms, and the normal is
+(second atom − CG) × (third atom − CG). A residue missing one of these atoms
+is left out, with a warning.
 
-Ring center = arithmetic mean of the three atoms. Normal = normalized cross product of the two ring vectors from CG.
+## Energy
 
-## Acute angle and 89.9° cap
+Each pair of rings whose centres are closer than 7.0 Å adds one table value,
+chosen by the angle between their normals. The angle is folded into 0°–90°,
+capped at 89.9° and binned in 10° bins. The mcpu08 values, divided by 1000 and
+before the weight:
 
-The angle between ring plane normals is converted to degrees, folded to acute (`if angle > 90° then 180° − angle`), then capped:
+| Angle between normals | Energy |
+|-----------------------|--------|
+| 0–10° | 1.000 |
+| 10–20° | 0.921 |
+| 20–30° | 0.659 |
+| 30–40° | 0.528 |
+| 40–50° | 0.481 |
+| 50–60° | 0.032 |
+| 60–70° | 0.032 |
+| 70–80° | 0 |
+| 80–90° | 0.044 |
 
-```
-if (angle_deg > 89.9°) angle_deg = 89.9°;
-```
+So the term penalises nearby rings whose planes are close to parallel, by up
+to 5.0 after weighting, and barely affects rings tilted by 50° or more.
 
-The cap is applied **before** `safe_bin()`. It ensures bin 8 covers 80–89.9°, not 80–90°, matching legacy behavior when normals are orthogonal.
+## Energy changes
 
-## 1D lookup table
-
-- Shape: `aromatic_E[9]` — nine bins
-- Bin width: 10° (`aro_int = 10.0`)
-- Range: 0°–89.9° after cap
-- Default unset cells: **0** (not 1000)
-
-## Energy formula
-
-Per pair within 7.0 Å center distance:
-
-```
-E_pair = aromatic_E[bin] / 1000.0
-delta_aromatic = ARO_WEIGHT × Σ_pairs (E_new − E_old)
-```
-
-`ARO_WEIGHT = 5.0`.
-
-## Distance gate
-
-Pairs are skipped when squared center distance ≥ (7.0 Å)² = 49.0 Å².
-
-## Move gating
-
-Unlike hbond (backbone only) or sidechain triplet (sidechain only), aromatic energy is evaluated for **all move types** in legacy. The pyMCPU kernel returns 0 only when no moved atom belongs to a registered aromatic residue.
-
-## Delta kernel scope
-
-`aromatic_delta()` iterates unique aromatic pairs where at least one residue was moved. Complexity is O(n_aro²) with typical n_aro ≪ N_atoms.
+Every move recomputes all ring pairs, which is cheap: proteins have few PHE
+and TRP residues.

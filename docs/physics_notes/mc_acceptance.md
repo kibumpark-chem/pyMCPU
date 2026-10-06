@@ -1,188 +1,46 @@
-# MC acceptance criterion
+# Monte Carlo acceptance
 
-**Python API:** :class:`~pymcpu.Integrator` (see :doc:`/api/integrator`).
+**Python API:** {class}`~pymcpu.Integrator`; see {doc}`/api/integrator`.
 
-pyMCPU uses the Metropolis–Hastings criterion implemented in
-`metropolis_accept()` (`mc_integrator.hpp`). For a proposed move
-with energy change $\Delta E$, dimensionless temperature $T$, and
-Jacobian ratio $J$ (`proposal_meta.jacobian_ratio`):
-
-```
-if delta_E >= clash_sentinel:  reject immediately
-if delta_E <= 0:               accept always
-else:  accept if rng() < exp(-delta_E / T) * jacobian_ratio
-```
-
-The Jacobian enters as a **multiplicative** factor on the
-acceptance probability, **not** as a log term in the exponent.
-
-For pivot and sidechain moves, `jacobian_ratio = 1.0f`. For KIC
-moves the ratio is set in `kic_move.hpp` as:
+Each step tries one move (see the moves in {doc}`background`). A move that
+would put two atoms closer than their hard-core distance is rejected outright.
+Any other move, with energy change ΔE, is accepted with probability
 
 ```
-jacobian_ratio = (jacobi_after / jacobi_before)
-                 × (n_soln / soln_no_before)
+P = min(1, exp(−ΔE / T) × w)
 ```
 
-See [kic_jacobian](kic_jacobian.md) for how `jacobi_*` are computed.
+where T is the reduced temperature and w corrects for a move that is not
+proposed symmetrically:
 
-## Temperature
+| Move | w |
+|------|---|
+| Pivot | 1 |
+| Sidechain, `'continuous'` mode | 1 |
+| Sidechain, rotamer library (the default) | q(old) / q(new) |
+| Pivot, Ramachandran library | q(old) / q(new) |
+| KIC | (J_new / J_old) × (n_new / n_old) |
 
-$T$ is a **dimensionless** reduced parameter (typical range
-0.3–0.6). Energy $\Delta E$ is unitless (knowledge-based table
-sum). Neither quantity is expressed in physical units.
+The continuous moves draw a symmetric Gaussian step, so w = 1. The library
+moves draw new angles from a distribution q that does not depend on the
+current ones, and q(old) / q(new) makes up for q favouring some angles over
+others. For KIC, J is the Jacobian of the loop closure and n the number of
+closures, before and after the move; see {doc}`kic_jacobian`.
 
-## Implementation Details
+A move that cannot be made, such as a KIC window with no closure, counts as an
+attempt that was not accepted, so it lowers that move's acceptance rate.
 
-### Clash sentinel
+## Hard-core clashes
 
-Moves that produce a hard-core clash are rejected before
-the Metropolis test. The sentinel value is:
+A move that puts a pair of atoms under its hard-core cutoff is rejected before
+the acceptance test, so no accepted move creates an overlap. Pairs that move
+together in a rigid pivot are not re-checked: the rotation keeps their
+distance, except for float32 rounding of a few 1e-6 Å. A whole state is
+therefore judged against cutoffs 0.001 Å looser
+(`mcpu_core.STATE_CLASH_BUFFER_A`). {doc}`/api/simulation` describes the
+running energy, its full recompute, and what happens if a recompute finds a
+clash anyway.
 
-```
-clash sentinel = 99999.0f  (PhysicsVerifier::kHardCorePenalty)
-```
-
-Any delta-energy return at or above half the sentinel
-causes immediate rejection without evaluating `exp(-dE/T)`.
-This matches legacy behavior where clashed moves bypass
-the acceptance criterion entirely.
-
-### KIC jacobian_ratio field
-
-The `MoveProposal` struct carries:
-
-```
-float jacobian_ratio = 1.0f  (default: neutral)
-```
-
-For KIC moves, `apply_kic_move()` sets:
-
-```
-jacobian_ratio = (jacobi_after / jacobi_before)
-                 × (n_soln / soln_no_before)
-```
-
-For pivot and sidechain moves: `jacobian_ratio` stays `1.0f`.
-The Metropolis criterion is:
-
-```
-accept = exp(-delta_E / T) * jacobian_ratio >= uniform_rng()
-```
-
-(equivalently: `rng() < exp(-delta_E / T) * jacobian_ratio`).
-
-### soln_no_before approximation
-
-When the pre-rotation KIC closure finds zero solutions
-(`soln_no_before == 0`), it is forced to 1 to avoid division
-by zero in the detailed balance ratio. This is a known
-approximation (from legacy `loop.h:582–583`). The effect is
-that the `n_soln/soln_no_before` factor becomes `n_soln` rather
-than the theoretically correct value.
-
-### Random solution selection
-
-When KIC finds multiple valid closure solutions (`n_soln > 1`),
-one is selected uniformly at random:
-
-```
-index = (int)(rng() * n_soln)
-```
-
-This is required for detailed balance. RMSD-based selection
-exists in the legacy code but is overridden by this random
-selection (legacy `loop.h:685`).
-
-### The Mu contact list
-
-A move's Mu energy change is the contact energy at the new positions minus
-the contact energy at the old ones. By default the second term is read off a
-live list of the accepted state's contacts rather than measured again (under
-a residue energy mask, or with `MCPU_CONTACT_LIST=0`, it is measured again).
-The list is built from the coordinates on the first move that needs it,
-updated by each accepted move, and rewritten from the coordinates whenever
-`calculate_total_energy(-1)` resets the running energy (`Simulation` does so
-after every `step()` by default; see `full_energy_every`). It is discarded
-whenever the coordinates are replaced wholesale (`set_positions`,
-`Context.coords`, `State.coords`, a restore or replica swap), by an accepted
-move that cannot use it (one outside the neighbour grid; a rejected one
-leaves it), and by a reset under a mask. Other full evaluations, such as
-`energy_breakdown`, leave it alone.
-
-A rigid pivot does not re-measure the pairs it carries, but its rounding
-moves each carried distance by up to sqrt(3) float steps of the largest
-coordinate (6.7e-6 Å below 64 Å), enough to carry a pair sitting on its
-contact cutoff across it. So the list also holds, with energy 0, every contact
-pair less than 0.05 Å outside its cutoff, and a rigid pivot re-decides each
-listed pair it carries. The unlisted ones cannot cross: the bound is summed
-over accepted pivots, and the list is rebuilt from the coordinates before the
-sum reaches 0.05 Å. A pivot out of the neighbour grid re-decides the carried
-pairs too: those the list holds, or every one when there is no list. The
-running energy therefore equals the full energy after every move. Under a
-residue energy mask, or with `MCPU_CONTACT_LIST=0`, moves take a path without
-the list, and such a crossing there leaves the running energy one contact
-energy off until the next reset (`Simulation` logs an energy-drift warning).
-
-### Hard-core clashes
-
-A proposal that puts a pair under its hard-core cutoff is rejected before the
-Metropolis test runs, so no accepted move introduces an overlap.
-
-A rigid pivot does not re-check the pairs it carries (both atoms moved): the
-rotation keeps their distances, which is what makes the move cheap. It rounds
-each carried coordinate to float, though, so a pair a move left exactly on its
-cutoff can drift a few 1e-6 Å under it. A whole state is therefore judged --
-by the full recompute, `Context.has_steric_clash()` and the check below --
-against cutoffs 0.001 Å looser (`mcpu_core.STATE_CLASH_BUFFER_A`), and a pair
-inside that margin scores as any pair at its distance. With nothing
-re-checking carried pairs, none went more than 1.8e-6 Å under its cutoff in
-5M-step actin and 20M-step chignolin runs. The KORP CA-CA guard works the
-same way.
-
-That margin assumes coordinates near the origin. A float step grows with the
-coordinate (3.8e-6 Å at 50 Å, 6.1e-5 Å at 1000 Å, 2.4e-4 Å at 4000 Å), and
-so does the rounding of every move: with actin moved 4000 Å out, a carried
-pair went through the margin within 200k pivot-only steps, backbone bond
-lengths drifted by up to 0.02 Å (2e-4 Å at the origin), and KIC moves failed
-their reversibility check hundreds of times more often. A run does not get
-there by itself (chignolin's centre moved about 10 Å in 5M steps), but
-structures that start far out, such as some cryo-EM models, would. So a
-`Context` runs a structure that reaches 64 Å or more from the origin in an
-engine frame shifted next to it, exactly (`Context.frame_offset`; see the
-Context API docs). The rounding never stops growing with distance, though:
-KIC's reversibility check fails in about 6e-4 of chignolin's attempts at the
-origin, 1e-2 at 64 Å and 0.1 at 300 Å, roughly doubling with every doubling
-of the coordinates. The hard-core margin, by contrast, holds with room to
-spare within a few hundred Å. When coordinates still reach 256 Å in the
-engine frame (a structure several hundred Å across, an axis that straddles
-the origin but reaches far, or an explicit `frame_offset`), the `Context`
-prints a note, once per process. The running energy, and the old side of
-every move, keep a carried pair's contact energy, so the energy is right
-again once such a pair moves apart.
-
-A clash in an accepted state therefore means coordinates that did not come
-from a move, or a pair a delta path missed. `Simulation` checks
-`Context.has_steric_clash()` on its periodic full-energy recompute and raises
-`StericClashError` by default. Setting `MCPU_CLASH_FATAL=0` downgrades this to
-a counted warning; continuing costs one exchange attempt made with a slightly
-stale energy. Checkpoint restores, replica swaps and `EngineSession.set_coords`
-check the state they set in the same way (`check_state_clash`).
-
-Overlaps in the structure a force field is built from are handled up front:
-Mu exempts those pairs for the whole run (native-structure exceptions), and
-`KORPForceField` refuses such a structure. Coordinates set later with an
-overlap (`set_positions`, a restore) fail the check above; with
-`MCPU_CLASH_FATAL=0` the run goes on, but every move that moves one atom of
-an overlapping pair and leaves it overlapping is rejected (moves that leave the
-pair alone, or carry both atoms rigidly, are not), so relax or repair the
-structure before sampling.
-
-### Q-bias native contacts
-
-`NativeContactsBiasPotential` builds the native CA–CA contact list at
-`Context` construction. The minimum sequence separation
-`min_seq_sep` is configurable (default **5**, matching the
-historical pyMCPU convention). Legacy MCPU `template.cfg`
-uses **8** — set `NativeContactsBiasPotential(min_seq_sep=8)` when matching
-a legacy run.
+Rounding grows with distance from the origin, so a `Context` runs a structure
+that reaches 64 Å or more from the origin in an engine frame shifted next to
+it; see `Context.frame_offset` in {doc}`/api/context`.

@@ -1,82 +1,117 @@
-Physics Background
+Physics background
 ==================
 
-pyMCPU implements a knowledge-based statistical potential
-for protein folding Monte Carlo simulation. This section
-describes each force term and the MC move types.
+pyMCPU samples protein conformations by Monte Carlo, scoring them with
+knowledge-based potentials: energy tables derived from the statistics of
+known protein structures. It has two force fields, used one at a time:
 
-Python force objects are documented in :doc:`/api/forces`.
-Acceptance and temperature are documented in
-:doc:`/api/integrator`.
+* **mcpu08** (:class:`~pymcpu.MCPUForceField`): all-atom, with the five MCPU
+  potentials described on this page and the pages after it.
+* **KORP** (:class:`~pymcpu.KORPForceField`): backbone-only, with one
+  orientation-dependent residue-pair potential; see :doc:`korp_6d`.
 
-Overview of the energy function
--------------------------------
+The potential objects are documented in :doc:`/api/forces`, and the move
+settings in :doc:`/api/integrator`.
 
-The total potential energy is a sum of five terms:
+The mcpu08 energy
+-----------------
+
+The energy is a weighted sum of five terms:
 
 .. math::
 
-   E = w_\mu E_\mu + w_{tor} E_{tor} + w_{sct} E_{sct}
+   E = w_\mu E_\mu + w_{bb} E_{bb} + w_{sc} E_{sc}
      + w_{hb} E_{hb} + w_{aro} E_{aro}
-
-where each of the five core table terms is a knowledge-based statistical
-potential derived from protein structure databases. The optional
-native-contact umbrella bias (:class:`~pymcpu.NativeContactsBiasPotential`,
-energy group 6) is documented in :doc:`/api/forces` and is not part of the
-default five-term sum. All energies are
-**unitless** — they are direct table lookups, not in
-physical energy units.
-
-Energy terms
-------------
 
 .. list-table::
    :header-rows: 1
-   :widths: 20 15 65
+   :widths: 25 10 65
 
-   * - Potential
-     - Default weight
-     - Description
-   * - :doc:`mu_potential`
-     - 1.0
-     - Pairwise contact energy between atom types (μ-potential)
-   * - :doc:`triplet_torsion` (backbone)
+   * - Term
+     - Weight
+     - What it scores
+   * - :doc:`Mu contact <mu_potential>`
+     - 0.4
+     - Contacts between atom pairs, by atom type. A pair closer than its
+       hard-core distance is a clash, and a move that makes one is rejected.
+   * - :doc:`Backbone torsion <triplet_torsion>`
      - 1.35
-     - 4D backbone torsion statistics (φ, ψ, pCA, bCA)
-   * - :doc:`triplet_torsion` (sidechain)
-     - 2.50
-     - χ₁–χ₄ sidechain torsion statistics
-   * - :doc:`hbond_directional`
-     - 1.35
-     - Directional 7D hydrogen bond potential
-   * - :doc:`aromatic_stacking`
+     - The φ and ψ of each residue and the orientation of its two
+       neighbours, with a table for each three-residue sequence.
+   * - :doc:`Sidechain torsion <triplet_torsion>`
+     - 2.5
+     - The χ angles of each residue, with a table for each three-residue
+       sequence.
+   * - :doc:`Hydrogen bond <hbond_directional>`
+     - 2.7
+     - Backbone N–H···O=C hydrogen bonds, by their geometry and by whether
+       they are helix-like, parallel or antiparallel.
+   * - :doc:`Aromatic <aromatic_stacking>`
      - 5.0
-     - Ring–ring aromatic stacking (PHE, TRP only)
+     - The angle between the rings of two PHE or TRP residues whose rings are
+       within 7 Å.
 
-MC move types
--------------
+Energies are unitless: each term is a sum of table values, and the weights
+are dimensionless. The weights shown are the ones an mcpu08 run uses; the
+hydrogen-bond weight of 2.7 is 1.35 times a fixed factor of 2.0 carried over
+from legacy MCPU. :doc:`/api/forces` shows how to read and change them, and
+the name that labels each term in ``energy_breakdown()`` and the energy CSV.
 
-Three move types are implemented:
+Replica exchange adds a sixth term, the native-contacts umbrella bias; see
+:doc:`/api/forces`.
 
-**Pivot move:** Rotates a contiguous backbone segment
-around a randomly chosen φ or ψ bond axis. Produces
-large conformational changes.
+Monte Carlo moves
+-----------------
 
-**KIC move (kinematic loop closure):** Solves the
-tripeptide closure problem analytically, guaranteeing
-exact chain geometry. See :doc:`kic_jacobian` for the
-Jacobian correction needed for detailed balance.
+Each step tries one move and accepts or rejects it with the Metropolis
+criterion; see :doc:`mc_acceptance`. There are three kinds of move. By default
+a step is a pivot a quarter of the time, a KIC move a quarter of the time and
+a sidechain move half of the time; ``Integrator.set_move_weights`` changes
+this.
 
-**Sidechain move:** Rotates χ₁ of a randomly chosen
-residue. Small, local perturbation.
+**Pivot.** Picks a residue and one of its backbone torsions, φ or ψ (never
+the φ of a proline), and rotates the shorter end of the chain about that bond
+by a random angle, drawn from a Gaussian of width ``step_size_rad``. A small
+rotation near the middle of the chain moves the far end a long way.
+Optionally, some pivot moves set (φ, ψ) to a pair drawn from a Ramachandran
+library instead; this is off by default
+(``Integrator.set_pivot_rama_probability``).
 
-Temperature convention
-----------------------
+**KIC (kinematic closure).** Rotates a backbone torsion next to a window of
+three residues, then rebuilds the backbone of the window so that the rest of
+the chain does not move. The window keeps the bond lengths and angles of the
+starting structure. It is a local backbone move; :doc:`kic_jacobian`
+describes the Jacobian correction it needs.
 
-.. important::
-   Temperature in pyMCPU is a **dimensionless** reduced
-   parameter. Typical production values: T = 0.3–0.6.
-   This is not a physical temperature unit.
-   The same convention is used in legacy MCPU.
+**Sidechain.** Changes the χ angles of one residue. By default it draws a
+rotamer from a rotamer library; in ``'continuous'`` mode it perturbs each χ
+by a Gaussian angle instead. Glycine and alanine have no χ angles. A KORP run
+sets this move's weight to 0, because its residues have no sidechains.
 
-See also :doc:`mc_acceptance` for the Metropolis criterion.
+Temperature
+-----------
+
+Temperature is a dimensionless reduced parameter, as in legacy MCPU, not a
+temperature in Kelvin. Where a protein unfolds depends on the protein:
+chignolin melts at about 0.65 to 0.7 (see
+:doc:`/tutorials/02_replica_exchange`).
+
+References
+----------
+
+The mcpu08 potentials are those of the MCPU program from the Shakhnovich lab.
+Each term first appears in one of these papers:
+
+* Contact, backbone torsion and hydrogen-bond terms: J. S. Yang, W. W. Chen,
+  J. Skolnick and E. I. Shakhnovich, "All-atom ab initio folding of a diverse
+  set of proteins", *Structure* 15, 53–63 (2007),
+  https://doi.org/10.1016/j.str.2006.11.010.
+* Sidechain torsion term: J. S. Yang, S. Wallin and E. I. Shakhnovich,
+  "Universality and diversity of folding mechanics for three-helix bundle
+  proteins", *PNAS* 105, 895–900 (2008),
+  https://doi.org/10.1073/pnas.0707284105.
+* Aromatic term: J. Tian, J. C. Woodard, A. Whitney and E. I. Shakhnovich,
+  "Thermal stabilization of dihydrofolate reductase using Monte Carlo
+  unfolding simulations and its functional consequences", *PLoS
+  Computational Biology* 11, e1004207 (2015),
+  https://doi.org/10.1371/journal.pcbi.1004207.

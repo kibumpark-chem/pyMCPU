@@ -1,4 +1,4 @@
-# KORP 6D orientational potential (KERNEL-7)
+# KORP 6D orientational potential
 
 **Python API:** {class}`~pymcpu.OrientationalPairPotential` (see {doc}`/api/forces`).
 Built by {class}`~pymcpu.KORPForceField`.
@@ -35,8 +35,7 @@ The paper writes `vy ~ vz × r12`; `frameCoord` in the reference source uses
 negatives, so the paper's frame is this one rotated 180° about `vz`. Both are
 right-handed, so no invariant catches the difference — but every ψ angle shifts
 by π and lands in a different bin. pyMCPU follows the **code**, because the code
-is what produced `korp6Dv1.bin`. `tests/physics/forcefield/test_korp_frames.py`
-pins this numerically.
+is what produced `korp6Dv1.bin`.
 :::
 
 ## The six coordinates
@@ -113,29 +112,10 @@ transform together and a proper rotation commutes with the cross products the
 frame is built from. Cost is `O(n_changed × N)`; a sidechain-only move costs
 nothing, since no frame atom moves.
 
-### Where the time actually goes
+### Speed
 
-Measured on 1DOS truncated to 400 residues, pivot moves only, KORP alone:
-
-| | |
-|---|---|
-| candidate pairs enumerated per step | ~30,400 |
-| of those, inside the 16 Å cutoff | ~5,700 (19%) |
-| cost of the distance tests | ~6% of the step |
-| cost per in-cutoff pair | ~230 ns |
-
-This is worth stating because it contradicts the obvious optimisation. A
-residue-level neighbour index would remove most of the out-of-cutoff distance
-tests — and those are **6% of the step**. The other 94% is spent on pairs that
-are inside the cutoff and have to be evaluated however you find them, so an
-index cannot touch it. The cost is dominated by the per-pair work: the frame
-algebra, the inverse trig, and one gather into a 332 MB table.
-
-That is why the polar angles are compared as cosines rather than as angles
-(see `PairVectors`): removing two `acos` calls from the per-pair path is
-worth ~20% of the step, which is three times what an index would return.
-Per-step cost scales close to linearly in chain length — ~480 µs at 200
-residues, ~1.1 ms at 400, ~2.2 ms at 686.
+A step costs time roughly in proportion to chain length: about 480 µs at 200
+residues, 1.1 ms at 400 and 2.2 ms at 686, with pivot moves and KORP alone.
 
 :::{note}
 The elision is exact in real arithmetic and *almost* exact in float32. Because
@@ -155,9 +135,12 @@ MC with KORP alone lets a chain collapse through itself.
 {class}`~pymcpu.CalphaExcludedVolumePotential` (energy group 8) supplies the
 floor as a pure filter — exactly zero in every accepted state, the clash
 sentinel otherwise — so it deletes configurations without shifting the ensemble.
-As with Mu, moves are tested against the floor and a whole state against a
-floor 0.001 Å lower, for the rounding of pairs a rigid pivot carries without
-re-checking them (see the hard-core section of the MC acceptance notes).
+`KORPForceField` installs it by default (`steric_guard=True`). It checks CA
+pairs at least `min_separation` residues apart (default 3) against
+`min_distance` (default 3.2 Å). As with Mu, moves are tested against the floor
+and a whole state against a floor 0.001 Å lower, for the rounding of pairs a
+rigid pivot carries without re-checking them (see the hard-core section of
+{doc}`mc_acceptance`).
 
 Its 3.2 Å default is measured, not assumed: across 1CEO, 1DOS, T0860D1, actin
 and chignolin the closest CA-CA contact at three or more apart in sequence is
@@ -165,31 +148,29 @@ and chignolin the closest CA-CA contact at three or more apart in sequence is
 at all and still reaches 3.88 Å at separation 9). A 4.0 Å floor rejects native
 structures outright.
 
-## Divergences from the reference implementation
+One sphere per residue at CA prevents collapse, but it does not rigorously stop
+one strand threading through another, as an all-backbone-atom guard would.
 
-There are none in the energy: `tests/physics/forces/test_korp_reference_parity.py`
-reproduces the `korpe` binary to ≤ 5e-9 relative on four structures, and the
-compiled term to ≤ 4e-8 (the residual there is `Potential::calculateEnergy`
-returning `float`). What differs is everything around it:
+## Differences from the reference implementation
 
-- **The map is not distributed.** At 316 MiB it is well over PyPI's per-file
-  limit, so pyMCPU requires it to be supplied via `KORP_MAP_PATH`. This is a
-  packaging constraint, not a licensing one: the chaconlab.org distribution is
-  BSD-3-Clause and permits redistribution provided the copyright notice and
-  disclaimer travel with it. (The same file is also published under NPOSL-3.0
-  in the `korpm` repository, so it is worth recording which copy you have —
-  different maps score differently and legitimately.)
+There are none in the energy: pyMCPU reproduces the reference `korpe` scorer to
+5e-9 relative on four structures, and the compiled term to 4e-8 (the residual is
+the term returning a float). What differs is everything around it:
+
+- **The map is not distributed** with pyMCPU; {ref}`korp-map` says where to get
+  it. Different copies of a map score differently, so record which one you
+  used.
 - **Residues with an incomplete backbone raise** rather than being skipped. KORP
   has no redundancy — without all of N, CA and C there is no frame.
-- **Non-increasing residue numbering raises** by default, since it would
-  silently change the local/non-local split.
+- **Non-increasing residue numbering raises** by default
+  (`strict_residue_numbering=True`), since it would silently change the
+  local/non-local split.
 - Geometry is computed in double where upstream uses float; the energy
   accumulation matches.
 
 ## Source
 
-López-Blanco JR & Chacón P, *KORP: knowledge-based 6D potential for fast protein
-and loop modeling*, Bioinformatics 2019;35(17):3013-3019.
-Reference implementation: `github.com/chaconlab/Korp`,
-`sbg/src/libenergy/korpe.cpp` (`frameCoord`, `frames2ic`, `contact2bins`,
-`readMapHeader`, `readMeshes`, `getMeshes`, `getMap`, `readKORP`).
+J. R. López-Blanco and P. Chacón, "KORP: knowledge-based 6D potential for fast
+protein and loop modeling", *Bioinformatics* 35, 3013–3019 (2019),
+https://doi.org/10.1093/bioinformatics/btz026. Reference implementation:
+`github.com/chaconlab/Korp`, `sbg/src/libenergy/korpe.cpp`.

@@ -163,7 +163,7 @@ your own tables.
 
 .. py:class:: AromaticPotential(aromatic_atom_indices, loaded_params)
 
-   Aromatic ring stacking term. Default energy group **5**. See
+   Aromatic ring orientation term. Default energy group **5**. See
    :doc:`../physics_notes/aromatic_stacking`.
 
    :param aromatic_atom_indices: ``Sequence`` of 3-element integer
