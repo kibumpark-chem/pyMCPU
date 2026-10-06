@@ -454,6 +454,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Mu pair walk round 4, bit-identical.** Mu reads its per-pair topology
+  flags from a compact table (a band over pairs within four residues plus
+  one byte per atom-type pair and a short per-atom exception list, 91-207 KB
+  on the test proteins) instead of the N*N byte `topo_flag_` (8-9 MB), whose
+  lookups were 28-30% of a Mu move's L2 misses; the compact form is checked
+  against every `topo_flag_` entry at setup and is not used if any differs.
+  The pair-search drain drops moved partners and `span_mask8` masks short
+  spans without branches (together 23-31% of a Mu move's mispredicts), the
+  stencil walk adds linear offsets for home cells away from the grid faces
+  instead of bounds-testing all 27 cells, and the moved-cell counts are
+  cleared with one memset after a large move. Interleaved A/B against the
+  previous main (n=3, user cycles/step) on T4L, CA2, LDH-A, actin and PGK1:
+  default mix -4.8% to -6.5% (actin 60.1k -> 56.6k), pivot-only -10.1% to
+  -11.1%, masked actin (`ignore_all`) -4.5%. Final energies, accept
+  sequences and `arch_parity_dump` are unchanged.
 - **Per-step fixed costs trimmed, bit-identical.** H-bond pair evaluation
   bins its six orientation angles and makes the CA-CA test on cosines,
   using acos only when a cosine is within 1e-4 of a bin edge, and computes
