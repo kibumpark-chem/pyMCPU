@@ -2568,20 +2568,16 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
         // ---- NEW half: one cell walk, one distance per candidate. ----
         // The grid holds ACCEPTED coordinates, so a moved partner's packed
         // position is stale: the walk skips moved partners, and moved-moved
-        // pairs are done below from the trial coordinates.
+        // pairs are done below from the trial coordinates. The walk hands
+        // over the distance its prefilter computed and applies the exact
+        // cutoff itself (moved_vs_static_r2).
         const neighbor::WalkArgs contact_wa{
             is_moved.data(), is_moved.size(), mpc, 0.f,
-            contact_cutoff_sq_ * kSpanMaskSlack, neighbor::Cells::Stencil};
-        const bool walked = neighbor::moved_vs_static<neighbor::Cells::Stencil>(
+            contact_cutoff_sq_, neighbor::Cells::Stencil};
+        const bool walked = neighbor::moved_vs_static_r2(
             grid, cnew, moved.data(), static_cast<int>(moved.size()),
-            neighbor::Order::Forward, contact_wa,
-            [&](const neighbor::Probe& p, int j, const neighbor::CellSpan& s,
-                int m) {
-                const float dx = p.x - s.x[m];
-                const float dy = p.y - s.y[m];
-                const float dz = p.z - s.z[m];
-                const float r2 = dx * dx + dy * dy + dz * dz;
-                if (r2 > contact_cutoff_sq_) return neighbor::Visit::Continue;
+            contact_wa,
+            [&](const neighbor::Probe& p, int j, float r2) {
                 bool local_clash = false, near = false;
                 const float e = eval_pair(p.i, j, r2, &local_clash, &near);
                 if (local_clash) {
