@@ -62,6 +62,7 @@ public:
         is_o_.assign(static_cast<size_t>(n_atoms_), 0);
         is_h_.assign(static_cast<size_t>(n_atoms_), 0);
         o_atom_ids_.clear();
+        h_dep_.clear();
         h_atom_ids_.clear();
 
         const auto& blocks = sys.getBlockIndices();
@@ -491,16 +492,20 @@ public:
             });
         }
 
-        // Virtual amide H tracks backbone; refresh donor entries when BB moved.
+        // Virtual amide H is a derived site: donor r's H follows its own N
+        // and CA and residue r-1's C. Move only the donors with a moved
+        // parent, in the order the moved atoms are walked.
         if (virtual_amide_h_ && !hb_fallback_) {
-            bool any_bb = false;
-            for (uint8_t v : patch.bb_atom_moved) {
-                if (v) { any_bb = true; break; }
-            }
-            if (any_bb) {
-                hb_h_grid_->reset(static_cast<int>(amide_donor_.size()));
-                insert_virtual_amide_h_(coords_new);
-            }
+            if (h_dep_.size() != static_cast<size_t>(n_atoms_)) build_h_dep_();
+            int last = -1;
+            order.for_each([&](int i) {
+                const int r = h_dep_[static_cast<size_t>(i)];
+                if (r < 0 || r == last) return;
+                last = r;
+                float hx, hy, hz;
+                if (!virtual_amide_h_xyz_(coords_new, static_cast<size_t>(r), hx, hy, hz)) return;
+                hb_h_grid_->update_position(r, Eigen::Vector3f(hx, hy, hz));
+            });
         }
 
 #if !defined(NDEBUG)
@@ -934,6 +939,24 @@ public:
     }
 
 private:
+    /// h_dep_[i] = the donor whose virtual H atom i places (its N, its CA,
+    /// or the previous residue's C), else -1. Each atom places at most one.
+    void build_h_dep_() {
+        h_dep_.assign(static_cast<size_t>(n_atoms_), -1);
+        auto set = [&](int atom, int r) {
+            if (atom >= 0 && atom < n_atoms_) h_dep_[static_cast<size_t>(atom)] = r;
+        };
+        for (size_t r = 1; r < amide_donor_.size(); ++r) {
+            if (!amide_donor_[r]) continue;
+            const int bb = donor_bb_starts_[r];
+            const int prev_c = donor_c_starts_[r - 1];
+            if (bb < 0 || prev_c < 0) continue;
+            set(bb, static_cast<int>(r));
+            set(bb + 1, static_cast<int>(r));
+            set(prev_c, static_cast<int>(r));
+        }
+    }
+
     void insert_virtual_amide_h_(const CoordsSoA& coords) {
         for (size_t r = 0; r < amide_donor_.size(); ++r) {
             float hx, hy, hz;
@@ -1033,6 +1056,7 @@ private:
     std::vector<int> donor_bb_starts_;
     std::vector<int> donor_c_starts_;
     std::vector<uint8_t> amide_donor_;
+    std::vector<int> h_dep_;
     std::vector<uint8_t> in_mu_;
     std::vector<uint8_t> is_o_;
     std::vector<uint8_t> is_h_;

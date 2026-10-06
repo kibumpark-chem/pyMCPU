@@ -12,6 +12,7 @@
 #include "pymcpu/utils/CoordView.h"
 #include "pymcpu/neighbor/PairLedger.h"
 #include "pymcpu/forces/korp/common/KorpStateCache.h"
+#include "pymcpu/forces/mcpu/common/HBondStateCache.h"
 
 namespace mcpu {
 
@@ -90,11 +91,16 @@ public:
     /// Dropped on copy, and by anything that replaces the coordinates.
     mutable forces::KorpStateCache korp_cache;
 
+    /// Nonzero H-bond pair energies of this state (see HBondStateCache.h).
+    /// Dropped on copy, and by anything that replaces the coordinates.
+    mutable forces::HBondStateCache hbond_cache;
+
     /// Drop every cache that describes the current coordinates. Call this
     /// when coordinates change outside an accepted move.
     void invalidate_coordinate_caches() const {
         mu_contact_invalidate();
         korp_cache.invalidate();
+        hbond_cache.invalidate();
     }
 
     float getEnergy() const noexcept { return current_energy; }
@@ -147,6 +153,7 @@ public:
         sidechain_torsions = src.sidechain_torsions;
         current_energy = src.current_energy;
         korp_cache.invalidate();
+        hbond_cache.invalidate();
     }
 
 private:

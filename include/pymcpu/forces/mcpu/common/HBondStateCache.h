@@ -1,0 +1,130 @@
+#pragma once
+/// H-bond bookkeeping for one accepted state: every (donor, acceptor) residue
+/// pair with a nonzero energy, as HBondPotential last scored it.
+///
+/// Lives on State (State::hbond_cache) because it describes that state's
+/// coordinates. HBondPotential builds it the first time a move needs it and
+/// folds each accepted move into it through Potential::commitAcceptedMove.
+/// With it, the old side of the H-bond delta is a lookup instead of a second
+/// evaluation of every candidate pair.
+///
+/// A pair is directional, so it is listed twice: in the donor's row with the
+/// acceptor as partner, and in the acceptor's row with the donor as partner.
+/// Only nonzero energies are listed; a residue rarely has more than two.
+///
+/// Like KorpStateCache, a copy starts EMPTY (a copied State has its
+/// coordinates changed without telling the cache), and a move carries the
+/// cache along and leaves the source empty.
+#include <cstddef>
+#include <cstdint>
+#include <utility>
+#include <vector>
+
+namespace mcpu::forces {
+
+class HBondStateCache {
+public:
+    struct Entry {
+        std::int32_t partner;
+        float energy;
+    };
+
+    HBondStateCache() = default;
+    HBondStateCache(const HBondStateCache&) noexcept {}
+    HBondStateCache& operator=(const HBondStateCache& other) noexcept {
+        if (this != &other) invalidate();
+        return *this;
+    }
+    HBondStateCache(HBondStateCache&& other) noexcept { take(other); }
+    HBondStateCache& operator=(HBondStateCache&& other) noexcept {
+        if (this != &other) take(other);
+        return *this;
+    }
+
+    /// Empty rows for n residues, marked as built by `owner` under the
+    /// residue energy mask `mask_epoch`. The caller then adds the pairs.
+    void reset(int n, const void* owner, std::uint64_t mask_epoch) {
+        n_ = n;
+        owner_ = owner;
+        mask_epoch_ = mask_epoch;
+        don_.resize(static_cast<std::size_t>(n));
+        acc_.resize(static_cast<std::size_t>(n));
+        for (auto& r : don_) r.clear();
+        for (auto& r : acc_) r.clear();
+        ready_ = true;
+        ++generation_;
+    }
+    /// True when built by this potential, for n residues, under this mask.
+    [[nodiscard]] bool ready_for(const void* owner, int n, std::uint64_t mask_epoch) const noexcept {
+        return ready_ && owner_ == owner && n_ == n && mask_epoch_ == mask_epoch;
+    }
+    void invalidate() noexcept {
+        ready_ = false;
+        owner_ = nullptr;
+        ++generation_;
+    }
+    /// Bumped by every reset, invalidate and committed move, so a pending
+    /// update can tell whether it was computed against the cache in place.
+    [[nodiscard]] std::uint64_t generation() const noexcept { return generation_; }
+    void note_commit() noexcept { ++generation_; }
+
+    [[nodiscard]] const std::vector<Entry>& as_donor(int d) const noexcept {
+        return don_[static_cast<std::size_t>(d)];
+    }
+    [[nodiscard]] const std::vector<Entry>& as_acceptor(int a) const noexcept {
+        return acc_[static_cast<std::size_t>(a)];
+    }
+    /// Energy of (d, a), or 0 when it is not listed. O(row length).
+    [[nodiscard]] float get(int d, int a) const noexcept {
+        for (const Entry& e : don_[static_cast<std::size_t>(d)]) {
+            if (e.partner == a) return e.energy;
+        }
+        return 0.f;
+    }
+    void add(int d, int a, float e) {
+        don_[static_cast<std::size_t>(d)].push_back(Entry{a, e});
+        acc_[static_cast<std::size_t>(a)].push_back(Entry{d, e});
+    }
+    /// Unlist every pair with d as donor.
+    void clear_donor(int d) noexcept {
+        auto& row = don_[static_cast<std::size_t>(d)];
+        for (const Entry& e : row) drop_(acc_[static_cast<std::size_t>(e.partner)], d);
+        row.clear();
+    }
+    /// Unlist every pair with a as acceptor.
+    void clear_acceptor(int a) noexcept {
+        auto& row = acc_[static_cast<std::size_t>(a)];
+        for (const Entry& e : row) drop_(don_[static_cast<std::size_t>(e.partner)], a);
+        row.clear();
+    }
+
+private:
+    static void drop_(std::vector<Entry>& row, int partner) noexcept {
+        for (std::size_t k = 0; k < row.size(); ++k) {
+            if (row[k].partner == partner) {
+                row[k] = row.back();
+                row.pop_back();
+                return;
+            }
+        }
+    }
+    void take(HBondStateCache& other) noexcept {
+        don_ = std::move(other.don_);
+        acc_ = std::move(other.acc_);
+        n_ = other.n_;
+        owner_ = other.owner_;
+        mask_epoch_ = other.mask_epoch_;
+        ready_ = other.ready_;
+        ++generation_;
+        other.invalidate();
+    }
+
+    std::vector<std::vector<Entry>> don_, acc_;
+    int n_ = 0;
+    const void* owner_ = nullptr;
+    std::uint64_t mask_epoch_ = 0;
+    bool ready_ = false;
+    std::uint64_t generation_ = 0;
+};
+
+}  // namespace mcpu::forces

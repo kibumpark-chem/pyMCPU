@@ -55,6 +55,14 @@ namespace mcpu::forces {
             const System& sys
         ) const;
 
+        // Fill state.hbond_cache with every nonzero pair of `state`, which
+        // must be the accepted state the neighbour grids describe.
+        void build_cache_(const Context& context, const State& state) const;
+
+        // Debug check behind HBondWorkspace::ledger_check.
+        void check_ledger_(const Context& context, const State& old_state,
+                           const State& proposed_state) const;
+
     public:
         HBondPotential(std::vector<float> loaded_params, std::vector<float> seq_dep_params);
 
@@ -66,6 +74,13 @@ namespace mcpu::forces {
             const Context& context, 
             const State& old_state, 
             const State& proposed_state, 
+            const ProposalPatch& patch
+        ) const override;
+
+        void commitAcceptedMove(
+            const Context& context,
+            const State& state,
+            const State& proposed_state,
             const ProposalPatch& patch
         ) const override;
 
