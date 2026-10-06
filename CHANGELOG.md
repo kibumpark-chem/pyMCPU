@@ -454,6 +454,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The Mu contact walk collects a probe's candidates before scoring
+  them.** Each moved atom's stencil walk now reuses the live cell list of
+  the previous probe when both sit in the same home cell, and collects
+  every slot the distance prefilter keeps, branch-free, before scoring
+  them in one loop, in the same order as before. Bit-identical. Branch
+  mispredicts per step drop 17-27%; cycles/step: default mix 1.05-1.07x
+  (actin, T4L, CA2, LDH-A, PGK1), pivot-only 1.08-1.10x, masked actin
+  1.03x.
+
 - **KIC root refinement no longer falls back to Sturm-count bisection.**
   About 40% of the roots of the closure polynomial never meet the
   regula-falsi stop (|f(x)/x| < 1e-15) in 20 iterations, and each then
