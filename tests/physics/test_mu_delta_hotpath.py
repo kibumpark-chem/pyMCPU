@@ -2,8 +2,7 @@
 
 Same shape as ``test_hbond_delta_hotpath.py`` but for the mu-potential
 neighbor hotpath: same-seed runs must reproduce bit-identical accept
-sequences, energies, and pair-distance-check counters at both Verlet-skin
-extremes. All comparisons are self-vs-self or delegate to the internal
+sequences, energies, and pair-distance-check counters. All comparisons are self-vs-self or delegate to the internal
 ``verify_physics_consistency`` checker -- no legacy MCPU comparison.
 """
 
@@ -41,22 +40,7 @@ def test_mu_delta_accept_bits_deterministic() -> None:
     )
 
 
-def test_mu_delta_skin1_accept_bits_deterministic() -> None:
-    """Same determinism check as above, at skin=1.0 (Verlet-list reuse
-    across steps) -- the mu hotpath sources candidate pairs from a
-    differently-maintained structure there than at skin=0."""
-    require_safe_math_for_accept_determinism()
-    a = run_hotpath(seed=4242, steps=200, skin=1.0)
-    b = run_hotpath(seed=4242, steps=200, skin=1.0)
-    assert a.bits == b.bits
-    assert a.proxy_stat("mu_num_pairs_within_rcut") == b.proxy_stat(
-        "mu_num_pairs_within_rcut"
-    )
-
-
 def test_actin_verify_after_mu_hotpath() -> None:
-    for skin in (0.0, 1.0):
-        ctx, _ = build_test_context(with_qbias=False)
-        ctx.set_mu_skin(skin)
-        integ = mcpu_core.Integrator(temperature=300.0, step_size_rad=0.05)
-        integ.verify_physics_consistency(ctx, num_steps=20, atol=ATOL)
+    ctx, _ = build_test_context(with_qbias=False)
+    integ = mcpu_core.Integrator(temperature=300.0, step_size_rad=0.05)
+    integ.verify_physics_consistency(ctx, num_steps=20, atol=ATOL)

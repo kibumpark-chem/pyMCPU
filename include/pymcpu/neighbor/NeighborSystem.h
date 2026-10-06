@@ -22,7 +22,6 @@
 #include "pymcpu/neighbor/NeighborConfig.h"
 #include "pymcpu/neighbor/OpenCellGrid.h"
 #include "pymcpu/neighbor/PairScratch.h"
-#include "pymcpu/neighbor/VerletList.h"
 #include "pymcpu/utils/CoordsSoA.h"
 #include "pymcpu/utils/CoordView.h"
 #include "pymcpu/utils/virtual_amide_h.h"
@@ -99,7 +98,7 @@ public:
         }
         // Mu full energy evaluates every non-amide-H atom. Mirror that exact
         // occupancy here so terminal OXT/OCT and other valid extra atoms cannot
-        // be absent from incremental cell/Verlet candidates.
+        // be absent from incremental cell-list candidates.
         for (int i = 0; i < n_atoms_; ++i) {
             in_mu_[static_cast<size_t>(i)] =
                 sys.is_amide_h_atom(i) ? 0 : 1;
@@ -213,7 +212,7 @@ public:
     }
     float hbond_cutoff_A() const noexcept { return kHBondCutoffA; }
     float hbond_cell_size_A() const noexcept {
-        return hb_fallback_ ? 0.f : kHBondListA; // skin_hb = 0
+        return hb_fallback_ ? 0.f : kHBondListA;
     }
     const char* mu_backend_name() const noexcept {
         return dense_active_ ? "opencell_mu_BBO_SC" : "mu_dense_cap_fallback";
@@ -239,10 +238,7 @@ public:
             hb_fallback_ ? 1 : 0);
     }
 
-    VerletList& muVerlet() noexcept { return mu_verlet_; }
-    const VerletList& muVerlet() const noexcept { return mu_verlet_; }
-
-    /// Read-only Mu index (BB+O+SC). For moved_new_grid bounds / Verlet rebuild.
+    /// Read-only Mu index (BB+O+SC). For moved_new_grid bounds.
     const CellListMC& muGrid() const { return *mu_grid_; }
 
     bool trial_in_bounds(const CoordsSoA& trial_coords,
@@ -370,25 +366,23 @@ public:
     /// Full rebuild from accepted coords. Only public mutator besides commit.
     bool rebuild_from_accepted_state(const CoordsSoA& coords) {
         ++stats_.num_aabb_rebuild_accept;
-        // AABB margin tracks r_cut+skin (Verlet validity / AutoExpand headroom).
+        // AABB margin gives AutoExpand headroom around the Mu cutoff.
         // Denselist cell + query stay at mu_cutoff (legacy 6 Å or exact contact).
         const float r_mu = mu_cutoff_A();
-        const float mu_query_list = r_mu + cfg_.skin;
-        const float mu_cell = effective_mu_cell_size_A(r_mu, /*skin=*/0.f, cfg_);
-        const float margin = cfg_.effective_margin(mu_query_list);
+        const float mu_cell = effective_mu_cell_size_A(r_mu, cfg_);
+        const float margin = cfg_.effective_margin(r_mu);
         BoxBounds b = aabb_of_coords(coords, margin);
         bounds_ = b;
 
         // --- Mu grid ---
         int nx = 0, ny = 0, nz = 0;
-        NeighborConfig cfg_mu = cfg_;
-        bool mu_ok = compute_grid_shape(b, mu_cell, cfg_mu, nx, ny, nz);
+        bool mu_ok = compute_grid_shape(b, mu_cell, cfg_, nx, ny, nz);
         dense_active_ = false;
         hb_fallback_ = false;
 
         if (mu_ok) {
             mu_grid_->set_cutoff(r_mu); // CHANGED: denselist query matches cell cut
-            if (mu_grid_->configure(b, cfg_mu, /*skin=*/0.f, mu_cell)) {
+            if (mu_grid_->configure(b, cfg_, mu_cell)) {
                 mu_grid_->reset(n_atoms_);
                 for (int i = 0; i < n_atoms_; ++i) {
                     if (in_mu_[static_cast<size_t>(i)]) mu_grid_->insert(i, coords);
@@ -445,23 +439,19 @@ public:
                 }
             } else {
                 ++stats_.num_dense_cap_fallback;
-                mu_verlet_.invalidate();
                 stats_.neighbor_offsets_count = 0;
             }
         } else {
             ++stats_.num_dense_cap_fallback;
-            mu_verlet_.invalidate();
             stats_.neighbor_offsets_count = 0;
         }
 
         // --- HBond O / H grids (same lo/hi, smaller cell) ---
-        NeighborConfig cfg_hb = cfg_;
-        cfg_hb.skin = 0.f;
         const float hb_cell = kHBondListA;
-        bool hb_ok = compute_grid_shape(b, hb_cell, cfg_hb, nx, ny, nz);
+        bool hb_ok = compute_grid_shape(b, hb_cell, cfg_, nx, ny, nz);
         if (hb_ok &&
-            hb_o_grid_->configure(b, cfg_hb, 0.f) &&
-            hb_h_grid_->configure(b, cfg_hb, 0.f)) {
+            hb_o_grid_->configure(b, cfg_) &&
+            hb_h_grid_->configure(b, cfg_)) {
             // Occupied stencil stays Off for HB (empty≈89% but wall-neutral;
             // maintenance cost not worth enabling).
             hb_o_grid_->reset(n_atoms_);
@@ -513,10 +503,8 @@ public:
 
         // --- Registered subset grids ---
         for (SubsetGrid& g : subset_grids_) {
-            NeighborConfig cfg_g = cfg_;
-            cfg_g.skin = 0.f;
-            g.active = compute_grid_shape(b, g.spec.cell_A, cfg_g, nx, ny, nz) &&
-                       g.grid->configure(b, cfg_g, 0.f, g.spec.cell_A);
+            g.active = compute_grid_shape(b, g.spec.cell_A, cfg_, nx, ny, nz) &&
+                       g.grid->configure(b, cfg_, g.spec.cell_A);
             if (!g.active) continue;
             g.grid->reset(n_atoms_);
             for (int i : g.spec.members) {
@@ -524,16 +512,12 @@ public:
             }
         }
 
-        maybe_rebuild_mu_verlet(coords);
         return dense_active_;
     }
 
     /// Incremental update after Metropolis accept. Call exactly once per accept.
     void commit_accepted_move(const ProposalPatch& patch,
-                              const CoordsSoA& coords_old,
-                              const CoordsSoA& coords_new,
-                              MoveKind move_kind,
-                              bool is_rigid) {
+                              const CoordsSoA& coords_new) {
         bool left_bounds = false;
         if (bounds_.valid) {
             if (!patch.moved_indices.empty()) {
@@ -550,13 +534,6 @@ public:
 
         if (left_bounds) {
             rebuild_from_accepted_state(coords_new);
-            if (move_kind == MoveKind::Pivot || is_rigid) {
-                mu_verlet_.invalidate(VerletList::DirtyCause::AutoExpand);
-                ++stats_.num_verlet_invalidate_pivot_accept;
-                // Actual CSR rebuild attributed later in maybe_rebuild_mu_verlet.
-            } else {
-                mu_verlet_.invalidate(VerletList::DirtyCause::AutoExpand);
-            }
             return;
         }
 
@@ -613,134 +590,6 @@ public:
                 hb_h_grid_->grid().verify_packed_coords(coords_new);
         }
 #endif
-
-        // Pivot: default is displacement tracking (Context::commit_accepted_move).
-        // Legacy invalidate_verlet_on_pivot_accept still force-dirties.
-        if ((move_kind == MoveKind::Pivot || is_rigid) &&
-            cfg_.invalidate_verlet_on_pivot_accept) {
-            invalidate_mu_verlet_pivot();
-        }
-
-        // Strategy B': accumulate always; partial rebuild only when skin exceeded.
-        // Rebuilding on every accept was ~180 µs/step (full CSR pack) — too costly.
-        last_commit_did_partial_verlet_ = false;
-        if (cfg_.skin > 0.f && cfg_.mu_verlet_enabled && dense_active_ &&
-            !(move_kind == MoveKind::Pivot || is_rigid) &&
-            !mu_verlet_.dirty) {
-            const int n_moved = static_cast<int>(patch.moved_indices.size());
-            if (n_moved > 0 && n_moved <= cfg_.verlet_partial_threshold) {
-                mu_verlet_.accumulate_accept(patch.moved_indices, coords_old,
-                                             coords_new);
-                if (mu_verlet_.dirty &&
-                    mu_verlet_.dirty_cause ==
-                        VerletList::DirtyCause::DispExceeded) {
-                    partial_rebuild_verlet(patch.moved_indices, coords_old,
-                                           coords_new);
-                    last_commit_did_partial_verlet_ = true;
-                }
-            }
-        }
-    }
-
-    /// True if last commit_accepted_move ran a partial Verlet rebuild. O(1).
-    [[nodiscard]] bool last_commit_did_partial_verlet() const noexcept {
-        return last_commit_did_partial_verlet_;
-    }
-
-    /// Partial Verlet rebuild after small-move accept -- currently a full rebuild.
-    ///
-    /// The selective "only touch affected rows" optimization this function's name
-    /// promises was never committed (see rebuild_verlet_undirected below); this
-    /// always does a full CSR rebuild instead. Kept as its own function so the
-    /// call site (a small-move accept) can still be distinguished from other
-    /// rebuild triggers via stats_.num_verlet_partial_rebuilds, but it delivers no
-    /// selective-rebuild speedup today. stats_.num_verlet_partial_affected_sum is
-    /// intentionally left at 0 by this path (there is no "affected atom set" to
-    /// report while it's a full rebuild) rather than incrementing it with a value
-    /// that would misrepresent what actually happened.
-    void partial_rebuild_verlet(
-        const std::vector<int>& /*moved_indices*/,
-        const CoordsSoA& /*coords_old_moved*/,
-        const CoordsSoA& coords_new)
-    {
-        const float r_list = mu_cutoff_A() + cfg_.skin;
-
-        OpenCellGrid& g = mu_grid_->grid();
-        const float q_dense = g.query_radius();
-        const bool widen = r_list > q_dense + 1e-4f;
-        if (widen) g.set_query_radius(r_list);
-
-        rebuild_verlet_undirected(
-            mu_verlet_, *mu_grid_, coords_new, mu_cutoff_A(), cfg_.skin,
-            residue_contiguous_ ? -1 : h_begin_);
-
-        if (widen) g.set_query_radius(q_dense);
-
-        ++stats_.num_verlet_partial_rebuilds;
-        const std::uint64_t directed =
-            static_cast<std::uint64_t>(mu_verlet_.neighbors.size());
-        stats_.verlet_edges_total = directed / 2ull;
-    }
-
-    void invalidate_mu_verlet_pivot() {
-        mu_verlet_.invalidate(VerletList::DirtyCause::PivotAccept);
-        ++stats_.num_verlet_invalidate_pivot_accept;
-    }
-
-    bool muVerletEnabled() const noexcept { return cfg_.mu_verlet_enabled; }
-
-    void maybe_rebuild_mu_verlet(const CoordsSoA& coords) {
-        if (cfg_.skin <= 0.f || !dense_active_ || !cfg_.mu_verlet_enabled) {
-            if (cfg_.skin <= 0.f || !cfg_.mu_verlet_enabled) {
-                mu_verlet_.invalidate(VerletList::DirtyCause::DirtyFlag);
-            }
-            return;
-        }
-        const auto cause = mu_verlet_.dirty_cause;
-        const std::uint64_t realloc_n0 = mu_verlet_.num_neigh_reallocs;
-        const std::uint64_t realloc_o0 = mu_verlet_.num_offsets_reallocs;
-        // Widen denselist stencil to r_cut+skin for the list build only, then
-        // restore r_cut so Pivot CellOnly keeps the tight 27-cell neighborhood.
-        OpenCellGrid& g = mu_grid_->grid();
-        const float q_dense = g.query_radius();
-        const float q_list = mu_cutoff_A() + cfg_.skin;
-#if !defined(NDEBUG)
-        assert(q_list + 1e-4f >= mu_cutoff_A() + cfg_.skin);
-#endif
-        const bool widen = q_list > q_dense + 1e-4f;
-        if (widen) g.set_query_radius(q_list);
-        // r_list = r_mu + skin; only BB+O+SC (Mu occupancy).
-        rebuild_verlet_undirected(mu_verlet_, *mu_grid_, coords, mu_cutoff_A(), cfg_.skin,
-                                  residue_contiguous_ ? -1 : h_begin_);
-        if (widen) g.set_query_radius(q_dense);
-        ++stats_.num_verlet_rebuilds;
-        stats_.num_verlet_neigh_reallocs +=
-            (mu_verlet_.num_neigh_reallocs - realloc_n0);
-        stats_.num_verlet_offsets_reallocs +=
-            (mu_verlet_.num_offsets_reallocs - realloc_o0);
-        switch (cause) {
-            case VerletList::DirtyCause::PivotAccept:
-                ++stats_.num_verlet_rebuild_due_to_pivot_accept;
-                break;
-            case VerletList::DirtyCause::DispExceeded:
-                ++stats_.num_verlet_rebuild_due_to_disp_acc_exceeded;
-                break;
-            case VerletList::DirtyCause::AutoExpand:
-                ++stats_.num_verlet_rebuild_due_to_autoexpand_accept;
-                break;
-            case VerletList::DirtyCause::None:
-            case VerletList::DirtyCause::DirtyFlag:
-            default:
-                ++stats_.num_verlet_rebuild_due_to_dirty_flag;
-                break;
-        }
-        // Undirected CSR stores each edge twice.
-        const std::uint64_t directed = static_cast<std::uint64_t>(mu_verlet_.neighbors.size());
-        stats_.verlet_edges_total = directed / 2ull;
-        const int n_mu = residue_contiguous_ ? n_atoms_ : std::max(0, h_begin_);
-        const int denom = n_mu > 0 ? n_mu : 1;
-        stats_.verlet_avg_degree =
-            static_cast<double>(directed) / static_cast<double>(denom);
     }
 
     // ---- Candidate enumeration (read-only; indices = accepted state) ----
@@ -1154,9 +1003,6 @@ private:
     std::unique_ptr<CellListMC> mu_grid_;
     std::unique_ptr<CellListMC> hb_o_grid_;
     std::unique_ptr<CellListMC> hb_h_grid_;
-    VerletList mu_verlet_;
-
-    bool last_commit_did_partial_verlet_ = false;
 };
 
 } // namespace mcpu

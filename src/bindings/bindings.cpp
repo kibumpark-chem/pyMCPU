@@ -448,11 +448,6 @@ PYBIND11_MODULE(mcpu_core, m) {
              [](const Context& c) { return c.neighbors().hbond_backend_name(); })
         .def("mu_backend_name",
              [](const Context& c) { return c.neighbors().mu_backend_name(); })
-        .def("set_mu_skin", &Context::set_mu_skin, py::arg("skin"))
-        .def("mu_skin", &Context::mu_skin)
-        .def("mu_verlet_enabled", &Context::mu_verlet_enabled)
-        .def("set_mu_verlet_enabled", &Context::set_mu_verlet_enabled, py::arg("on"),
-             "Enable/disable Mu Verlet without changing skin (denselist geometry).")
         .def("set_skip_rigid_mm", &Context::set_skip_rigid_mm, py::arg("on"),
              "Skip re-measuring the pairs a rigid pivot carries (both atoms "
              "moved): their distances change only by rounding, so Mu re-decides "
@@ -479,18 +474,6 @@ PYBIND11_MODULE(mcpu_core, m) {
             [](Context& c) -> m08::MuPotential* { return c.mu_potential(); },
             py::return_value_policy::reference_internal,
             "First MuPotential, or None.")
-        .def("set_verlet_moved_threshold", &Context::set_verlet_moved_threshold,
-             py::arg("n"),
-             "Force CellOnly when n_moved > n (0 ⇒ always CellOnly).")
-        .def("verlet_moved_threshold", &Context::verlet_moved_threshold)
-        .def("set_verlet_partial_threshold", &Context::set_verlet_partial_threshold,
-             py::arg("n"),
-             "Partial Verlet CSR rebuild on accept when n_moved ≤ n (default 50).")
-        .def("verlet_partial_threshold", &Context::verlet_partial_threshold)
-        .def("set_invalidate_verlet_on_pivot_accept",
-             &Context::set_invalidate_verlet_on_pivot_accept, py::arg("on"))
-        .def("invalidate_verlet_on_pivot_accept",
-             &Context::invalidate_verlet_on_pivot_accept)
         .def("set_mu_cell_size_scale", &Context::set_mu_cell_size_scale, py::arg("scale"))
         .def("mu_cell_size_scale", &Context::mu_cell_size_scale)
         .def("set_mu_cell_size_angstrom", &Context::set_mu_cell_size_angstrom,
@@ -502,10 +485,6 @@ PYBIND11_MODULE(mcpu_core, m) {
         .def("effective_mu_cell_size_A", &Context::effective_mu_cell_size_A)
         .def("mu_cell_size_A",
              [](const Context& c) { return c.neighbors().mu_cell_size_A(); })
-        .def("maybe_rebuild_verlet", &Context::maybe_rebuild_verlet,
-             "Rebuild Mu Verlet CSR if skin>0 (for microbench / debug).")
-        .def("invalidate_verlet_pivot_accept", &Context::invalidate_verlet_pivot_accept,
-             "Mark Mu Verlet dirty (same path as pivot-accept invalidation).")
         .def("reset_neighbor_proxy_stats", &Context::reset_neighbor_proxy_stats)
         .def("print_neighbor_proxy_stats",
              [](const Context& c, const std::string& tag) {
@@ -517,23 +496,6 @@ PYBIND11_MODULE(mcpu_core, m) {
              py::arg("tag") = "neighbor-proxy",
              "Print neighbor-list proxy statistics (developer tuning only). "
              "DEPRECATED: will be removed in a future version.")
-        .def("set_proxy_print_every",
-             [](Context& c, int n) {
-                 if (PyErr_WarnEx(PyExc_DeprecationWarning,
-                     "set_proxy_print_every() is deprecated and has no effect. "
-                     "Auto-print was removed from Integrator.run() to prevent log spam "
-                     "under REMD. Call print_neighbor_proxy_stats() explicitly if needed.",
-                     1) < 0) {
-                     throw py::error_already_set();
-                 }
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
-                 c.set_proxy_print_every(n);
-#pragma GCC diagnostic pop
-             },
-             py::arg("n"),
-             "DEPRECATED: was used to set auto-print interval for neighbor-list stats. "
-             "Now a no-op. Will be removed in a future version.")
         .def("reset_coord_sync_stats", &Context::reset_coord_sync_stats)
         .def("coord_sync_stats",
              [](const Context& c) {
@@ -546,11 +508,8 @@ PYBIND11_MODULE(mcpu_core, m) {
         .def("neighbor_proxy_stats",
              [](const Context& c) {
                  const auto& s = c.neighborStats();
-                 const float skin = c.mu_skin();
                  const auto& cfg = c.neighborConfig();
-                 const auto r = s.derive(
-                     s.num_steps_executed, skin,
-                     cfg.verlet_warn_min_use_rate, cfg.verlet_warn_max_rebuild_rate);
+                 const auto r = s.derive(s.num_steps_executed);
                  py::dict d;
                  d["mu_num_candidates_iterated"] = s.mu_num_candidates_iterated;
                  d["mu_num_pair_distance_checks"] = s.mu_num_pair_distance_checks;
@@ -611,56 +570,25 @@ PYBIND11_MODULE(mcpu_core, m) {
                      d["mu_grid_contiguous"] = false;
                      d["mu_grid_cell_capacity"] = OpenCellGrid::CELL_CAPACITY;
                  }
-                 d["num_verlet_used"] = s.num_verlet_used();
-                 d["num_verlet_fallback_cell"] = s.num_verlet_fallback_cell();
-                 d["num_verlet_rebuilds"] = s.num_verlet_rebuilds;
-                 d["num_verlet_partial_rebuilds"] = s.num_verlet_partial_rebuilds;
-                 d["num_verlet_partial_affected_sum"] = s.num_verlet_partial_affected_sum;
-                 d["num_verlet_invalidate_pivot_accept"] = s.num_verlet_invalidate_pivot_accept;
-                 d["num_pivot_accepts"] = s.num_pivot_accepts;
-                 d["num_pivot_accepts_keep_verlet_valid"] = s.num_pivot_accepts_keep_verlet_valid;
-                 d["num_pivot_accepts_dirty_verlet"] = s.num_pivot_accepts_dirty_verlet;
-                 d["mu_verlet_enabled"] = cfg.mu_verlet_enabled;
-                 d["invalidate_verlet_on_pivot_accept"] = cfg.invalidate_verlet_on_pivot_accept;
-                 d["num_verlet_rebuild_due_to_pivot_accept"] = s.num_verlet_rebuild_due_to_pivot_accept;
-                 d["num_verlet_rebuild_due_to_disp_acc_exceeded"] =
-                     s.num_verlet_rebuild_due_to_disp_acc_exceeded;
-                 d["num_verlet_rebuild_due_to_dirty_flag"] = s.num_verlet_rebuild_due_to_dirty_flag;
-                 d["num_verlet_rebuild_due_to_autoexpand_accept"] =
-                     s.num_verlet_rebuild_due_to_autoexpand_accept;
-                 d["verlet_edges_total"] = s.verlet_edges_total;
-                 d["verlet_avg_degree"] = s.verlet_avg_degree;
-                 d["num_verlet_neigh_reallocs"] = s.num_verlet_neigh_reallocs;
-                 d["num_verlet_offsets_reallocs"] = s.num_verlet_offsets_reallocs;
                  d["num_aabb_rebuild_accept"] = s.num_aabb_rebuild_accept;
                  d["num_trial_fallback"] = s.num_trial_fallback;
                  d["num_reject_hard_disp"] = s.num_reject_hard_disp;
                  d["num_steps_executed"] = s.num_steps_executed;
                  d["total_steps"] = r.total_steps;
-                 d["mu_skin"] = r.mu_skin;
-                 d["verlet_use_rate"] = r.verlet_use_rate;
-                 d["rebuild_rate_per_step"] = r.rebuild_rate_per_step;
                  d["avg_mu_pair_checks_per_step"] = r.avg_mu_pair_checks_per_step;
                  d["avg_mu_pairs_within_rcut_per_step"] = r.avg_mu_pairs_within_rcut_per_step;
                  d["avg_mu_pairs_per_step"] = r.avg_mu_pairs_per_step;
                  d["avg_mu_candidates_per_step"] = r.avg_mu_candidates_per_step;
                  d["avg_cell_visits_per_step"] = r.avg_cell_visits_per_step;
                  d["avg_hbond_geom_checks_per_step"] = r.avg_hbond_geom_checks_per_step;
-                 d["low_use_rate"] = r.low_use_rate;
-                 d["high_rebuild_rate"] = r.high_rebuild_rate;
                  py::dict derived;
                  derived["total_steps"] = r.total_steps;
-                 derived["mu_skin"] = r.mu_skin;
-                 derived["verlet_use_rate"] = r.verlet_use_rate;
-                 derived["rebuild_rate_per_step"] = r.rebuild_rate_per_step;
                  derived["avg_mu_pair_checks_per_step"] = r.avg_mu_pair_checks_per_step;
                  derived["avg_mu_pairs_within_rcut_per_step"] = r.avg_mu_pairs_within_rcut_per_step;
                  derived["avg_mu_pairs_per_step"] = r.avg_mu_pairs_per_step;
                  derived["avg_mu_candidates_per_step"] = r.avg_mu_candidates_per_step;
                  derived["avg_cell_visits_per_step"] = r.avg_cell_visits_per_step;
                  derived["avg_hbond_geom_checks_per_step"] = r.avg_hbond_geom_checks_per_step;
-                 derived["low_use_rate"] = r.low_use_rate;
-                 derived["high_rebuild_rate"] = r.high_rebuild_rate;
                  d["derived"] = derived;
                  return d;
 
@@ -836,31 +764,6 @@ PYBIND11_MODULE(mcpu_core, m) {
                      by_kind.append(dmk);
                  }
                  d["mu_by_kind"] = by_kind;
-                 d["verlet_used"] = s.verlet_used;
-                 d["verlet_fallback_cell"] = s.verlet_fallback_cell;
-                 d["verlet_rebuilds"] = s.verlet_rebuilds;
-                 d["verlet_partial_rebuilds"] = s.verlet_partial_rebuilds;
-                 d["verlet_partial_affected_sum"] = s.verlet_partial_affected_sum;
-                 {
-                     const auto trials = s.verlet_used + s.verlet_fallback_cell;
-                     py::dict vs;
-                     vs["n_verlet_queries"] = s.verlet_used;
-                     vs["n_cellonly_queries"] = s.verlet_fallback_cell;
-                     vs["n_full_rebuilds"] = s.verlet_rebuilds;
-                     vs["n_partial_rebuilds"] = s.verlet_partial_rebuilds;
-                     vs["n_affected_atoms_sum"] = s.verlet_partial_affected_sum;
-                     if (trials > 0) {
-                         vs["reuse_rate"] =
-                             static_cast<double>(s.verlet_used) /
-                             static_cast<double>(trials);
-                     }
-                     if (s.verlet_partial_rebuilds > 0) {
-                         vs["avg_affected_atoms"] =
-                             static_cast<double>(s.verlet_partial_affected_sum) /
-                             static_cast<double>(s.verlet_partial_rebuilds);
-                     }
-                     d["verlet_stats"] = vs;
-                 }
                  {
                      const auto& b = s.pivot_mu_breakdown;
                      py::dict pb;
@@ -957,17 +860,6 @@ PYBIND11_MODULE(mcpu_core, m) {
                              static_cast<double>(cp_tot);
                      }
                      d["cell_pair_breakdown"] = cpb;
-                 }
-                 const auto verlet_trials = s.verlet_used + s.verlet_fallback_cell;
-                 if (verlet_trials > 0) {
-                     d["verlet_use_rate"] =
-                         static_cast<double>(s.verlet_used) /
-                         static_cast<double>(verlet_trials);
-                 }
-                 if (s.n_steps > 0) {
-                     d["verlet_rebuild_rate_per_step"] =
-                         static_cast<double>(s.verlet_rebuilds) /
-                         static_cast<double>(s.n_steps);
                  }
                  py::dict by_group;
                  // Only groups 1..7 have a timing slot (energy_delta_ns is [8]).

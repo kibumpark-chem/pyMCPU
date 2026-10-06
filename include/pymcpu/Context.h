@@ -20,7 +20,6 @@
 #include "pymcpu/neighbor/PairScratch.h"
 #include "pymcpu/neighbor/NeighborConfig.h"
 #include "pymcpu/neighbor/NeighborSystem.h"
-#include "pymcpu/neighbor/VerletList.h"
 #include "pymcpu/utils/CoordSyncStats.h"
 
 namespace mcpu {
@@ -47,7 +46,6 @@ struct MuWorkspace {
     std::unique_ptr<CellListMC> moved_new_grid;
     std::vector<int> moved_grid_atoms;
 
-    NeighborMode neighbor_mode = NeighborMode::CellOnly;
     bool use_trial_fallback = false;
     MoveKind move_kind = MoveKind::Other;
 
@@ -228,9 +226,6 @@ private:
     /// Sole owner of Mu + HBond spatial indices (single lifecycle).
     NeighborSystem neighbors_;
 
-    /// Reusable scratch for Verlet accumulate_accept (moved atoms only). CHANGED: sparse.
-    CoordsSoA commit_old_coords_scratch_;
-
     mutable MuWorkspace mu_workspace_;
     /// Scratch for the shared pair walks (moved-cell counts per grid, clash
     /// order hints). Per Context, so replicas never share it.
@@ -284,8 +279,7 @@ public:
     /// was created: this one's coordinates are then in the wrong order. A
     /// Context created on an already reordered System adopts its permutation.
     void require_current_atom_order() const;
-    void commit_accepted_move(const State& proposed_state, const ProposalPatch& patch,
-                              MoveKind move_kind = MoveKind::Other);
+    void commit_accepted_move(const State& proposed_state, const ProposalPatch& patch);
     float calculate_total_energy(int target_group = -1);
     float calculate_total_energy_raw(int target_group = -1) const;
     float calculate_delta_energy(const State& proposed_state, const ProposalPatch& patch) const;
@@ -364,47 +358,6 @@ public:
         "Neighbor-list tuning only. Auto-print was removed from Integrator::run(). "
         "Will be removed in a future release.")]]
     void print_neighbor_proxy_stats(const char* tag = "neighbor-proxy") const;
-    [[deprecated(
-        "Auto-print was removed from Integrator::run(). This setter has no effect. "
-        "Will be removed in a future release.")]]
-    void set_proxy_print_every(int n);
-    void set_mu_skin(float skin) {
-        neighbors_.config().skin = skin;
-        if (skin <= 0.f) {
-            neighbors_.config().mu_verlet_enabled = false;
-            neighbors_.muVerlet().invalidate();
-        } else {
-            neighbors_.config().mu_verlet_enabled = true;
-        }
-        if (positions_set_) {
-            // Skin changes the Mu grid query radius, stencil, AABB margin, and
-            // Verlet shell. Rebuild the complete accepted-state index.
-            neighbors_.rebuild_from_accepted_state(state.coords_soa);
-        }
-    }
-    float mu_skin() const noexcept { return neighbors_.config().skin; }
-    bool mu_verlet_enabled() const noexcept {
-        return neighbors_.config().mu_verlet_enabled;
-    }
-    /// Force CellOnly when n_moved > threshold (0 ⇒ always CellOnly for valid moves).
-    void set_verlet_moved_threshold(int n) noexcept {
-        neighbors_.config().verlet_moved_threshold = n;
-    }
-    int verlet_moved_threshold() const noexcept {
-        return neighbors_.config().verlet_moved_threshold;
-    }
-    /// Partial Verlet rebuild threshold (default 50). O(1).
-    void set_verlet_partial_threshold(int n) noexcept {
-        neighbors_.config().verlet_partial_threshold = n;
-    }
-    int verlet_partial_threshold() const noexcept {
-        return neighbors_.config().verlet_partial_threshold;
-    }
-    /// Gate Verlet use without changing skin / denselist geometry.
-    void set_mu_verlet_enabled(bool on) noexcept {
-        neighbors_.config().mu_verlet_enabled = on;
-        if (!on) neighbors_.muVerlet().invalidate();
-    }
     /// Skip the pairs a rigid pivot carries (default true); see
     /// NeighborConfig::skip_rigid_mm. O(1) flag.
     void set_skip_rigid_mm(bool on) noexcept {
@@ -439,17 +392,9 @@ public:
     /// First MuPotential (nullptr if none). For diagnostics / verify.
     [[nodiscard]] forces::mcpu08::MuPotential* mu_potential();
     [[nodiscard]] const forces::mcpu08::MuPotential* mu_potential() const;
-    /// Legacy opt-in: restore unconditional pivot→Verlet invalidate (default off).
-    void set_invalidate_verlet_on_pivot_accept(bool on) noexcept {
-        neighbors_.config().invalidate_verlet_on_pivot_accept = on;
-    }
-    bool invalidate_verlet_on_pivot_accept() const noexcept {
-        return neighbors_.config().invalidate_verlet_on_pivot_accept;
-    }
-
 
     /// Mu denselist cell size = scale * Mu cutoff, never below the cutoff (so
-    /// scale < 1 acts as 1). Default 1.0. The skin does not enter it.
+    /// scale < 1 acts as 1). Default 1.0.
     /// Rebuilds the Mu denselist when positions are already set (scale must be
     /// set before ``setPositions`` / init_only reorder for matching locality).
     void set_mu_cell_size_scale(float scale) noexcept {
@@ -486,15 +431,11 @@ public:
         return neighbors_.config().mu_cell_size_min_angstrom;
     }
     float effective_mu_cell_size_A() const noexcept {
-        // Denselist cell ignores skin (Verlet widens stencil only at rebuild).
-        const float r_cut = neighbors_.mu_cutoff_A();
-        return ::mcpu::effective_mu_cell_size_A(
-            r_cut, /*skin=*/0.f, neighbors_.config());
+        return ::mcpu::effective_mu_cell_size_A(neighbors_.mu_cutoff_A(),
+                                                neighbors_.config());
     }
 
     const BoxBounds& boxBounds() const noexcept { return neighbors_.bounds(); }
-    VerletList& verletContact() noexcept { return neighbors_.muVerlet(); }
-    const VerletList& verletContact() const noexcept { return neighbors_.muVerlet(); }
     bool denseGridsActive() const noexcept { return neighbors_.denseActive(); }
 
     bool trial_in_bounds(const State& proposal, const ProposalPatch& patch) const {
@@ -504,13 +445,6 @@ public:
                                         const ProposalPatch& patch) {
         return NeighborSystem::max_moved_displacement(
             accepted.coords_soa, proposal.coords_soa, patch);
-    }
-
-    void maybe_rebuild_verlet() {
-        neighbors_.maybe_rebuild_mu_verlet(state.coords_soa);
-    }
-    void invalidate_verlet_pivot_accept() {
-        neighbors_.invalidate_mu_verlet_pivot();
     }
 
 

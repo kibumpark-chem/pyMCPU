@@ -40,7 +40,6 @@ def compute_current_energies(pdb_file: str) -> dict:
     ctx.set_atom_reorder_mode("off")
     coords = (ff.coords[0] * 10.0).T.astype("float32")
     ctx.set_positions(coords)
-    ctx.set_mu_skin(0.0)
     ctx.calculate_total_energy(-1)
 
     bd = ctx.energy_breakdown(weighted=True)

@@ -118,23 +118,12 @@ std::vector<int> sidechain_dfs_from_ca(
 //
 // Within each residue (external ids → emitted in this order):
 //   [N, CA] + sidechain_DFS(from CA, excluding CA–N / CA–C) + [C, O] (+ H)
-// Residues sorted by Mu cell of CA (6Å+skin), tie-break residue id.
+// Residues sorted by Mu cell of CA, tie-break residue id.
 // Result: all atoms of a residue occupy a contiguous internal range.
 // ---------------------------------------------------------------------------
 AtomPermutation compute_init_only_atom_permutation(
     const System& sys,
     const CoordsSoA& coords,
-    float mu_skin,
-    std::vector<BlockIndices>* out_blocks)
-{
-    return compute_init_only_atom_permutation(sys, coords, mu_skin, -1.f,
-                                              out_blocks);
-}
-
-AtomPermutation compute_init_only_atom_permutation(
-    const System& sys,
-    const CoordsSoA& coords,
-    float mu_skin,
     float mu_cell_size_A,
     std::vector<BlockIndices>* out_blocks)
 {
@@ -145,7 +134,7 @@ AtomPermutation compute_init_only_atom_permutation(
     const float cell =
         (mu_cell_size_A > 0.f)
             ? mu_cell_size_A
-            : (NeighborSystem::kMuCutoffFallbackA + std::max(0.f, mu_skin));
+            : NeighborSystem::kMuCutoffFallbackA;
     BoxBounds b = aabb_of_coords(coords, /*margin=*/0.f);
     const float lx = std::max(b.hi[0] - b.lo[0], cell);
     const float ly = std::max(b.hi[1] - b.lo[1], cell);

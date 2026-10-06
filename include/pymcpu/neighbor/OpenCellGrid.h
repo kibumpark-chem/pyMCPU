@@ -785,7 +785,7 @@ public:
 
     /// Configure / resize dense cells from bounds.
     /// ``cell`` = denselist bin size; ``query_radius`` = interaction range for stencil
-    /// (typically r_cut (+ skin for Verlet)). Returns false if caps exceeded.
+    /// (typically r_cut). Returns false if caps exceeded.
     bool configure(const BoxBounds& b, float cell, const NeighborConfig& cfg,
                    float query_radius = -1.f) {
         int nx = 0, ny = 0, nz = 0;
@@ -836,15 +836,6 @@ public:
     float query_radius() const noexcept { return query_radius_; }
     std::size_t neighbor_offsets_count() const noexcept {
         return neighbor_offsets_.size();
-    }
-
-    /// Rebuild neighbor stencil only (O(R³)). Does not clear atom membership.
-    /// Used to temporarily widen the Mu grid for Verlet list builds (r_cut+skin)
-    /// without re-binning denselist atoms.
-    void set_query_radius(float query_radius) {
-        if (!configured_ || query_radius <= 0.f) return;
-        query_radius_ = query_radius;
-        precompute_neighbor_offsets_();
     }
 
     void clear_cells_keep_shape() {

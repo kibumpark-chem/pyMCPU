@@ -56,12 +56,10 @@ def test_accept_bits_deterministic_fixed_seed() -> None:
     assert a.energy == pytest.approx(b.energy, abs=1e-5)
 
 
-def test_actin_verify_skin0_and_skin1() -> None:
-    for skin in (0.0, 1.0):
-        ctx, _ = build_test_context(with_qbias=False)
-        ctx.set_mu_skin(skin)
-        integ = mcpu_core.Integrator(temperature=300.0, step_size_rad=0.05)
-        integ.verify_physics_consistency(ctx, num_steps=30, atol=ATOL)
+def test_actin_verify() -> None:
+    ctx, _ = build_test_context(with_qbias=False)
+    integ = mcpu_core.Integrator(temperature=300.0, step_size_rad=0.05)
+    integ.verify_physics_consistency(ctx, num_steps=30, atol=ATOL)
 
 
 def test_pooled_proposal_runs_finite_energy(minimal_pdb_path: str) -> None:
@@ -69,7 +67,6 @@ def test_pooled_proposal_runs_finite_energy(minimal_pdb_path: str) -> None:
     removed alongside the pooling refactor, so this only asserts the run
     doesn't produce NaN/inf, not any specific value)."""
     ctx = _build_small_context(minimal_pdb_path)
-    ctx.set_mu_skin(0.0)
     integ = mcpu_core.Integrator(temperature=0.6, step_size_rad=0.05)
     if hasattr(integ, "set_use_pooled_proposal"):
         integ.set_use_pooled_proposal(True)

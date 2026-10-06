@@ -117,12 +117,6 @@ struct StepStats {
     std::uint64_t mu_eval_pair_calls = 0;
     /// Index: 0=Pivot, 1=KIC, 2=Sidechain.
     MuKindStats mu_by_kind[3] = {};
-    /// Neighbor Verlet amortization (copied from NeighborStats at end of run).
-    std::uint64_t verlet_used = 0;
-    std::uint64_t verlet_fallback_cell = 0;
-    std::uint64_t verlet_rebuilds = 0;           ///< full CSR rebuilds
-    std::uint64_t verlet_partial_rebuilds = 0;   ///< Strategy B partial accepts
-    std::uint64_t verlet_partial_affected_sum = 0;
     /// Copied from NeighborStats.
     PivotMuBreakdown pivot_mu_breakdown;
     CellPairBreakdown cell_pair_breakdown;

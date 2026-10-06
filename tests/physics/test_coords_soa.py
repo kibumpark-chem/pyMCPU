@@ -26,7 +26,7 @@ pytestmark = pytest.mark.slow
 
 # Frozen regression baseline of the CURRENT engine's own output under a fixed
 # recipe (seed=42, 100-step warmup then reseed to 42+1_000_003, 1000 measured
-# steps, mu_skin=0.0, temperature=0.6, step_size_rad=0.1, pooled proposal
+# steps, temperature=0.6, step_size_rad=0.1, pooled proposal
 # enabled) -- not independently derivable from physics first principles or
 # from legacy MCPU. This is the fourth capture of this baseline; each prior
 # refresh followed a genuine physics-changing engine fix (stale proposal
@@ -162,12 +162,10 @@ def test_soa_coords_deterministic_repeat() -> None:
     )
 
 
-def test_soa_actin_verify_skin0_and_skin1() -> None:
-    for skin in (0.0, 1.0):
-        ctx, _ = build_test_context(with_qbias=False)
-        ctx.set_mu_skin(skin)
-        integ = mcpu_core.Integrator(temperature=300.0, step_size_rad=0.05)
-        integ.verify_physics_consistency(ctx, num_steps=30, atol=ATOL)
+def test_soa_actin_verify() -> None:
+    ctx, _ = build_test_context(with_qbias=False)
+    integ = mcpu_core.Integrator(temperature=300.0, step_size_rad=0.05)
+    integ.verify_physics_consistency(ctx, num_steps=30, atol=ATOL)
 
 
 def test_soa_baseline_accept_and_hbond_energy() -> None:

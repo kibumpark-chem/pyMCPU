@@ -7,7 +7,6 @@
 #include "pymcpu/neighbor/NeighborConfig.h"
 #include "pymcpu/neighbor/NeighborFallback.h"
 #include "pymcpu/neighbor/PairSearch.h"
-#include "pymcpu/neighbor/VerletList.h"
 #include "pymcpu/utils/CoordsSoA.h"
 #include "pymcpu/utils/CoordView.h"
 #include "pymcpu/AtomPermutation.h"
@@ -312,8 +311,7 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
     /// Count one Mu pair r2 evaluation (distance check + optional within-rcut).
     /// Increment sites (exactly one hot r2 path per backend):
     ///   1) Cell-grid enumeration  — calculateEnergyChange_fast (dense OpenCellGrid)
-    ///   2) Verlet enumeration     — calculateEnergyChange_fast (CSR VerletList)
-    ///   3) Fallback enumeration  — NeighborFallback moved-vs-all (+ explicit moved–moved)
+    ///   2) Fallback enumeration   — NeighborFallback moved-vs-all (+ explicit moved–moved)
     /// MCPU_HOT_COUNTERS=0 compiles the hot-loop diagnostic counters out of the
     /// measured path. They are ON by default and therefore present in EVERY
     /// production run and every published pyMCPU timing. The legacy baseline
@@ -1418,34 +1416,26 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
                                       moved_indices, list_exact);
         }
 
-        // Optional Verlet path for KIC/SC when Integrator marked VerletPreferred and list is usable
         auto& nstats = const_cast<NeighborStats&>(context.neighborStats());
-        const bool use_verlet =
-            (ws.neighbor_mode == NeighborMode::VerletPreferred)
-            && (context.neighborConfig().skin > 0.f)
-            && context.verletContact().trial_usable(
-                   moved_indices, old_state.coords_soa, new_state.coords_soa);
-        if (use_verlet) ++nstats.num_verlet_used();
 
         CellListMC* moved_grid = nullptr;
         // Rigid pivot: skip moved_new_grid -- its moved-moved pairs are not
         // re-measured on this path (see the contact-list notes in the header).
-        if (!moved_indices.empty() && !use_verlet && !skip_rigid_mm) {
+        if (!moved_indices.empty() && !skip_rigid_mm) {
             ws.ensure_moved_grid(mu_exact_cutoff_, num_atoms);
             moved_grid = ws.moved_new_grid.get();
             // Share contact-grid bounds so inserts index correctly (open, no wrap)
             const auto& gb = ns.muGrid().grid().bounds();
             if (gb.valid) {
                 NeighborConfig cfg = context.neighborConfig();
-                const float mu_cell = effective_mu_cell_size_A(
-                    mu_exact_cutoff_, /*skin=*/0.f, cfg);
-                // Match accepted Mu denselist: r_mu cell/query (not skin-inflated).
+                const float mu_cell = effective_mu_cell_size_A(mu_exact_cutoff_, cfg);
+                // Match accepted Mu denselist: r_mu cell/query.
                 // CRITICAL: configure() assigns n_cells×CAPACITY packed arrays (~MB).
                 // Only reconfigure when geometry changes — was called every SC/KIC
                 // denselist step and dominated SC Mu (~80 µs fixed overhead).
                 moved_grid->set_cutoff(mu_exact_cutoff_);
                 if (!moved_grid->grid().matches_geometry(gb, mu_cell, cfg)) {
-                    moved_grid->configure(gb, cfg, /*skin=*/0.f, mu_cell);
+                    moved_grid->configure(gb, cfg, mu_cell);
                 }
                 // Scratch MM grid never uses occupied stencil (Mu denselist only).
                 moved_grid->grid().set_occupied_stencil_mode(
@@ -1461,72 +1451,7 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
             }
         }
 
-        if (use_verlet) {
-            // Hot pair loop #2: Verlet CSR enumeration (moved atoms × undirected neighbors).
-            const VerletList& vl = context.verletContact();
-            const CoordView cold(old_state.coord_view());
-            const CoordView cnew(new_state.coord_view());
-            for (int i : moved_indices) {
-                {
-                    const int a = vl.offsets[static_cast<size_t>(i)];
-                    const int b = vl.offsets[static_cast<size_t>(i) + 1];
-                    for (int k = a; k < b; ++k) {
-                        const int j = vl.neighbors[static_cast<size_t>(k)];
-                        ++nstats.mu_num_candidates_iterated;
-                        if (is_moved[static_cast<size_t>(j)]) {
-                            if (skip_rigid_mm) {
-                                ++nstats.elided_rigid_mm;
-                                continue;
-                            }
-                            if (i > j) continue;
-                        }
-                        const float r2 = cold.dist2(i, j);
-                        note_mu_pair_r2(nstats, r2, contact_cutoff_sq_);
-                        // CHANGED: gate like denselist — hard_core/contact ≤ 6 Å.
-                        if (r2 <= contact_cutoff_sq_)
-                            delta_E -= eval_pair<ClashCutoff::None>(i, j, r2, nullptr);
-                    }
-                }
-                {
-                    const int a = vl.offsets[static_cast<size_t>(i)];
-                    const int b = vl.offsets[static_cast<size_t>(i) + 1];
-                    for (int k = a; k < b && !clash; ++k) {
-                        const int j = vl.neighbors[static_cast<size_t>(k)];
-                        ++nstats.mu_num_candidates_iterated;
-                        if (is_moved[static_cast<size_t>(j)]) {
-                            if (skip_rigid_mm) {
-                                ++nstats.elided_rigid_mm;
-                                continue;
-                            }
-                            if (i > j) continue;
-                            const float r2 = cnew.dist2(i, j);
-                            bool local_clash = false;
-                            note_mu_pair_r2(nstats, r2, contact_cutoff_sq_);
-                            if (r2 <= contact_cutoff_sq_) {
-                                delta_E += eval_pair(i, j, r2, &local_clash);
-                            }
-                            if (local_clash) clash = true;
-                        } else {
-                            const float r2 = cnew.dist2(i, j);
-                            bool local_clash = false;
-                            note_mu_pair_r2(nstats, r2, contact_cutoff_sq_);
-                            if (r2 <= contact_cutoff_sq_) {
-                                delta_E += eval_pair(i, j, r2, &local_clash);
-                            }
-                            if (local_clash) clash = true;
-                        }
-                    }
-                }
-                if (clash) break;
-            }
-            if (clash) {
-                ws.clear();
-                return kHardCorePenalty;
-            }
-            return delta_E;
-        }
-
-        // Hot pair loop #1: classic denselist OpenCellGrid (skin=0 default).
+        // Hot pair loop #1: classic denselist OpenCellGrid.
         // CSR pack-all-then-SIMD-r² was tried and reverted (wall ~150→459 µs):
         // packing before clash exit overflows (>98k pairs) and double-walks;
         // cell walk is ~71% of pivot Mu so splitting r² cannot win.

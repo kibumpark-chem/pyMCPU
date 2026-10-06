@@ -113,7 +113,6 @@ def _engine_chi_angles(traj: md.Trajectory, param_dir: str | None = None) -> lis
     ff = MCPUForceField(traj, **kwargs)
     system = ff.create_system(traj.topology)
     ctx = mcpu_core.Context(system)
-    ctx.set_mu_skin(0.0)
     coords = (np.asarray(ff.coords[0], dtype=float) * 10.0).T.astype("float32")
     ctx.set_positions(coords)
     state = ctx.get_state()

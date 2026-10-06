@@ -911,10 +911,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`scripts/arch_parity_dump.py` no longer fails a comparison on internal
   work counters alone.** Counters such as `hbond_num_candidates_iterated`,
-  `neighbor_num_cell_visits` and the Mu candidate and Verlet counters are
-  printed as a note when they differ; energies, accept bits, coordinate
-  hashes, move counts and step totals stay strict. A speedup that skips work
-  the result does not depend on used to read as a parity failure.
+  `neighbor_num_cell_visits` and the Mu candidate counters are printed as a
+  note when they differ; energies, accept bits, coordinate hashes, move counts
+  and step totals stay strict. A speedup that skips work the result does not
+  depend on used to read as a parity failure.
 
 - **Mu's energy change does less work per moved atom, which makes actin
   1.7x faster on the default move mix and 2.3x pivot-only.** Each part
@@ -1213,6 +1213,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `set_clash_first_min_moved`). The other modes are gone: off (`0`), the
   27-cell stencil with a point-to-box cull (`1`, measured slower) and every
   moved atom (`2`), with the stencil walker only mode `1` used.
+- **The Mu Verlet neighbour list.** It was opt-in (skin > 0), ran in no
+  default run and was 22-28x slower than the default on actin and an
+  8k-atom protein; the live Mu contact list now does the reuse it was meant
+  to provide. Gone with it: the `Context` methods `set_mu_skin`, `mu_skin`,
+  `set_mu_verlet_enabled`, `mu_verlet_enabled`, `set_verlet_moved_threshold`,
+  `verlet_moved_threshold`, `set_verlet_partial_threshold`,
+  `verlet_partial_threshold`, `set_invalidate_verlet_on_pivot_accept`,
+  `invalidate_verlet_on_pivot_accept`, `maybe_rebuild_verlet` and
+  `invalidate_verlet_pivot_accept`; the environment variables
+  `MCPU_MU_SKIN` and `MCPU_VERLET_PARTIAL_THRESHOLD`; the `neighbor_proxy_stats()`
+  keys `mu_skin`, `mu_verlet_enabled`, `invalidate_verlet_on_pivot_accept`,
+  `num_verlet_*`, `num_pivot_accepts*`, `verlet_*`, `verlet_use_rate`,
+  `rebuild_rate_per_step`, `low_use_rate` and `high_rebuild_rate` (also from
+  its `derived` dict); the `Integrator.step_stats()` keys `verlet_used`,
+  `verlet_fallback_cell`, `verlet_rebuilds`, `verlet_partial_rebuilds`,
+  `verlet_partial_affected_sum`, `verlet_stats`, `verlet_use_rate` and
+  `verlet_rebuild_rate_per_step`; the `verlet_mode` and `skin` fields of the
+  `MCPU_DEBUG_MOVES` log; and `scripts/parity_verlet_vs_cellonly.py`.
+  Scripts that called `set_mu_skin(0.0)` only restated the default and can
+  drop the call. Results are bit-identical.
+- `Context.set_proxy_print_every()`. The 0.1.0 notes list it as removed, but
+  the deprecated no-op binding was still there; it is gone now.
 
 ## [0.1.0] — 2026-09-16
 

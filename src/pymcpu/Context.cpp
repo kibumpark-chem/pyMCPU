@@ -71,9 +71,9 @@ void Context::maybe_apply_init_only_reorder_() {
     std::vector<BlockIndices> new_blocks;
     const NeighborConfig& ncfg = neighbors_.config();
     const float mu_cell = ::mcpu::effective_mu_cell_size_A(
-        neighbors_.mu_cutoff_A(), ncfg.skin, ncfg);
+        neighbors_.mu_cutoff_A(), ncfg);
     atom_perm_ = compute_init_only_atom_permutation(
-        *system, state.coords_soa, ncfg.skin, mu_cell, &new_blocks);
+        *system, state.coords_soa, mu_cell, &new_blocks);
     atom_perm_identity_ = atom_perm_.is_identity();
     if (atom_perm_identity_) {
         reorder_applied_ = true;
@@ -242,15 +242,7 @@ void Context::setPositions(const Eigen::Matrix3Xd& new_coords,
 }
 
 void Context::print_neighbor_proxy_stats(const char* tag) const {
-    neighbors_.stats().print(tag, neighbors_.config().skin, &neighbors_.config());
-}
-
-void Context::set_proxy_print_every(int n) {
-    std::fprintf(stderr,
-        "[MCPU WARNING] set_proxy_print_every() is deprecated and has no effect.\n"
-        "  Auto-print was removed from Integrator::run() to prevent log spam.\n"
-        "  Call print_neighbor_proxy_stats() explicitly if needed.\n");
-    (void)n;
+    neighbors_.stats().print(tag);
 }
 
 void Context::computeTorsions() {
@@ -311,8 +303,7 @@ void Context::sync_geometry() {
     neighbors_.rebuild_from_accepted_state(state.coords_soa);
 }
 
-void Context::commit_accepted_move(const State& proposed_state, const ProposalPatch& patch,
-                                   MoveKind move_kind) {
+void Context::commit_accepted_move(const State& proposed_state, const ProposalPatch& patch) {
     auto& mu_ws = mu_workspace_;
 
     auto& q_ws = q_bias_workspace_;
@@ -339,27 +330,6 @@ void Context::commit_accepted_move(const State& proposed_state, const ProposalPa
 
     for (const auto& potential : system->getPotentials()) {
         potential->commitAcceptedMove(*this, state, proposed_state, patch);
-    }
-
-    // CHANGED: sparse — Verlet (skin>0) needs old xyz for moved atoms only.
-    // NeighborSystem::commit_accepted_move ignores coords_old. Default skin=0
-    // skips Verlet entirely, so avoid the O(N) SoA clone.
-    const bool need_old_for_verlet =
-        neighbors_.config().skin > 0.f && neighbors_.denseActive() &&
-        neighbors_.config().mu_verlet_enabled;
-    if (need_old_for_verlet) {
-        if (commit_old_coords_scratch_.n != state.coords_soa.n) {
-            commit_old_coords_scratch_.resize(state.coords_soa.n);
-        }
-        // O(n_moved): gather pre-accept positions for accumulate_accept.
-        if (patch.moved_as_ranges()) {
-            for (const auto& rg : patch.moved_ranges)
-                commit_old_coords_scratch_.copy_range_from(state.coords_soa, rg.first, rg.second);
-        } else {
-            for (int i : patch.moved_indices) {
-                commit_old_coords_scratch_.copy_atom_from(state.coords_soa, i, i);
-            }
-        }
     }
 
     // Copy accepted trial coordinates into master state (no grid mutation here).
@@ -446,50 +416,7 @@ void Context::commit_accepted_move(const State& proposed_state, const ProposalPa
     }
 
     // Single lifecycle update for ALL indices (Mu + HBond).
-    // coords_old is unused by NeighborSystem; pass scratch (or state) as placeholder.
-    {
-        const CoordsSoA& coords_old_arg =
-            need_old_for_verlet ? commit_old_coords_scratch_ : state.coords_soa;
-        neighbors_.commit_accepted_move(
-            patch, coords_old_arg, state.coords_soa, move_kind, patch.is_rigid);
-    }
-
-    if (need_old_for_verlet) {
-        const bool pivot_like =
-            (move_kind == MoveKind::Pivot || patch.is_rigid);
-        if (pivot_like) {
-            ++neighbors_.stats().num_pivot_accepts;
-        }
-
-        const bool legacy_force_dirty =
-            pivot_like && neighbors_.config().invalidate_verlet_on_pivot_accept;
-        if (legacy_force_dirty) {
-            // NeighborSystem already invalidated; attribute dirty counter.
-            ++neighbors_.stats().num_pivot_accepts_dirty_verlet;
-        } else if (!neighbors_.muVerlet().dirty) {
-            // SC/KIC accumulate may already have run inside commit (partial path).
-            // Pivot still accumulates here.
-            if (pivot_like) {
-                neighbors_.muVerlet().accumulate_accept(
-                    patch.moved_indices, commit_old_coords_scratch_, state.coords_soa);
-                if (neighbors_.muVerlet().dirty) {
-                    neighbors_.muVerlet().dirty_cause =
-                        VerletList::DirtyCause::PivotAccept;
-                    ++neighbors_.stats().num_pivot_accepts_dirty_verlet;
-                } else {
-                    ++neighbors_.stats().num_pivot_accepts_keep_verlet_valid;
-                }
-            } else if (!neighbors_.last_commit_did_partial_verlet()) {
-                // Non-pivot: commit already accumulated when list was clean.
-                // If commit skipped (e.g. already dirty), nothing to do.
-            }
-        }
-
-        // Lazy Verlet rebuild: Integrator::run rebuilds when a KIC/SC step
-        // actually needs VerletPreferred. Eager rebuild here made commit dominate
-        // wall time (full CSR after nearly every large pivot accept).
-        // if (neighbors_.muVerlet().dirty) maybe_rebuild...  — intentionally omitted
-    }
+    neighbors_.commit_accepted_move(patch, state.coords_soa);
 }
 
 
