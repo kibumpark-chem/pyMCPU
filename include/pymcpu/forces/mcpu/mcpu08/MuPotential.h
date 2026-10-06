@@ -192,19 +192,24 @@ namespace mcpu::forces::mcpu08 {
             const int d = tf_res_[uj] - tf_res_[ui];
             const bool in_band =
                 static_cast<unsigned>(d + kTopoBand) <= 2u * kTopoBand;
-            // Both bytes are read and one is selected, so whether a pair is
-            // near in sequence costs no branch.
-            const size_t bidx = in_band
-                ? static_cast<size_t>(tf_row_[ui] + tf_rank_[uj]) : 0;
-            const uint8_t fb = tf_band_[bidx];
-            uint8_t ff = tf_far_[static_cast<size_t>(tf_cls_[ui]) *
-                                     static_cast<size_t>(tf_ncls_) +
-                                 tf_cls_[uj]];
+            // Both bytes are read and one is selected with masks, so whether
+            // a pair is near in sequence costs no branch (a conditional here
+            // compiled to one, 3.5% of a Mu move's mispredicts). A far pair's
+            // band index is masked to 0, which is always in range.
+            const int32_t band_mask = -static_cast<int32_t>(in_band);
+            const size_t bidx = static_cast<size_t>(
+                static_cast<uint32_t>(tf_row_[ui] + tf_rank_[uj]) &
+                static_cast<uint32_t>(band_mask));
+            const uint32_t fb = tf_band_[bidx];
+            uint32_t ff = tf_far_[static_cast<size_t>(tf_cls_[ui]) *
+                                      static_cast<size_t>(tf_ncls_) +
+                                  tf_cls_[uj]];
             if (__builtin_expect((tf_exc_atom_[ui] & tf_exc_atom_[uj]) != 0, 0) &&
                 !in_band) {
-                ff = topo_far_exception(i, j, ff);
+                ff = topo_far_exception(i, j, static_cast<uint8_t>(ff));
             }
-            return in_band ? fb : ff;
+            return static_cast<uint8_t>(
+                ff ^ ((fb ^ ff) & static_cast<uint32_t>(band_mask)));
         }
         /// Denselist / r² prefilter cutoff² (= mu_exact_cutoff_²).
         float contact_cutoff_sq_ = 36.f;
