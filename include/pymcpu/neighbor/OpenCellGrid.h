@@ -690,17 +690,33 @@ public:
                 n_live = memo->n_live;
                 goto visit;
             }
-            for (const CellOffset& o : neighbor_offsets_) {
-                const int ix = ix0 + o.dx;
-                const int iy = iy0 + o.dy;
-                const int iz = iz0 + o.dz;
-                if (ix < 0 || iy < 0 || iz < 0 || ix >= nx_ || iy >= ny_ ||
-                    iz >= nz_)
-                    continue;
-                const int c = (ix * ny_ + iy) * nz_ + iz;
-                live[n_live] = c;
-                n_live += (cell_count_[static_cast<size_t>(c)] !=
-                           static_cast<int>(moved_per_cell[static_cast<size_t>(c)]));
+            if (const int R = stencil_radius_;
+                ix0 >= R && iy0 >= R && iz0 >= R && ix0 < nx_ - R &&
+                iy0 < ny_ - R && iz0 < nz_ - R) {
+                // Every stencil cell is inside the grid: step through the
+                // offsets as linear cell ids, with no bounds test per cell.
+                const int c0 = (ix0 * ny_ + iy0) * nz_ + iz0;
+                const int* const lin = neighbor_lin_.data();
+                const int n_off = static_cast<int>(neighbor_lin_.size());
+                for (int k = 0; k < n_off; ++k) {
+                    const int c = c0 + lin[k];
+                    live[n_live] = c;
+                    n_live += (cell_count_[static_cast<size_t>(c)] !=
+                               static_cast<int>(moved_per_cell[static_cast<size_t>(c)]));
+                }
+            } else {
+                for (const CellOffset& o : neighbor_offsets_) {
+                    const int ix = ix0 + o.dx;
+                    const int iy = iy0 + o.dy;
+                    const int iz = iz0 + o.dz;
+                    if (ix < 0 || iy < 0 || iz < 0 || ix >= nx_ || iy >= ny_ ||
+                        iz >= nz_)
+                        continue;
+                    const int c = (ix * ny_ + iy) * nz_ + iz;
+                    live[n_live] = c;
+                    n_live += (cell_count_[static_cast<size_t>(c)] !=
+                               static_cast<int>(moved_per_cell[static_cast<size_t>(c)]));
+                }
             }
             if (memo) {
                 memo->ix = ix0;
@@ -1492,6 +1508,13 @@ private:
                 }
             }
         }
+        // The same offsets as linear cell ids, valid for a home cell at
+        // least R cells from every face (see
+        // for_each_neighbor_cell_span_while_unmoved).
+        neighbor_lin_.clear();
+        neighbor_lin_.reserve(neighbor_offsets_.size());
+        for (const CellOffset& o : neighbor_offsets_)
+            neighbor_lin_.push_back((o.dx * ny_ + o.dy) * nz_ + o.dz);
     }
 
     float cell_size_ = 1.f;
@@ -1509,6 +1532,7 @@ private:
     std::vector<int> prev_;
     std::vector<int> atom_cell_;
     std::vector<CellOffset> neighbor_offsets_;
+    std::vector<int> neighbor_lin_;  ///< neighbor_offsets_ as linear cell ids
 
     // Contiguous per-cell storage (Option A). Linked list always kept in sync.
     bool use_contiguous_ = true;
