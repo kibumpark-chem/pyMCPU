@@ -103,8 +103,6 @@ _PROXY_KEYS = (
     "mu_num_pairs_within_rcut",
     "mu_num_pairs_evaluated",
     "mu_eval_pair_calls",
-    "mu_span_slots_scanned",
-    "mu_stencil_cells_culled",
     "hbond_num_candidates_iterated",
     "hbond_num_geom_checks",
     "neighbor_num_cell_visits",
@@ -247,11 +245,14 @@ def _run_case_in_child(pdb: str, seed: int, steps: int) -> dict[str, Any]:
     # counters lives in `calculateEnergyChange_fast`, now only a fallback for
     # moves that leave the dense grid or run under an energy mask. Measured on chignolin/300 steps: `eval_pair_calls`,
     # `pair_distance_checks`, `pairs_within_rcut` and `eval_pair_nonzero` are
-    # all 0 by default, and become [3206, 223, 856] per move kind under
-    # `MCPU_CONTACT_LIST=0`. Accept counts match across the two paths (64 both
-    # ways), so that bypass is trajectory-neutral and usable as a SEPARATE
-    # diagnostic run -- but the primary fingerprint must stay on the path
-    # users actually execute.
+    # all 0 by default, and count every pair under `MCPU_CONTACT_LIST=0`,
+    # which sends every move through the all-pairs moved-vs-all delta. That
+    # run checks the physics, not the trajectory: moved-vs-all sums the old
+    # and new energies separately, so a move that changes no contact gets a
+    # rounding-size delta instead of exactly 0, and a positive one draws a
+    # Metropolis number and shifts the random stream (actin, seed 42: the
+    # accept bits part at step 53). Use it as a SEPARATE diagnostic run; the
+    # primary fingerprint must stay on the path users actually execute.
     #
     # What still carries signal in this section: `n_steps` and
     # `moved_atoms_sum`. The comparison's real witnesses are the accept-bit
@@ -363,12 +364,12 @@ def _child_env(import_root: str | None) -> dict[str, str]:
     Three classes of confound are removed here, each of which would otherwise
     be attributed to the compiler flag:
 
-    1. **Engine env vars.** 28 ``MCPU_*`` variables change engine behaviour,
-       and several latch in ``static const bool`` lambdas read once per
-       process. ``MCPU_LIVE_R2=0`` is the sharpest: it re-enables the eager
-       ``#pragma GCC ivdep`` r2 loop at ``MuPotential.cpp:1671``, i.e. it
-       toggles one of the very vectorized paths whose contraction is under
-       test. All are cleared; the ones we need are then set explicitly.
+    1. **Engine env vars.** Many ``MCPU_*`` variables change engine
+       behaviour, and several latch in ``static const bool`` lambdas read
+       once per process. ``MCPU_CONTACT_LIST=0`` is the sharpest: it sends
+       every Mu delta down the all-pairs moved-vs-all scan instead of the
+       contact list. All are cleared; the ones we need are then set
+       explicitly.
     2. **Parameter resolution.** ``ensure_params`` has six steps, and two of
        them key off ``PACKAGE_ROOT``. If one build resolves parameters from a
        wheel and the other from the repo tree, the *potentials* could differ.

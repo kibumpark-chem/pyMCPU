@@ -3,7 +3,7 @@
 The grid code walks a one-cell stencil (27 cells). A cell smaller than the
 cutoff needs a wider one, which overflowed fixed-size buffers: with
 set_mu_cell_size_scale below 1, or set_mu_cell_size_angstrom below the cutoff,
-set_positions crashed the interpreter, and the cell-pair path dropped cells.
+set_positions crashed the interpreter.
 Such a request is now raised to the cutoff. Larger cells still work.
 
 The probe runs in a subprocess so a regression fails this test instead of
@@ -46,7 +46,7 @@ PROBE = textwrap.dedent("""
 
 def test_a_cell_below_the_cutoff_is_raised_to_it() -> None:
     repo = Path(__file__).resolve().parents[2]
-    # MCPU_MU_CELL_SCALE and friends would change the default cell.
+    # MCPU_* settings in the caller's environment could change the default cell.
     env = {k: v for k, v in os.environ.items() if not k.startswith("MCPU_") or k == "MCPU_CACHE_DIR"}
     run = subprocess.run([sys.executable, "-c", PROBE], cwd=repo, env=env, capture_output=True, text=True)
     assert run.returncode == 0, f"probe exited {run.returncode}\n{run.stderr[-2000:]}"

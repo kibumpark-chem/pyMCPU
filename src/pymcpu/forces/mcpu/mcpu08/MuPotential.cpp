@@ -23,59 +23,11 @@
 #include <type_traits>
 #include <vector>
 
-#if defined(MCPU_CP_BREAKDOWN)
-#include <x86intrin.h>
-#endif
 #if defined(__AVX2__)
 #include <immintrin.h>
 #endif
 
 namespace mcpu::forces::mcpu08 {
-
-#if defined(MCPU_CP_BREAKDOWN)
-// ---------------------------------------------------------------------------
-// Cell-pair phase breakdown (DIAGNOSTIC BUILD ONLY -- -DMCPU_CP_BREAKDOWN).
-//
-// The cp_* fields in NeighborStats have always been declared, copied into
-// StepStats and exposed through bindings, but NOTHING EVER WROTE THEM, so
-// MCPU_CELL_PAIR_BREAKDOWN=1 silently reported zeros. This wires them.
-//
-// Compile-gated AND sampled, because the phases sit inside the per-(moved
-// atom, neighbour-cell) loop -- ~860 cell visits/step at actin. Timing every
-// visit with 3 rdtsc pairs would add ~6k rdtsc/step ~= 40 us on a 120 us step:
-// a 34% observer effect that would invalidate the split we are trying to
-// measure. Sampling one move in kCpSample keeps overhead ~0.5% while still
-// collecting hundreds of timed moves over a 20k-step run.
-//
-// CONSEQUENCE: per-step averages must be taken over cp_n_steps (the number of
-// SAMPLED moves), never over total steps.
-//
-// rdtsc rather than steady_clock (~20-25 ns/call through the vDSO) because it
-// is ~6-20 cycles. Converted at the 2.9 GHz nominal clock of the Xeon 8268
-// these nodes run, so absolute ns drift under turbo -- but the phase SHARES,
-// which is the whole point, do not.
-static constexpr std::uint64_t kCpSample = 64;
-static constexpr double kCpCyclesPerNs = 2.9;
-
-struct CpTimer {
-    std::uint64_t* sink;
-    std::uint64_t t0;
-    bool live;
-    CpTimer(std::uint64_t* s, bool on) noexcept
-        : sink(s), t0(on ? __rdtsc() : 0), live(on) {}
-    ~CpTimer() noexcept {
-        if (live) {
-            const std::uint64_t d = __rdtsc() - t0;
-            *sink += static_cast<std::uint64_t>(static_cast<double>(d) / kCpCyclesPerNs);
-        }
-    }
-};
-#define CP_CAT2(a, b) a##b
-#define CP_CAT(a, b) CP_CAT2(a, b)
-#define CP_SCOPE(field, on) CpTimer CP_CAT(cp_t_, __LINE__)(&(field), (on))
-#else
-#define CP_SCOPE(field, on) ((void)0)
-#endif
 
 namespace {
 
@@ -275,28 +227,10 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
         }
     }
 
-    /// Sort new-side neighbor cells by descending occupancy (MCPU_CLASH_ORDER_BY_DENSITY=1).
-    static bool clash_order_by_density_enabled() {
-        static const bool on = [] {
-            const char* e = std::getenv("MCPU_CLASH_ORDER_BY_DENSITY");
-            return e && e[0] == '1';
-        }();
-        return on;
-    }
-
-    // FIXED: moved_bits / skip_mask are 64-bit because they are indexed by
-    // `1ull << m` for m < n_static, and n_static can reach CELL_CAPACITY.
-    // They were std::uint32_t: for m >= 32 `1u << m` is undefined behaviour, and
-    // on x86 the shift count is masked to 5 bits, so slot 32 silently ALIASED
-    // slot 0 -- corrupting the moved/skip masks, which can drop a pair or miss a
-    // steric clash. Unreachable at default occupancy (actin max ~22) but
-    // reachable at MCPU_MU_CELL_SCALE >= 1.2 (measured max_occ 31/46), and a
-    // same-residue moved-moved clash escaped the delta path in production
-    // (p18.8.7 sce, atoms 811/2180 of residue 270) which is exactly this
-    // failure mode. Same bug class as the moved_ids[32] -> [CELL_CAPACITY] fix
-    // in Context.h. This assert makes the coupling explicit.
+    // The per-atom walk's skip_mask is 64-bit, indexed by `1ull << m` for a
+    // cell slot m < CELL_CAPACITY, so the capacity must fit in it.
     static_assert(::mcpu::OpenCellGrid::CELL_CAPACITY <= 64,
-                  "moved_bits/skip_mask are 64-bit; CELL_CAPACITY must fit");
+                  "skip_mask is 64-bit; CELL_CAPACITY must fit");
 
     /// Report the atom pair that trips the hard-core sentinel in the full
     /// recompute (MCPU_CLASH_REPORT=1); see the call site in calculateEnergy.
@@ -312,131 +246,11 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
     /// Increment sites (exactly one hot r2 path per backend):
     ///   1) Cell-grid enumeration  — calculateEnergyChange_fast (dense OpenCellGrid)
     ///   2) Fallback enumeration   — NeighborFallback moved-vs-all (+ explicit moved–moved)
-    /// MCPU_HOT_COUNTERS=0 compiles the hot-loop diagnostic counters out of the
-    /// measured path. They are ON by default and therefore present in EVERY
-    /// production run and every published pyMCPU timing. The legacy baseline
-    /// (fold_potential_mpi_asshipped) carries no equivalent instrumentation, so
-    /// leaving them on makes any legacy-vs-pyMCPU ratio asymmetric. Set this to 0
-    /// for publication numbers.
-    /// MCPU_UNIFORM_SKIPMASK=0 restores the per-(moved atom, cell) skip_mask loop.
-    static bool uniform_skipmask_enabled() {
-        static const bool on = [] {
-            const char* e = std::getenv("MCPU_UNIFORM_SKIPMASK");
-            return !(e && e[0] == '0');
-        }();
-        return on;
-    }
-
-    static bool hot_counters_enabled() {
-        // DEFAULT OFF. These are diagnostics, they cost a measured 2.3% of the
-        // step, and the legacy baseline carries no equivalent instrumentation,
-        // so leaving them on made every published pyMCPU-vs-legacy ratio
-        // asymmetric. MCPU_HOT_COUNTERS=1 turns them back on.
-        static const bool on = [] {
-            const char* e = std::getenv("MCPU_HOT_COUNTERS");
-            return e && e[0] == '1';
-        }();
-        return on;
-    }
-
     static inline void note_mu_pair_r2(::mcpu::NeighborStats& nstats, float r2,
                                        float cut2) noexcept {
         ++nstats.mu_num_pair_distance_checks;
         if (r2 <= cut2)
             ++nstats.mu_num_pairs_within_rcut;
-    }
-
-    /// Build MovedCellGroups from moved indices + coords. O(n_moved).
-    /// Returns false if any atom is OOB or group capacity exceeded (caller falls back).
-    static bool build_moved_cell_groups(
-        const std::vector<int>& moved_indices,
-        const CoordsSoA& coords,
-        const OpenCellGrid& grid,
-        MuWorkspace::MovedCellGroups& out,
-        std::vector<int>& cell_to_group)
-    {
-        out.n_groups = 0;
-        const int n_cells = static_cast<int>(grid.num_cells());
-        if (static_cast<int>(cell_to_group.size()) < n_cells)
-            cell_to_group.assign(static_cast<size_t>(n_cells), -1);
-
-        for (int i : moved_indices) {
-            const int cell = grid.cell_of(coords.x[static_cast<size_t>(i)],
-                                         coords.y[static_cast<size_t>(i)],
-                                         coords.z[static_cast<size_t>(i)]);
-            if (cell < 0) {
-                std::fprintf(stderr,
-                    "WARN: cell_of OOB for moved atom %d — falling back to "
-                    "per-atom denselist walk\n",
-                    i);
-                for (int g = 0; g < out.n_groups; ++g)
-                    cell_to_group[static_cast<size_t>(out.groups[g].cell_id)] = -1;
-                out.n_groups = 0;
-                return false;
-            }
-            int gi = cell_to_group[static_cast<size_t>(cell)];
-            if (gi < 0) {
-                if (out.n_groups >= MuWorkspace::MovedCellGroups::MAX_GROUPS) {
-                    static bool warned = false;
-                    if (!warned) {
-                        warned = true;
-                        std::fprintf(stderr,
-                            "WARN: MovedCellGroups overflow n_groups=%d "
-                            "(MAX_GROUPS=%d) — denselist fallback "
-                            "(further overflows suppressed)\n",
-                            out.n_groups,
-                            MuWorkspace::MovedCellGroups::MAX_GROUPS);
-                    }
-                    for (int g = 0; g < out.n_groups; ++g)
-                        cell_to_group[static_cast<size_t>(out.groups[g].cell_id)] =
-                            -1;
-                    out.n_groups = 0;
-                    return false;
-                }
-                gi = out.n_groups++;
-                cell_to_group[static_cast<size_t>(cell)] = gi;
-                out.groups[gi].cell_id = cell;
-                out.groups[gi].count = 0;
-            }
-            auto& g = out.groups[gi];
-            if (g.count >= OpenCellGrid::CELL_CAPACITY) {
-                std::fprintf(stderr,
-                    "WARN: MovedCellGroups cell %d count overflow — fallback\n",
-                    cell);
-                for (int g2 = 0; g2 < out.n_groups; ++g2)
-                    cell_to_group[static_cast<size_t>(out.groups[g2].cell_id)] =
-                        -1;
-                out.n_groups = 0;
-                return false;
-            }
-            g.moved_ids[g.count++] = i;
-        }
-        for (int g = 0; g < out.n_groups; ++g)
-            cell_to_group[static_cast<size_t>(out.groups[g].cell_id)] = -1;
-        return true;
-    }
-
-    /// Whether cell-pair denselist is enabled (config + env + moved size). O(1).
-    /// Env ``MCPU_USE_CELL_PAIR=1`` forces on; ``=0`` forces off.
-    /// ``MCPU_CELL_PAIR_MIN_MOVED`` overrides ``cell_pair_min_moved`` when set.
-    static bool cell_pair_enabled(const NeighborConfig& cfg, int n_moved) {
-        static const int kEnv = [] {
-            const char* e = std::getenv("MCPU_USE_CELL_PAIR");
-            if (e && e[0] == '0') return 0;
-            if (e && e[0] == '1') return 1;
-            return -1;
-        }();
-        static const int kMinEnv = [] {
-            const char* e = std::getenv("MCPU_CELL_PAIR_MIN_MOVED");
-            if (!e || !e[0]) return -1;
-            return std::atoi(e);
-        }();
-        if (kEnv == 0) return false;
-        if (kEnv == 1) return true;
-        if (!cfg.use_cell_pair) return false;
-        const int min_m =
-            (kMinEnv >= 0) ? kMinEnv : cfg.cell_pair_min_moved;
-        return n_moved >= min_m;
     }
 
     MuPotential::MuPotential(
@@ -1039,8 +853,8 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
         const ProposalPatch& patch
     ) const {
         // DEFAULT ON (1.35-1.45x on chignolin/1igd/actin when introduced).
-        // MCPU_CONTACT_LIST=0 restores the re-measure path, which does not
-        // re-decide pairs a rigid pivot carries.
+        // MCPU_CONTACT_LIST=0 sends every move to the all-pairs moved-vs-all
+        // delta instead: an exact O(n_moved * N) reference, slow, for checks.
         const bool kContactList = contact_list_enabled();
         float delta;
         if (kContactList) {
@@ -1377,16 +1191,6 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
         auto& ns = const_cast<NeighborSystem&>(context.neighbors());
         // Mu index (BB+O+SC only). Prefer NeighborSystem candidate API.
         const std::vector<uint8_t>& is_moved = patch.moving_atoms;
-        // Fallback scans all atoms; skip amide H (not in historical Mu contact set).
-        const auto& sys = context.getSystem();
-        const int h_begin = sys.getTotalBBAtoms() + sys.getTotalOAtoms() + sys.getTotalSCAtoms();
-        auto skip_fixed_h = [&](int j) {
-            if (sys.residueContiguousLayout()) {
-                return sys.is_amide_h_atom(j) && !is_moved[static_cast<size_t>(j)];
-            }
-            return j >= h_begin && !is_moved[static_cast<size_t>(j)];
-        };
-
         // Prefer patch.moved_indices; fall back to a one-time scan if empty
         std::vector<int> fallback_moved;
         const std::vector<int>* moved_ptr = &patch.moved_indices;
@@ -1409,9 +1213,12 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
             neighbor::MoveFootprint::of(patch, context.neighborConfig().skip_rigid_mm)
                 .moved_rigid();
 
-        // Hot pair loop #3: Fallback moved-vs-all (out-of-box / no dense grid).
-        // Out-of-bounds trial under AUTO_EXPAND: no dense-grid rebuild; moved-vs-all fallback.
-        if (ws.use_trial_fallback || !context.denseGridsActive()) {
+        // Hot pair loop #3: moved-vs-all, for a trial that leaves the grid
+        // (no dense-grid rebuild under AUTO_EXPAND), a run without dense
+        // grids, and every move under MCPU_CONTACT_LIST=0, where it is the
+        // exact slow reference for the contact-list delta.
+        if (ws.use_trial_fallback || !context.denseGridsActive() ||
+            !contact_list_enabled()) {
             return delta_moved_vs_all(context, old_state, new_state, patch,
                                       moved_indices, list_exact);
         }
@@ -1458,511 +1265,60 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
         const CoordView cold(old_state.coord_view());
         const CoordView cnew(new_state.coord_view());
 
-        // CHANGED: cell-pair inversion (optional) + fused packed denselist fallback.
+        // Per-moved-atom fused walk of the dense Mu grid. The contact list
+        // cannot follow an in-grid move only when the grid lost its
+        // contiguous layout after a cell overflow, so that is when this runs.
         const OpenCellGrid& mu_grid_ref = ns.muGrid().grid();
         const bool use_span = mu_grid_ref.use_contiguous();
-        const bool want_cell_pair =
-            use_span &&
-            cell_pair_enabled(context.neighborConfig(),
-                              static_cast<int>(moved_indices.size()));
-        static constexpr bool kPrefetchLayered = true;
+        for (int i : moved_indices) {
+            const float ox = cold.x(i), oy = cold.y(i), oz = cold.z(i);
+            const float nx = cnew.x(i), ny = cnew.y(i), nz = cnew.z(i);
 
-        bool used_cell_pair = false;
-        if (want_cell_pair) {
-#if defined(MCPU_CP_BREAKDOWN)
-            // One move in kCpSample is timed; see the note at the top of file.
-            static std::uint64_t cp_move_seq = 0;
-            const bool cp_on = ((cp_move_seq++ % kCpSample) == 0);
-            if (cp_on) ++nstats.cp_n_steps;
-#else
-            constexpr bool cp_on = false;
-#endif
-            // MEASURED AND REJECTED: legacy's old-side-skip gate does not port.
-            //
-            // Legacy gates its entire old-cell pass on one pointer compare
-            // (contacts.h:278, comparing the new and old stencils' self cell) and
-            // skips it when the atom did not change cell. Two reasons that cannot
-            // be copied here:
-            //
-            // 1. STRUCTURAL. Legacy can skip the old side because it keeps a
-            //    persistent per-pair contact-bit cache (data[][], O(N^2) memory --
-            //    ~512 MB at 4000 atoms, its scaling wall) and computes the delta by
-            //    comparing the new distance against the cached bit. It never needs
-            //    E_old. pyMCPU has no such cache by design, so it must evaluate the
-            //    old neighbourhood whatever the cell membership. The most available
-            //    here is MERGING the two walks when the cell sets coincide, which
-            //    saves the walk but not the evaluation.
-            // 2. STATISTICAL. Measured fraction of cell-pair moves whose moved-atom
-            //    cell membership is unchanged: chignolin 20.4%, barnase 10.4%,
-            //    sce 10.4% (MCPU_CELLGATE_PROBE, 60k steps each). So the merge would
-            //    apply to ~1 move in 5 at best, saving at most half the stencil walk
-            //    on those -- a few percent of the step -- against restructuring a
-            //    loop documented below as having cost 13% wall the last time it was
-            //    reorganised. Negative expected value.
-            //
-            // CHANGED: cell-pair inversion — group moved atoms by old/new cell.
-            const bool ok_old = build_moved_cell_groups(
-                moved_indices, old_state.coords_soa, mu_grid_ref,
-                ws.old_moved_groups, ws.cell_to_group_scratch);
-            const bool ok_new = ok_old && build_moved_cell_groups(
-                moved_indices, new_state.coords_soa, mu_grid_ref,
-                ws.new_moved_groups, ws.cell_to_group_scratch);
-            if (ok_old && ok_new) {
-                used_cell_pair = true;
-                ++nstats.pivot_mu_cell_pair_evals;
-                nstats.pivot_mu_n_groups +=
-                    static_cast<std::uint64_t>(ws.old_moved_groups.n_groups) +
-                    static_cast<std::uint64_t>(ws.new_moved_groups.n_groups);
-                for (int g = 0; g < ws.old_moved_groups.n_groups; ++g)
-                    nstats.pivot_mu_group_atoms +=
-                        static_cast<std::uint64_t>(
-                            ws.old_moved_groups.groups[g].count);
-                for (int g = 0; g < ws.new_moved_groups.n_groups; ++g)
-                    nstats.pivot_mu_group_atoms +=
-                        static_cast<std::uint64_t>(
-                            ws.new_moved_groups.groups[g].count);
-
-                auto eval_groups =
-                    [&](const MuWorkspace::MovedCellGroups& groups,
-                        const CoordView& cview, bool is_new_side,
-                        double& acc) -> bool {
-                    // Timed from inside the lambda so the call sites stay
-                    // byte-for-byte original. Wrapping them instead cost 13%
-                    // wall with the timers compiled OUT -- the restructuring,
-                    // not the rdtsc, was the observer effect.
-                    CP_SCOPE(is_new_side ? nstats.cp_new_walk_ns
-                                         : nstats.cp_old_walk_ns,
-                             cp_on);
-                    const bool order_dense =
-                        is_new_side && clash_order_by_density_enabled();
-                    const bool hot_cnt = hot_counters_enabled();
-                    // ADDED: one-shot nc-sharing diagnostic (MCPU_NC_SHARE_DIAG=1)
-                    static const bool kNcShareDiag = [] {
-                        const char* e = std::getenv("MCPU_NC_SHARE_DIAG");
-                        return e && e[0] == '1';
-                    }();
-                    if (kNcShareDiag && is_new_side &&
-                        groups.n_groups >= 40) {
-                        static bool printed = false;
-                        if (!printed) {
-                            printed = true;
-                            thread_local std::vector<int> visit;
-                            const int n_cells =
-                                static_cast<int>(mu_grid_ref.num_cells());
-                            if (static_cast<int>(visit.size()) < n_cells)
-                                visit.assign(static_cast<size_t>(n_cells), 0);
-                            int unique = 0;
-                            long long sum = 0;
-                            for (int gi = 0; gi < groups.n_groups; ++gi) {
-                                mu_grid_ref.for_each_neighbor_cell_of(
-                                    groups.groups[gi].cell_id, [&](int nc) {
-                                        if (visit[static_cast<size_t>(nc)] ==
-                                            0)
-                                            ++unique;
-                                        ++visit[static_cast<size_t>(nc)];
-                                    });
-                            }
-                            for (int c = 0; c < n_cells; ++c) {
-                                if (visit[static_cast<size_t>(c)] > 0) {
-                                    sum += visit[static_cast<size_t>(c)];
-                                    visit[static_cast<size_t>(c)] = 0;
-                                }
-                            }
-                            const double avg =
-                                unique > 0
-                                    ? static_cast<double>(sum) / unique
-                                    : 0.0;
-                            // CHANGED: gated behind MCPU_VERBOSE
-                            if (mcpu_verbose_enabled()) {
-                                std::fprintf(stderr, // CHANGED: gated behind MCPU_VERBOSE
-                                    "INFO: nc-share diag (new-side pivot): "
-                                    "n_groups=%d unique_nc=%d "
-                                    "avg_groups_per_nc=%.2f\n",
-                                    groups.n_groups, unique, avg);
-                            }
-                        }
-                    }
-                    // Span prefetch / cell-outer were measured neutral → removed.
-                    for (int iter = 0; iter < groups.n_groups; ++iter) {
-                        int gi = iter;
-                        const auto& mc = groups.groups[gi];
-                        // MEASURED AND REVERTED: point-to-cell distance cull.
-                        // A neighbour cell whose nearest point is beyond the cutoff
-                        // cannot hold a partner in range, so it can be dropped
-                        // bit-identically (verified: 0 in-cutoff pairs lost, same
-                        // energy to the last digit, same coordinates, on all three
-                        // systems). It removed 24.8% of cell visits and 21.8% of r2
-                        // checks at sce, 21.3%/20.9% at barnase.
-                        //
-                        // It was still SLOWER: -1.4% sce, -0.9% barnase, -3.0%
-                        // chignolin (7 interleaved repeats, spread <=0.4%). Placing
-                        // the test inside the ki/a loops was worse still (-1.9% /
-                        // -1.6% / -11.3%), because a ~25%-taken branch in the
-                        // innermost loop mispredicts on every (moved atom, cell)
-                        // pair. Hoisting it into this list build removed the branch
-                        // and it STILL did not pay.
-                        //
-                        // Conclusion: cell visits and r2 checks are not what Mu's
-                        // time is made of, so removing a fifth of them buys nothing.
-                        // See mu_span_slots_scanned vs mu_num_pair_distance_checks
-                        // for where it actually goes. Do not re-attempt geometric
-                        // stencil culling without first moving that ratio.
-                        //
-                        // Local stencil copy (≤27); optional density sort for new-side.
-                        int nc_buf[NeighborCellList::kCap];
-                        int n_nc = 0;
-                        mu_grid_ref.for_each_neighbor_cell_of(
-                            mc.cell_id, [&](int nc) {
-                                if (n_nc < NeighborCellList::kCap)
-                                    nc_buf[n_nc++] = nc;
-                            });
-                        if (order_dense && n_nc > 1) {
-                            // Insertion sort by cell_atom_count descending.
-                            for (int i = 1; i < n_nc; ++i) {
-                                const int key = nc_buf[i];
-                                const int key_c =
-                                    mu_grid_ref.cell_atom_count(key);
-                                int j = i - 1;
-                                while (j >= 0 &&
-                                       mu_grid_ref.cell_atom_count(
-                                           nc_buf[j]) < key_c) {
-                                    nc_buf[j + 1] = nc_buf[j];
-                                    --j;
-                                }
-                                nc_buf[j + 1] = key;
-                            }
-                        }
-                        // i-side block: gather this group's moved-atom coordinates
-                        // ONCE instead of re-fetching them inside every neighbour
-                        // cell. mc has ~6 atoms and a group visits ~4.3 cells, so
-                        // the scattered SoA loads were ~4.3x redundant. This is the
-                        // one piece of the GROMACS i-cluster idea that transfers
-                        // directly to a rebuild-every-step MC delta. Bit-identical:
-                        // same values, fetched once.
-                        float gx[OpenCellGrid::CELL_CAPACITY];
-                        float gy[OpenCellGrid::CELL_CAPACITY];
-                        float gz[OpenCellGrid::CELL_CAPACITY];
-                        for (int a = 0; a < mc.count; ++a) {
-                            const int ia = mc.moved_ids[a];
-                            gx[a] = cview.x(ia);
-                            gy[a] = cview.y(ia);
-                            gz[a] = cview.z(ia);
-                        }
-                        for (int ki = 0; ki < n_nc; ++ki) {
-                            const int nc = nc_buf[ki];
-                            if (clash) break;
-                            const int* cids;
-                            int n_static;
-                            const float* __restrict__ cx;
-                            const float* __restrict__ cy;
-                            const float* __restrict__ cz;
-                            const auto sp =
-                                mu_grid_ref.cell_atoms_span(nc);
-                            cids = sp.first;
-                            n_static = sp.second;
-                            if (n_static == 0) {
-                                if (hot_cnt) ++nstats.pivot_mu_cell_pairs_empty;
+            if (use_span) {
+                mu_grid_ref.for_each_neighbor_cell_span(
+                    ox, oy, oz,
+                    [&](const int* __restrict__ cids,
+                        const float* __restrict__ cx,
+                        const float* __restrict__ cy,
+                        const float* __restrict__ cz, int count) {
+                        std::uint64_t skip_mask = 0ull;
+                        for (int m = 0; m < count; ++m) {
+                            const int j = cids[m];
+                            if (j == i) {
+                                skip_mask |= (1ull << m);
                                 continue;
                             }
-                            cx = mu_grid_ref.cell_x_span(nc);
-                            cy = mu_grid_ref.cell_y_span(nc);
-                            cz = mu_grid_ref.cell_z_span(nc);
-                            if (hot_cnt) {
-                                ++nstats.pivot_mu_cell_pairs;
-                                ++nstats.neighbor_num_cell_visits;
+                            if (is_moved[static_cast<size_t>(j)]) {
+                                if (skip_rigid_mm) {
+                                    ++nstats.elided_rigid_mm;
+                                    skip_mask |= (1ull << m);
+                                } else if (i > j) {
+                                    skip_mask |= (1ull << m);
+                                }
                             }
-
-                                // CHANGED: cell-pair inversion — moved mask once per nc
-                                std::uint64_t moved_bits = 0ull;
-                                {
-                                    CP_SCOPE(nstats.cp_movedbits_ns, cp_on);
-                                    for (int m = 0; m < n_static; ++m) {
-                                        if (is_moved[static_cast<size_t>(cids[m])])
-                                            moved_bits |= (1ull << m);
-                                    }
-                                }
-
-                                // ADDED: the old-side skip_mask is provably
-                                // INDEPENDENT of `a` whenever skip_rigid_mm is on.
-                                // In that branch every moved slot gets masked, and
-                                // the j == i case is subsumed: `i` comes from
-                                // mc.moved_ids, so is_moved[i] is true, so if i
-                                // occupies slot m then moved_bits already carries bit
-                                // m. The O(n_static) per-(moved atom, cell) loop
-                                // below therefore evaluates to exactly `moved_bits`
-                                // every single time -- the same simplification
-                                // already made on the new side. Only the
-                                // !skip_rigid_mm branch really depends on `a`,
-                                // through the `i > j` keep-once tiebreak.
-                                const bool uniform_skip =
-                                    (is_new_side || skip_rigid_mm) &&
-                                    uniform_skipmask_enabled();
-                                // i lies in this cell only when it is the group's own
-                                // cell, and then exactly once.
-                                const int self_here = (nc == mc.cell_id) ? 1 : 0;
-                                for (int a = 0; a < mc.count && !clash; ++a) {
-                                    const int i = mc.moved_ids[a];
-                                    const float xi = gx[a];
-                                    const float yi = gy[a];
-                                    const float zi = gz[a];
-
-                                    std::uint64_t skip_mask = 0ull;
-                                    {
-                                    CP_SCOPE(nstats.cp_skipmask_ns, cp_on);
-                                    if (uniform_skip) {
-                                        skip_mask = moved_bits;
-                                        if (!is_new_side && hot_cnt) {
-                                            // keep the counter's exact meaning:
-                                            // moved slots here, minus self
-                                            nstats.elided_rigid_mm +=
-                                                static_cast<std::uint64_t>(
-                                                    __builtin_popcountll(moved_bits) -
-                                                    self_here);
-                                        }
-                                    } else if (is_new_side) {
-                                        // New: skip all moved + self.
-                                        //
-                                        // FIXED: the self-scan below was dead. `i`
-                                        // always comes from mc.moved_ids, so it is a
-                                        // moved atom; if it also appears in this cell
-                                        // at slot m then is_moved[cids[m]] is true and
-                                        // moved_bits already carries bit m. The loop
-                                        // therefore only ever re-set a bit that was
-                                        // set. Removing it drops an O(n_static) scan
-                                        // per (moved atom, neighbour cell) -- and the
-                                        // skip-mask phase is 17% of new-side cell-pair
-                                        // time at actin. Provably bit-identical.
-                                        skip_mask = moved_bits;
-                                    } else {
-                                        // Old: per-i self / MM keep-once.
-                                        for (int m = 0; m < n_static; ++m) {
-                                            const int j = cids[m];
-                                            if (j == i) {
-                                                skip_mask |= (1ull << m);
-                                                continue;
-                                            }
-                                            if (moved_bits & (1ull << m)) {
-                                                if (skip_rigid_mm) {
-                                                    if (hot_cnt) ++nstats.elided_rigid_mm;
-                                                    skip_mask |= (1ull << m);
-                                                } else if (i > j) {
-                                                    skip_mask |= (1ull << m);
-                                                }
-                                            }
-                                        }
-                                    }
-                                    }  // end skip_mask timing scope
-
-                                    // CHANGED: r2 is no longer computed eagerly for
-                                    // the whole span here -- it is computed inside the
-                                    // collect loop below, for the slots that survive
-                                    // skip_mask only.
-                                    //
-                                    // The eager `#pragma GCC ivdep` loop filled all
-                                    // n_static slots, but r2_buf is read ONLY through
-                                    // in_cut[], which the collect loop populates from
-                                    // non-skipped slots. So every skipped slot's r2 was
-                                    // computed and discarded. Measured share of span
-                                    // slots discarded: 6.8% chignolin, 51.5% barnase,
-                                    // 63.3% sce -- it grows with the molecule because
-                                    // a pivot moves a spatially compact chain segment,
-                                    // so a moved atom's neighbour cells are themselves
-                                    // largely moved, and skip_mask == moved_bits on
-                                    // the new side.
-                                    //
-                                    // Bit-identical: __builtin_ctzll walks set bits in
-                                    // increasing m, the same order the old `for m`
-                                    // loop used, computing the same expression on the
-                                    // same slots. Only slots whose r2 was never read
-                                    // are dropped.
-                                    float r2_buf[OpenCellGrid::CELL_CAPACITY];
-                                    if (hot_cnt)
-                                        nstats.mu_span_slots_scanned +=
-                                            static_cast<std::uint64_t>(n_static);
-                                    // A/B switch for the change described above.
-                                    // MCPU_LIVE_R2=0 restores the eager full-span
-                                    // loop so the two can be interleaved on one node.
-                                    static const bool kLiveR2 = [] {
-                                        const char* e = std::getenv("MCPU_LIVE_R2");
-                                        return !(e && e[0] == '0');
-                                    }();
-                                    if (!kLiveR2) {
+                        }
+                        float r2_buf[OpenCellGrid::CELL_CAPACITY];
 #pragma GCC ivdep
-                                        for (int m = 0; m < n_static; ++m) {
-                                            const float dx = xi - cx[m];
-                                            const float dy = yi - cy[m];
-                                            const float dz = zi - cz[m];
-                                            r2_buf[m] =
-                                                pair_r2(dx, dy, dz);
-                                        }
-                                    }
-#if defined(MCPU_CP_BREAKDOWN)
-                                    // count only on SAMPLED moves so the
-                                    // denominator matches cp_n_steps
-                                    if (cp_on) {
-                                        if (is_new_side)
-                                            nstats.cp_new_r2_checks +=
-                                                static_cast<std::uint64_t>(n_static);
-                                        else
-                                            nstats.cp_old_r2_checks +=
-                                                static_cast<std::uint64_t>(n_static);
-                                    }
-#endif
-
-                                    // Collect in-cutoff partners; prefetch layered tables.
-                                    CP_SCOPE(is_new_side ? nstats.cp_new_eval_ns
-                                                         : nstats.cp_old_eval_ns,
-                                             cp_on);
-                                    int in_cut[OpenCellGrid::CELL_CAPACITY];
-                                    int n_in = 0;
-                                    {
-                                        CP_SCOPE(is_new_side
-                                                     ? nstats.cp_new_r2_ns
-                                                     : nstats.cp_old_r2_ns,
-                                                 cp_on);
-                                        std::uint64_t live = ~skip_mask;
-                                        if (n_static < 64)
-                                            live &= (1ull << n_static) - 1ull;
-                                        while (live) {
-                                            const int m = __builtin_ctzll(live);
-                                            live &= live - 1ull;
-                                            float r2;
-                                            if (kLiveR2) {
-                                                const float dx = xi - cx[m];
-                                                const float dy = yi - cy[m];
-                                                const float dz = zi - cz[m];
-                                                r2 = pair_r2(dx, dy, dz);
-                                                r2_buf[m] = r2;
-                                            } else {
-                                                r2 = r2_buf[m];
-                                            }
-                                            if (hot_cnt)
-                                                note_mu_pair_r2(
-                                                    nstats, r2,
-                                                    contact_cutoff_sq_);
-                                            if (r2 > contact_cutoff_sq_) continue;
-                                            in_cut[n_in++] = m;
-                                        }
-                                    }
-                                    for (int t = 0; t < n_in; ++t) {
-                                        if (kPrefetchLayered && t + 2 < n_in &&
-                                            use_topo_flags_ && !tf_ready_ &&
-                                            !topo_flag_.empty()) {
-                                            const int j_next = cids[in_cut[t + 2]];
-                                            const size_t pidx =
-                                                static_cast<size_t>(i) *
-                                                    static_cast<size_t>(
-                                                        num_atoms_cached_) +
-                                                static_cast<size_t>(j_next);
-                                            __builtin_prefetch(
-                                                &topo_flag_[pidx], 0, 1);
-                                            const int ti =
-                                                atom_types[static_cast<size_t>(
-                                                    i)];
-                                            const int tj =
-                                                atom_types[static_cast<size_t>(
-                                                    j_next)];
-                                            if (ti >= 0 && tj >= 0 &&
-                                                n_types_ > 0) {
-                                                __builtin_prefetch(
-                                                    &type_params_
-                                                        [static_cast<size_t>(
-                                                             ti) *
-                                                             static_cast<
-                                                                 size_t>(
-                                                                 n_types_) +
-                                                         static_cast<size_t>(
-                                                             tj)],
-                                                    0, 1);
-                                            }
-                                        }
-                                        const int m = in_cut[t];
-                                        const float r2 = r2_buf[m];
-                                        if (is_new_side) {
-                                            bool local_clash = false;
-                                            acc += static_cast<double>(eval_pair(
-                                                i, cids[m], r2, &local_clash));
-                                            if (local_clash) {
-                                                clash = true;
-                                                break;
-                                            }
-                                        } else {
-                                            acc -= static_cast<double>(
-                                                eval_pair<ClashCutoff::None>(
-                                                    i, cids[m], r2, nullptr));
-                                        }
-                                    }
-                                }
+                        for (int m = 0; m < count; ++m) {
+                            const float dx = ox - cx[m];
+                            const float dy = oy - cy[m];
+                            const float dz = oz - cz[m];
+                            r2_buf[m] = pair_r2(dx, dy, dz);
                         }
-                        if (clash) return false;
-                    }
-                    return true;
-                };
-
-                // CHANGED: cell-pair — NEW side first (clash early-exit), then OLD.
-                // Pair sets match per-atom; double acc reduces FP order sensitivity.
-                double cell_pair_acc = 0.0;
-                // NOTE: cp_new_walk_ns / cp_old_walk_ns hold the TOTAL time in
-                // eval_groups for that side. The walk proper (stencil
-                // enumeration, span fetch and moved_bits/skip_mask
-                // bookkeeping) is therefore
-                //     walk = total - r2 - eval
-                // computed by the reporter. Bracketing the walk directly would
-                // need timers inside the per-cell loop, tripling the rdtsc
-                // count for no extra information.
-                const bool new_ok = eval_groups(
-                    ws.new_moved_groups, cnew, /*is_new=*/true, cell_pair_acc);
-                if (!new_ok || clash) {
-                    clash = true;
-                } else if (!eval_groups(ws.old_moved_groups, cold,
-                                        /*is_new=*/false, cell_pair_acc) ||
-                           clash) {
-                    clash = true;
-                } else {
-                    delta_E += static_cast<float>(cell_pair_acc);
-                }
-
-                // Non-rigid: moved–moved at new positions via moved_grid.
-                if (!clash && moved_grid) {
-                    for (int i : moved_indices) {
-                        const float nx = cnew.x(i), ny = cnew.y(i),
-                                    nz = cnew.z(i);
-                        const bool ok_moved = moved_grid->for_each_neighbor_while(
-                            nx, ny, nz, [&](int j) {
-                                ++nstats.mu_num_candidates_iterated;
-                                if (j == i) return true;
-                                if (i > j) return true;
-                                const float r2 = cnew.dist2(i, j);
-                                bool local_clash = false;
-                                note_mu_pair_r2(nstats, r2, contact_cutoff_sq_);
-                                if (r2 <= contact_cutoff_sq_) {
-                                    delta_E +=
-                                        eval_pair(i, j, r2, &local_clash);
-                                }
-                                if (local_clash) {
-                                    clash = true;
-                                    return false;
-                                }
-                                return true;
-                            });
-                        if (!ok_moved || clash) {
-                            clash = true;
-                            break;
+                        for (int m = 0; m < count; ++m) {
+                            if (skip_mask & (1ull << m)) continue;
+                            const float r2 = r2_buf[m];
+                            note_mu_pair_r2(nstats, r2, contact_cutoff_sq_);
+                            if (r2 <= contact_cutoff_sq_)
+                                delta_E -=
+                                    eval_pair<ClashCutoff::None>(i, cids[m], r2, nullptr);
                         }
-                    }
-                }
-            }
-        }
+                    },
+                    &nstats.neighbor_num_cell_visits);
 
-        if (!used_cell_pair && !clash) {
-            // Per-moved-atom fused denselist (legacy / fallback).
-            for (int i : moved_indices) {
-                const float ox = cold.x(i), oy = cold.y(i), oz = cold.z(i);
-                const float nx = cnew.x(i), ny = cnew.y(i), nz = cnew.z(i);
-
-                if (use_span) {
-                    mu_grid_ref.for_each_neighbor_cell_span(
-                        ox, oy, oz,
+                const bool ok_fixed =
+                    mu_grid_ref.for_each_neighbor_cell_span_while(
+                        nx, ny, nz,
                         [&](const int* __restrict__ cids,
                             const float* __restrict__ cx,
                             const float* __restrict__ cy,
@@ -1970,134 +1326,67 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
                             std::uint64_t skip_mask = 0ull;
                             for (int m = 0; m < count; ++m) {
                                 const int j = cids[m];
-                                if (j == i) {
+                                if (j == i ||
+                                    is_moved[static_cast<size_t>(j)])
                                     skip_mask |= (1ull << m);
-                                    continue;
-                                }
-                                if (is_moved[static_cast<size_t>(j)]) {
-                                    if (skip_rigid_mm) {
-                                        ++nstats.elided_rigid_mm;
-                                        skip_mask |= (1ull << m);
-                                    } else if (i > j) {
-                                        skip_mask |= (1ull << m);
-                                    }
-                                }
                             }
                             float r2_buf[OpenCellGrid::CELL_CAPACITY];
 #pragma GCC ivdep
                             for (int m = 0; m < count; ++m) {
-                                const float dx = ox - cx[m];
-                                const float dy = oy - cy[m];
-                                const float dz = oz - cz[m];
+                                const float dx = nx - cx[m];
+                                const float dy = ny - cy[m];
+                                const float dz = nz - cz[m];
                                 r2_buf[m] = pair_r2(dx, dy, dz);
                             }
                             for (int m = 0; m < count; ++m) {
                                 if (skip_mask & (1ull << m)) continue;
                                 const float r2 = r2_buf[m];
-                                note_mu_pair_r2(nstats, r2, contact_cutoff_sq_);
-                                if (r2 <= contact_cutoff_sq_)
-                                    delta_E -=
-                                        eval_pair<ClashCutoff::None>(i, cids[m], r2, nullptr);
-                            }
-                        },
-                        &nstats.neighbor_num_cell_visits);
-
-                    const bool ok_fixed =
-                        mu_grid_ref.for_each_neighbor_cell_span_while(
-                            nx, ny, nz,
-                            [&](const int* __restrict__ cids,
-                                const float* __restrict__ cx,
-                                const float* __restrict__ cy,
-                                const float* __restrict__ cz, int count) {
-                                std::uint64_t skip_mask = 0ull;
-                                for (int m = 0; m < count; ++m) {
-                                    const int j = cids[m];
-                                    if (j == i ||
-                                        is_moved[static_cast<size_t>(j)])
-                                        skip_mask |= (1ull << m);
-                                }
-                                float r2_buf[OpenCellGrid::CELL_CAPACITY];
-#pragma GCC ivdep
-                                for (int m = 0; m < count; ++m) {
-                                    const float dx = nx - cx[m];
-                                    const float dy = ny - cy[m];
-                                    const float dz = nz - cz[m];
-                                    r2_buf[m] = pair_r2(dx, dy, dz);
-                                }
-                                for (int m = 0; m < count; ++m) {
-                                    if (skip_mask & (1ull << m)) continue;
-                                    const float r2 = r2_buf[m];
-                                    bool local_clash = false;
-                                    note_mu_pair_r2(nstats, r2, contact_cutoff_sq_);
-                                    if (r2 <= contact_cutoff_sq_) {
-                                        delta_E += eval_pair(
-                                            i, cids[m], r2, &local_clash);
-                                    }
-                                    if (local_clash) {
-                                        clash = true;
-                                        return false;
-                                    }
-                                }
-                                return true;
-                            },
-                            &nstats.neighbor_num_cell_visits);
-                    if (!ok_fixed || clash) {
-                        clash = true;
-                        break;
-                    }
-                } else {
-                    ns.for_each_mu_candidate(ox, oy, oz, [&](int j) {
-                        if (j == i) return;
-                        if (is_moved[static_cast<size_t>(j)]) {
-                            if (skip_rigid_mm) {
-                                ++nstats.elided_rigid_mm;
-                                return;
-                            }
-                            if (i > j) return;
-                        }
-                        const float r2 = cold.dist2(i, j);
-                        note_mu_pair_r2(nstats, r2, contact_cutoff_sq_);
-                        if (r2 <= contact_cutoff_sq_)
-                            delta_E -= eval_pair<ClashCutoff::None>(i, j, r2, nullptr);
-                    });
-
-                    {
-                        const bool ok_fixed = ns.for_each_mu_candidate_while(
-                            nx, ny, nz, [&](int j) {
-                                if (j == i) return true;
-                                if (is_moved[static_cast<size_t>(j)])
-                                    return true;
-                                const float r2 = cnew.dist2(i, j);
                                 bool local_clash = false;
                                 note_mu_pair_r2(nstats, r2, contact_cutoff_sq_);
                                 if (r2 <= contact_cutoff_sq_) {
-                                    delta_E +=
-                                        eval_pair(i, j, r2, &local_clash);
+                                    delta_E += eval_pair(
+                                        i, cids[m], r2, &local_clash);
                                 }
                                 if (local_clash) {
                                     clash = true;
                                     return false;
                                 }
-                                return true;
-                            });
-                        if (!ok_fixed || clash) {
-                            clash = true;
-                            break;
-                        }
-                    }
+                            }
+                            return true;
+                        },
+                        &nstats.neighbor_num_cell_visits);
+                if (!ok_fixed || clash) {
+                    clash = true;
+                    break;
                 }
+            } else {
+                ns.for_each_mu_candidate(ox, oy, oz, [&](int j) {
+                    if (j == i) return;
+                    if (is_moved[static_cast<size_t>(j)]) {
+                        if (skip_rigid_mm) {
+                            ++nstats.elided_rigid_mm;
+                            return;
+                        }
+                        if (i > j) return;
+                    }
+                    const float r2 = cold.dist2(i, j);
+                    note_mu_pair_r2(nstats, r2, contact_cutoff_sq_);
+                    if (r2 <= contact_cutoff_sq_)
+                        delta_E -= eval_pair<ClashCutoff::None>(i, j, r2, nullptr);
+                });
 
-                if (moved_grid) {
-                    const bool ok_moved = moved_grid->for_each_neighbor_while(
+                {
+                    const bool ok_fixed = ns.for_each_mu_candidate_while(
                         nx, ny, nz, [&](int j) {
-                            ++nstats.mu_num_candidates_iterated;
                             if (j == i) return true;
-                            if (i > j) return true;
+                            if (is_moved[static_cast<size_t>(j)])
+                                return true;
                             const float r2 = cnew.dist2(i, j);
                             bool local_clash = false;
                             note_mu_pair_r2(nstats, r2, contact_cutoff_sq_);
                             if (r2 <= contact_cutoff_sq_) {
-                                delta_E += eval_pair(i, j, r2, &local_clash);
+                                delta_E +=
+                                    eval_pair(i, j, r2, &local_clash);
                             }
                             if (local_clash) {
                                 clash = true;
@@ -2105,10 +1394,34 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
                             }
                             return true;
                         });
-                    if (!ok_moved || clash) {
+                    if (!ok_fixed || clash) {
                         clash = true;
                         break;
                     }
+                }
+            }
+
+            if (moved_grid) {
+                const bool ok_moved = moved_grid->for_each_neighbor_while(
+                    nx, ny, nz, [&](int j) {
+                        ++nstats.mu_num_candidates_iterated;
+                        if (j == i) return true;
+                        if (i > j) return true;
+                        const float r2 = cnew.dist2(i, j);
+                        bool local_clash = false;
+                        note_mu_pair_r2(nstats, r2, contact_cutoff_sq_);
+                        if (r2 <= contact_cutoff_sq_) {
+                            delta_E += eval_pair(i, j, r2, &local_clash);
+                        }
+                        if (local_clash) {
+                            clash = true;
+                            return false;
+                        }
+                        return true;
+                    });
+                if (!ok_moved || clash) {
+                    clash = true;
+                    break;
                 }
             }
         }

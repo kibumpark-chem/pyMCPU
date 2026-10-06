@@ -160,33 +160,25 @@ def test_ignore_all_delta_matches_the_full_recompute(heavy, overlap) -> None:
     assert abs(check.delta_incremental) < CLASH
 
 
-@pytest.mark.parametrize(
-    ("mask_mode", "use_cell_pair"),
-    [(None, True), ("ignore_all", True), ("ignore_all", False)],
-    ids=["contact-list", "cell-pair", "per-atom"],
-)
-def test_every_path_scores_a_clash_free_rigid_move_alike(heavy, mask_mode, use_cell_pair: bool) -> None:
-    """At the native structure a small rigid pivot clashes nowhere, and every
-    Mu path must give the full-energy change for it. (A since-removed clash
-    margin padded the hard core on the cell-pair path only.)"""
+@pytest.mark.parametrize("mask_mode", [None, "ignore_all"], ids=["unmasked", "ignore-all"])
+def test_a_clash_free_rigid_move_scores_the_full_energy_change(heavy, mask_mode) -> None:
+    """At the native structure a small rigid pivot clashes nowhere, and the
+    Mu delta must give the full-energy change for it, with or without a
+    mask."""
     ff = MCPUForceField(heavy)
     coords = np.ascontiguousarray((ff.coords[0] * 10.0).T.astype(np.float32))
     sim = _sim(heavy, coords, mask_mode)
-    sim.context.set_use_cell_pair(use_cell_pair)
-    sim.context.set_cell_pair_min_moved(1)
     moved = _moved_set(sim)
     check = _check_rigid(sim.context, _psi_rotation(heavy, coords, moved), moved)
     assert check.passed, check.message
     assert abs(check.delta_incremental) < CLASH
 
 
-def _far_move(heavy, overlap, *, use_cell_pair: bool):
+def _far_move(heavy, overlap):
     """The clash_only overlap carried 7.5 A by its rigid segment: the
     simulation, the moved coordinates and the moved atoms."""
     coords, _ = overlap
     sim = _sim(heavy, coords, "clash_only")
-    sim.context.set_use_cell_pair(use_cell_pair)
-    sim.context.set_cell_pair_min_moved(1)
     moved = _moved_set(sim)
     new_coords = coords.copy()
     new_coords[:, moved] += np.array([[0.0], [-7.5], [0.0]], dtype=np.float32)
@@ -206,24 +198,29 @@ def _far_move(heavy, overlap, *, use_cell_pair: bool):
 def test_a_rigid_move_does_not_recheck_the_overlap_it_carries(heavy, overlap) -> None:
     """The carried pair keeps its distance, so the move is scored like any
     other: its incremental change matches the full energy's. Masked runs use
-    the contact list like unmasked ones; the per-atom and cell-pair paths are
-    checked below."""
-    sim, new_coords, moved = _far_move(heavy, overlap, use_cell_pair=False)
+    the contact list like unmasked ones; the paths without it are checked
+    below."""
+    sim, new_coords, moved = _far_move(heavy, overlap)
     check = _check_rigid(sim.context, new_coords, moved)
     assert check.passed, check.message
     assert abs(check.delta_incremental) < CLASH
 
 
-@pytest.mark.parametrize("use_cell_pair", [False, True])
-def test_without_the_contact_list_the_carried_overlap_agrees(use_cell_pair: bool) -> None:
-    """The same move on the per-atom walk or the cell-pair path, which a move
-    the contact list cannot follow falls back to. MCPU_CONTACT_LIST is read
-    once per process, so this runs in a fresh one."""
-    code = textwrap.dedent(f"""
+@pytest.mark.parametrize(
+    ("env_var", "walks_grid"),
+    [("MCPU_CONTACT_LIST", False), ("MCPU_USE_CONTIGUOUS_CELLS", True)],
+    ids=["moved-vs-all", "per-atom-walk"],
+)
+def test_without_the_contact_list_the_carried_overlap_agrees(env_var: str, walks_grid: bool) -> None:
+    """The same move without the contact list: MCPU_CONTACT_LIST=0 sends it
+    to the all-pairs moved-vs-all delta, and a grid without its contiguous
+    layout (MCPU_USE_CONTIGUOUS_CELLS=0, as after a cell overflow) to the
+    per-atom grid walk. Both variables are read once per process, so this
+    runs in a fresh one."""
+    code = textwrap.dedent("""
         from tests.physics.forcefield import test_mu_energy_mask_clash as t
         heavy = t._load_heavy()
-        sim, new_coords, moved = t._far_move(heavy, t._make_overlap(heavy),
-                                             use_cell_pair={use_cell_pair})
+        sim, new_coords, moved = t._far_move(heavy, t._make_overlap(heavy))
         stats = sim.context.neighbor_proxy_stats
         before = stats()["neighbor_num_cell_visits"]
         check = t._check_rigid(sim.context, new_coords, moved)
@@ -231,13 +228,13 @@ def test_without_the_contact_list_the_carried_overlap_agrees(use_cell_pair: bool
         print("CHECK", check.passed, check.delta_incremental, walked)
     """)
     repo = Path(__file__).resolve().parents[3]
-    env = dict(os.environ, MCPU_CONTACT_LIST="0")
+    env = dict(os.environ, **{env_var: "0"})
     run = subprocess.run([sys.executable, "-c", code], cwd=repo, env=env,
                          capture_output=True, text=True, check=True)
     passed, delta, walked = [line.split()[1:] for line in run.stdout.splitlines()
                              if line.startswith("CHECK ")][-1]
-    # The per-atom walk counts cell visits and the cell-pair path does not,
-    # so this confirms which path ran (MCPU_USE_CELL_PAIR would override it).
-    assert walked == str(not use_cell_pair)
+    # The per-atom walk counts cell visits and moved-vs-all does not, so
+    # this confirms which path ran.
+    assert walked == str(walks_grid)
     assert passed == "True"
     assert abs(float(delta)) < CLASH
