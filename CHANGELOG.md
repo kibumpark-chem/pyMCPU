@@ -454,6 +454,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Per-step fixed costs trimmed, bit-identical.** H-bond pair evaluation
+  bins its six orientation angles and makes the CA-CA test on cosines,
+  using acos only when a cosine is within 1e-4 of a bin edge, and computes
+  each Ramachandran-gate dihedral only when a test reads it (libm acosf and
+  atan2f were about 6% of T4L default cycles). The Sturm solver no longer
+  zero-fills its 4.6 KB polynomial sequence on every solve.
+  `trial_in_bounds` checks a contiguous moved range (every pivot) in one
+  branch-free pass. Interleaved A/B against the previous main (n=3, user
+  cycles/step) on T4L, CA2, LDH-A, actin and PGK1: default mix -2% to -6%
+  (actin 78.3k -> 73.6k), KIC-only -2% to -7%, pivot-only -2% to -5%;
+  those numbers also include a cheaper virtual amide H grid reset that the
+  H-bond ledger change below has since replaced. Final energies, accept
+  sequences and `arch_parity_dump` are unchanged.
+
 - **H-bond moves score each changed pair once.** `HBondPotential` now keeps
   the accepted state's nonzero (donor, acceptor) pair energies on the
   `State` (`HBondStateCache`) and folds each accepted move into it through
