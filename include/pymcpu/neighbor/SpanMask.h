@@ -69,7 +69,9 @@ struct Probe {
         _mm256_castsi256_ps(_mm256_cmpeq_epi32(ids, _mm256_set1_epi32(self)))));
     keep &= ~is_self;
     const int left = count - m0;
-    const unsigned valid = left >= 8 ? 0xFFu : ((1u << left) - 1u);
+    // left <= 0 (a block past the span, see probe_static_collect) keeps none.
+    const unsigned valid =
+        left >= 8 ? 0xFFu : (left <= 0 ? 0u : ((1u << left) - 1u));
     return keep & valid;
 #else
     unsigned keep = 0;

@@ -644,9 +644,32 @@ public:
 
     /// for_each_neighbor_cell_span_while minus the cells whose atoms all
     /// moved; see for_each_cell_span_within_fast_unmoved.
+    /// The live stencil cells of the last probe a walk collected, keyed by
+    /// that probe's home cell. Consecutive moved atoms of a chain mostly
+    /// share a home cell, and their stencils are then the same cells: the
+    /// next probe reuses the list instead of testing all 27 offsets again.
+    /// Valid only while the grid and the moved-cell counts stay as they were
+    /// (one moved_vs_static walk); a fresh memo matches no cell.
+    struct StencilMemo {
+        int ix = std::numeric_limits<int>::min();
+        int iy = 0;
+        int iz = 0;
+        int n_live = 0;
+        int live[128];
+    };
+
     template <typename CellFunc>
     bool for_each_neighbor_cell_span_while_unmoved(float x, float y, float z,
                                                    const std::uint8_t* moved_per_cell,
+                                                   CellFunc&& cell_fn) const {
+        return for_each_neighbor_cell_span_while_unmoved(
+            x, y, z, moved_per_cell, nullptr, std::forward<CellFunc>(cell_fn));
+    }
+
+    template <typename CellFunc>
+    bool for_each_neighbor_cell_span_while_unmoved(float x, float y, float z,
+                                                   const std::uint8_t* moved_per_cell,
+                                                   StencilMemo* memo,
                                                    CellFunc&& cell_fn) const {
         if (!configured_ || neighbor_offsets_.empty() || !use_contiguous_)
             return true;
@@ -660,8 +683,13 @@ public:
         if (neighbor_offsets_.size() <= kMaxLive) {
             // Branch-free collection, then the visits in the same order; see
             // for_each_cell_span_within_fast_unmoved.
-            int live[kMaxLive];
+            int local_live[kMaxLive];
+            int* const live = memo ? memo->live : local_live;
             int n_live = 0;
+            if (memo && memo->ix == ix0 && memo->iy == iy0 && memo->iz == iz0) {
+                n_live = memo->n_live;
+                goto visit;
+            }
             for (const CellOffset& o : neighbor_offsets_) {
                 const int ix = ix0 + o.dx;
                 const int iy = iy0 + o.dy;
@@ -674,6 +702,13 @@ public:
                 n_live += (cell_count_[static_cast<size_t>(c)] !=
                            static_cast<int>(moved_per_cell[static_cast<size_t>(c)]));
             }
+            if (memo) {
+                memo->ix = ix0;
+                memo->iy = iy0;
+                memo->iz = iz0;
+                memo->n_live = n_live;
+            }
+        visit:
             for (int k = 0; k < n_live; ++k) {
                 const size_t c = static_cast<size_t>(live[k]);
                 const size_t base = c * CELL_CAPACITY;
