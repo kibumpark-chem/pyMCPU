@@ -132,7 +132,7 @@ index cannot touch it. The cost is dominated by the per-pair work: the frame
 algebra, the inverse trig, and one gather into a 332 MB table.
 
 That is why the polar angles are compared as cosines rather than as angles
-(see `PairCoordinates`): removing two `acos` calls from the per-pair path is
+(see `PairVectors`): removing two `acos` calls from the per-pair path is
 worth ~20% of the step, which is three times what an index would return.
 Per-step cost scales close to linearly in chain length — ~480 µs at 200
 residues, ~1.1 ms at 400, ~2.2 ms at 686.

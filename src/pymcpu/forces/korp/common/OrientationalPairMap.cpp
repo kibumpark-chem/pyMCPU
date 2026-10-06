@@ -75,6 +75,72 @@ OrientationalPairMap::OrientationalPairMap(
     for (std::int8_t s : smapping_) {
         need(s < static_cast<std::int8_t>(nslices_), "smapping refers to a missing slice");
     }
+
+    // Bin-edge directions for the azimuth and dihedral bins (see angle_bin).
+    // Edge i of a bin of width w sits at angle i * w, i.e. at atan2-angle
+    // i * w - pi. A bin wider than pi/2 that is not the whole circle could put
+    // a tested edge more than pi from the vector, where the cross product's
+    // sign no longer says which side it is on; no released map has one.
+    const auto add_edges = [](std::vector<Edge>& out, float width, int n) {
+        for (int i = 0; i <= n; ++i) {
+            const double e = static_cast<double>(i) * static_cast<double>(width) - M_PI;
+            out.push_back(Edge{std::cos(e), std::sin(e)});
+        }
+    };
+    const auto check_width = [&](float width, int n) {
+        need(n > 0 && width > 0.f, "empty angular bin");
+        need(n == 1 || static_cast<double>(width) <= 0.5 * M_PI + 1e-6,
+             "angular bins wider than pi/2 must cover the whole circle");
+    };
+    psi_edge_offset_.resize(rings);
+    ring_inv_dpsi_.resize(rings);
+    for (std::size_t k = 0; k < rings; ++k) {
+        check_width(ring_dpsi_[k], ring_ncells_[k]);
+        psi_edge_offset_[k] = static_cast<int>(psi_edge_.size());
+        ring_inv_dpsi_[k] = 1.f / ring_dpsi_[k];
+        add_edges(psi_edge_, ring_dpsi_[k], ring_ncells_[k]);
+    }
+    chi_edge_offset_.resize(static_cast<std::size_t>(nr_));
+    shell_inv_dchi_.resize(static_cast<std::size_t>(nr_));
+    for (int s = 0; s < nr_; ++s) {
+        const std::size_t u = static_cast<std::size_t>(s);
+        check_width(shell_dchi_[u], shell_nchi_[u]);
+        chi_edge_offset_[u] = static_cast<int>(chi_edge_.size());
+        shell_inv_dchi_[u] = 1.f / shell_dchi_[u];
+        add_edges(chi_edge_, shell_dchi_[u], shell_nchi_[u]);
+    }
+
+    // Padded boundaries for the branch-free shell and ring counts, used when
+    // the map fits them and its boundaries are ordered (then the count and
+    // upstream's loop agree); otherwise bins() runs upstream's loops.
+    bool fits = nr_ < kMaxShells;
+    for (int s = 0; fits && s < nr_; ++s) {
+        fits = br_[static_cast<std::size_t>(s)] < br_[static_cast<std::size_t>(s) + 1];
+        const int lo = ring_offset_[static_cast<std::size_t>(s)];
+        const int hi = ring_offset_[static_cast<std::size_t>(s) + 1];
+        fits = fits && hi > lo && hi - lo <= kMaxRings + 1;
+        for (int i = lo; fits && i + 1 < hi; ++i) {
+            fits = ring_cos_theta_[static_cast<std::size_t>(i)]
+                   >= ring_cos_theta_[static_cast<std::size_t>(i) + 1];
+        }
+    }
+    padded_ = fits;
+    if (padded_) {
+        for (int s = 0; s < kMaxShells; ++s) {
+            br_pad_[s] = s <= nr_ ? static_cast<double>(br_[static_cast<std::size_t>(s)])
+                                  : HUGE_VAL;
+        }
+        ring_cos_pad_.assign(static_cast<std::size_t>(nr_) * kMaxRings, -HUGE_VAL);
+        for (int s = 0; s < nr_; ++s) {
+            const int lo = ring_offset_[static_cast<std::size_t>(s)];
+            const int nring = ring_offset_[static_cast<std::size_t>(s) + 1] - lo;
+            for (int i = 0; i + 1 < nring; ++i) {
+                ring_cos_pad_[static_cast<std::size_t>(s) * kMaxRings
+                              + static_cast<std::size_t>(i)] =
+                    ring_cos_theta_[static_cast<std::size_t>(lo + i)];
+            }
+        }
+    }
 }
 
 } // namespace mcpu::forces

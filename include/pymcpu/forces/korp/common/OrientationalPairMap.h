@@ -16,11 +16,15 @@
 ///
 /// Binning transcribed from `contact2bins` (chaconlab/Korp, korpe.cpp).
 
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <stdexcept>
 #include <string>
 #include <vector>
+#if defined(__SSE__)
+#include <immintrin.h>
+#endif
 
 #include "pymcpu/forces/korp/common/ResidueFrame.h"
 
@@ -82,24 +86,25 @@ public:
     /// radial loop has no upper bound and walks off the end of the boundary
     /// array otherwise, and this port keeps the same shape rather than adding a
     /// branch to the hot path.
-    [[nodiscard]] PairBins bins(const PairCoordinates& pc) const noexcept {
+    [[nodiscard]] PairBins bins(const PairVectors& pv) const noexcept {
         int shell = 0;
-        while (pc.d > br_[static_cast<std::size_t>(shell) + 1]) ++shell;
-
+        if (padded_) {
+            // Count of inner boundaries below d: the same shell as the loop
+            // below for increasing boundaries, without its unpredictable exit.
+            for (int s = 1; s < kMaxShells; ++s) shell += pv.d > br_pad_[s];
+        } else {
+            while (pv.d > br_[static_cast<std::size_t>(shell) + 1]) ++shell;
+        }
         PairBins out;
         out.shell = shell;
-        out.cell_a = angular_cell(shell, pc.cos_theta_a, pc.psi_a);
-        out.cell_b = angular_cell(shell, pc.cos_theta_b, pc.psi_b);
-
-        const int nchi = shell_nchi_[static_cast<std::size_t>(shell)];
-        int ic = static_cast<int>(pc.chi / shell_dchi_[static_cast<std::size_t>(shell)]);
-        if (ic >= nchi) ic = nchi - 1;   // upstream: "rarely... but it does"
-        if (ic < 0) ic = 0;
-        out.chi = ic;
+        out.cell_a = angular_cell(shell, pv.cos_theta_a, pv.psi_a_y, pv.psi_a_x);
+        out.cell_b = angular_cell(shell, pv.cos_theta_b, pv.psi_b_y, pv.psi_b_x);
+        const std::size_t us = static_cast<std::size_t>(shell);
+        out.chi = angle_bin(pv.chi_y, pv.chi_x, shell_dchi_[us], shell_inv_dchi_[us],
+                            shell_nchi_[us], &chi_edge_[static_cast<std::size_t>(chi_edge_offset_[us])]);
         return out;
     }
 
-    /// Raw (unweighted) table entry.
     /// Index into the table of the entry for (slice, type_a, type_b, bins).
     [[nodiscard]] std::size_t entry_index(int slice, int type_a, int type_b,
                                           const PairBins& b) const noexcept
@@ -115,6 +120,7 @@ public:
             + static_cast<std::size_t>(b.chi);
     }
 
+    /// Raw (unweighted) table entry.
     [[nodiscard]] float entry(std::size_t index) const noexcept { return table_[index]; }
 
     /// Address of an entry, for a prefetch. The table is ~330 MB and mapped
@@ -136,23 +142,94 @@ private:
                * static_cast<std::size_t>(block_stride_);
     }
 
-    [[nodiscard]] int angular_cell(int shell, double cos_theta, double psi) const noexcept {
-        const std::size_t lo = static_cast<std::size_t>(ring_offset_[static_cast<std::size_t>(shell)]);
-        const std::size_t hi = static_cast<std::size_t>(ring_offset_[static_cast<std::size_t>(shell) + 1]);
-        const int nring = static_cast<int>(hi - lo);
+    /// Direction of a bin edge: the edge at angle e (pi + atan2 convention)
+    /// is the unit vector at atan2-angle e - pi.
+    struct Edge { double c, s; };
 
+    /// Bin of pi + atan2(y, x) in bins of `width`, clamped to [0, n - 1]:
+    /// upstream's `(int)(angle / width)`, found without atan2.
+    ///
+    /// A rough float angle (octant reduction and a cubic in min/max, with an
+    /// approximate reciprocal; error below 2.5e-3 rad) picks a bin, and the
+    /// vector is then tested against that bin's two edges, in double, by the
+    /// sign of a cross product, which moves it to the neighbouring bin when
+    /// the rough guess was off. The guess is off only within 2.5e-3 rad of an
+    /// edge, and the narrowest bin is 0.63 rad, so one step either way is
+    /// always enough. The edge tests make the result exact up to the rounding
+    /// of a cross product, a few ulp of the angle, where the atan2 form decided
+    /// by its own rounding. The constructor guarantees bins of at most pi/2
+    /// whenever n > 1, so each edge tested is within pi of the vector and the
+    /// sign of the cross product says which side of the edge it is on.
+    [[nodiscard]] static int angle_bin(double y, double x, float width, float inv_width,
+                                       int n, const Edge* edge) noexcept {
+        if (n == 1) return 0;
+        if (y == 0.0 && x == 0.0) {
+            // atan2(0, 0) = 0: the angle is exactly pi. Never seen in practice
+            // (a zero projection), and the edge tests cannot place it.
+            int i = static_cast<int>(M_PI / static_cast<double>(width));
+            return i >= n ? n - 1 : (i < 0 ? 0 : i);
+        }
+        const float fy = static_cast<float>(y);
+        const float fx = static_cast<float>(x);
+        const float ay = std::fabs(fy);
+        const float ax = std::fabs(fx);
+        const float hi = ay > ax ? ay : ax;
+        const float lo = ay > ax ? ax : ay;
+#if defined(__SSE__)
+        const float t = hi > 0.f ? lo * _mm_cvtss_f32(_mm_rcp_ss(_mm_set_ss(hi))) : 0.f;
+#else
+        const float t = hi > 0.f ? lo / hi : 0.f;
+#endif
+        float r = t * (0.78539816f + (1.f - t) * (0.2447f + 0.0663f * t));
+        r = ay > ax ? 1.57079633f - r : r;
+        r = fx < 0.f ? 3.14159265f - r : r;
+        r = fy < 0.f ? -r : r;   // -0 counts as +0, as atan2's angle did
+        int i = static_cast<int>((r + 3.14159265f) * inv_width);
+        i = i >= n ? n - 1 : (i < 0 ? 0 : i);
+        // below(k): the vector lies before edge k, i.e. angle < k * width.
+        const bool down = (i > 0) & (edge[i].c * y - edge[i].s * x < 0.0);
+        const bool up = (i < n - 1) & !(edge[i + 1].c * y - edge[i + 1].s * x < 0.0);
+        return i - static_cast<int>(down) + static_cast<int>(up);
+    }
+
+    [[nodiscard]] __attribute__((always_inline)) int angular_cell(int shell, double cos_theta, double y,
+                                   double x) const noexcept {
+        const std::size_t lo = static_cast<std::size_t>(ring_offset_[static_cast<std::size_t>(shell)]);
         // `theta > ring_theta[i]`, rewritten with cosines: acos decreases, so
         // the inequality flips. Exactly the same ring, two fewer acos calls.
         int ring = 0;
-        while (cos_theta < ring_cos_theta_[lo + static_cast<std::size_t>(ring)]
-               && ring < nring - 1) ++ring;
-
+        if (padded_) {
+            // The rings' cosines decrease, so the loop below stops at the first
+            // boundary not above cos_theta: counting the boundaries above it
+            // gives the same ring. Unused slots hold -inf and never count.
+            const double* rc = &ring_cos_pad_[static_cast<std::size_t>(shell) * kMaxRings];
+            for (int i = 0; i < kMaxRings; ++i) ring += cos_theta < rc[i];
+        } else {
+            const int nring = ring_offset_[static_cast<std::size_t>(shell) + 1]
+                              - ring_offset_[static_cast<std::size_t>(shell)];
+            while (cos_theta < ring_cos_theta_[lo + static_cast<std::size_t>(ring)]
+                   && ring < nring - 1) ++ring;
+        }
         const std::size_t k = lo + static_cast<std::size_t>(ring);
-        int ip = static_cast<int>(psi / ring_dpsi_[k]);
-        if (ip >= ring_ncells_[k]) ip = ring_ncells_[k] - 1;
-        if (ip < 0) ip = 0;
+        const int ip = angle_bin(y, x, ring_dpsi_[k], ring_inv_dpsi_[k], ring_ncells_[k],
+                                 &psi_edge_[static_cast<std::size_t>(psi_edge_offset_[k])]);
         return ring_first_cell_[k] + ip;
     }
+
+    /// Fixed-size, padded copies of the shell and ring boundaries, so the
+    /// shell and ring are counted without data-dependent loop exits. Used
+    /// when the map fits (`padded_`); otherwise the loops run as upstream's.
+    static constexpr int kMaxShells = 16;
+    static constexpr int kMaxRings = 8;
+    bool padded_ = false;
+    double br_pad_[kMaxShells];
+    std::vector<double> ring_cos_pad_;   // nr * kMaxRings
+
+    /// Bin-edge directions: ring k's psi edges start at psi_edge_offset_[k]
+    /// (ring_ncells + 1 of them), shell s's chi edges at chi_edge_offset_[s].
+    std::vector<Edge> psi_edge_, chi_edge_;
+    std::vector<int> psi_edge_offset_, chi_edge_offset_;
+    std::vector<float> ring_inv_dpsi_, shell_inv_dchi_;
 
     float cutoff_, cutoff_sq_, min_r_;
     int nr_, nslices_;
