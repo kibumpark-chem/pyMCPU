@@ -87,13 +87,6 @@ your own tables.
       Install the topology contact/clash masks and seed the internal
       caches from ``coords`` (a ``float32`` ``(3, n)`` array).
 
-   .. py:method:: set_topology_atom_meta(res_index, is_sidechain, atom_role, res_class) -> None
-
-      Per-atom metadata (residue, side chain or not, atom role, residue
-      class) the term uses to decide which pairs count; set by the force
-      field. All four arguments are ``Sequence[int]`` of length
-      ``n_atoms``.
-
    .. py:method:: calculate_energy_change(context, old_state, new_state, patch) -> float
 
       Incremental energy for one proposed move. Called by the
@@ -117,20 +110,11 @@ your own tables.
       Read-only. ``mu_exact_cutoff`` squared, used in the denselist
       ``r²`` prefilter.
 
-   .. py:attribute:: clash_exception_count
+   .. rubric:: Internals
 
-      Read-only ``int``. Number of native-structure clash exceptions: pairs
-      already under their move cutoff in the structure the force field was
-      built from, exempt from the clash test for the whole run.
-
-   .. rubric:: Internals and benchmarking
-
-   These are development hooks, not part of the stable API:
-   ``use_topo_flags`` (read/write ``bool``, default ``True``; ``False``
-   selects the older on-the-fly Layer 1 decode, as does
-   ``MCPU_TOPO_FLAGS=0``), ``topo_flag_size_mb``,
-   ``type_params_size_kb``, ``verify_layered_eval_consistency()`` and
-   ``bench_eval_pair_only(n_iter=1000000)``.
+   Read-only table sizes, for diagnostics and not part of the stable API:
+   ``topo_flag_size_mb`` (the per-pair flag table) and
+   ``type_params_size_kb`` (the type-pair parameter table).
 
 .. py:class:: TripletPotential(loaded_params)
 

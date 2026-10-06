@@ -62,7 +62,7 @@ namespace mcpu::forces::mcpu08 {
         /// FIXED: keep sizeof == 16. A precomputed `hard_r` field briefly took
         /// this to 20 B, which is not a divisor of the 64 B line, so 25% of
         /// entries straddled two lines (at 16 B: none do) and the by-value copy
-        /// in eval_pair_layered_v2 stopped being a single movups. `hard_r` was
+        /// in eval_pair stopped being a single movups. `hard_r` was
         /// write-only anyway -- it existed solely to feed hard_tol_r2_from() on
         /// the following line at setup, so it is now a local there instead.
         struct TypePairParams {
@@ -83,67 +83,10 @@ namespace mcpu::forces::mcpu08 {
         float clash_prefilter_r2_ = std::numeric_limits<float>::infinity();
         int n_types_ = 0;
 
-        // ── Three-layer eval ───────────────────────────────────────────────
-        // Layer 1: O(N) topology metadata — on-the-fly clash/contact enable.
-        // Layer 2: type_params_ (always built) — hard_r2 / contact_r2 / energy.
-        // Layer 3: SparseClashExceptions — native-dist structure clash disables.
-        // Needs atom_role + is_sc, not just is_bb.
-
-        /// Atom-name roles for Layer 1 (mirrors mu_builder.py name checks).
-        enum class MuAtomRole : uint8_t {
-            Other = 0,
-            H = 1,
-            N = 2,
-            CA = 3,
-            C = 4,
-            O = 5,       ///< O / OCT / OXT
-            CB = 6,
-            CD = 7,
-            SG = 8,
-            Gx = 9       ///< name.startswith('G') — CG*, OG*, …
-        };
-        /// Residue class for Layer 1 PRO / CYS specials.
-        enum class MuResClass : uint8_t {
-            Other = 0,
-            PRO = 1,
-            CYS = 2
-        };
-
-        std::vector<int32_t> res_index_;   ///< residue index per atom; size N
-        std::vector<uint8_t> is_sc_;       ///< 1 if sidechain atom, else 0
-        std::vector<uint8_t> atom_role_;   ///< MuAtomRole per atom
-        std::vector<uint8_t> res_class_;   ///< MuResClass per atom
-        bool layer1_meta_ready_ = false;
-
-        /// Sparse CSR of structure-clash-disabled atom pairs (Layer 3).
-        /// Only pairs where native_dist² < hard_r2 AND topology would keep clash on.
-        struct SparseClashExceptions {
-            std::vector<int32_t> row_start;  ///< size N+1
-            std::vector<int32_t> col;        ///< sorted neighbor indices
-
-            [[nodiscard]] bool contains(int i, int j) const noexcept {
-                const auto* b = col.data() + row_start[static_cast<size_t>(i)];
-                const auto* e = col.data() + row_start[static_cast<size_t>(i) + 1];
-                const int n = static_cast<int>(e - b);
-                if (n == 0) return false;
-                if (n <= 8) {
-                    for (const auto* p = b; p != e; ++p)
-                        if (*p == j) return true;
-                    return false;
-                }
-                return std::binary_search(b, e, static_cast<int32_t>(j));
-            }
-
-            [[nodiscard]] bool has_any() const noexcept { return !col.empty(); }
-        };
-        SparseClashExceptions clash_exceptions_;
-
-        /// Precomputed per-pair topology+structure enable flags (layered v2).
-        /// Bits: bit0=clash_ok, bit1=contact_ok. Index i*N+j.
-        /// Built in cache_necessary_data (includes Rules 0–8 + structure).
-        /// Env ``MCPU_TOPO_FLAGS=0`` forces Layer 1 branch decode (v1).
+        /// Per-pair enable flags, index i*N+j: bit0 = the pair can clash,
+        /// bit1 = it can make a contact. Built in cache_necessary_data from
+        /// the Python topology masks (mu_builder) and the native structure.
         std::vector<uint8_t> topo_flag_;
-        bool use_topo_flags_ = true;
 
         /// topo_flag_ in a form that fits in cache, read by topo_flag().
         /// topo_flag_ is N*N bytes (8.5 MB on actin) and its lookups were
@@ -235,111 +178,6 @@ namespace mcpu::forces::mcpu08 {
         static_assert(kTopoBand == kSkipLocalContactRange,
                       "the band holds the pairs whose contacts are switched off by sequence");
 
-        /// Fills clash/contact enable from Layer 1 (mirrors mu_builder Rules 0–6).
-        [[gnu::always_inline]] inline void topology_pair_flags(
-            int i, int j, bool& clash_on, bool& contact_on) const noexcept
-        {
-            clash_on = false;
-            contact_on = false;
-            const auto ri = static_cast<MuAtomRole>(atom_role_[static_cast<size_t>(i)]);
-            const auto rj = static_cast<MuAtomRole>(atom_role_[static_cast<size_t>(j)]);
-            // Rule 0: mute H for all pairs
-            if (ri == MuAtomRole::H || rj == MuAtomRole::H) {
-                return;
-            }
-            const int sep = std::abs(
-                static_cast<int>(res_index_[static_cast<size_t>(i)]) -
-                static_cast<int>(res_index_[static_cast<size_t>(j)]));
-            const bool sc_i = is_sc_[static_cast<size_t>(i)] != 0;
-            const bool sc_j = is_sc_[static_cast<size_t>(j)] != 0;
-            const auto rc_i =
-                static_cast<MuResClass>(res_class_[static_cast<size_t>(i)]);
-            const auto rc_j =
-                static_cast<MuResClass>(res_class_[static_cast<size_t>(j)]);
-
-            if (sep == 0) {
-                // Rule 1 — contact always off
-                if (sc_i == sc_j) return;  // BB–BB or SC–SC: clash off
-                // BB–SC
-                const int b = sc_i ? j : i;
-                const int s = sc_i ? i : j;
-                const auto rb = static_cast<MuAtomRole>(
-                    atom_role_[static_cast<size_t>(b)]);
-                const auto rs = static_cast<MuAtomRole>(
-                    atom_role_[static_cast<size_t>(s)]);
-                const auto rc = static_cast<MuResClass>(
-                    res_class_[static_cast<size_t>(i)]);  // same residue
-                if ((rb == MuAtomRole::C || rb == MuAtomRole::N ||
-                     rb == MuAtomRole::CA) &&
-                    rs == MuAtomRole::CB) {
-                    return;  // clash off
-                }
-                if (rc == MuResClass::PRO) return;
-                if (rb == MuAtomRole::CA && rs == MuAtomRole::Gx) return;
-                clash_on = true;
-                return;
-            }
-            if (sep == 1) {
-                // Rule 2 — contact always off
-                const bool i_first =
-                    res_index_[static_cast<size_t>(i)] <
-                    res_index_[static_cast<size_t>(j)];
-                const int first = i_first ? i : j;
-                const int second = i_first ? j : i;
-                const auto rf = static_cast<MuAtomRole>(
-                    atom_role_[static_cast<size_t>(first)]);
-                const auto rs = static_cast<MuAtomRole>(
-                    atom_role_[static_cast<size_t>(second)]);
-                const auto rc_second = static_cast<MuResClass>(
-                    res_class_[static_cast<size_t>(second)]);
-                const bool sc_f = is_sc_[static_cast<size_t>(first)] != 0;
-                const bool sc_s = is_sc_[static_cast<size_t>(second)] != 0;
-                const bool is_pro_cd =
-                    (rs == MuAtomRole::CD && rc_second == MuResClass::PRO);
-                if (is_pro_cd &&
-                    (rf == MuAtomRole::C || rf == MuAtomRole::CA)) {
-                    return;  // clash off
-                }
-                if (rf == MuAtomRole::N ||
-                    (rs != MuAtomRole::CA && rs != MuAtomRole::N) || sc_f ||
-                    sc_s) {
-                    clash_on = true;
-                    return;
-                }
-                return;  // peptide-local: clash off
-            }
-            if (sep <= kSkipLocalContactRange) {
-                // Rule 3: clash on, contact off.
-                //
-                // FIXED: was `sep < kSkipLocalContactRange`, which let residue
-                // pairs at EXACTLY the skip range (default 4 -- the canonical
-                // alpha-helix i,i+4 spacing) fall through to the long-range
-                // branch and switch contacts ON. Legacy MCPU's CheckCorrelation
-                // (init.h) gates on `> SKIP_LOCAL_CONTACT_RANGE`, i.e. contacts
-                // only from sep >= 5, and mu_builder.py:194 was already fixed to
-                // match (`res_diff <= skip_local_contact_range`). This Layer-1
-                // decode was the last place still disagreeing.
-                //
-                // Not reachable in a default run -- use_topo_flags_ is on, so the
-                // Python-built topo_flag_ table is what production reads -- but it
-                // IS live under MCPU_TOPO_FLAGS=0, which is why that knob used to
-                // change the trajectory instead of just the code path.
-                clash_on = true;
-                return;
-            }
-            // Rule 4 / 6 — distant
-            if (rc_i == MuResClass::CYS && rc_j == MuResClass::CYS &&
-                ri == MuAtomRole::SG && rj == MuAtomRole::SG) {
-                // Rule 6: clash off, contact on
-                contact_on = true;
-                return;
-            }
-            clash_on = true;
-            contact_on = sc_i || sc_j;  // BB–BB: contact off
-        }
-
-        /// Build Layer 3 CSR from final clash masks + Layer 1 rules. O(N²).
-        void build_clash_exceptions();
         /// Rebuild type_params_ from contact matrices (after atom permute). O(N²).
         void rebuild_type_params_from_matrices();
         /// Stores atom pair (i, j)'s parameters as its type pair's entry.
@@ -432,9 +270,7 @@ namespace mcpu::forces::mcpu08 {
             // topo_flag_ table plus a type_params_ load per pair.
             if (!(r2 < clash_prefilter_r2_)) return false;
             if (mask_ignores_pair(i, j)) return false;
-            if (!topo_flag_.empty()) {
-                if (!(topo_flag(i, j) & 1u)) return false;
-            }
+            if (!(topo_flag(i, j) & 1u)) return false;
             const size_t NT = static_cast<size_t>(n_types_);
             const int ti = atom_types[static_cast<size_t>(i)];
             const int tj = atom_types[static_cast<size_t>(j)];
@@ -448,12 +284,16 @@ namespace mcpu::forces::mcpu08 {
             return is_hard_clash(r2, hard_tol_r2);
         }
 
-        /// Layered v2: single-byte topo_flag_ + type_params_. O(1).
+        /// Hot pair energy for known r2. Returns contact energy or 0; sets
+        /// *clash_out on a hard-core overlap under cutoff C, and *near_out for
+        /// a contact pair outside its cutoff by less than the near-miss band
+        /// (see kContactBandA). One topo_flag() byte decides which halves
+        /// apply; type_params_ supplies the radii and energy.
         template <ClashCutoff C = ClashCutoff::Move>
-        [[gnu::always_inline]] inline float eval_pair_layered_v2(
-            int i, int j, float r2, bool* clash_out,
-            bool* near_out = nullptr) const noexcept
-        {
+        [[gnu::always_inline]] inline float eval_pair(
+            int i, int j, float r2, bool* clash_out, bool* near_out = nullptr
+        ) const {
+            ++eval_pair_calls_local_;
             const uint8_t flag = topo_flag(i, j);
             if (flag == 0) {
                 return 0.0f;
@@ -496,84 +336,6 @@ namespace mcpu::forces::mcpu08 {
                 *near_out = true;
             }
             return 0.0f;
-        }
-
-        /// Layered v1: on-the-fly topology decode + CSR exceptions. O(1) amortized.
-        template <ClashCutoff C = ClashCutoff::Move>
-        [[gnu::always_inline]] inline float eval_pair_layered_v1(
-            int i, int j, float r2, bool* clash_out,
-            bool* near_out = nullptr) const noexcept
-        {
-            bool clash_on = false, contact_on = false;
-            topology_pair_flags(i, j, clash_on, contact_on);
-            if (!clash_on && !contact_on) {
-                return 0.0f;
-            }
-
-            if (clash_on && clash_exceptions_.has_any()) {
-                if (clash_exceptions_.contains(i, j)) clash_on = false;
-            }
-
-            const size_t NT = static_cast<size_t>(n_types_);
-            const int ti = atom_types[static_cast<size_t>(i)];
-            const int tj = atom_types[static_cast<size_t>(j)];
-            TypePairParams g{};
-            if (ti >= 0 && tj >= 0 && NT > 0) {
-                g = type_params_[static_cast<size_t>(ti) * NT +
-                                 static_cast<size_t>(tj)];
-            }
-
-            if (energy_mask_ptr_) {
-                const auto ri = atom_to_residue[static_cast<size_t>(i)];
-                const auto rj = atom_to_residue[static_cast<size_t>(j)];
-                if (energy_mask_ptr_[static_cast<size_t>(ri)] |
-                    energy_mask_ptr_[static_cast<size_t>(rj)]) {
-                    if (energy_mask_mode_cached_ == EnergyMaskMode::ClashOnly) {
-                        if (clash_on && clashes_at<C>(r2, g.hard_tol_r2)) {
-                            if (clash_out) *clash_out = true;
-                        }
-                        return 0.0f;
-                    }
-                    return 0.0f;
-                }
-            }
-
-            if (clash_on && clashes_at<C>(r2, g.hard_tol_r2)) {
-                if (clash_out) *clash_out = true;
-                return 0.0f;
-            }
-            if (contact_on && g.energy != 0.0f && r2 <= g.contact_r2) {
-                ++eval_pair_nonzero_local_;
-                return g.energy;
-            }
-            if (near_out && contact_on && g.energy != 0.0f &&
-                r2 < g.contact_r2 + contact_band_w_r2_) {
-                *near_out = true;
-            }
-            return 0.0f;
-        }
-
-        /// Dispatch layered v1 (branches) or v2 (topo_flag_).
-        template <ClashCutoff C = ClashCutoff::Move>
-        [[gnu::always_inline]] inline float eval_pair_layered(
-            int i, int j, float r2, bool* clash_out,
-            bool* near_out = nullptr) const noexcept
-        {
-            if (use_topo_flags_ && !topo_flag_.empty())
-                return eval_pair_layered_v2<C>(i, j, r2, clash_out, near_out);
-            return eval_pair_layered_v1<C>(i, j, r2, clash_out, near_out);
-        }
-
-        /// Hot pair energy for known r2. Returns contact energy or 0; sets
-        /// *clash_out on a hard-core overlap under cutoff C, and *near_out for
-        /// a contact pair outside its cutoff by less than the near-miss band
-        /// (see kContactBandA).
-        template <ClashCutoff C = ClashCutoff::Move>
-        [[gnu::always_inline]] inline float eval_pair(
-            int i, int j, float r2, bool* clash_out, bool* near_out = nullptr
-        ) const {
-            ++eval_pair_calls_local_;
-            return eval_pair_layered<C>(i, j, r2, clash_out, near_out);
         }
 
         /// Contact energy of a pair already on the contact list at distance²
@@ -703,15 +465,6 @@ namespace mcpu::forces::mcpu08 {
             const Eigen::Matrix3Xf& coords
         );
 
-        /// Install Layer 1 per-atom topology metadata (from Python builder).
-        /// Must be called before cache_necessary_data for layered eval.
-        void set_topology_atom_meta(
-            std::vector<int32_t> res_index,
-            std::vector<uint8_t> is_sidechain,
-            std::vector<uint8_t> atom_role,
-            std::vector<uint8_t> res_class
-        );
-
         void permute_atom_indices(const AtomPermutation& perm) override;
 
         /// Times a state's contact list was rebuilt from its coordinates.
@@ -753,11 +506,6 @@ namespace mcpu::forces::mcpu08 {
                 / 1024.0;
         }
 
-        /// Use precomputed topo_flag_ (v2) vs on-the-fly Layer 1 decode (v1).
-        void set_use_topo_flags(bool on) noexcept { use_topo_flags_ = on; }
-        [[nodiscard]] bool use_topo_flags() const noexcept {
-            return use_topo_flags_;
-        }
         /// The Mu query cutoff (Å); see mu_exact_cutoff_. O(1).
         [[nodiscard]] float mu_exact_cutoff() const noexcept {
             return mu_exact_cutoff_;
@@ -771,14 +519,6 @@ namespace mcpu::forces::mcpu08 {
         }
         /// Recompute mu_exact_cutoff_ from type_params_ (or matrices) + env override.
         void apply_mu_denselist_cutoff();
-        /// Debug: compare layered v1 vs v2 for representative r². O(N²).
-        void verify_layered_eval_consistency() const;
-        /// Microbench: eval_pair only over fixed pairs. Reports ns/call to stderr.
-        void bench_eval_pair_only(int n_iter = 1000000) const;
-        /// Layer 3 exception count (unique undirected pairs).
-        [[nodiscard]] std::size_t clash_exception_count() const noexcept {
-            return clash_exceptions_.col.size() / 2;
-        }
         [[nodiscard]] double topo_flag_size_mb() const noexcept {
             return static_cast<double>(topo_flag_.size()) / (1024.0 * 1024.0);
         }

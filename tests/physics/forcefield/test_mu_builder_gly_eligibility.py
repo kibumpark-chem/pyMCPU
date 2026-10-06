@@ -2,12 +2,12 @@
 
 Glycine's CA has one engine slot, in the backbone segment. For Mu it must be
 ordinary backbone for clash/contact eligibility -- legacy MCPU's
-``IsSidechainAtom("CA")`` is false for every residue -- with the ``CA`` role
-and the glycine-specific Mu *type*.
+``IsSidechainAtom("CA")`` is false for every residue -- with the
+glycine-specific Mu *type*.
 
 Earlier versions stored the CA twice and muted the backbone copy, so only the
-sidechain-segment copy was scored. These tests pin the three inputs Mu reads
-for the single slot (eligibility masks, Layer-1 role, atom type), so that a
+sidechain-segment copy was scored. These tests pin the two inputs Mu reads
+for the single slot (eligibility masks, atom type), so that a
 leftover mute, which would silently drop glycine's Mu energy, cannot pass.
 
 Internal consistency only: every assertion checks pyMCPU's own builder
@@ -62,18 +62,8 @@ def test_each_glycine_ca_has_one_backbone_slot(acta_forcefield: MCPUForceField) 
 
 def test_glycine_ca_is_backbone_for_eligibility(acta_forcefield: MCPUForceField) -> None:
     ordered = acta_forcefield.ordered_atom_list
-    _, is_sidechain, _, _ = MuPotentialBuilder.layer1_atom_meta(ordered)
     for i in _gly_cas(ordered):
         assert MuPotentialBuilder._is_sidechain_for_eligibility(ordered[i]) is False
-        assert is_sidechain[i] == 0
-
-
-def test_glycine_ca_has_the_ca_role(acta_forcefield: MCPUForceField) -> None:
-    """The C++ side mutes every atom with the H role (Rule 0), so only H may have it."""
-    ordered = acta_forcefield.ordered_atom_list
-    _, _, role, _ = MuPotentialBuilder.layer1_atom_meta(ordered)
-    assert all((r == MuPotentialBuilder._ROLE_H) == (a.name == "H") for r, a in zip(role, ordered))
-    assert {role[i] for i in _gly_cas(ordered)} == {MuPotentialBuilder._ROLE_CA}
 
 
 class _RecordingLookup(dict):

@@ -1,20 +1,11 @@
-"""Coverage for the two ``PhysicsVerifier`` / Mu self-check entry points that
-were bound but never exercised.
+"""Coverage for ``PhysicsVerifier.verify_all_potential_deltas``, the vector
+form of the per-group delta check.
 
-Both verify an invariant the incremental path can genuinely violate, which is
-why they are worth pinning rather than deleting:
-
-* ``PhysicsVerifier.verify_all_potential_deltas`` -- the vector form of the
-  per-group delta check. ``verify_potential_delta`` (the scalar form) is already
-  covered by ``test_potential_delta_consistency.py``; this pins that the "all"
-  form agrees with it for every added energy group, so the two cannot drift.
-* ``MuPotential.verify_layered_eval_consistency`` -- compares
-  ``eval_pair_layered_v1`` (``use_topo_flags_=false``) against
-  ``eval_pair_layered_v2`` (``use_topo_flags_=true``) over all pairs x six
-  test r^2 values. A disagreement would mean the topo-flag fast path and the
-  reference path score contacts differently, which is exactly the class of bug
-  that produced the accepted-state clash documented in
-  ``pymcpu/simulation.py``'s steric-clash handler.
+It verifies an invariant the incremental path can genuinely violate, which is
+why it is worth pinning. ``verify_potential_delta`` (the scalar form) is
+already covered by ``test_potential_delta_consistency.py``; this pins that the
+"all" form agrees with it for every added energy group, so the two cannot
+drift.
 """
 
 from __future__ import annotations
@@ -88,48 +79,3 @@ def test_verify_all_potential_deltas_covers_every_added_group() -> None:
             vector.delta_incremental, abs=1e-6
         )
         assert scalar.delta_direct == pytest.approx(vector.delta_direct, abs=1e-6)
-
-
-def test_mu_layered_eval_v1_matches_v2(chignolin_pdb_path, capfd) -> None:
-    """The topo-flag fast path (v2) must score every pair identically to the
-    reference path (v1).
-
-    Uses chignolin explicitly rather than the shared ``chignolin_context``
-    fixture, which defaults to actin: this verifier is O(N^2 x 6), which is
-    ~18k pair evaluations at N=77 but ~26M at N=2943.
-    """
-    mdtraj = pytest.importorskip("mdtraj")
-    from pymcpu.forcefields.mcpu import MCPUForceField
-
-    traj = mdtraj.load(chignolin_pdb_path)
-    heavy = traj.atom_slice(traj.topology.select("not element H"))
-    forcefield = MCPUForceField(heavy, param_set="mcpu08")
-    system = forcefield.create_system(heavy.topology)
-    context = mcpu_core.Context(system)
-    context.set_positions((forcefield.coords[0] * 10.0).T.astype(np.float32))
-
-    mu = next(
-        (f for f in system.get_potentials() if hasattr(f, "verify_layered_eval_consistency")),
-        None,
-    )
-    assert mu is not None, "no MuPotential found on the system"
-
-    # Guard against a VACUOUS pass: the verifier early-returns (printing an
-    # ERROR) when Layer-1 meta or topo_flag_ is missing, in which case it
-    # compares nothing at all. Assert both preconditions via the bound
-    # size properties before trusting a silent run.
-    assert float(mu.type_params_size_kb) > 0.0, "Layer-1 type_params_ not populated"
-    assert float(mu.topo_flag_size_mb) > 0.0, "topo_flag_ not populated"
-
-    # A clean run is SILENT unless MCPU_VERBOSE is set (and that env var is
-    # cached in a function-local static on first use, so it cannot be flipped
-    # from here). Verified manually with MCPU_VERBOSE=1 on this system that the
-    # verifier does report "eval_pair_layered consistency (v1 vs v2): PASS",
-    # i.e. it really does walk the pairs -- the precondition assertions above
-    # are what keep this test from passing vacuously.
-    capfd.readouterr()  # drop setup chatter
-    mu.verify_layered_eval_consistency()
-    err = capfd.readouterr().err
-
-    assert "LAYERED_MISMATCH" not in err, f"v1/v2 disagree:\n{err}"
-    assert "ERROR" not in err, f"verifier reported an error:\n{err}"

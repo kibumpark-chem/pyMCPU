@@ -2,8 +2,8 @@
 
 Assembles the C++ ``mcpu_core.MuPotential`` energy term: loads the MCPU08
 atom-type/radius lookup table and the raw contact-energy matrix, computes the
-coordinate-independent Layer-1 clash/contact eligibility masks and per-atom
-metadata consumed by the C++ engine, and includes a Python port of the
+coordinate-independent clash/contact eligibility masks consumed by the C++
+engine, and includes a Python port of the
 relevant parts of legacy MCPU's ``pdb_util.h`` atom-classification logic that
 those computations depend on.
 """
@@ -33,11 +33,10 @@ class MuPotentialBuilder:
     Never instantiated -- callers use the classmethods directly (see
     ``pymcpu.forcefields.mcpu.MCPUForceField``, which drives the full
     pipeline: ``load_atom_types``/``load_parameters`` to read the on-disk
-    atom-type table and MCPU08 energy matrix, ``build_topology_masks`` and
-    ``layer1_atom_meta`` to derive the coordinate-independent per-atom-pair
-    eligibility masks and per-atom role metadata consumed by the C++ engine's
-    Layer-1 gating, and ``build`` to assemble all of the above into a ready
-    ``mcpu_core.MuPotential``.
+    atom-type table and MCPU08 energy matrix, ``build_topology_masks`` to
+    derive the coordinate-independent per-atom-pair eligibility masks the C++
+    engine turns into its pair-flag table, and ``build`` to assemble all of the
+    above into a ready ``mcpu_core.MuPotential``.
     """
 
     # legacy pdb_util.h IsSidechainAtom(): backbone-named atoms are never
@@ -108,7 +107,7 @@ class MuPotentialBuilder:
         skip_local_contact_range: int = 4
     ) -> tuple[list[int], list[int]]:
         """Build the static (topology-only, coordinate-independent) per-atom-pair
-        clash/contact masks consumed by the C++ MuPotential's Layer-1 gating.
+        clash/contact masks the C++ MuPotential bakes into its pair-flag table.
 
         ``clash_mask[i,j] == 1`` means the pair is eligible to be scored as a
         hard-core clash (subject to the runtime distance check in the engine);
@@ -233,64 +232,6 @@ class MuPotentialBuilder:
                 contact_mask[i, j] = contact_mask[j, i] = check_contact
 
         return contact_mask.flatten().tolist(), clash_mask.flatten().tolist()
-
-    # MuAtomRole / MuResClass enums — must match MuPotential.h
-    _ROLE_OTHER = 0
-    _ROLE_H = 1
-    _ROLE_N = 2
-    _ROLE_CA = 3
-    _ROLE_C = 4
-    _ROLE_O = 5
-    _ROLE_CB = 6
-    _ROLE_CD = 7
-    _ROLE_SG = 8
-    _ROLE_GX = 9
-    _RES_OTHER = 0
-    _RES_PRO = 1
-    _RES_CYS = 2
-
-    @classmethod
-    def layer1_atom_meta(
-        cls, ordered_atom_list: list[MCPUAtom]
-    ) -> tuple[list[int], list[int], list[int], list[int]]:
-        """Per-atom Layer 1 arrays for MuPotential.set_topology_atom_meta.
-
-        Returns (res_index, is_sidechain, atom_role, res_class).
-        """
-        res_index = [int(a.residue_index) for a in ordered_atom_list]
-        is_sidechain = [1 if cls._is_sidechain_for_eligibility(a) else 0 for a in ordered_atom_list]
-        atom_role: list[int] = []
-        res_class: list[int] = []
-        for atom in ordered_atom_list:
-            name = atom.name
-            if name == "H":
-                role = cls._ROLE_H
-            elif name == "N":
-                role = cls._ROLE_N
-            elif name == "CA":
-                role = cls._ROLE_CA
-            elif name == "C":
-                role = cls._ROLE_C
-            elif name in ("O", "OCT", "OXT"):
-                role = cls._ROLE_O
-            elif name == "CB":
-                role = cls._ROLE_CB
-            elif name == "CD":
-                role = cls._ROLE_CD
-            elif name == "SG":
-                role = cls._ROLE_SG
-            elif name.startswith("G"):
-                role = cls._ROLE_GX
-            else:
-                role = cls._ROLE_OTHER
-            atom_role.append(role)
-            if atom.residue_name == "PRO":
-                res_class.append(cls._RES_PRO)
-            elif atom.residue_name == "CYS":
-                res_class.append(cls._RES_CYS)
-            else:
-                res_class.append(cls._RES_OTHER)
-        return res_index, is_sidechain, atom_role, res_class
 
     @classmethod
     def build(

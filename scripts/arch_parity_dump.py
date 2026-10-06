@@ -236,7 +236,7 @@ def _run_case_in_child(pdb: str, seed: int, steps: int) -> dict[str, Any]:
     proxy = dict(ctx.neighbor_proxy_stats())
 
     # `eval_pair_nonzero` counts the epsilon-free `r2 <= g.contact_r2` compare
-    # in eval_pair_layered_v2, so a +/-1 delta would be the signature of a
+    # in eval_pair, so a +/-1 delta would be the signature of a
     # single contact-membership flip.
     #
     # IMPORTANT -- it reads 0 in the shipped configuration, so do NOT rely on

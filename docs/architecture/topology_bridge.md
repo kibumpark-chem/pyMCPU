@@ -151,21 +151,11 @@ and `Context.coords` adds the shift back (`Context.frame_offset`).
 ## Extending it
 
 **A new Mu contact or clash rule.** The coordinate-independent
-eligibility masks come from `MuPotentialBuilder.build_topology_masks()`,
-and the per-atom role and residue-class metadata from
-`MuPotentialBuilder.layer1_atom_meta()`. `create_system` passes them
-through `MuPotential.set_topology_atom_meta()` and
-`MuPotential.cache_necessary_data()`, which bakes them into a per-pair
-flag table the hot path reads. So for the default configuration a rule
-change is a Python change.
-
-It is not a Python-only change in general: `MuPotential`
-(`include/pymcpu/forces/mcpu/mcpu08/MuPotential.h`) keeps a second,
-hand-mirrored copy of the same rules in `topology_pair_flags()`, used
-when the precomputed table is disabled with `MCPU_TOPO_FLAGS=0`. The two
-copies have drifted apart before. Change both, or accept that the
-environment variable changes trajectories rather than just the code
-path.
+eligibility masks come from `MuPotentialBuilder.build_topology_masks()`.
+`create_system` passes them to `MuPotential.cache_necessary_data()`,
+which bakes them, together with the native-structure clash exemptions,
+into the per-pair flag table the hot path reads. The engine holds no
+other copy of the rules, so a rule change is a Python change.
 
 **A new per-residue table.** Add the field to `System`
 (`include/pymcpu/System.h`), bind a setter in

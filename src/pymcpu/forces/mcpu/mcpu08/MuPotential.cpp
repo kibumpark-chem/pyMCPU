@@ -277,35 +277,6 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
         // Exact denselist cutoff from parameter matrices (refined after
         // type_params_ in cache_necessary_data). Default ON.
         apply_mu_denselist_cutoff();
-        // ADDED: three-layer eval — layered path is always active.
-        // ADDED: topo_flag_ path (layered v2). Default on; =0 forces v1 branches.
-        if (const char* e = std::getenv("MCPU_TOPO_FLAGS")) {
-            use_topo_flags_ = (e[0] != '0');
-        }
-    }
-
-    void MuPotential::set_topology_atom_meta(
-        std::vector<int32_t> res_index,
-        std::vector<uint8_t> is_sidechain,
-        std::vector<uint8_t> atom_role,
-        std::vector<uint8_t> res_class
-    ) {
-        const size_t n = res_index.size();
-        if (is_sidechain.size() != n || atom_role.size() != n ||
-            res_class.size() != n) {
-            throw std::invalid_argument(
-                "MuPotential::set_topology_atom_meta: size mismatch");
-        }
-        if (!atom_types.empty() && atom_types.size() != n) {
-            throw std::invalid_argument(
-                "MuPotential::set_topology_atom_meta: size != atom_types");
-        }
-        res_index_ = std::move(res_index);
-        is_sc_ = std::move(is_sidechain);
-        atom_role_ = std::move(atom_role);
-        res_class_ = std::move(res_class);
-        layer1_meta_ready_ = true;
-        build_compact_topo();
     }
 
     void MuPotential::permute_atom_indices(const AtomPermutation& perm) {
@@ -327,30 +298,6 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
         };
         permute_vec_int(atom_types);
         permute_vec_int(atom_to_residue);
-
-        if (layer1_meta_ready_ &&
-            static_cast<int>(res_index_.size()) == n) {
-            auto permute_i32 = [&](std::vector<int32_t>& v) {
-                std::vector<int32_t> tmp(static_cast<size_t>(n));
-                for (int i = 0; i < n; ++i) {
-                    tmp[static_cast<size_t>(i)] =
-                        v[static_cast<size_t>(perm.int_to_ext[static_cast<size_t>(i)])];
-                }
-                v.swap(tmp);
-            };
-            auto permute_u8 = [&](std::vector<uint8_t>& v) {
-                std::vector<uint8_t> tmp(static_cast<size_t>(n));
-                for (int i = 0; i < n; ++i) {
-                    tmp[static_cast<size_t>(i)] =
-                        v[static_cast<size_t>(perm.int_to_ext[static_cast<size_t>(i)])];
-                }
-                v.swap(tmp);
-            };
-            permute_i32(res_index_);
-            permute_u8(is_sc_);
-            permute_u8(atom_role_);
-            permute_u8(res_class_);
-        }
 
         auto permute_mat = [&](Eigen::MatrixXf& m) {
             if (m.rows() != n || m.cols() != n) return;
@@ -387,19 +334,14 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
         permute_flat(topo_flag_);
         num_atoms_cached_ = n;
         rebuild_type_params_from_matrices();
-        if (layer1_meta_ready_) {
-            build_clash_exceptions();
-        }
-        num_atoms_cached_ = n;
         build_compact_topo();
     }
 
-    /// Build Layer 3 CSR from final clash masks + Layer 1 rules. O(N²).
     void MuPotential::build_compact_topo() {
         tf_ready_ = false;
         const int n = num_atoms_cached_;
         const size_t N = static_cast<size_t>(n);
-        if (n < 2 || topo_flag_.size() != N * N || res_index_.size() != N ||
+        if (n < 2 || topo_flag_.size() != N * N || atom_to_residue.size() != N ||
             atom_types.size() != N) {
             return;
         }
@@ -408,7 +350,7 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
         if (max_t + 2 > 256) return;
         const int ncls = max_t + 2;
         tf_ncls_ = ncls;
-        tf_res_.assign(res_index_.begin(), res_index_.end());
+        tf_res_.assign(atom_to_residue.begin(), atom_to_residue.end());
         tf_cls_.resize(N);
         for (size_t i = 0; i < N; ++i)
             tf_cls_[i] = static_cast<uint8_t>(std::max(atom_types[i], -1) + 1);
@@ -509,57 +451,6 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
         }
     }
 
-    void MuPotential::build_clash_exceptions() {
-        const size_t N = static_cast<size_t>(num_atoms_cached_);
-        if (!layer1_meta_ready_ || res_index_.size() != N ||
-            topo_clash_mask_.size() != N * N) {
-            clash_exceptions_ = SparseClashExceptions{};
-            return;
-        }
-
-        std::vector<std::vector<int32_t>> exc_rows(N);
-        size_t n_exceptions = 0;
-        for (size_t i = 0; i < N; ++i) {
-            for (size_t j = i + 1; j < N; ++j) {
-                if (topo_clash_mask_[i * N + j] != 0) continue;
-
-                bool topo_clash = false, topo_contact = false;
-                topology_pair_flags(
-                    static_cast<int>(i), static_cast<int>(j), topo_clash,
-                    topo_contact);
-                (void)topo_contact;
-                if (!topo_clash) continue;
-
-                exc_rows[i].push_back(static_cast<int32_t>(j));
-                exc_rows[j].push_back(static_cast<int32_t>(i));
-                ++n_exceptions;
-            }
-        }
-
-        clash_exceptions_.row_start.assign(N + 1, 0);
-        clash_exceptions_.col.clear();
-        clash_exceptions_.col.reserve(n_exceptions * 2);
-        for (size_t i = 0; i < N; ++i) {
-            std::sort(exc_rows[i].begin(), exc_rows[i].end());
-            clash_exceptions_.row_start[i + 1] =
-                clash_exceptions_.row_start[i] +
-                static_cast<int32_t>(exc_rows[i].size());
-            for (int32_t j : exc_rows[i])
-                clash_exceptions_.col.push_back(j);
-        }
-
-        // CHANGED: gated behind MCPU_VERBOSE
-        if (mcpu_verbose_enabled()) {
-            std::fprintf(
-                stderr, // CHANGED: gated behind MCPU_VERBOSE
-                "INFO: Layer 3 sparse exceptions: %zu pairs (%.1f KB CSR)\n",
-                n_exceptions,
-                (clash_exceptions_.row_start.size() * 4 +
-                 clash_exceptions_.col.size() * 4) /
-                    1024.0);
-        }
-    }
-
     void MuPotential::rebuild_type_params_from_matrices() {
         const size_t N = static_cast<size_t>(num_atoms_cached_);
         if (N == 0) {
@@ -622,118 +513,6 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
         filled[key] = filled[key_sym] = 1;
         type_params_[key] = tp;
         type_params_[key_sym] = tp;
-    }
-
-    void MuPotential::bench_eval_pair_only(int n_iter) const {
-        const int N = num_atoms_cached_;
-        if (N < 2 || topo_flag_.empty()) {
-            std::fprintf(stderr, "bench_eval_pair_only: not ready\n");
-            return;
-        }
-        // Diverse pairs covering Layer 1 branches + distant contacts.
-        struct Pair {
-            int i, j;
-            float r2;
-        };
-        std::vector<Pair> test_pairs;
-        test_pairs.push_back({0, 1, 10.0f});  // likely same/near residue
-        if (N > 6) test_pairs.push_back({0, 5, 10.0f});
-        if (N > 51) test_pairs.push_back({0, 50, 20.0f});
-        if (N > 70) test_pairs.push_back({10, 60, 15.0f});
-        if (N > 200) test_pairs.push_back({100, 180, 12.0f});
-        if (N > 500) {
-            test_pairs.push_back({200, 450, 8.0f});
-            test_pairs.push_back({300, 301, 4.0f});
-            test_pairs.push_back({0, N - 1, 25.0f});
-        }
-        // Pad with scattered distant pairs
-        for (int k = 0; k < 16 && N > 100; ++k) {
-            const int i = (k * 97) % (N - 1);
-            const int j = (i + 50 + k * 13) % N;
-            if (i != j) test_pairs.push_back({i, j, 10.0f + static_cast<float>(k)});
-        }
-
-        // Warmup
-        float sink = 0.f;
-        bool clash = false;
-        for (int w = 0; w < 1000; ++w) {
-            for (const auto& p : test_pairs)
-                sink += eval_pair(p.i, p.j, p.r2, &clash);
-        }
-
-        const auto t0 = std::chrono::steady_clock::now();
-        for (int iter = 0; iter < n_iter; ++iter) {
-            for (const auto& p : test_pairs)
-                sink += eval_pair(p.i, p.j, p.r2, &clash);
-        }
-        const auto t1 = std::chrono::steady_clock::now();
-        const double ns = std::chrono::duration<double, std::nano>(t1 - t0).count();
-        const double n_calls =
-            static_cast<double>(n_iter) * static_cast<double>(test_pairs.size());
-        const char* mode =
-            use_topo_flags_ && !topo_flag_.empty() ? "layered_v2" : "layered_v1";
-        std::fprintf(
-            stderr,
-            "eval_pair (%s): %.2f ns/call  n_pairs=%zu n_iter=%d sink=%.1f\n",
-            mode, ns / n_calls, test_pairs.size(), n_iter, sink);
-    }
-
-    void MuPotential::verify_layered_eval_consistency() const {
-        if (!layer1_meta_ready_ || type_params_.empty()) {
-            std::fprintf(
-                stderr,
-                "ERROR: verify_layered_eval_consistency: missing Layer1 / "
-                "type_params_\n");
-            return;
-        }
-        if (topo_flag_.empty()) {
-            std::fprintf(
-                stderr,
-                "ERROR: verify_layered_eval_consistency: no topo_flag_\n");
-            return;
-        }
-        size_t mismatches = 0;
-        const size_t N = static_cast<size_t>(num_atoms_cached_);
-        const float tests[] = {1.0f, 4.0f, 9.0f, 16.0f, 25.0f, 36.0f};
-        const bool saved = use_topo_flags_;
-        for (float test_r2 : tests) {
-            for (size_t i = 0; i < N; ++i) {
-                for (size_t j = i + 1; j < N; ++j) {
-                    bool c1 = false, c2 = false;
-                    const_cast<MuPotential*>(this)->use_topo_flags_ = false;
-                    const float e1 = eval_pair_layered_v1(
-                        static_cast<int>(i), static_cast<int>(j), test_r2,
-                        &c1);
-                    const_cast<MuPotential*>(this)->use_topo_flags_ = true;
-                    const float e2 = eval_pair_layered_v2(
-                        static_cast<int>(i), static_cast<int>(j), test_r2,
-                        &c2);
-                    if (std::fabs(e1 - e2) > 1e-5f || c1 != c2) {
-                        ++mismatches;
-                        if (mismatches <= 5) {
-                            std::fprintf(
-                                stderr,
-                                "LAYERED_MISMATCH (v1 vs v2) r2=%.1f "
-                                "i=%zu j=%zu v1=(%.4f,%d) v2=(%.4f,%d)\n",
-                                test_r2, i, j, e1, static_cast<int>(c1), e2,
-                                static_cast<int>(c2));
-                        }
-                    }
-                }
-            }
-        }
-        const_cast<MuPotential*>(this)->use_topo_flags_ = saved;
-        // CHANGED: gated behind MCPU_VERBOSE
-        if (mismatches == 0) {
-            if (mcpu_verbose_enabled()) {
-                std::fprintf(
-                    stderr, // CHANGED: gated behind MCPU_VERBOSE
-                    "INFO: eval_pair_layered consistency (v1 vs v2): PASS\n");
-            }
-        } else
-            std::fprintf(
-                stderr, "ERROR: eval_pair_layered: %zu mismatches\n",
-                mismatches);
     }
 
     void MuPotential::cache_necessary_data(
@@ -822,21 +601,9 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
                 }
             }
         }
-        if (layer1_meta_ready_) {
-            build_clash_exceptions();
-        } else {
-            std::fprintf(
-                stderr,
-                "WARNING: set_topology_atom_meta was not called — layered "
-                "eval Layer 1 / Layer 3 will misbehave.\n");
-        }
-        // CHANGED: gated behind MCPU_VERBOSE
         if (mcpu_verbose_enabled()) {
-            std::fprintf(
-                stderr, // CHANGED: gated behind MCPU_VERBOSE
-                "INFO: topo_flag_ %.2f MB (N²×1 B) use_topo_flags=%d\n",
-                topo_flag_.size() / (1024.0 * 1024.0),
-                static_cast<int>(use_topo_flags_));
+            std::fprintf(stderr, "INFO: topo_flag_ %.2f MB (N²×1 B)\n",
+                         topo_flag_.size() / (1024.0 * 1024.0));
         }
         build_compact_topo();
         // CHANGED: exact denselist cutoff from type_params_ (default ON).
