@@ -454,6 +454,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The Mu contact walk is about 5-7% faster per step.** The walk over a
+  moved atom's new neighbours now keeps the distance its 8-slot prefilter
+  computed: each kept slot's partner id and r2 are compressed into two
+  lists, and the energy is scored from them, so a candidate is no longer
+  looked up again and its coordinates reloaded to recompute r2. The
+  prefilter now applies the exact cutoff. With FMA and the default
+  contraction, r2 is formed in the same FMA order GCC 8.5 emits for the
+  scalar form at -march=haswell; with `MCPU_FP_CONTRACT` set to anything
+  but `fast`, or without FMA, it is the unfused sum, as the scalar form is
+  in those builds. The pending contact lists also push with an inlined
+  capacity test and store, where std::vector::push_back had been left out
+  of line. Interleaved A/B against the previous main (n=3, user
+  cycles/step, two runs) on T4L, CA2, LDH-A, actin and PGK1: default mix
+  -4.7% to -6.8%, pivot-only -5.2% to -7.3%, actin with a residue energy
+  mask -3.9%. Bit-identical in these builds (`scripts/arch_parity_dump.py`
+  and every A/B run); a compiler that contracts the scalar distance
+  differently could move a pair lying on the cutoff by an ulp, within
+  tolerance.
 - **Pivot moves cost 3-4% less, the default mix about 2% less.** Three
   scans now use AVX2 compares and stop at the same first match as before:
   the live-cell pass that H-bond and Mu probes run over their 27 stencil
