@@ -11,6 +11,7 @@
 #include <cmath>
 #if defined(__AVX2__)
 #include <immintrin.h>
+#include "pymcpu/utils/pair_r2.h"
 #endif
 
 namespace mcpu::forces {
@@ -282,7 +283,7 @@ EnergyChangeResult HBondPotential::calculateEnergyChange(
                     if (r_acc < 0 || r_acc >= num_residues) return Visit::Continue;
                     if (res_affected[static_cast<size_t>(r_acc)]) return Visit::Continue;
                     const float bx = nh[0] - cold.x(o), by = nh[1] - cold.y(o), bz = nh[2] - cold.z(o);
-                    if (bx * bx + by * by + bz * bz > kFarCut2) return Visit::Continue;
+                    if (pair_r2(bx, by, bz) > kFarCut2) return Visit::Continue;
                     evaluate_new(r_don, r_acc);
                     return Visit::Continue;
                 };
@@ -325,7 +326,7 @@ EnergyChangeResult HBondPotential::calculateEnergyChange(
                 if (r_acc < 0 || r_acc >= num_residues) return;
                 if (res_affected[static_cast<size_t>(r_acc)]) return;
                 const float bx = nh[0] - cold.x(o), by = nh[1] - cold.y(o), bz = nh[2] - cold.z(o);
-                if (bx * bx + by * by + bz * bz > kFarCut2) return;
+                if (pair_r2(bx, by, bz) > kFarCut2) return;
                 evaluate_new(r_don, r_acc);
             };
             if (use_brute) {
@@ -395,7 +396,7 @@ EnergyChangeResult HBondPotential::calculateEnergyChange(
             const float dx = hnew[0] - anx[static_cast<size_t>(k)];
             const float dy = hnew[1] - any[static_cast<size_t>(k)];
             const float dz = hnew[2] - anz[static_cast<size_t>(k)];
-            if (dx * dx + dy * dy + dz * dz > cut2) return;
+            if (pair_r2(dx, dy, dz) > cut2) return;
             evaluate_new(r_don, acc_res[static_cast<size_t>(k)]);
         };
 #if defined(__AVX2__)
@@ -443,7 +444,7 @@ void HBondPotential::build_cache_(const Context& context, const State& state) co
             if (sys.is_residue_energy_ignored(r_acc)) return;
             if (blocks[static_cast<size_t>(r_acc)].o_start != o) return;
             const float dx = h[0] - cv.x(o), dy = h[1] - cv.y(o), dz = h[2] - cv.z(o);
-            if (dx * dx + dy * dy + dz * dz > kFarCut2) return;
+            if (pair_r2(dx, dy, dz) > kFarCut2) return;
             const float e = evaluate_directional(r_don, r_acc, state, sys);
             if (e != 0.0f) cache.add(r_don, r_acc, e);
         };

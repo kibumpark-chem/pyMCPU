@@ -6,6 +6,7 @@
 #include "pymcpu/State.h"
 #include "pymcpu/System.h"
 #include "pymcpu/utils/numbers_compat.h"
+#include "pymcpu/utils/pair_r2.h"
 
 using mcpu::State;
 using mcpu::BlockIndices;
@@ -47,14 +48,14 @@ constexpr float HBOND_CACA_HELIX_SHEET_THRESHOLD = mcpu::PI_F / 2.0f;
 
 namespace HydrogenBondUtils {
     inline bool is_close_enough_for_hbond(const Eigen::Vector3f& H, const Eigen::Vector3f& O) {
-        return (H - O).squaredNorm() < HBOND_CUTOFF_SQUARED;
+        return mcpu::pair_r2(H - O) < HBOND_CUTOFF_SQUARED;
     }
 
     inline bool is_close_enough_for_hbond(const float* H, const float* O) {
         const float dx = H[0] - O[0];
         const float dy = H[1] - O[1];
         const float dz = H[2] - O[2];
-        return (dx * dx + dy * dy + dz * dz) < HBOND_CUTOFF_SQUARED;
+        return mcpu::pair_r2(dx, dy, dz) < HBOND_CUTOFF_SQUARED;
     }
 
     inline HBondDonors construct_donor(const State& state, const mcpu::System& sys, int residue_index) {
@@ -122,10 +123,10 @@ namespace HydrogenBondUtils {
     /// misplacement would destroy ~80% of helical (res_idx_diff==4) H-bonds if SS were
     /// ever enabled without this fix.
     inline bool passes_ca_geometry_gate(const HBondDonors& donor, const HBondAcceptors& acceptor) {
-        float ca_distance1 = (donor.prev_CA - acceptor.next_CA).squaredNorm();
-        float ca_distance2 = (donor.CA - acceptor.next_CA).squaredNorm();
-        float ca_distance3 = (donor.prev_CA - acceptor.CA).squaredNorm();
-        float ca_distance4 = (donor.CA - acceptor.CA).squaredNorm();
+        float ca_distance1 = mcpu::pair_r2(donor.prev_CA - acceptor.next_CA);
+        float ca_distance2 = mcpu::pair_r2(donor.CA - acceptor.next_CA);
+        float ca_distance3 = mcpu::pair_r2(donor.prev_CA - acceptor.CA);
+        float ca_distance4 = mcpu::pair_r2(donor.CA - acceptor.CA);
         float min1 = std::min(ca_distance1, ca_distance3);
         float min2 = std::min(ca_distance2, ca_distance4);
         float min3 = std::min(min1, min2);

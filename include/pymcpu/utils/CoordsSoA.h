@@ -9,6 +9,7 @@
 #include <vector>
 #if defined(__AVX2__) && defined(__FMA__)
 #include <immintrin.h>
+#include "pymcpu/utils/pair_r2.h"
 #endif
 
 namespace mcpu {
@@ -163,7 +164,7 @@ struct CoordsSoA {
             const float dx = x[static_cast<size_t>(i)] - other.x[static_cast<size_t>(i)];
             const float dy = y[static_cast<size_t>(i)] - other.y[static_cast<size_t>(i)];
             const float dz = z[static_cast<size_t>(i)] - other.z[static_cast<size_t>(i)];
-            const float d2 = dx * dx + dy * dy + dz * dz;
+            const float d2 = pair_r2(dx, dy, dz);
             if (d2 > d2max) d2max = d2;
         }
         return d2max;

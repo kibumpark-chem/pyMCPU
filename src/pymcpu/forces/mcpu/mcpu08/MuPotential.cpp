@@ -1199,7 +1199,7 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
                 const float dx = p.x - s.x[m];
                 const float dy = p.y - s.y[m];
                 const float dz = p.z - s.z[m];
-                const float r2 = dx * dx + dy * dy + dz * dz;
+                const float r2 = pair_r2(dx, dy, dz);
                 return overlaps_at_move_cutoff(p.i, j, r2)
                            ? neighbor::Visit::Stop
                            : neighbor::Visit::Continue;
@@ -2092,7 +2092,7 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
                                             const float dy = yi - cy[m];
                                             const float dz = zi - cz[m];
                                             r2_buf[m] =
-                                                dx * dx + dy * dy + dz * dz;
+                                                pair_r2(dx, dy, dz);
                                         }
                                     }
 #if defined(MCPU_CP_BREAKDOWN)
@@ -2130,7 +2130,7 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
                                                 const float dx = xi - cx[m];
                                                 const float dy = yi - cy[m];
                                                 const float dz = zi - cz[m];
-                                                r2 = dx * dx + dy * dy + dz * dz;
+                                                r2 = pair_r2(dx, dy, dz);
                                                 r2_buf[m] = r2;
                                             } else {
                                                 r2 = r2_buf[m];
@@ -2288,7 +2288,7 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
                                 const float dx = ox - cx[m];
                                 const float dy = oy - cy[m];
                                 const float dz = oz - cz[m];
-                                r2_buf[m] = dx * dx + dy * dy + dz * dz;
+                                r2_buf[m] = pair_r2(dx, dy, dz);
                             }
                             for (int m = 0; m < count; ++m) {
                                 if (skip_mask & (1ull << m)) continue;
@@ -2321,7 +2321,7 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
                                     const float dx = nx - cx[m];
                                     const float dy = ny - cy[m];
                                     const float dz = nz - cz[m];
-                                    r2_buf[m] = dx * dx + dy * dy + dz * dz;
+                                    r2_buf[m] = pair_r2(dx, dy, dz);
                                 }
                                 for (int m = 0; m < count; ++m) {
                                     if (skip_mask & (1ull << m)) continue;

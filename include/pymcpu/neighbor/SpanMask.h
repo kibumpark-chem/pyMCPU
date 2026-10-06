@@ -7,6 +7,7 @@
 
 #if defined(__AVX2__)
 #include <immintrin.h>
+#include "pymcpu/utils/pair_r2.h"
 #endif
 
 namespace mcpu::neighbor {
@@ -82,7 +83,7 @@ struct Probe {
         const float dx = nx - cx[m0 + k];
         const float dy = ny - cy[m0 + k];
         const float dz = nz - cz[m0 + k];
-        const float r2 = dx * dx + dy * dy + dz * dz;
+        const float r2 = pair_r2(dx, dy, dz);
         if (!(r2 > lim2) && cids[m0 + k] != self) keep |= 1u << k;
     }
     return keep;

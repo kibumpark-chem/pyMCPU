@@ -27,6 +27,7 @@
 
 #include "pymcpu/neighbor/MovedCells.h"
 #include "pymcpu/neighbor/SpanMask.h"
+#include "pymcpu/utils/pair_r2.h"
 
 namespace mcpu::neighbor {
 
@@ -272,7 +273,7 @@ template <class Grid, class Fn>
             const float dx = p.x - cx[m0 + k];
             const float dy = p.y - cy[m0 + k];
             const float dz = p.z - cz[m0 + k];
-            const float r2 = dx * dx + dy * dy + dz * dz;
+            const float r2 = pair_r2(dx, dy, dz);
             if (!(r2 > lim2) && cids[m0 + k] != p.i) {
                 hit_j[n_hits] = cids[m0 + k];
                 hit_r2[n_hits++] = r2;
