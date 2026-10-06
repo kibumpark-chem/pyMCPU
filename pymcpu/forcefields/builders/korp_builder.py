@@ -3,8 +3,8 @@
 The map is parsed and validated in Python (:mod:`pymcpu.forcefields.korp_map`)
 and the energy table is passed to C++ by reference, not copied. Keep the
 returned map object alive for as long as any potential built from it: it owns
-the reference that keeps the underlying numpy array (normally a memmap) from
-being collected.
+the reference that keeps the underlying numpy array (a private copy or a
+memmap) from being collected.
 """
 
 from __future__ import annotations

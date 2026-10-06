@@ -101,6 +101,14 @@ class KORPForceField(BaseForceField):
         The ``korp6Dv1.bin`` energy map, which pyMCPU does not ship (it is
         316 MiB). Looked for here, then at ``$KORP_MAP_PATH``, then in
         ``$MCPU_PARAMS_DIR``, then in the cache.
+    map_mmap
+        False (the default) reads the map into this process's memory on 2 MiB
+        pages where the OS allows, which makes KORP steps about 5-9% faster
+        (160-420 residues) and costs ~316 MiB per process. True memory-maps the file so that all
+        processes on a node share one copy; use it when many ranks run on a
+        node short of memory. Force fields in one process that load the same
+        map in the same mode share one copy either way. See
+        :func:`pymcpu.forcefields.korp_map.load_korp_map`.
     steric_guard
         Install the CA-CA excluded-volume filter. On by default and you almost
         certainly want it: KORP has no hard-core repulsion, so without it a
@@ -123,13 +131,14 @@ class KORPForceField(BaseForceField):
         trajectory: md.Trajectory,
         *,
         map_path: str | Path | None = None,
+        map_mmap: bool = False,
         steric_guard: bool = True,
         min_separation: int = 3,
         min_distance: float = 3.2,
         strict_residue_numbering: bool = True,
     ) -> None:
         self.map_path = self._resolve_map_path(map_path)
-        self.korp_map = load_korp_map(self.map_path)
+        self.korp_map = load_korp_map(self.map_path, mmap=map_mmap)
         self.steric_guard = bool(steric_guard)
         self.min_separation = int(min_separation)
         self.min_distance = float(min_distance)

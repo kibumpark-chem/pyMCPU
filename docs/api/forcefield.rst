@@ -274,6 +274,14 @@ in :ref:`korp-map`.
    ff.apply_energy_weights(sim.context)
    sim.step(10_000)
 
+By default each process reads the map into its own memory and asks the OS for
+2 MiB pages, which makes KORP steps about 5-9% faster (160-420 residues)
+than reading the map through 4 KiB pages. That costs ~316 MiB per process. If many ranks share a
+node that is short of memory, pass ``map_mmap=True`` (in a config file,
+``forcefield_options: {map_mmap: true}``) to memory-map the file instead, so
+all processes on the node share one copy through the page cache. Force fields
+built in one process from the same map share one loaded copy in either mode.
+
 .. autoclass:: pymcpu.forcefields.korp.KORPForceField
    :members: create_system, apply_energy_weights, inverse_mapping
 

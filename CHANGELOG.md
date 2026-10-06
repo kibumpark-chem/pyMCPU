@@ -501,6 +501,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Bit-identical: the parity dump, and the final energies and accept bits
   of every A/B run. `MCPU_FALLBACK_PRECHECK` is gone; the check always
   runs.
+- **The KORP map is read into memory on 2 MiB pages by default.** The
+  energy table is far larger than what 4 KiB pages keep in the TLB, so
+  with the old memory-mapped default about 11% of every KORP step's
+  cycles were page walks. `load_korp_map` now reads the table into a
+  private anonymous mapping, aligned to 2 MiB and advised `MADV_HUGEPAGE`
+  (it gets huge pages when THP is `always` or `madvise`, and is ordinary
+  memory elsewhere; Pythons built without the constant use the kernel's
+  value) and returns it as a read-only array. Interleaved A/B against the
+  previous main (n=3, 20k steps, pivot+KIC, user cycles/step): T4L
+  -4.7%, CA2 -6.4%, actin -8.0%, PGK1 -7.7%, page walks 11.2% of cycles
+  -> 0.1%, instructions unchanged. The cost is ~316 MiB of private memory
+  per process (actin: RSS 422 -> 526 MB) and a longer start: ~0.15 s when
+  the file is in the page cache, 10-17 s when it is read cold from NFS
+  (the memory-mapped mode paid that time as 4 KiB page faults during the
+  first steps instead). The old behaviour, one copy shared through the page cache
+  by every process on a node, is `KORPForceField(..., map_mmap=True)`
+  (`forcefield_options: {map_mmap: true}` in a config) or
+  `load_korp_map(path, mmap=True)`; use it when many ranks share a node
+  short of memory. Loads of the same unchanged file in the same mode now
+  return one shared `KorpMap` per process, so several force fields or
+  systems hold one table. `sha256=True` works in both modes and, in the
+  default one, digests the bytes already read instead of reading the file
+  again. Bit-identical: the parity dump, the KORP checks of
+  `scripts/tolerance_check.py` (zero difference against the previous
+  main) and the accept counts and final energies of every A/B run match.
 - **The KIC root solver does less bookkeeping per solve.** The Sturm
   sequence is packed for vector evaluation without looking up each
   member's order per entry (that loop was about a fifth of a solve with

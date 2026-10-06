@@ -1285,11 +1285,13 @@ PYBIND11_MODULE(mcpu_core, m) {
             "Engine-side view of a KORP 6D energy map.\n\n"
             "Built by pymcpu.forcefields.builders.korp_builder from a map that\n"
             "pymcpu.forcefields.korp_map has already parsed and validated. The\n"
-            "energy table is referenced in place, not copied -- pass the numpy\n"
-            "memmap and it stays shared through the OS page cache across every\n"
-            "rank on a node. The array is kept alive for as long as the C++ map\n"
-            "exists -- including after this Python object is gone, since every\n"
-            "potential built from it holds the map by shared_ptr.")
+            "energy table is referenced in place, not copied, so it stays\n"
+            "wherever load_korp_map put it: by default a private copy on 2 MiB\n"
+            "pages (fastest), or with mmap=True a numpy memmap shared through\n"
+            "the OS page cache by every rank on a node. The array is kept alive\n"
+            "for as long as the C++ map exists -- including after this Python\n"
+            "object is gone, since every potential built from it holds the map\n"
+            "by shared_ptr.")
         .def(py::init([](float cutoff, float min_r, int nslices,
                          std::vector<float> br,
                          std::vector<int> shell_ncells,
