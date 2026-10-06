@@ -220,6 +220,95 @@ template <class Grid, class Fn>
     }
 }
 
+/// probe_static_collect for callers that want r2 rather than the slot:
+/// the cell walk compresses each kept slot's id and its distance into two
+/// lists (span_hits8), and the second phase calls fn(p, j, r2) from them,
+/// so it neither looks the slot up again nor reloads its coordinates. The
+/// prefilter is the exact test r2 <= wa.lim2. Same pairs in the same order
+/// as probe_static_collect with fn's own r2 <= cutoff test.
+template <class Grid, class Fn>
+[[gnu::always_inline]] inline bool probe_static_collect_r2(
+        const Grid& grid, const Probe& p, const WalkArgs& wa, Fn& fn,
+        typename Grid::StencilMemo* memo) {
+    static_assert(Grid::CELL_CAPACITY % 8 == 0 && Grid::CELL_CAPACITY >= 16,
+                  "span_hits8 reads whole 8-slot blocks of a cell span");
+    constexpr int kHits = 27 * Grid::CELL_CAPACITY;
+    int hit_j[kHits + 8];
+    float hit_r2[kHits + 8];
+    int n_hits = 0;
+    const std::uint8_t* const is_moved = wa.is_moved;
+    const float lim2 = wa.lim2;
+    const auto drain = [&]() -> bool {
+        // Drop the moved partners first, without a branch per hit (see
+        // probe_static_collect); the kept hits stay in order.
+        int n_keep = 0;
+        for (int k = 0; k < n_hits; ++k) {
+            const int j = hit_j[k];
+            hit_j[n_keep] = j;
+            hit_r2[n_keep] = hit_r2[k];
+            n_keep += is_moved[static_cast<std::size_t>(j)] == 0;
+        }
+        for (int k = 0; k < n_keep; ++k)
+            if (fn(p, hit_j[k], hit_r2[k]) == Visit::Stop) return false;
+        n_hits = 0;
+        return true;
+    };
+    const auto block = [&](const int* cids, const float* cx, const float* cy,
+                           const float* cz, int m0, int count) {
+#if defined(__AVX2__)
+        __m256i ids;
+        __m256 r2;
+        const unsigned bits = span_hits8(p.x, p.y, p.z, cids, cx, cy, cz, m0,
+                                         count, p.i, lim2, ids, r2);
+        const __m256i perm = _mm256_cvtepu8_epi32(_mm_loadl_epi64(
+            reinterpret_cast<const __m128i*>(&kHitLanes.lanes[bits])));
+        _mm256_storeu_si256(reinterpret_cast<__m256i*>(hit_j + n_hits),
+                            _mm256_permutevar8x32_epi32(ids, perm));
+        _mm256_storeu_ps(hit_r2 + n_hits, _mm256_permutevar8x32_ps(r2, perm));
+        n_hits += __builtin_popcount(bits);
+#else
+        const int n = std::min(8, count - m0);
+        for (int k = 0; k < n; ++k) {
+            const float dx = p.x - cx[m0 + k];
+            const float dy = p.y - cy[m0 + k];
+            const float dz = p.z - cz[m0 + k];
+            const float r2 = dx * dx + dy * dy + dz * dz;
+            if (!(r2 > lim2) && cids[m0 + k] != p.i) {
+                hit_j[n_hits] = cids[m0 + k];
+                hit_r2[n_hits++] = r2;
+            }
+        }
+#endif
+    };
+    // As in probe_static_collect: a stencil whose candidates overflow the
+    // lists is walked again from the first cell not yet collected.
+    int skip = 0;
+    for (;;) {
+        int seen = 0;
+        bool full = false;
+        (void)walk_cells<Cells::Stencil>(
+            grid, p, wa,
+            [&](const int* __restrict__ cids, const float* __restrict__ cx,
+                const float* __restrict__ cy, const float* __restrict__ cz,
+                int count) {
+                if (seen++ < skip) return true;
+                if (n_hits > kHits - Grid::CELL_CAPACITY) {
+                    full = true;
+                    return false;
+                }
+                block(cids, cx, cy, cz, 0, count);
+                block(cids, cx, cy, cz, 8, count);
+                for (int m0 = 16; m0 < count; m0 += 8)
+                    block(cids, cx, cy, cz, m0, count);
+                return true;
+            },
+            memo);
+        if (!drain()) return false;
+        if (!full) return true;
+        skip = seen - 1;
+    }
+}
+
 }  // namespace detail
 
 /// For each moved site i (moved[0..n), in `order`): fn(p, j, span, m) ->
@@ -239,6 +328,22 @@ template <Cells C, class Grid, class Coords, class Fn>
         } else {
             if (!detail::probe_static<C>(grid, p, wa, fn, &memo)) return false;
         }
+    }
+    return true;
+}
+
+/// moved_vs_static over the Stencil, forward, for a fn(p, j, r2) -> Visit
+/// that takes the prefilter's distance (probe_static_collect_r2): every
+/// unmoved site j with r2 <= wa.lim2, exact, no slack.
+template <class Grid, class Coords, class Fn>
+[[gnu::always_inline]] inline bool moved_vs_static_r2(
+        const Grid& grid, const Coords& cnew, const int* moved, int n,
+        const WalkArgs& wa, Fn&& fn) {
+    typename Grid::StencilMemo memo;
+    for (int k = 0; k < n; ++k) {
+        const int i = moved[k];
+        const Probe p{i, cnew.x(i), cnew.y(i), cnew.z(i)};
+        if (!detail::probe_static_collect_r2(grid, p, wa, fn, &memo)) return false;
     }
     return true;
 }
