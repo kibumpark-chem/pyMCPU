@@ -350,8 +350,13 @@ void Context::commit_accepted_move(const State& proposed_state, const ProposalPa
             commit_old_coords_scratch_.resize(state.coords_soa.n);
         }
         // O(n_moved): gather pre-accept positions for accumulate_accept.
-        for (int i : patch.moved_indices) {
-            commit_old_coords_scratch_.copy_atom_from(state.coords_soa, i, i);
+        if (patch.moved_as_ranges()) {
+            for (const auto& rg : patch.moved_ranges)
+                commit_old_coords_scratch_.copy_range_from(state.coords_soa, rg.first, rg.second);
+        } else {
+            for (int i : patch.moved_indices) {
+                commit_old_coords_scratch_.copy_atom_from(state.coords_soa, i, i);
+            }
         }
     }
 
@@ -366,8 +371,13 @@ void Context::commit_accepted_move(const State& proposed_state, const ProposalPa
         assert(n_marked == patch.moved_indices.size() &&
                "moved_indices must list exactly the atoms moving_atoms marks");
 #endif
-        for (int atom_idx : patch.moved_indices) {
-            state.coords_soa.copy_atom_from(proposed_state.coords_soa, atom_idx, atom_idx);
+        if (patch.moved_as_ranges()) {
+            for (const auto& rg : patch.moved_ranges)
+                state.coords_soa.copy_range_from(proposed_state.coords_soa, rg.first, rg.second);
+        } else {
+            for (int atom_idx : patch.moved_indices) {
+                state.coords_soa.copy_atom_from(proposed_state.coords_soa, atom_idx, atom_idx);
+            }
         }
 
         for (int r : patch.distorted_bb_residues) {

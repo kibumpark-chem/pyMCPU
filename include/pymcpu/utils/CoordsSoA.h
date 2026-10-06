@@ -4,6 +4,7 @@
 #include <Eigen/Dense>
 #include <algorithm>
 #include <cstddef>
+#include <cstring>
 #include <vector>
 
 namespace mcpu {
@@ -50,6 +51,16 @@ struct CoordsSoA {
         x[static_cast<size_t>(dst)] = src.x[static_cast<size_t>(src_idx)];
         y[static_cast<size_t>(dst)] = src.y[static_cast<size_t>(src_idx)];
         z[static_cast<size_t>(dst)] = src.z[static_cast<size_t>(src_idx)];
+    }
+
+    /// Copy atoms [lo, hi) from src at the same indices.
+    void copy_range_from(const CoordsSoA& src, int lo, int hi) {
+        if (hi <= lo) return;
+        const size_t ulo = static_cast<size_t>(lo);
+        const size_t bytes = static_cast<size_t>(hi - lo) * sizeof(float);
+        std::memcpy(x.data() + ulo, src.x.data() + ulo, bytes);
+        std::memcpy(y.data() + ulo, src.y.data() + ulo, bytes);
+        std::memcpy(z.data() + ulo, src.z.data() + ulo, bytes);
     }
 
     void copy_all_from(const CoordsSoA& src) {

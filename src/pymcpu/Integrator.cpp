@@ -481,8 +481,13 @@ void MCIntegrator::ensure_proposal_buffers(const Context& context) {
 
 void MCIntegrator::restore_proposal_from_accepted(State& proposal, const State& accepted,
                                                   const ProposalPatch& patch) {
-    for (int i : patch.moved_indices) {
-        proposal.copy_atom_from(accepted, i, i);
+    if (patch.moved_as_ranges()) {
+        for (const auto& rg : patch.moved_ranges)
+            proposal.coords_soa.copy_range_from(accepted.coords_soa, rg.first, rg.second);
+    } else {
+        for (int i : patch.moved_indices) {
+            proposal.copy_atom_from(accepted, i, i);
+        }
     }
     for (int r : patch.distorted_bb_residues) {
         proposal.backbone_torsions[static_cast<size_t>(r)] =
@@ -603,10 +608,7 @@ void MCIntegrator::apply_pivot_at(Context& context, State& proposal, ProposalPat
     auto rotate_range = [&](int start, int end, std::vector<uint8_t>& moved_flags) {
         if (start < 0 || end <= start) return;
         proposal.rotate_atoms(start, end, R, pivot_A);
-        for (int i = start; i < end; ++i) {
-            moved_flags[static_cast<size_t>(i)] = 1;
-            patch.mark_moved(i);
-        }
+        patch.mark_moved_range(start, end, moved_flags);
     };
 
     auto mark_atom = [&](int i) {
