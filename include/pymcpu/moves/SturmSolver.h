@@ -19,8 +19,9 @@ namespace TripeptideLoopClosure {
 // Sturm-sequence root finder (Graphics Gems 1990, Hook & McAree).
 //
 // Speed without changing a single root bit. ~88% of the Sturm counts a solve made went
-// to the single-root fallback bisection (modrf stops on |f(x)/x| < 1e-15, which 40% of
-// roots never reach in 20 iterations; each then bisects to 1e-15 relative, ~51 counts),
+// to the single-root fallback bisection (regula falsi, since replaced, stopped on
+// |f(x)/x| < 1e-15, which 40% of roots never met in 20 iterations; each then bisected to
+// 1e-15 relative, ~51 counts),
 // and each count was 17 dependent scalar Horner loops plus a data-dependent branch per
 // sign comparison. With AVX2+FMA (the default v3 build) a count now evaluates four
 // sequence members per vector -- the same fused multiply-add per lane that the scalar
@@ -40,13 +41,11 @@ namespace TripeptideLoopClosure {
 // stays. Without AVX2 (v2/none builds) the original scalar loops run unchanged.
 //
 // Single-root refinement (not bit-identical, allowed by the tolerance rule): the
-// Sturm counts above still isolate each root, but when modrf stops without meeting
-// |f(x)/x| < 1e-15 it now hands back its narrowed sign-change bracket, and the root is
-// finished by halving that bracket on the sign of the polynomial itself (one Horner
-// evaluation) with the same 1e-15 relative stop. modrf also stops as soon as its bracket
-// is that narrow. The Sturm-count bisection runs only when the bracket ends have the
-// same sign. On 10,475 T4L/CA2 closures the closure counts are unchanged, 76% of the
-// 24,206 closures are bit-identical, and the largest coordinate difference is 3.7e-9 A.
+// Sturm counts above still isolate each root, and the root is then finished by Newton's
+// method kept inside its sign-change bracket (newton), stopping at the same 1e-15
+// relative tolerance. That takes about 6 Horner passes per root where regula falsi plus
+// sign halvings took about 50. The Sturm-count bisection runs only when the bracket
+// ends have the same sign.
 class SturmSolver {
 private:
     static constexpr int MAX_ORDER = 16;
@@ -63,7 +62,6 @@ private:
 
     double rel_error = 1.0e-15;
     int max_it = 100;
-    int max_iter_secant = 20;
 
     // The Sturm sequence packed for vector evaluation: T[g][j] holds coefficient j of
     // members 4g..4g+3, zero above each member's order. Only the full sequence
@@ -243,62 +241,62 @@ private:
         return atneginf - atposinf;
     }
 
-    // Illinois regula falsi on [a, b]. Returns 1 with val set when |f(x)/x| < rel_error;
-    // 2 when the bracket shrank to the bisection stop width (or the iterations ran out)
-    // first, leaving a and b as the narrowed sign-change bracket; 0 when f(a), f(b) have
-    // the same sign.
-    int modrf(int ord, const std::array<double, MAX_ORDER + 1>& coef, double& a, double& b, double& val) const {
+    // Finishes the single root in [a, b] by Newton's method on the polynomial, kept inside
+    // the sign-change bracket (Numerical Recipes rtsafe): a step that would leave the
+    // bracket, or that does not halve the previous step, is a halving instead. Returns
+    // false, touching nothing, when f(a) and f(b) have the same sign. Stops when a step is
+    // below the 1e-15 relative tolerance, f is exactly 0, or the bracket meets the
+    // bisection stop width. Each iteration is one Horner pass for f and f' together; it
+    // replaced Illinois regula falsi with |f(x)/x| < 1e-15, which 40% of roots never met
+    // in 20 iterations, followed by ~30 sign halvings.
+    bool newton(int ord, const std::array<double, MAX_ORDER + 1>& coef, double a, double b, double& root) const {
         double fa = coef[ord], fb = coef[ord];
         for (int i = ord - 1; i >= 0; i--) {
             fa = a * fa + coef[i];
             fb = b * fb + coef[i];
         }
-
-        if (fa * fb > 0.0) return 0;
-
-        double lfx = fa;
-        for (int its = 0; its < max_iter_secant; its++) {
-            double x = (fb * a - fa * b) / (fb - fa);
-            if (x < a || x > b) x = 0.5 * (a + b);
-
-            double fx = coef[ord];
-            for (int i = ord - 1; i >= 0; i--) fx = x * fx + coef[i];
-
-            if (std::abs(x) > rel_error) {
-                if (std::abs(fx / x) < rel_error) { val = x; return 1; }
-            } else if (std::abs(fx) < rel_error) {
-                val = x; return 1;
-            }
-
-            if ((fa * fx) < 0.0) {
-                b = x; fb = fx;
-                if ((lfx * fx) > 0.0) fa /= 2.0;
-            } else {
-                a = x; fa = fx;
-                if ((lfx * fx) > 0.0) fb /= 2.0;
-            }
-            lfx = fx;
-            if (bisect_done(a, b, 0.5 * (a + b))) return 2;
-        }
-        return 2;
-    }
-
-    // Finishes a single root from a sign-change bracket of the polynomial itself: one
-    // Horner sign per halving instead of a Sturm count, with the Sturm loop's stop test.
-    double sign_bisect(int ord, const std::array<double, MAX_ORDER + 1>& coef, double a, double b) const {
-        double fa = coef[ord];
-        for (int i = ord - 1; i >= 0; i--) fa = a * fa + coef[i];
-        double mid = 0.5 * (a + b);
+        if (fa * fb > 0.0) return false;
+        if (fa == 0.0) { root = a; return true; }
+        if (fb == 0.0) { root = b; return true; }
+        double lo = a, hi = b;              // f(lo) < 0 < f(hi)
+        if (fa > 0.0) std::swap(lo, hi);
+        double x = (fb * a - fa * b) / (fb - fa);    // secant start
+        if (!(x > std::min(a, b) && x < std::max(a, b))) x = 0.5 * (a + b);
+        double dxold = std::abs(b - a), dx = dxold;
+        bool newton_last = false;
         for (int its = 0; its < max_it; its++) {
-            mid = 0.5 * (a + b);
-            if (bisect_done(a, b, mid)) return mid;
-            double fm = coef[ord];
-            for (int i = ord - 1; i >= 0; i--) fm = mid * fm + coef[i];
-            if (fm == 0.0) return mid;
-            if ((fa < 0.0) != (fm < 0.0)) b = mid;
-            else { a = mid; fa = fm; }
+            double f = coef[ord], df = 0.0;
+            for (int i = ord - 1; i >= 0; i--) {
+                df = x * df + f;
+                f = x * f + coef[i];
+            }
+            if (f == 0.0) { root = x; return true; }
+            if (f < 0.0) lo = x; else hi = x;
+            const double step = f / df;
+            const double xn = x - step;
+            // Converged. Tested before the bracket test: a step below one ulp leaves xn == x,
+            // which is a bracket end, so the bracket test would otherwise halve the bracket.
+            if (bisect_done(0.0, step, x)) { root = xn; return true; }
+            if (!(std::abs(2.0 * f) < std::abs(dxold * df)) ||
+                !(xn > std::min(lo, hi) && xn < std::max(lo, hi))) {
+                // Rejected right after a Newton step below 1e-11 relative: x is at the
+                // rounding-noise floor of f. Halving the bracket instead, whose far end may
+                // not have moved since the start, would take dozens of passes.
+                if (newton_last && bisect_done(0.0, 1.0e-4 * dx, x)) { root = x; return true; }
+                newton_last = false;
+                dxold = dx;
+                dx = 0.5 * (hi - lo);
+                x = lo + dx;
+            } else {
+                newton_last = true;
+                dxold = dx;
+                dx = step;
+                x = xn;
+            }
+            if (bisect_done(0.0, dx, x) || bisect_done(lo, hi, 0.5 * (lo + hi))) { root = x; return true; }
         }
-        return mid;
+        root = x;
+        return true;
     }
 
     // The single-root loop's stop test; it does not depend on the count at mid.
@@ -312,10 +310,8 @@ private:
         int nroot = atmin - atmax;
         
         if (nroot == 1) {
-            double val = 0.0, lo = min, hi = max;
-            const int rf = modrf(sseq[0].ord, sseq[0].coef, lo, hi, val);
-            if (rf == 1) { roots.push_back(val); return; }
-            if (rf == 2) { roots.push_back(sign_bisect(sseq[0].ord, sseq[0].coef, lo, hi)); return; }
+            double val = 0.0;
+            if (newton(sseq[0].ord, sseq[0].coef, min, max, val)) { roots.push_back(val); return; }
             int its = 0;
 #if MCPU_STURM_SIMD
             // Two of the loop below per round; see the class comment.
