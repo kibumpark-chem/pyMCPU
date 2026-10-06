@@ -454,6 +454,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Rotamer-library sidechain moves compute log(sigma) once, at load.**
+  The proposal density stores each component's log(sigma) when the table
+  is loaded instead of calling `logf` per component and chi angle (one
+  `logf` per call remains, for the log-sum-exp), and keeps its
+  per-component terms on the stack instead of a new heap vector per call.
+  Writing `RotamerLibrary.row(...).sigma` from Python refreshes the cached
+  value. `wrap_angle_to_pi` rounds with `std::trunc` plus a fix-up that
+  equals `std::round` bit for bit, which drops the `roundf` call on SSE4.1
+  builds (`MCPU_ARCH` v2 and up). The per-energy-group timers in
+  `System::evaluateDeltaEnergy`, on by default, read the TSC instead of
+  calling `steady_clock::now()` twice per potential per move; the
+  `step_stats` timings and `MCPU_ENERGY_TIMING=0` are unchanged.
+  Interleaved A/B against the previous main (n=3, user cycles/step) on
+  T4L, CA2, LDH-A, actin and PGK1: default mix -1.0% to -2.9% (actin
+  instructions/step -4.7%), pivot-only and KIC-only -1.4% to +0.4%.
+  Bit-identical.
+
 - **KIC proposals cost about a fifth less.** The degree-16 closure
   polynomial is built from products whose degrees are fixed when
   compiling, so each unrolls to straight-line code (bit-identical
