@@ -115,15 +115,16 @@ void OrientationalPairPotential::build_frames(
     }
 }
 
-double OrientationalPairPotential::pair_energy(
-    const std::vector<ResidueFrame>& frames, int lo, int hi) const noexcept
+bool OrientationalPairPotential::pair_entry(
+    const std::vector<ResidueFrame>& frames, int lo, int hi,
+    std::size_t& index, float& weight) const noexcept
 {
     const std::size_t a = static_cast<std::size_t>(lo);
     const std::size_t b = static_cast<std::size_t>(hi);
 
     const Eigen::Vector3d rab = frames[b].origin - frames[a].origin;
     const double d2 = rab.squaredNorm();
-    if (d2 >= static_cast<double>(map_->cutoff_sq())) return 0.0;
+    if (d2 >= static_cast<double>(map_->cutoff_sq())) return false;
 
     // Sequence separation from PDB numbering, as upstream does; a pair spanning
     // two chains is unconditionally non-bonding.
@@ -131,14 +132,23 @@ double OrientationalPairPotential::pair_energy(
         ? 0
         : std::abs(seq_number_[b] - seq_number_[a]);
     const int slice = map_->slice_for_separation(separation);
-    if (slice < 0) return 0.0;   // too close in sequence to be scored at all
+    if (slice < 0) return false;   // too close in sequence to be scored at all
 
     const PairCoordinates pc = pair_coordinates(frames[a], frames[b]);
-    if (pc.d <= static_cast<double>(map_->min_r())) return 0.0;
+    if (pc.d <= static_cast<double>(map_->min_r())) return false;
 
-    const PairBins bins = map_->bins(pc);
-    return static_cast<double>(map_->slice_weight(slice))
-         * static_cast<double>(map_->lookup(slice, korp_type_[a], korp_type_[b], bins));
+    index = map_->entry_index(slice, korp_type_[a], korp_type_[b], map_->bins(pc));
+    weight = map_->slice_weight(slice);
+    return true;
+}
+
+double OrientationalPairPotential::pair_energy(
+    const std::vector<ResidueFrame>& frames, int lo, int hi) const noexcept
+{
+    std::size_t index = 0;
+    float weight = 0.f;
+    if (!pair_entry(frames, lo, hi, index, weight)) return 0.0;
+    return static_cast<double>(weight) * static_cast<double>(map_->entry(index));
 }
 
 float OrientationalPairPotential::calculateEnergy(
@@ -264,6 +274,16 @@ EnergyChangeResult OrientationalPairPotential::calculateEnergyChange(
     // The old energy comes from the cache, and only pairs whose energy
     // changed enter the sum and the pending update. Both sides are the float
     // values the cache holds, so the running total stays the sum of the cache.
+    //
+    // Each row runs in three passes so the table lookups overlap: the first
+    // collects, without branches, the partners that can contribute (within
+    // the prefilter, or holding a nonzero cached energy); the second computes
+    // their table entries and prefetches them; the third reads the entries
+    // and folds the changes in, in the same order as a single pass would.
+    cand_.resize(un);
+    entry_.resize(un);
+    weight_.resize(un);
+    constexpr std::size_t kNoEntry = ~std::size_t{0};
     double delta = 0.0;
     for (int a : changed_) {
         const std::size_t ua = static_cast<std::size_t>(a);
@@ -271,21 +291,40 @@ EnergyChangeResult OrientationalPairPotential::calculateEnergyChange(
         // Rigid exists only with the rigid skip on; see the header.
         const bool a_rigid = cls_[ua] == FrameClass::Rigid;
         const double ax = ox_[ua], ay = oy_[ua], az = oz_[ua];
+        std::size_t k = 0;
         for (int j = 0; j < n; ++j) {
             const std::size_t uj = static_cast<std::size_t>(j);
             const FrameClass cj = cls_[uj];
-            if (cj != FrameClass::Fixed) {
-                if (j <= a) continue;
-                if (a_rigid && cj == FrameClass::Rigid) continue;
-            }
+            const bool visit = (cj == FrameClass::Fixed)
+                | ((j > a) & !(a_rigid & (cj == FrameClass::Rigid)));
             const double dx = ox_[uj] - ax;
             const double dy = oy_[uj] - ay;
             const double dz = oz_[uj] - az;
-            float e_new = 0.f;
-            if (dx * dx + dy * dy + dz * dz < cut2) {
-                e_new = static_cast<float>(a < j ? pair_energy(frames_new_, a, j)
-                                                 : pair_energy(frames_new_, j, a));
+            const bool near = dx * dx + dy * dy + dz * dz < cut2;
+            cand_[k] = near ? j : ~j;
+            k += static_cast<std::size_t>(visit & (near | (old_row[j] != 0.f)));
+        }
+        const float* table_base = map_->entry_address(0);
+        for (std::size_t i = 0; i < k; ++i) {
+            const int j = cand_[i];
+            std::size_t index = kNoEntry;
+            float weight = 0.f;
+            if (j >= 0) {
+                const bool scored = a < j ? pair_entry(frames_new_, a, j, index, weight)
+                                          : pair_entry(frames_new_, j, a, index, weight);
+                if (scored) __builtin_prefetch(table_base + index);
+                else index = kNoEntry;
             }
+            entry_[i] = index;
+            weight_[i] = weight;
+        }
+        for (std::size_t i = 0; i < k; ++i) {
+            const int c = cand_[i];
+            const int j = c >= 0 ? c : ~c;
+            const std::size_t index = entry_[i];
+            const float e_new = index == kNoEntry ? 0.f
+                : static_cast<float>(static_cast<double>(weight_[i])
+                                     * static_cast<double>(map_->entry(index)));
             const float e_old = old_row[j];
             if (e_new != e_old) {
                 delta += static_cast<double>(e_new) - static_cast<double>(e_old);
@@ -293,7 +332,6 @@ EnergyChangeResult OrientationalPairPotential::calculateEnergyChange(
             }
         }
     }
-
     return EnergyChangeResult::finite(static_cast<float>(delta));
 }
 

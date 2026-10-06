@@ -100,20 +100,33 @@ public:
     }
 
     /// Raw (unweighted) table entry.
-    [[nodiscard]] float lookup(int slice, int type_a, int type_b,
-                               const PairBins& b) const noexcept
+    /// Index into the table of the entry for (slice, type_a, type_b, bins).
+    [[nodiscard]] std::size_t entry_index(int slice, int type_a, int type_b,
+                                          const PairBins& b) const noexcept
     {
         const std::size_t ncells =
             static_cast<std::size_t>(shell_ncells_[static_cast<std::size_t>(b.shell)]);
         const std::size_t nchi =
             static_cast<std::size_t>(shell_nchi_[static_cast<std::size_t>(b.shell)]);
-        const std::size_t offset =
-            block_base(slice, type_a, type_b)
+        return block_base(slice, type_a, type_b)
             + static_cast<std::size_t>(shell_offset_[static_cast<std::size_t>(b.shell)])
             + (static_cast<std::size_t>(b.cell_a) * ncells
                + static_cast<std::size_t>(b.cell_b)) * nchi
             + static_cast<std::size_t>(b.chi);
-        return table_[offset];
+    }
+
+    [[nodiscard]] float entry(std::size_t index) const noexcept { return table_[index]; }
+
+    /// Address of an entry, for a prefetch. The table is ~330 MB and mapped
+    /// from the file, so nearly every lookup misses the TLB and the caches.
+    [[nodiscard]] const float* entry_address(std::size_t index) const noexcept {
+        return table_ + index;
+    }
+
+    [[nodiscard]] float lookup(int slice, int type_a, int type_b,
+                               const PairBins& b) const noexcept
+    {
+        return table_[entry_index(slice, type_a, type_b, b)];
     }
 
 private:
