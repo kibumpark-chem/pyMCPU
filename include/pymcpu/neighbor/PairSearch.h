@@ -61,6 +61,7 @@ template <Cells C, class Grid, class CellFn>
 [[gnu::always_inline]] inline bool walk_cells(
         const Grid& grid, const Probe& p, const WalkArgs& wa, CellFn&& cell_fn,
         typename Grid::StencilMemo* memo = nullptr) {
+    (void)memo;  // only the Stencil walk uses it
     if constexpr (C == Cells::Stencil) {
         return grid.for_each_neighbor_cell_span_while_unmoved(
             p.x, p.y, p.z, wa.moved_counts, memo, cell_fn);
@@ -144,12 +145,22 @@ template <class Grid, class Fn>
     const std::uint8_t* const is_moved = wa.is_moved;
     const float lim2 = wa.lim2;
     const auto drain = [&]() -> bool {
+        // Drop the moved partners first, without a branch per hit: a
+        // branch on is_moved here was 10-13% of a Mu move's mispredicts
+        // (actin, PGK1), since moved and unmoved atoms share cells. The
+        // kept hits stay in order, so fn sees the same pairs as before.
+        int n_keep = 0;
         for (int k = 0; k < n_hits; ++k) {
+            const int v = hits[k];
+            const int j = tab[v >> 8].ids[v & 0xFF];
+            hits[n_keep] = v;
+            n_keep += is_moved[static_cast<std::size_t>(j)] == 0;
+        }
+        for (int k = 0; k < n_keep; ++k) {
             const int v = hits[k];
             const CellSpan& s = tab[v >> 8];
             const int m = v & 0xFF;
             const int j = s.ids[m];
-            if (is_moved[static_cast<std::size_t>(j)]) continue;
             if (fn(p, j, s, m) == Visit::Stop) return false;
         }
         n_cells = 0;

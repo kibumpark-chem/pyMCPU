@@ -5,6 +5,7 @@
 #include <cassert>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <vector>
 
 namespace mcpu::neighbor {
@@ -56,9 +57,19 @@ public:
     }
     [[gnu::always_inline]] inline ~MovedCellScope() {
         std::uint8_t* const counts = c_.counts_.data();
-        for (int k = 0; k < n_; ++k) {
-            const int cell = grid_.atom_cell(moved_[k]);
-            if (cell >= 0) counts[static_cast<std::size_t>(cell)] = 0;
+        // A move that displaces many atoms (a pivot near the middle of the
+        // chain) touches most cells anyway: clearing every count is then a
+        // short vector memset instead of a cell lookup per moved atom (the
+        // per-atom loops were ~4.7% of PGK1 pivot-only cycles). Either way every
+        // count ends at zero.
+        const std::size_t n_cells = static_cast<std::size_t>(grid_.num_cells());
+        if (static_cast<std::size_t>(n_) * 16 > n_cells) {
+            std::memset(counts, 0, n_cells);
+        } else {
+            for (int k = 0; k < n_; ++k) {
+                const int cell = grid_.atom_cell(moved_[k]);
+                if (cell >= 0) counts[static_cast<std::size_t>(cell)] = 0;
+            }
         }
 #ifndef NDEBUG
         --c_.depth_;

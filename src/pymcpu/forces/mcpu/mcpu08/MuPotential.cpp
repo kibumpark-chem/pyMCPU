@@ -529,6 +529,7 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
         atom_role_ = std::move(atom_role);
         res_class_ = std::move(res_class);
         layer1_meta_ready_ = true;
+        build_compact_topo();
     }
 
     void MuPotential::permute_atom_indices(const AtomPermutation& perm) {
@@ -614,9 +615,124 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
             build_clash_exceptions();
         }
         num_atoms_cached_ = n;
+        build_compact_topo();
     }
 
     /// Build Layer 3 CSR from final clash masks + Layer 1 rules. O(N²).
+    void MuPotential::build_compact_topo() {
+        tf_ready_ = false;
+        const int n = num_atoms_cached_;
+        const size_t N = static_cast<size_t>(n);
+        if (n < 2 || topo_flag_.size() != N * N || res_index_.size() != N ||
+            atom_types.size() != N) {
+            return;
+        }
+        int max_t = -1;
+        for (int t : atom_types) max_t = std::max(max_t, t);
+        if (max_t + 2 > 256) return;
+        const int ncls = max_t + 2;
+        tf_ncls_ = ncls;
+        tf_res_.assign(res_index_.begin(), res_index_.end());
+        tf_cls_.resize(N);
+        for (size_t i = 0; i < N; ++i)
+            tf_cls_[i] = static_cast<uint8_t>(std::max(atom_types[i], -1) + 1);
+
+        // Residue order: rank atoms by (residue, index).
+        std::vector<int> order(N);
+        for (int i = 0; i < n; ++i) order[static_cast<size_t>(i)] = i;
+        std::stable_sort(order.begin(), order.end(), [&](int a, int b) {
+            return tf_res_[static_cast<size_t>(a)] < tf_res_[static_cast<size_t>(b)];
+        });
+        std::vector<int32_t> res_sorted(N);
+        tf_rank_.assign(N, 0);
+        for (size_t r = 0; r < N; ++r) {
+            tf_rank_[static_cast<size_t>(order[r])] = static_cast<int32_t>(r);
+            res_sorted[r] = tf_res_[static_cast<size_t>(order[r])];
+        }
+        // Band rows: atom i holds the atoms of residues res_i -+ kTopoBand.
+        tf_row_.assign(N, 0);
+        std::vector<int32_t> lo(N), hi(N);
+        size_t total = 0;
+        for (size_t i = 0; i < N; ++i) {
+            const int32_t r = tf_res_[i];
+            lo[i] = static_cast<int32_t>(
+                std::lower_bound(res_sorted.begin(), res_sorted.end(),
+                                 r - kTopoBand) - res_sorted.begin());
+            hi[i] = static_cast<int32_t>(
+                std::upper_bound(res_sorted.begin(), res_sorted.end(),
+                                 r + kTopoBand) - res_sorted.begin());
+            if (total > static_cast<size_t>(std::numeric_limits<int32_t>::max() / 2))
+                return;
+            tf_row_[i] = static_cast<int32_t>(total) - lo[i];
+            total += static_cast<size_t>(hi[i] - lo[i]);
+        }
+        tf_band_.assign(std::max<size_t>(total, 1), 0);
+        for (size_t i = 0; i < N; ++i) {
+            for (int32_t r = lo[i]; r < hi[i]; ++r) {
+                const size_t j = static_cast<size_t>(order[static_cast<size_t>(r)]);
+                tf_band_[static_cast<size_t>(tf_row_[i] + r)] = topo_flag_[i * N + j];
+            }
+        }
+        // Far pairs: each class pair's most common byte; the rest are
+        // exceptions.
+        const size_t C = static_cast<size_t>(ncls);
+        std::vector<uint32_t> votes(C * C * 4, 0);
+        for (size_t i = 0; i < N; ++i) {
+            const uint8_t* row = topo_flag_.data() + i * N;
+            const size_t ci = tf_cls_[i] * C;
+            for (size_t j = 0; j < N; ++j) {
+                const int d = tf_res_[j] - tf_res_[i];
+                if (d >= -kTopoBand && d <= kTopoBand) continue;
+                if (row[j] > 3) return;
+                ++votes[(ci + tf_cls_[j]) * 4 + row[j]];
+            }
+        }
+        tf_far_.assign(C * C, 0);
+        for (size_t k = 0; k < C * C; ++k) {
+            uint8_t best = 0;
+            for (uint8_t f = 1; f < 4; ++f)
+                if (votes[k * 4 + f] > votes[k * 4 + best]) best = f;
+            tf_far_[k] = best;
+        }
+        tf_exc_atom_.assign(N, 0);
+        tf_exc_start_.assign(N + 1, 0);
+        tf_exc_col_.clear();
+        tf_exc_flag_.clear();
+        for (size_t i = 0; i < N; ++i) {
+            const uint8_t* row = topo_flag_.data() + i * N;
+            const size_t ci = tf_cls_[i] * C;
+            for (size_t j = 0; j < N; ++j) {
+                const int d = tf_res_[j] - tf_res_[i];
+                if (d >= -kTopoBand && d <= kTopoBand) continue;
+                if (row[j] != tf_far_[ci + tf_cls_[j]]) {
+                    tf_exc_col_.push_back(static_cast<int32_t>(j));
+                    tf_exc_flag_.push_back(row[j]);
+                    tf_exc_atom_[i] = 1;
+                }
+            }
+            tf_exc_start_[i + 1] = static_cast<int32_t>(tf_exc_col_.size());
+            if (tf_exc_col_.size() > 8 * N) return;  // not compact: keep N*N
+        }
+        // Check every entry before switching over.
+        tf_ready_ = true;
+        for (int i = 0; i < n && tf_ready_; ++i) {
+            for (int j = 0; j < n; ++j) {
+                if (topo_flag(i, j) !=
+                    topo_flag_[static_cast<size_t>(i) * N + static_cast<size_t>(j)]) {
+                    tf_ready_ = false;
+                    break;
+                }
+            }
+        }
+        if (mcpu_verbose_enabled()) {
+            std::fprintf(stderr,
+                         "INFO: compact topo flags %s: band %.1f KB, %d classes, "
+                         "%zu far exceptions\n",
+                         tf_ready_ ? "on" : "off (mismatch)", total / 1024.0,
+                         ncls, tf_exc_col_.size());
+        }
+    }
+
     void MuPotential::build_clash_exceptions() {
         const size_t N = static_cast<size_t>(num_atoms_cached_);
         if (!layer1_meta_ready_ || res_index_.size() != N ||
@@ -946,6 +1062,7 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
                 topo_flag_.size() / (1024.0 * 1024.0),
                 static_cast<int>(use_topo_flags_));
         }
+        build_compact_topo();
         // CHANGED: exact denselist cutoff from type_params_ (default ON).
         apply_mu_denselist_cutoff();
     }
@@ -2013,7 +2130,7 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
                                     }
                                     for (int t = 0; t < n_in; ++t) {
                                         if (kPrefetchLayered && t + 2 < n_in &&
-                                            use_topo_flags_ &&
+                                            use_topo_flags_ && !tf_ready_ &&
                                             !topo_flag_.empty()) {
                                             const int j_next = cids[in_cut[t + 2]];
                                             const size_t pidx =

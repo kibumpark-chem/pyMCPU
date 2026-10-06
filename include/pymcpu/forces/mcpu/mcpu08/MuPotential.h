@@ -144,6 +144,73 @@ namespace mcpu::forces::mcpu08 {
         /// Env ``MCPU_TOPO_FLAGS=0`` forces Layer 1 branch decode (v1).
         std::vector<uint8_t> topo_flag_;
         bool use_topo_flags_ = true;
+
+        /// topo_flag_ in a form that fits in cache, read by topo_flag().
+        /// topo_flag_ is N*N bytes (8.5 MB on actin) and its lookups were
+        /// the top L2-miss line of a Mu move (28% of all L2 misses on actin
+        /// and LDH-A). Pairs within kTopoBand residues read a banded table
+        /// (one row per atom, holding the atoms of residues r-kTopoBand to
+        /// r+kTopoBand); farther pairs read one byte per atom-type pair, and
+        /// the few far pairs that differ from their type pair's byte (native
+        /// clash exemptions) are listed per atom. Built from the final
+        /// topo_flag_ and checked against every entry of it, so a lookup
+        /// returns exactly topo_flag_'s byte; when the check fails or the
+        /// list grows past a few entries per atom, topo_flag() reads
+        /// topo_flag_ itself. See build_compact_topo().
+        static constexpr int kTopoBand = 4;  // kSkipLocalContactRange
+        bool tf_ready_ = false;
+        std::vector<int32_t> tf_res_;    ///< residue per atom
+        std::vector<int32_t> tf_rank_;   ///< position in residue order
+        std::vector<int32_t> tf_row_;    ///< band row start - first rank of the row
+        std::vector<uint8_t> tf_cls_;    ///< atom type + 1 (0 = untyped)
+        std::vector<uint8_t> tf_band_;
+        std::vector<uint8_t> tf_far_;    ///< (n_cls x n_cls) far-pair byte
+        int tf_ncls_ = 0;
+        std::vector<uint8_t> tf_exc_atom_;    ///< 1: atom has a far exception
+        std::vector<int32_t> tf_exc_start_;   ///< CSR rows over atoms, N + 1
+        std::vector<int32_t> tf_exc_col_;
+        std::vector<uint8_t> tf_exc_flag_;
+        void build_compact_topo();
+        [[gnu::noinline]] uint8_t topo_far_exception(int i, int j,
+                                                     uint8_t f) const noexcept {
+            const int32_t* c = tf_exc_col_.data();
+            for (int32_t k = tf_exc_start_[static_cast<size_t>(i)],
+                         e = tf_exc_start_[static_cast<size_t>(i) + 1];
+                 k < e; ++k) {
+                if (c[k] == j) return tf_exc_flag_[static_cast<size_t>(k)];
+            }
+            return f;
+        }
+        /// topo_flag_[i*N + j], from the compact form when it is built.
+        [[nodiscard, gnu::always_inline]] inline uint8_t topo_flag(
+            int i, int j) const noexcept {
+            const size_t ui = static_cast<size_t>(i);
+            const size_t uj = static_cast<size_t>(j);
+            if (!tf_ready_) {
+                return topo_flag_[ui * static_cast<size_t>(num_atoms_cached_) + uj];
+            }
+            const int d = tf_res_[uj] - tf_res_[ui];
+            const bool in_band =
+                static_cast<unsigned>(d + kTopoBand) <= 2u * kTopoBand;
+            // Both bytes are read and one is selected with masks, so whether
+            // a pair is near in sequence costs no branch (a conditional here
+            // compiled to one, 3.5% of a Mu move's mispredicts). A far pair's
+            // band index is masked to 0, which is always in range.
+            const int32_t band_mask = -static_cast<int32_t>(in_band);
+            const size_t bidx = static_cast<size_t>(
+                static_cast<uint32_t>(tf_row_[ui] + tf_rank_[uj]) &
+                static_cast<uint32_t>(band_mask));
+            const uint32_t fb = tf_band_[bidx];
+            uint32_t ff = tf_far_[static_cast<size_t>(tf_cls_[ui]) *
+                                      static_cast<size_t>(tf_ncls_) +
+                                  tf_cls_[uj]];
+            if (__builtin_expect((tf_exc_atom_[ui] & tf_exc_atom_[uj]) != 0, 0) &&
+                !in_band) {
+                ff = topo_far_exception(i, j, static_cast<uint8_t>(ff));
+            }
+            return static_cast<uint8_t>(
+                ff ^ ((fb ^ ff) & static_cast<uint32_t>(band_mask)));
+        }
         /// Denselist / r² prefilter cutoff² (= mu_exact_cutoff_²).
         float contact_cutoff_sq_ = 36.f;
         /// Mu query cutoff (Å): the largest contact cutoff widened by the
@@ -165,6 +232,8 @@ namespace mcpu::forces::mcpu08 {
 
         /// Matches mu_builder skip_local_contact_range default.
         static constexpr int kSkipLocalContactRange = 4;
+        static_assert(kTopoBand == kSkipLocalContactRange,
+                      "the band holds the pairs whose contacts are switched off by sequence");
 
         /// Fills clash/contact enable from Layer 1 (mirrors mu_builder Rules 0–6).
         [[gnu::always_inline]] inline void topology_pair_flags(
@@ -363,12 +432,8 @@ namespace mcpu::forces::mcpu08 {
             // topo_flag_ table plus a type_params_ load per pair.
             if (!(r2 < clash_prefilter_r2_)) return false;
             if (mask_ignores_pair(i, j)) return false;
-            const size_t N = static_cast<size_t>(num_atoms_cached_);
             if (!topo_flag_.empty()) {
-                const uint8_t flag =
-                    topo_flag_[static_cast<size_t>(i) * N +
-                               static_cast<size_t>(j)];
-                if (!(flag & 1u)) return false;
+                if (!(topo_flag(i, j) & 1u)) return false;
             }
             const size_t NT = static_cast<size_t>(n_types_);
             const int ti = atom_types[static_cast<size_t>(i)];
@@ -389,9 +454,7 @@ namespace mcpu::forces::mcpu08 {
             int i, int j, float r2, bool* clash_out,
             bool* near_out = nullptr) const noexcept
         {
-            const size_t N = static_cast<size_t>(num_atoms_cached_);
-            const uint8_t flag =
-                topo_flag_[static_cast<size_t>(i) * N + static_cast<size_t>(j)];
+            const uint8_t flag = topo_flag(i, j);
             if (flag == 0) {
                 return 0.0f;
             }
