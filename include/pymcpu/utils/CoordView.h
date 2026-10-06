@@ -2,9 +2,25 @@
 /// Fast coordinate access for Mu / neighbor hot loops (SoA scalar loads, no Eigen temporaries).
 
 #include "pymcpu/utils/CoordsSoA.h"
+#include <cmath>
 #include <cstddef>
 
 namespace mcpu {
+
+/// Squared length of (dx, dy, dz), rounded the way span_hits8 (SpanMask.h)
+/// rounds it: fma(dz, dz, fma(dx, dx, dy * dy)) with FMA and the default
+/// contraction, the unfused sum otherwise. Written out because the compiler
+/// is free to contract dx * dx + dy * dy + dz * dz either way at each call
+/// site, and a pair on its cutoff then lands on different sides of it in
+/// different code paths (an incremental delta and the full energy).
+[[nodiscard, gnu::always_inline]] inline float pair_r2(
+        float dx, float dy, float dz) noexcept {
+#if defined(__FMA__) && !defined(MCPU_FP_CONTRACT_OFF)
+    return std::fma(dz, dz, std::fma(dx, dx, dy * dy));
+#else
+    return dx * dx + dy * dy + dz * dz;
+#endif
+}
 
 struct CoordView {
     const float* x_ = nullptr;
@@ -43,27 +59,27 @@ struct CoordView {
         const float dx = a[0] - b[0];
         const float dy = a[1] - b[1];
         const float dz = a[2] - b[2];
-        return dx * dx + dy * dy + dz * dz;
+        return pair_r2(dx, dy, dz);
     }
 
     [[nodiscard]] inline float dist2(int i, int j) const noexcept {
         const float dx = x_[static_cast<size_t>(i)] - x_[static_cast<size_t>(j)];
         const float dy = y_[static_cast<size_t>(i)] - y_[static_cast<size_t>(j)];
         const float dz = z_[static_cast<size_t>(i)] - z_[static_cast<size_t>(j)];
-        return dx * dx + dy * dy + dz * dz;
+        return pair_r2(dx, dy, dz);
     }
 
     [[nodiscard]] inline float dist2(int i, const CoordView& other, int j) const noexcept {
         const float dx = x_[static_cast<size_t>(i)] - other.x_[static_cast<size_t>(j)];
         const float dy = y_[static_cast<size_t>(i)] - other.y_[static_cast<size_t>(j)];
         const float dz = z_[static_cast<size_t>(i)] - other.z_[static_cast<size_t>(j)];
-        return dx * dx + dy * dy + dz * dz;
+        return pair_r2(dx, dy, dz);
     }
     [[nodiscard]] static inline float dist2(const float* a, float bx, float by, float bz) noexcept {
         const float dx = a[0] - bx;
         const float dy = a[1] - by;
         const float dz = a[2] - bz;
-        return dx * dx + dy * dy + dz * dz;
+        return pair_r2(dx, dy, dz);
     }
 };
 

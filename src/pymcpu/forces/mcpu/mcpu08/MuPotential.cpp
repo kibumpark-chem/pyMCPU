@@ -1377,7 +1377,7 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
             const float xa = x[a], ya = y[a], za = z[a];
             for (size_t b = a + 1; b < n; ++b) {
                 const float dx = x[b] - xa, dy = y[b] - ya, dz = z[b] - za;
-                r2_row[b] = dx * dx + dy * dy + dz * dz;
+                r2_row[b] = pair_r2(dx, dy, dz);
             }
             // Beyond the Mu cutoff a pair is out of contact on both sides:
             // the cutoff includes the contact list's 0.05 A band, and a
