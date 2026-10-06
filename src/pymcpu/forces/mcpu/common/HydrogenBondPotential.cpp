@@ -6,6 +6,7 @@
 #include "pymcpu/utils/hydrogen_bond_utils.h"
 #include "pymcpu/utils/virtual_amide_h.h"
 #include "pymcpu/forces/mcpu/common/HBondStateCache.h"
+#include "pymcpu/neighbor/PairSearch.h"
 #include <array>
 #include <cmath>
 #if defined(__AVX2__)
@@ -182,10 +183,46 @@ EnergyChangeResult HBondPotential::calculateEnergyChange(
         if (res_affected[static_cast<size_t>(r)]) aff_list.push_back(r);
     }
 
+    // Rigid sites: under a rigid move, a residue whose donor and acceptor
+    // geometry (backbone of r-1, r, r+1 and its amide H) moved as one body
+    // keeps its energy with every other such residue, so those pairs are
+    // dropped from both sides of the delta and their ledger entries carried.
+    // Rounding in the rotation can still move such a pair across a bin edge;
+    // skip_rigid_mm = false scores them all, as a reference.
+    constexpr uint8_t kRigid = HBondWorkspace::kRigidSite;
+    constexpr uint8_t kBbMoved = HBondWorkspace::kBackboneMoved;
+    const int n_atoms = sys.getNumAtoms();
+    if (patch.is_rigid && !patch.moved_indices.empty()
+        && context.neighborConfig().skip_rigid_mm
+        && static_cast<int>(patch.moving_atoms.size()) == n_atoms) {
+        const uint8_t* mv = patch.moving_atoms.data();
+        for (int r : aff_list) {
+            const BlockIndices& b = blocks[static_cast<size_t>(r)];
+            if (b.bb_start < 0) continue;
+            if (mv[b.bb_start] && mv[b.ca_atom()] && mv[b.c_atom()]
+                && (b.o_start < 0 || mv[b.o_start])
+                && (!b.has_explicit_h() || mv[b.h_start])) {
+                res_affected[static_cast<size_t>(r)] |= kBbMoved;
+            }
+        }
+        for (int r : aff_list) {
+            if (r <= 0 || r >= num_residues - 1) continue;
+            if (res_affected[static_cast<size_t>(r - 1)] & res_affected[static_cast<size_t>(r)]
+                & res_affected[static_cast<size_t>(r + 1)] & kBbMoved) {
+                res_affected[static_cast<size_t>(r)] |= kRigid;
+            }
+        }
+    }
+    auto rigid = [&](int r) { return (res_affected[static_cast<size_t>(r)] & kRigid) != 0; };
+
     // Old side: every listed pair with an affected end, each counted once.
     double e_old_sum = 0.0;
     for (int r : aff_list) {
-        for (const auto& en : cache.as_donor(r)) e_old_sum += static_cast<double>(en.energy);
+        const bool r_rigid = rigid(r);
+        for (const auto& en : cache.as_donor(r)) {
+            if (r_rigid && rigid(en.partner)) continue;
+            e_old_sum += static_cast<double>(en.energy);
+        }
         for (const auto& en : cache.as_acceptor(r)) {
             if (!res_affected[static_cast<size_t>(en.partner)]) {
                 e_old_sum += static_cast<double>(en.energy);
@@ -196,74 +233,164 @@ EnergyChangeResult HBondPotential::calculateEnergyChange(
     // New side, part 1: affected donor x unaffected acceptor. The O grid holds
     // the accepted positions, which are the proposed ones for an unaffected
     // acceptor, so one walk at the donor's new H finds every such pair.
-    auto process_donor = [&](int r_don) {
-        float nh[3];
-        if (!load_donor_h(proposed_state, sys, r_don, nh)) return;
-        auto query_oxygen = [&](int o) {
-            const int r_acc = sys.atom_to_residue[static_cast<size_t>(o)];
-            if (r_acc < 0 || r_acc >= num_residues) return;
-            if (res_affected[static_cast<size_t>(r_acc)]) return;
-            const float bx = nh[0] - cold.x(o), by = nh[1] - cold.y(o), bz = nh[2] - cold.z(o);
-            if (bx * bx + by * by + bz * bz > kFarCut2) return;
-            evaluate_new(r_don, r_acc);
-        };
-        if (use_brute) {
-            ns.for_each_hbond_acceptor_bruteforce(old_state.coords_soa, nh[0], nh[1], nh[2], cut2, query_oxygen);
-        } else {
-            ns.for_each_hbond_acceptor_candidate(nh[0], nh[1], nh[2], query_oxygen);
-        }
-    };
-
     // Part 2: affected acceptor x unaffected donor, from the H grid at the
     // acceptor's new O (an unaffected donor's H has not moved either).
-    auto process_acceptor = [&](int r_acc, int o_atom) {
-        const float x = cnew.x(o_atom), y = cnew.y(o_atom), z = cnew.z(o_atom);
-        auto query_donor = [&](int neighbor_id) {
-            const int r_don = virt
-                ? neighbor_id
-                : sys.atom_to_residue[static_cast<size_t>(neighbor_id)];
-            if (r_don < 0 || r_don >= num_residues) return;
-            if (res_affected[static_cast<size_t>(r_don)]) return;
-            evaluate_new(r_don, r_acc);
-        };
-        if (use_brute) {
-            if (virt) {
-                ns.for_each_hbond_donor_bruteforce(old_state.coords_soa, sys, x, y, z, cut2, query_donor);
-            } else {
-                ns.for_each_hbond_h_bruteforce(old_state.coords_soa, x, y, z, cut2, query_donor);
+    const CellListMC* o_cells = ns.hbond_o_cells();
+    const CellListMC* h_cells = ns.hbond_h_cells();
+    const bool on_layer = !use_brute && o_cells && h_cells
+        && o_cells->grid().use_contiguous() && h_cells->grid().use_contiguous();
+    if (on_layer) {
+        // The shared pair-search walk: cells whose listed sites all belong
+        // to affected residues are skipped, and eight slots at a time are
+        // dropped beyond the far cutoff before any per-pair work.
+        using neighbor::Visit;
+        auto& atom_aff = hb_ws.atom_aff;
+        if (static_cast<int>(atom_aff.size()) != n_atoms) atom_aff.assign(static_cast<size_t>(n_atoms), 0);
+        auto& o_sites = hb_ws.o_sites;
+        auto& h_sites = hb_ws.h_sites;
+        o_sites.clear();
+        h_sites.clear();
+        for (int r : aff_list) {
+            const BlockIndices& b = blocks[static_cast<size_t>(r)];
+            if (b.o_start >= 0) {
+                atom_aff[static_cast<size_t>(b.o_start)] = 1;
+                o_sites.push_back(b.o_start);
             }
-        } else {
-            ns.for_each_hbond_h_candidate(x, y, z, query_donor);
+            if (!b.amide_donor) continue;
+            if (virt) {
+                h_sites.push_back(r);
+            } else if (b.has_explicit_h()) {
+                atom_aff[static_cast<size_t>(b.h_start)] = 1;
+                h_sites.push_back(b.h_start);
+            }
         }
-    };
-
-    for (int r : aff_list) {
-        if (blocks[static_cast<size_t>(r)].amide_donor) process_donor(r);
-        const int o_atom = blocks[static_cast<size_t>(r)].o_start;
-        if (o_atom != -1) process_acceptor(r, o_atom);
+        const float lim2 = kFarCut2 * neighbor::kSpanMaskSlack;
+        {
+            const OpenCellGrid& g = o_cells->grid();
+            const neighbor::MovedCellScope<OpenCellGrid> scope(
+                hb_ws.o_cells, g, o_sites.data(), static_cast<int>(o_sites.size()));
+            const neighbor::WalkArgs wa{atom_aff.data(), atom_aff.size(), scope.counts(),
+                                        0.f, lim2, neighbor::Cells::Stencil};
+            OpenCellGrid::StencilMemo memo;
+            for (int r_don : aff_list) {
+                if (!blocks[static_cast<size_t>(r_don)].amide_donor) continue;
+                float nh[3];
+                if (!load_donor_h(proposed_state, sys, r_don, nh)) continue;
+                auto fn = [&](const neighbor::Probe&, int o, const neighbor::CellSpan&, int) {
+                    ++ns.stats().hbond_num_candidates_iterated;
+                    const int r_acc = sys.atom_to_residue[static_cast<size_t>(o)];
+                    if (r_acc < 0 || r_acc >= num_residues) return Visit::Continue;
+                    if (res_affected[static_cast<size_t>(r_acc)]) return Visit::Continue;
+                    const float bx = nh[0] - cold.x(o), by = nh[1] - cold.y(o), bz = nh[2] - cold.z(o);
+                    if (bx * bx + by * by + bz * bz > kFarCut2) return Visit::Continue;
+                    evaluate_new(r_don, r_acc);
+                    return Visit::Continue;
+                };
+                neighbor::detail::probe_static<neighbor::Cells::Stencil>(
+                    g, neighbor::Probe{-1, nh[0], nh[1], nh[2]}, wa, fn, &memo);
+            }
+        }
+        {
+            const OpenCellGrid& g = h_cells->grid();
+            const neighbor::MovedCellScope<OpenCellGrid> scope(
+                hb_ws.h_cells, g, h_sites.data(), static_cast<int>(h_sites.size()));
+            const neighbor::WalkArgs wa{virt ? res_affected.data() : atom_aff.data(),
+                                        virt ? res_affected.size() : atom_aff.size(),
+                                        scope.counts(), 0.f, lim2, neighbor::Cells::Stencil};
+            OpenCellGrid::StencilMemo memo;
+            for (int r_acc : aff_list) {
+                const int o_atom = blocks[static_cast<size_t>(r_acc)].o_start;
+                if (o_atom < 0) continue;
+                const float x = cnew.x(o_atom), y = cnew.y(o_atom), z = cnew.z(o_atom);
+                auto fn = [&](const neighbor::Probe&, int id, const neighbor::CellSpan&, int) {
+                    ++ns.stats().hbond_num_candidates_iterated;
+                    const int r_don = virt ? id : sys.atom_to_residue[static_cast<size_t>(id)];
+                    if (r_don < 0 || r_don >= num_residues) return Visit::Continue;
+                    if (res_affected[static_cast<size_t>(r_don)]) return Visit::Continue;
+                    evaluate_new(r_don, r_acc);
+                    return Visit::Continue;
+                };
+                neighbor::detail::probe_static<neighbor::Cells::Stencil>(
+                    g, neighbor::Probe{-1, x, y, z}, wa, fn, &memo);
+            }
+        }
+        for (int o : o_sites) atom_aff[static_cast<size_t>(o)] = 0;
+        if (!virt) for (int h : h_sites) atom_aff[static_cast<size_t>(h)] = 0;
+    } else {
+        auto process_donor = [&](int r_don) {
+            float nh[3];
+            if (!load_donor_h(proposed_state, sys, r_don, nh)) return;
+            auto query_oxygen = [&](int o) {
+                const int r_acc = sys.atom_to_residue[static_cast<size_t>(o)];
+                if (r_acc < 0 || r_acc >= num_residues) return;
+                if (res_affected[static_cast<size_t>(r_acc)]) return;
+                const float bx = nh[0] - cold.x(o), by = nh[1] - cold.y(o), bz = nh[2] - cold.z(o);
+                if (bx * bx + by * by + bz * bz > kFarCut2) return;
+                evaluate_new(r_don, r_acc);
+            };
+            if (use_brute) {
+                ns.for_each_hbond_acceptor_bruteforce(old_state.coords_soa, nh[0], nh[1], nh[2], cut2, query_oxygen);
+            } else {
+                ns.for_each_hbond_acceptor_candidate(nh[0], nh[1], nh[2], query_oxygen);
+            }
+        };
+        auto process_acceptor = [&](int r_acc, int o_atom) {
+            const float x = cnew.x(o_atom), y = cnew.y(o_atom), z = cnew.z(o_atom);
+            auto query_donor = [&](int neighbor_id) {
+                const int r_don = virt
+                    ? neighbor_id
+                    : sys.atom_to_residue[static_cast<size_t>(neighbor_id)];
+                if (r_don < 0 || r_don >= num_residues) return;
+                if (res_affected[static_cast<size_t>(r_don)]) return;
+                evaluate_new(r_don, r_acc);
+            };
+            if (use_brute) {
+                if (virt) {
+                    ns.for_each_hbond_donor_bruteforce(old_state.coords_soa, sys, x, y, z, cut2, query_donor);
+                } else {
+                    ns.for_each_hbond_h_bruteforce(old_state.coords_soa, x, y, z, cut2, query_donor);
+                }
+            } else {
+                ns.for_each_hbond_h_candidate(x, y, z, query_donor);
+            }
+        };
+        for (int r : aff_list) {
+            if (blocks[static_cast<size_t>(r)].amide_donor) process_donor(r);
+            const int o_atom = blocks[static_cast<size_t>(r)].o_start;
+            if (o_atom != -1) process_acceptor(r, o_atom);
+        }
     }
 
     // Part 3: affected donor x affected acceptor, both at proposed positions.
-    // Pack the acceptors' new O once, drop far pairs eight at a time, and
-    // score the rest in (donor, acceptor) order.
+    // Pack the acceptors' new O once (those that are not rigid sites first,
+    // each group padded to a multiple of 8), drop far pairs eight at a time,
+    // and score the rest in (donor, acceptor) order. A rigid-site donor scans
+    // only the first group.
     auto& acc_res = hb_ws.acc_res;
     auto& anx = hb_ws.acc_new_x; auto& any = hb_ws.acc_new_y; auto& anz = hb_ws.acc_new_z;
     acc_res.clear();
     anx.clear(); any.clear(); anz.clear();
-    for (int r_acc : aff_list) {
-        const int o_atom = blocks[static_cast<size_t>(r_acc)].o_start;
-        if (o_atom < 0) continue;
-        acc_res.push_back(r_acc);
-        anx.push_back(cnew.x(o_atom)); any.push_back(cnew.y(o_atom)); anz.push_back(cnew.z(o_atom));
-    }
-    const int n_acc = static_cast<int>(acc_res.size());
-    const int n_acc8 = (n_acc + 7) & ~7;
     // Padding sits ~1e18 A away, so it never passes the far filter.
-    for (auto* v : {&anx, &any, &anz}) v->resize(static_cast<size_t>(n_acc8), 1e18f);
+    auto pack = [&](bool want_rigid) {
+        for (int r_acc : aff_list) {
+            const int o_atom = blocks[static_cast<size_t>(r_acc)].o_start;
+            if (o_atom < 0 || rigid(r_acc) != want_rigid) continue;
+            acc_res.push_back(r_acc);
+            anx.push_back(cnew.x(o_atom)); any.push_back(cnew.y(o_atom)); anz.push_back(cnew.z(o_atom));
+        }
+        const size_t n8 = (acc_res.size() + 7) & ~static_cast<size_t>(7);
+        acc_res.resize(n8, 0);
+        for (auto* v : {&anx, &any, &anz}) v->resize(n8, 1e18f);
+    };
+    pack(false);
+    const int n_flex8 = static_cast<int>(acc_res.size());
+    pack(true);
+    const int n_all8 = static_cast<int>(acc_res.size());
     for (int r_don : aff_list) {
         if (!blocks[static_cast<size_t>(r_don)].amide_donor) continue;
         float hnew[3];
         if (!load_donor_h(proposed_state, sys, r_don, hnew)) continue;
+        const int n_scan = rigid(r_don) ? n_flex8 : n_all8;
         auto visit = [&](int k) {
             const float dx = hnew[0] - anx[static_cast<size_t>(k)];
             const float dy = hnew[1] - any[static_cast<size_t>(k)];
@@ -274,7 +401,7 @@ EnergyChangeResult HBondPotential::calculateEnergyChange(
 #if defined(__AVX2__)
         const __m256 far = _mm256_set1_ps(kFarCut2);
         const __m256 hnx = _mm256_set1_ps(hnew[0]), hny = _mm256_set1_ps(hnew[1]), hnz = _mm256_set1_ps(hnew[2]);
-        for (int k0 = 0; k0 < n_acc8; k0 += 8) {
+        for (int k0 = 0; k0 < n_scan; k0 += 8) {
             const __m256 dxn = _mm256_sub_ps(hnx, _mm256_loadu_ps(anx.data() + k0));
             const __m256 dyn = _mm256_sub_ps(hny, _mm256_loadu_ps(any.data() + k0));
             const __m256 dzn = _mm256_sub_ps(hnz, _mm256_loadu_ps(anz.data() + k0));
@@ -286,7 +413,7 @@ EnergyChangeResult HBondPotential::calculateEnergyChange(
             }
         }
 #else
-        for (int k = 0; k < n_acc; ++k) visit(k);
+        for (int k = 0; k < n_scan; ++k) visit(k);
 #endif
     }
 
@@ -354,7 +481,11 @@ void HBondPotential::check_ledger_(const Context& context, const State& old_stat
             // Old path: (d, a) enters the delta iff e_new != e_old.
             const float e_new = evaluate_directional(d, a, proposed_state, sys);
             const bool old_path = (e_new - e_old) != 0.0f;
-            const bool new_path = (pending_e(d, a) - cache.get(d, a)) != 0.0f;
+            // A pair of two rigid sites is skipped: zero delta by construction,
+            // so a rounding flip of its energy counts as a mismatch here.
+            const bool both_rigid = (hb_ws.res_affected[static_cast<size_t>(d)]
+                & hb_ws.res_affected[static_cast<size_t>(a)] & HBondWorkspace::kRigidSite) != 0;
+            const bool new_path = !both_rigid && (pending_e(d, a) - cache.get(d, a)) != 0.0f;
             if (old_path != new_path || (new_path && pending_e(d, a) != e_new)) {
                 ++hb_ws.ledger_mismatches;
             }
@@ -384,11 +515,24 @@ void HBondPotential::commitAcceptedMove(
         cache.invalidate();
         return;
     }
+    // Rigid-site pairs were not rescored (see calculateEnergyChange): keep
+    // their entries as they are.
+    auto& carried = hb_ws.carried;
+    carried.clear();
+    const auto& ra = hb_ws.res_affected;
+    constexpr uint8_t kRigid = HBondWorkspace::kRigidSite;
+    for (int r : hb_ws.aff_list) {
+        if (!(ra[static_cast<size_t>(r)] & kRigid)) continue;
+        for (const auto& en : cache.as_donor(r)) {
+            if (ra[static_cast<size_t>(en.partner)] & kRigid) carried.push_back({r, en.partner, en.energy});
+        }
+    }
     for (int r : hb_ws.aff_list) {
         cache.clear_donor(r);
         cache.clear_acceptor(r);
     }
     for (const auto& p : hb_ws.pending) cache.add(p.d, p.a, p.e);
+    for (const auto& p : carried) cache.add(p.d, p.a, p.e);
     cache.note_commit();
 }
 

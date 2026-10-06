@@ -448,8 +448,10 @@ PYBIND11_MODULE(mcpu_core, m) {
              "Skip re-measuring the pairs a rigid pivot carries (both atoms "
              "moved): their distances change only by rounding, so Mu re-decides "
              "just the carried pairs on its contact list and the KORP CA-CA "
-             "guard skips them. Default True; False evaluates them all exactly, "
-             "as a reference.")
+             "guard skips them. The H-bond term also keeps the energy of a "
+             "donor-acceptor pair whose backbone geometry (residues r-1 to r+1 "
+             "on both sides) moved as one body, and carries its ledger entry. "
+             "Default True; False evaluates them all exactly, as a reference.")
         .def("skip_rigid_mm", &Context::skip_rigid_mm)
         .def("set_use_cell_pair", &Context::set_use_cell_pair, py::arg("on"),
              "Cell-pair denselist Mu (default true). False = per-atom walks.")

@@ -195,6 +195,11 @@ public:
     const BoxBounds& bounds() const noexcept { return bounds_; }
     bool denseActive() const noexcept { return dense_active_; }
     bool hbondUsesFallback() const noexcept { return hb_fallback_; }
+    /// The O and H grids, for walks on the pair-search layer; null before
+    /// setup. Their ids are O atoms, and H atoms or (virtual amide H) donor
+    /// residues; see hbondHIdIsResidue().
+    const CellListMC* hbond_o_cells() const noexcept { return hb_o_grid_.get(); }
+    const CellListMC* hbond_h_cells() const noexcept { return hb_h_grid_.get(); }
     int hBegin() const noexcept { return h_begin_; }
     bool virtualAmideH() const noexcept { return virtual_amide_h_; }
     bool hbondHIdIsResidue() const noexcept { return hb_h_ids_are_residues_; }
