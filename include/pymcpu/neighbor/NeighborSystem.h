@@ -33,6 +33,9 @@ class NeighborSystem {
 public:
     static constexpr float kMuCutoffFallbackA = 6.0f;
     static constexpr float kHBondCutoffA = 2.5f;
+    /// The H-bond ledger lists every donor-acceptor pair whose H and O are
+    /// closer than this (HBondStateCache), so the H-bond cells are this big.
+    static constexpr float kHBondListA = 2.55f;
 
     /// Active Mu denselist cutoff (Å): from MuPotential (exact) or fallback 6.0.
     [[nodiscard]] float mu_cutoff_A() const noexcept {
@@ -115,12 +118,12 @@ public:
         }
 
         mu_grid_ = std::make_unique<CellListMC>(kMuCutoffFallbackA, n_atoms_);
-        hb_o_grid_ = std::make_unique<CellListMC>(kHBondCutoffA, n_atoms_);
+        hb_o_grid_ = std::make_unique<CellListMC>(kHBondListA, n_atoms_);
         // Virtual-H grid uses residue ids as keys (capacity ≥ n_res); explicit H uses atom ids.
         const int hb_h_cap = virtual_amide_h_
             ? std::max(n_atoms_, sys.getNumResidues())
             : n_atoms_;
-        hb_h_grid_ = std::make_unique<CellListMC>(kHBondCutoffA, hb_h_cap);
+        hb_h_grid_ = std::make_unique<CellListMC>(kHBondListA, hb_h_cap);
         mu_grid_->ensure_atom_capacity(n_atoms_);
         hb_o_grid_->ensure_atom_capacity(n_atoms_);
         hb_h_grid_->ensure_atom_capacity(hb_h_cap);
@@ -210,7 +213,7 @@ public:
     }
     float hbond_cutoff_A() const noexcept { return kHBondCutoffA; }
     float hbond_cell_size_A() const noexcept {
-        return hb_fallback_ ? 0.f : kHBondCutoffA; // skin_hb = 0
+        return hb_fallback_ ? 0.f : kHBondListA; // skin_hb = 0
     }
     const char* mu_backend_name() const noexcept {
         return dense_active_ ? "opencell_mu_BBO_SC" : "mu_dense_cap_fallback";
@@ -454,7 +457,7 @@ public:
         // --- HBond O / H grids (same lo/hi, smaller cell) ---
         NeighborConfig cfg_hb = cfg_;
         cfg_hb.skin = 0.f;
-        const float hb_cell = kHBondCutoffA;
+        const float hb_cell = kHBondListA;
         bool hb_ok = compute_grid_shape(b, hb_cell, cfg_hb, nx, ny, nz);
         if (hb_ok &&
             hb_o_grid_->configure(b, cfg_hb, 0.f) &&

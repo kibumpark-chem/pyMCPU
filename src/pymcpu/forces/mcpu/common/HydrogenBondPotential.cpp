@@ -7,6 +7,7 @@
 #include "pymcpu/utils/virtual_amide_h.h"
 #include "pymcpu/forces/mcpu/common/HBondStateCache.h"
 #include "pymcpu/neighbor/PairSearch.h"
+#include <algorithm>
 #include <array>
 #include <cmath>
 #if defined(__AVX2__)
@@ -20,11 +21,24 @@ namespace {
 
 // A donor/acceptor pair whose H and O are at least HBOND_CUTOFF apart in both
 // states scores 0 in both, so its term in the delta is exactly +0.0f and it
-// can be dropped without changing the sum. The filters below drop a pair only
-// when both distances clear this slightly larger cutoff, which leaves room for
-// the last-bit differences between their arithmetic and the evaluator's.
-constexpr float kFarCut2 = 2.55f * 2.55f;
+// can be dropped without changing the sum. The walks drop a pair only when
+// it is farther than the ledger's listing distance, 0.05 A past the cutoff,
+// and the ledger lists (with energy 0 if need be) every pair they keep.
+constexpr float kFarCut2 = NeighborSystem::kHBondListA * NeighborSystem::kHBondListA;
 static_assert(kFarCut2 > HBOND_CUTOFF_SQUARED, "far filter must be looser than the H-bond cutoff");
+
+// An unlisted pair was farther than kHBondListA when last measured, so it
+// cannot score until it has moved by the band between that and the cutoff.
+// The ledger is rebuilt before its drift reaches kListBudgetA; the rest of
+// the band covers the rounding of the squared distances themselves.
+constexpr float kListBudgetA = 0.04f;
+static_assert(kListBudgetA < NeighborSystem::kHBondListA - 2.5f, "budget must fit in the listing band");
+
+// A virtual amide H is N minus the unit vector along (CA - N) + (C_prev - N)
+// (|v| ~ 1.36 A), so it moves by up to ~4.9 times the per-atom carry error
+// and an H...O distance by ~5.9 times it, i.e. ~3x Context::rigid_carry_bound_A
+// (which bounds a heavy-atom pair). Explicit H and O need only 1x.
+constexpr float kCarryFactor = 4.0f;
 
 /// Load donor amide H (explicit atom or legacy virtual) into hpos[3].
 inline bool load_donor_h(
@@ -99,7 +113,6 @@ EnergyChangeResult HBondPotential::calculateEnergyChange(
     const auto& sys = context.getSystem();
     const int num_residues = sys.getNumResidues();
     const auto& blocks = sys.getBlockIndices();
-    const float cut2 = NeighborSystem::kHBondCutoffA * NeighborSystem::kHBondCutoffA;
     const bool use_brute = ns.hbondUsesFallback();
     const bool virt = sys.virtualAmideH() && sys.getTotalHAtoms() == 0;
 
@@ -138,10 +151,8 @@ EnergyChangeResult HBondPotential::calculateEnergyChange(
 
         const float e = evaluate_directional(r_don, r_acc, proposed_state, sys);
         ns.stats().hbond_num_geom_checks += 1;
-        if (e != 0.0f) {
-            e_new_sum += static_cast<double>(e);
-            hb_ws.pending.push_back({r_don, r_acc, e});
-        }
+        e_new_sum += static_cast<double>(e);
+        hb_ws.pending.push_back({r_don, r_acc, e});
     };
 
     auto& res_affected = hb_ws.res_affected;
@@ -216,12 +227,28 @@ EnergyChangeResult HBondPotential::calculateEnergyChange(
     }
     auto rigid = [&](int r) { return (res_affected[static_cast<size_t>(r)] & kRigid) != 0; };
 
+    // Drift budget. A pair of two rigid sites is re-decided only if listed;
+    // the carry moves an unlisted one by at most `carry`. Before the sum
+    // since the ledger was measured could reach the band, measure it again
+    // (the energies it finds are the ones carried, since every pair that can
+    // score was re-decided). A move that alone exceeds the band skips nothing.
+    float carry = 0.f;
+    if (std::any_of(aff_list.begin(), aff_list.end(), rigid)) {
+        carry = kCarryFactor * context.rigid_carry_bound_A(proposed_state, patch);
+        if (carry > kListBudgetA) {
+            for (int r : aff_list) res_affected[static_cast<size_t>(r)] &= static_cast<uint8_t>(~kRigid);
+            carry = 0.f;
+        } else if (cache.drift + carry > kListBudgetA) {
+            build_cache_(context, old_state);
+            hb_ws.pending_generation = cache.generation();
+        }
+    }
+    hb_ws.pending_drift = cache.drift + carry;
+
     // Old side: every listed pair with an affected end, each counted once.
     double e_old_sum = 0.0;
     for (int r : aff_list) {
-        const bool r_rigid = rigid(r);
         for (const auto& en : cache.as_donor(r)) {
-            if (r_rigid && rigid(en.partner)) continue;
             e_old_sum += static_cast<double>(en.energy);
         }
         for (const auto& en : cache.as_acceptor(r)) {
@@ -330,7 +357,7 @@ EnergyChangeResult HBondPotential::calculateEnergyChange(
                 evaluate_new(r_don, r_acc);
             };
             if (use_brute) {
-                ns.for_each_hbond_acceptor_bruteforce(old_state.coords_soa, nh[0], nh[1], nh[2], cut2, query_oxygen);
+                ns.for_each_hbond_acceptor_bruteforce(old_state.coords_soa, nh[0], nh[1], nh[2], kFarCut2, query_oxygen);
             } else {
                 ns.for_each_hbond_acceptor_candidate(nh[0], nh[1], nh[2], query_oxygen);
             }
@@ -347,9 +374,9 @@ EnergyChangeResult HBondPotential::calculateEnergyChange(
             };
             if (use_brute) {
                 if (virt) {
-                    ns.for_each_hbond_donor_bruteforce(old_state.coords_soa, sys, x, y, z, cut2, query_donor);
+                    ns.for_each_hbond_donor_bruteforce(old_state.coords_soa, sys, x, y, z, kFarCut2, query_donor);
                 } else {
-                    ns.for_each_hbond_h_bruteforce(old_state.coords_soa, x, y, z, cut2, query_donor);
+                    ns.for_each_hbond_h_bruteforce(old_state.coords_soa, x, y, z, kFarCut2, query_donor);
                 }
             } else {
                 ns.for_each_hbond_h_candidate(x, y, z, query_donor);
@@ -396,7 +423,7 @@ EnergyChangeResult HBondPotential::calculateEnergyChange(
             const float dx = hnew[0] - anx[static_cast<size_t>(k)];
             const float dy = hnew[1] - any[static_cast<size_t>(k)];
             const float dz = hnew[2] - anz[static_cast<size_t>(k)];
-            if (pair_r2(dx, dy, dz) > cut2) return;
+            if (pair_r2(dx, dy, dz) > kFarCut2) return;
             evaluate_new(r_don, acc_res[static_cast<size_t>(k)]);
         };
 #if defined(__AVX2__)
@@ -418,6 +445,16 @@ EnergyChangeResult HBondPotential::calculateEnergyChange(
 #endif
     }
 
+    // Part 4: listed pairs of two rigid sites. Their old energy is already on
+    // the old side; re-decide each from the new coordinates. An unlisted one
+    // cannot cross the cutoff within the drift budget.
+    for (int r : aff_list) {
+        if (!rigid(r)) continue;
+        for (const auto& en : cache.as_donor(r)) {
+            if (rigid(en.partner)) evaluate_new(r, en.partner);
+        }
+    }
+
     if (hb_ws.ledger_check) check_ledger_(context, old_state, proposed_state);
 
     return EnergyChangeResult::finite(static_cast<float>(e_new_sum - e_old_sum) / 1000.0f);
@@ -428,7 +465,6 @@ void HBondPotential::build_cache_(const Context& context, const State& state) co
     const auto& sys = context.getSystem();
     const int num_residues = sys.getNumResidues();
     const auto& blocks = sys.getBlockIndices();
-    const float cut2 = NeighborSystem::kHBondCutoffA * NeighborSystem::kHBondCutoffA;
     HBondStateCache& cache = state.hbond_cache;
     cache.reset(num_residues, this, sys.energy_mask_epoch());
     const CoordView cv(state.coord_view());
@@ -446,10 +482,10 @@ void HBondPotential::build_cache_(const Context& context, const State& state) co
             const float dx = h[0] - cv.x(o), dy = h[1] - cv.y(o), dz = h[2] - cv.z(o);
             if (pair_r2(dx, dy, dz) > kFarCut2) return;
             const float e = evaluate_directional(r_don, r_acc, state, sys);
-            if (e != 0.0f) cache.add(r_don, r_acc, e);
+            cache.add(r_don, r_acc, e);
         };
         if (ns.hbondUsesFallback()) {
-            ns.for_each_hbond_acceptor_bruteforce(state.coords_soa, h[0], h[1], h[2], cut2, visit);
+            ns.for_each_hbond_acceptor_bruteforce(state.coords_soa, h[0], h[1], h[2], kFarCut2, visit);
         } else {
             ns.for_each_hbond_acceptor_candidate(h[0], h[1], h[2], visit);
         }
@@ -482,11 +518,7 @@ void HBondPotential::check_ledger_(const Context& context, const State& old_stat
             // Old path: (d, a) enters the delta iff e_new != e_old.
             const float e_new = evaluate_directional(d, a, proposed_state, sys);
             const bool old_path = (e_new - e_old) != 0.0f;
-            // A pair of two rigid sites is skipped: zero delta by construction,
-            // so a rounding flip of its energy counts as a mismatch here.
-            const bool both_rigid = (hb_ws.res_affected[static_cast<size_t>(d)]
-                & hb_ws.res_affected[static_cast<size_t>(a)] & HBondWorkspace::kRigidSite) != 0;
-            const bool new_path = !both_rigid && (pending_e(d, a) - cache.get(d, a)) != 0.0f;
+            const bool new_path = (pending_e(d, a) - cache.get(d, a)) != 0.0f;
             if (old_path != new_path || (new_path && pending_e(d, a) != e_new)) {
                 ++hb_ws.ledger_mismatches;
             }
@@ -516,24 +548,12 @@ void HBondPotential::commitAcceptedMove(
         cache.invalidate();
         return;
     }
-    // Rigid-site pairs were not rescored (see calculateEnergyChange): keep
-    // their entries as they are.
-    auto& carried = hb_ws.carried;
-    carried.clear();
-    const auto& ra = hb_ws.res_affected;
-    constexpr uint8_t kRigid = HBondWorkspace::kRigidSite;
-    for (int r : hb_ws.aff_list) {
-        if (!(ra[static_cast<size_t>(r)] & kRigid)) continue;
-        for (const auto& en : cache.as_donor(r)) {
-            if (ra[static_cast<size_t>(en.partner)] & kRigid) carried.push_back({r, en.partner, en.energy});
-        }
-    }
     for (int r : hb_ws.aff_list) {
         cache.clear_donor(r);
         cache.clear_acceptor(r);
     }
     for (const auto& p : hb_ws.pending) cache.add(p.d, p.a, p.e);
-    for (const auto& p : carried) cache.add(p.d, p.a, p.e);
+    cache.drift = hb_ws.pending_drift;
     cache.note_commit();
 }
 

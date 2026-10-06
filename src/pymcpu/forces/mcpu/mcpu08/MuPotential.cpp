@@ -1078,7 +1078,7 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
                 neighbor::MoveFootprint::of(patch, context.neighborConfig().skip_rigid_mm)
                 .moved_rigid();
             const float carry_bound =
-                carries ? carry_bound_A(context, new_state, patch) : 0.f;
+                carries ? context.rigid_carry_bound_A(new_state, patch) : 0.f;
             const float budget = kContactBandA - kContactBandSlackA;
             // The live list is only valid where the dense contiguous grid sees
             // every candidate pair and the carry fits the drift budget. Under
@@ -1219,23 +1219,6 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
                                   moved_cells.counts(), /*hot_only=*/false);
     }
 
-    float MuPotential::carry_bound_A(const Context& context, const State& new_state,
-                                     const ProposalPatch& patch) {
-        float m = 0.f;
-        const BoxBounds& b = context.neighbors().muGrid().grid().bounds();
-        if (b.valid) {
-            for (int d = 0; d < 3; ++d) {
-                m = std::max({m, std::fabs(b.lo[d]), std::fabs(b.hi[d])});
-            }
-        } else {
-            const CoordView c(new_state.coord_view());
-            for (int i : patch.moved_indices) {
-                m = std::max({m, std::fabs(c.x(i)), std::fabs(c.y(i)), std::fabs(c.z(i))});
-            }
-        }
-        const float ulp = std::nextafter(m, std::numeric_limits<float>::infinity()) - m;
-        return 1.01f * 1.7320508f * ulp;
-    }
 
     float MuPotential::delta_moved_vs_all(
         const Context& context,

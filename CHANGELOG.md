@@ -76,6 +76,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A rigid pivot re-decides the H-bonds it carries.** Under a pivot, an
+  H-bond between two residues that moved as one body was carried at its old
+  energy, but the rotation rounds every moved coordinate, so such a pair
+  could cross a bin edge or the 2.5 A cutoff without the running energy
+  noticing. 1000 A from the origin, an actin pivot-only run drifted 0.212
+  (one H-bond) from the full energy at step 7092
+  (`test_the_drift_budget_rebuilds_the_list_in_time`, which is
+  slow-marked, so CI never ran it). The H-bond ledger now lists every pair
+  whose H and O are within 2.55 A, with energy 0 if it does not score; a
+  pivot re-scores the listed pairs it carries; and the ledger is measured
+  again from the coordinates before the summed carry rounding of the
+  unlisted ones could reach the 0.05 A band, like the Mu contact list. The
+  H-bond grid cells are 2.55 A so one stencil walk finds every listed pair.
+  The run now ends 6e-4 from the full energy. Every arch_parity_dump case
+  stays bit-identical.
+
+- **Every pair-distance cutoff test rounds the squared distance the same
+  way.** GCC (default `-ffp-contract=fast`) contracts
+  `dx * dx + dy * dy + dz * dz` into fused multiply-adds in a different
+  order at different inlined call sites, so the incremental delta and the
+  full energy could decide the same pair on different sides of a cutoff.
+  All scalar cutoff tests (Mu, pair search, H-bond, CA excluded volume,
+  KORP near filter, aromatic, Q bias) now go through one helper,
+  `pair_r2`, which fuses in the order of the AVX2 pair search, or not at
+  all under `MCPU_FP_CONTRACT=off` or without FMA.
+
 - **`examples/configs/template.yaml` runs on its own structure.** It held
   residues 88-199 fixed, but the 1uao structure it points to has 10
   residues, so any run of it stopped with an `IndexError`. That line is now

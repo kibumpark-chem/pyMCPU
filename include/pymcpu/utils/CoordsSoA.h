@@ -103,7 +103,7 @@ struct CoordsSoA {
     /// pivot-only chignolin steps CA-C bonds shrank by 3e-3 A. Rounded once,
     /// what remains is unbiased float noise (+6e-6 A on average there), and
     /// a distance the rotation keeps moves by at most sqrt(3) float steps of
-    /// the larger coordinate, which MuPotential::carry_bound_A relies on.
+    /// the larger coordinate, which Context::rigid_carry_bound_A relies on.
     ///
     /// With FMA (MCPU_ARCH=v3) four atoms go through each AVX pass. Each
     /// output is spelt out as the exact chain of fused multiply-adds GCC

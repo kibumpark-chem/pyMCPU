@@ -624,7 +624,7 @@ namespace mcpu::forces::mcpu08 {
         // kContactBandA outside its cutoff. A rigid pivot does not re-measure
         // the pairs it carries -- that is what makes it cheap -- but its
         // rounding moves them by up to sqrt(3) float steps of the largest
-        // coordinate (carry_bound_A). So it re-decides each listed pair it
+        // coordinate (Context::rigid_carry_bound_A). So it re-decides each listed pair it
         // carries, and an unlisted one cannot cross: State::mu_list_drift sums
         // the bound over accepted carries, and the list is rebuilt from the
         // coordinates before the sum reaches the band.
@@ -652,12 +652,6 @@ namespace mcpu::forces::mcpu08 {
         /// Count of rebuild_contact_list calls (diagnostic only).
         mutable std::uint64_t contact_list_rebuilds_ = 0;
 
-        /// Most a rigid move can change a carried pair's distance, in Å:
-        /// sqrt(3) float steps of the largest coordinate the dense grid holds,
-        /// +1% for the double-precision rotation itself. Every coordinate is
-        /// the double image of a float rounded once (CoordsSoA::rotate_atoms).
-        static float carry_bound_A(const Context& context, const State& new_state,
-                                   const ProposalPatch& patch);
 
         /// Rebuild a state's list from its coordinates. O(N^2).
         void rebuild_contact_list(const Context& context, const State& state) const;
@@ -667,7 +661,7 @@ namespace mcpu::forces::mcpu08 {
         float full_energy(const Context& context, const State& state, bool resync) const;
 
         /// Delta using the live contact list (default; MCPU_CONTACT_LIST=0 turns
-        /// it off). carry_bound is carry_bound_A for a rigid move, else 0.
+        /// it off). carry_bound is Context::rigid_carry_bound_A for a rigid move, else 0.
         float calculateEnergyChange_clist(
             const Context& context,
             const State& old_state,

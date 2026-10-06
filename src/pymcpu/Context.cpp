@@ -1,4 +1,6 @@
 #include "pymcpu/Context.h"
+#include "pymcpu/utils/CoordView.h"
+#include <limits>
 #include <cassert>
 #include <stdexcept>
 #include <string>
@@ -553,6 +555,23 @@ const forces::mcpu08::MuPotential* Context::mu_potential() const {
         }
     }
     return nullptr;
+}
+
+float Context::rigid_carry_bound_A(const State& new_state, const ProposalPatch& patch) const {
+    float m = 0.f;
+    const BoxBounds& b = neighbors().muGrid().grid().bounds();
+    if (b.valid) {
+        for (int d = 0; d < 3; ++d) {
+            m = std::max({m, std::fabs(b.lo[d]), std::fabs(b.hi[d])});
+        }
+    } else {
+        const CoordView c(new_state.coord_view());
+        for (int i : patch.moved_indices) {
+            m = std::max({m, std::fabs(c.x(i)), std::fabs(c.y(i)), std::fabs(c.z(i))});
+        }
+    }
+    const float ulp = std::nextafter(m, std::numeric_limits<float>::infinity()) - m;
+    return 1.01f * 1.7320508f * ulp;
 }
 
 } // namespace mcpu
