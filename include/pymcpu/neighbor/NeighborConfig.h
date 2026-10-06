@@ -48,7 +48,10 @@ struct NeighborConfig {
     /// distances, so they cannot start to overlap and only a pair on its
     /// contact cutoff can change energy, by rounding. Mu re-decides just the
     /// carried pairs on its contact list (see MuPotential), and the KORP CA-CA
-    /// guard skips them. False evaluates them all exactly, as a reference.
+    /// guard skips them. The H-bond term likewise keeps the energy of a
+    /// donor-acceptor pair whose backbone geometry (residues r-1 to r+1 on both
+    /// sides) moved as one body and carries its ledger entry (see
+    /// HBondPotential). False evaluates them all exactly, as a reference.
     bool skip_rigid_mm = true;
 
     /// If true (default), denselist Mu uses cell-pair inversion (group moved by

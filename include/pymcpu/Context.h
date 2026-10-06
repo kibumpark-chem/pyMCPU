@@ -143,8 +143,24 @@ struct HBondWorkspace {
     uint32_t cur_stamp = 1;
     int n_res = 0;
 
+    // Per residue: kAffected when a pair with it as donor or acceptor can
+    // change energy; plus kBackboneMoved when its N, CA, C, O (and explicit
+    // amide H) all moved, and kRigidSite when that holds for r-1, r and r+1
+    // under a rigid move, so every atom its donor or acceptor geometry reads
+    // moved with one rigid transform. Pairs of two rigid sites keep their
+    // energy and are skipped (NeighborConfig::skip_rigid_mm).
+    static constexpr uint8_t kAffected = 1, kBackboneMoved = 2, kRigidSite = 4;
     std::vector<uint8_t> res_affected;
     std::vector<int> aff_list;
+
+    // Grid walks for the affected sites: atom_aff flags the O (and explicit
+    // H) atoms of the affected residues, which the walks skip as partners;
+    // o_sites / h_sites list the ids the O and H grids hold for them, so a
+    // MovedCellScope can skip cells that hold nothing else. All zero / empty
+    // between calls.
+    std::vector<uint8_t> atom_aff;
+    std::vector<int> o_sites, h_sites;
+    neighbor::MovedCellCounts o_cells, h_cells;
 
     // Old and new O coordinates of the affected acceptors, packed for the
     // affected-donor x affected-acceptor scan; padded to a multiple of 8.
@@ -159,6 +175,8 @@ struct HBondWorkspace {
     // HBondPotential::commitAcceptedMove.
     struct PendingPair { int d, a; float e; };
     std::vector<PendingPair> pending;
+    // Rigid-site pairs of an accepted move, carried into the ledger as is.
+    std::vector<PendingPair> carried;
     bool pending_valid = false;
     const void* pending_old_state = nullptr;
     const void* pending_proposed_state = nullptr;

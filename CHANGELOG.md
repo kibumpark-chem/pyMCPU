@@ -454,6 +454,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The H-bond energy change walks the shared pair-search layer and skips
+  pairs inside a rigid pivot body, which makes pivot moves 4-8% faster.**
+  The walks from a moved donor's H into the O grid and from a moved
+  acceptor's O into the H grid now use the layer's 8-slot distance
+  prefilter and skip cells whose sites all belong to affected residues.
+  Under a rigid move, a pair whose donor and acceptor geometry (backbone of
+  residues r-1 to r+1) moved as one body keeps its energy: it is left out
+  of both sides of the delta and its ledger entry is carried over.
+  `Context.set_skip_rigid_mm(False)` scores those pairs again, as a
+  reference. Interleaved A/B against the previous main (n=3, user
+  cycles/step) on T4L, CA2, LDH-A, actin and PGK1: pivot-only -4.5% to
+  -8.2%, default mix about -1% to -4%, masked actin -3%, KIC-only +0.1% to
+  +1.3% (within run-to-run spread; KIC moves have no rigid sites). Short
+  runs (3k-60k steps) and `arch_parity_dump` are bit-identical to before.
+  Over long pivot runs, rotation rounding now and then moves a skipped pair
+  across a bin edge and the trajectory departs from the previous one: 2 of
+  8 runs of 300k pivot-only steps did, and the H-bond ledger check reports
+  those pairs as mismatches. With `set_skip_rigid_mm(False)` both runs
+  matched the previous main exactly. |running - full| stayed within
+  max(1e-3, 1e-5 |E|) in all 8 runs and `tolerance_check` passes.
+
 - **KORP moves are about 1.3x faster again, bit-identical.** The pair
   angles psi_a, psi_b and chi are no longer computed: each is binned by
   testing its (y, x) vector against precomputed bin-edge directions, after
