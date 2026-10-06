@@ -3,9 +3,13 @@
 
 #include <Eigen/Dense>
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <cstring>
 #include <vector>
+#if defined(__AVX2__) && defined(__FMA__)
+#include <immintrin.h>
+#endif
 
 namespace mcpu {
 
@@ -99,11 +103,57 @@ struct CoordsSoA {
     /// what remains is unbiased float noise (+6e-6 A on average there), and
     /// a distance the rotation keeps moves by at most sqrt(3) float steps of
     /// the larger coordinate, which MuPotential::carry_bound_A relies on.
+    ///
+    /// With FMA (MCPU_ARCH=v3) four atoms go through each AVX pass. Each
+    /// output is spelt out as the exact chain of fused multiply-adds GCC
+    /// emitted for the Eigen expression below on this target:
+    ///   x' = fma(R02, dz, fma(R01, dy, R00*dx)) + px  (y' likewise, row 1)
+    ///   z' = fma(R20, dx, fma(R22, dz, R21*dy)) + pz
+    /// so the coordinates are bit for bit those of the scalar loop, and no
+    /// longer depend on how the compiler happens to contract it.
     void rotate_atoms(int start, int end, const Eigen::Matrix3d& R, const Eigen::Vector3d& pivot) {
+#if defined(__AVX2__) && defined(__FMA__)
+        float* const px_ = x.data();
+        float* const py_ = y.data();
+        float* const pz_ = z.data();
+        const __m256d r00 = _mm256_set1_pd(R(0, 0)), r01 = _mm256_set1_pd(R(0, 1)),
+                      r02 = _mm256_set1_pd(R(0, 2));
+        const __m256d r10 = _mm256_set1_pd(R(1, 0)), r11 = _mm256_set1_pd(R(1, 1)),
+                      r12 = _mm256_set1_pd(R(1, 2));
+        const __m256d r20 = _mm256_set1_pd(R(2, 0)), r21 = _mm256_set1_pd(R(2, 1)),
+                      r22 = _mm256_set1_pd(R(2, 2));
+        const __m256d cx = _mm256_set1_pd(pivot.x()), cy = _mm256_set1_pd(pivot.y()),
+                      cz = _mm256_set1_pd(pivot.z());
+        int i = start;
+        for (; i + 4 <= end; i += 4) {
+            const __m256d dx = _mm256_sub_pd(_mm256_cvtps_pd(_mm_loadu_ps(px_ + i)), cx);
+            const __m256d dy = _mm256_sub_pd(_mm256_cvtps_pd(_mm_loadu_ps(py_ + i)), cy);
+            const __m256d dz = _mm256_sub_pd(_mm256_cvtps_pd(_mm_loadu_ps(pz_ + i)), cz);
+            const __m256d ox = _mm256_add_pd(
+                _mm256_fmadd_pd(r02, dz, _mm256_fmadd_pd(r01, dy, _mm256_mul_pd(r00, dx))), cx);
+            const __m256d oy = _mm256_add_pd(
+                _mm256_fmadd_pd(r12, dz, _mm256_fmadd_pd(r11, dy, _mm256_mul_pd(r10, dx))), cy);
+            const __m256d oz = _mm256_add_pd(
+                _mm256_fmadd_pd(r20, dx, _mm256_fmadd_pd(r22, dz, _mm256_mul_pd(r21, dy))), cz);
+            _mm_storeu_ps(px_ + i, _mm256_cvtpd_ps(ox));
+            _mm_storeu_ps(py_ + i, _mm256_cvtpd_ps(oy));
+            _mm_storeu_ps(pz_ + i, _mm256_cvtpd_ps(oz));
+        }
+        for (; i < end; ++i) {
+            const size_t k = static_cast<size_t>(i);
+            const double dx = static_cast<double>(x[k]) - pivot.x();
+            const double dy = static_cast<double>(y[k]) - pivot.y();
+            const double dz = static_cast<double>(z[k]) - pivot.z();
+            x[k] = static_cast<float>(std::fma(R(0, 2), dz, std::fma(R(0, 1), dy, R(0, 0) * dx)) + pivot.x());
+            y[k] = static_cast<float>(std::fma(R(1, 2), dz, std::fma(R(1, 1), dy, R(1, 0) * dx)) + pivot.y());
+            z[k] = static_cast<float>(std::fma(R(2, 0), dx, std::fma(R(2, 2), dz, R(2, 1) * dy)) + pivot.z());
+        }
+#else
         for (int i = start; i < end; ++i) {
             const Eigen::Vector3d p = R * (atom(i).cast<double>() - pivot) + pivot;
             set_atom(i, p.cast<float>());
         }
+#endif
     }
 
     [[nodiscard]] float max_displacement_sq(const CoordsSoA& other,
