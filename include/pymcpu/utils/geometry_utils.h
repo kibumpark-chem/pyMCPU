@@ -6,9 +6,16 @@
 #include <algorithm> // for std::clamp
 
 namespace GeometryUtils {
-    inline float calculate_angle(const Eigen::Vector3f& v1, const Eigen::Vector3f& v2) {
+    /// Cosine of the angle between v1 and v2, clamped to [-1, 1]: the exact
+    /// value calculate_angle() passes to acos, for callers that only compare
+    /// or bin the angle.
+    inline float calculate_angle_cos(const Eigen::Vector3f& v1, const Eigen::Vector3f& v2) {
         float dot_product = v1.normalized().dot(v2.normalized());
-        return std::acos(std::clamp(dot_product, -1.0f, 1.0f));
+        return std::clamp(dot_product, -1.0f, 1.0f);
+    }
+
+    inline float calculate_angle(const Eigen::Vector3f& v1, const Eigen::Vector3f& v2) {
+        return std::acos(calculate_angle_cos(v1, v2));
     }
 
     inline float calculate_bond_angle(const Eigen::Vector3f& v1, const Eigen::Vector3f& v2, const Eigen::Vector3f& v3) {
@@ -56,18 +63,25 @@ namespace GeometryUtils {
         return v1.cross(v2).normalized();
     }
 
-    // Computes the a_PCA (Interplanar) angle between two residues
-    inline float calculate_a_PCA(const Eigen::Vector3f& N1, const Eigen::Vector3f& CA1, const Eigen::Vector3f& O1,
-                                 const Eigen::Vector3f& N2, const Eigen::Vector3f& CA2, const Eigen::Vector3f& O2) {
+    /// cos of the a_PCA (interplanar) angle between two residues, computed with
+    /// the float operations calculate_a_PCA() passes to acos.
+    inline float calculate_a_PCA_cos(const Eigen::Vector3f& N1, const Eigen::Vector3f& CA1, const Eigen::Vector3f& O1,
+                                     const Eigen::Vector3f& N2, const Eigen::Vector3f& CA2, const Eigen::Vector3f& O2) {
         Eigen::Vector3f plane1 = plane_normal(N1, CA1, O1);
         Eigen::Vector3f plane2 = plane_normal(N2, CA2, O2);
 
-        return calculate_angle(plane1, plane2);
+        return calculate_angle_cos(plane1, plane2);
     }
 
-    // Computes the a_bCA (Bisector) angle between two residues
-    inline float calculate_a_bCA(const Eigen::Vector3f& N1, const Eigen::Vector3f& CA1, const Eigen::Vector3f& O1,
+    inline float calculate_a_PCA(const Eigen::Vector3f& N1, const Eigen::Vector3f& CA1, const Eigen::Vector3f& O1,
                                  const Eigen::Vector3f& N2, const Eigen::Vector3f& CA2, const Eigen::Vector3f& O2) {
+        return std::acos(calculate_a_PCA_cos(N1, CA1, O1, N2, CA2, O2));
+    }
+
+    /// cos of the a_bCA (bisector) angle between two residues, computed with
+    /// the float operations calculate_a_bCA() passes to acos.
+    inline float calculate_a_bCA_cos(const Eigen::Vector3f& N1, const Eigen::Vector3f& CA1, const Eigen::Vector3f& O1,
+                                     const Eigen::Vector3f& N2, const Eigen::Vector3f& CA2, const Eigen::Vector3f& O2) {
         Eigen::Vector3f v1 = N1 - CA1;
         Eigen::Vector3f v2 = O1 - CA1;
         Eigen::Vector3f v3 = N2 - CA2;
@@ -76,13 +90,24 @@ namespace GeometryUtils {
         Eigen::Vector3f bisect1 = bisector(v1, v2);
         Eigen::Vector3f bisect2 = bisector(v3, v4);
 
-        return calculate_angle(bisect1, bisect2);
+        return calculate_angle_cos(bisect1, bisect2);
+    }
+
+    inline float calculate_a_bCA(const Eigen::Vector3f& N1, const Eigen::Vector3f& CA1, const Eigen::Vector3f& O1,
+                                 const Eigen::Vector3f& N2, const Eigen::Vector3f& CA2, const Eigen::Vector3f& O2) {
+        return std::acos(calculate_a_bCA_cos(N1, CA1, O1, N2, CA2, O2));
+    }
+
+    /// cos of calculate_a_CACA(), computed with the same float operations.
+    inline float calculate_a_CACA_cos(const Eigen::Vector3f& CA1a, const Eigen::Vector3f& CA2a,
+                                      const Eigen::Vector3f& CA1b, const Eigen::Vector3f& CA2b) {
+        Eigen::Vector3f v1 = CA1a - CA1b;
+        Eigen::Vector3f v2 = CA2a - CA2b;
+        return calculate_angle_cos(v1, v2);
     }
 
     inline float calculate_a_CACA(const Eigen::Vector3f& CA1a, const Eigen::Vector3f& CA2a,
                                   const Eigen::Vector3f& CA1b, const Eigen::Vector3f& CA2b) {
-        Eigen::Vector3f v1 = CA1a - CA1b;
-        Eigen::Vector3f v2 = CA2a - CA2b;
-        return calculate_angle(v1, v2);
+        return std::acos(calculate_a_CACA_cos(CA1a, CA2a, CA1b, CA2b));
     }
 } // namespace GeometryUtils

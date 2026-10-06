@@ -164,25 +164,55 @@ namespace HydrogenBondUtils {
     /// legacy hbonds.h ~433-460: hard Ramachandran-quadrant rejections (not a soft
     /// penalty -- an excluded pair contributes exactly 0, same as NO_HBOND).
     inline bool passes_ramachandran_gate(const HBondDonors& donor, const HBondAcceptors& acceptor) {
+        // Each angle is the same expression donor_acceptor_rama_angles() uses, but
+        // it is computed only when a test reads it, in the order the tests run:
+        // most pairs leave after one or two atan2 calls instead of four.
+        constexpr float RAD2DEG = 180.0f / mcpu::PI_F;
+        const HBondDonors& d = donor;
+        const HBondAcceptors& a = acceptor;
+        auto Dphi = [&] { return GeometryUtils::calculate_dihedral(d.prev_C, d.N, d.CA, d.C) * RAD2DEG + 180.0f; };
+        auto Dpsi = [&] { return GeometryUtils::calculate_dihedral(d.prev_N, d.prev_CA, d.prev_C, d.N) * RAD2DEG + 180.0f; };
+        auto Aphi = [&] { return GeometryUtils::calculate_dihedral(a.C, a.next_N, a.next_CA, a.next_C) * RAD2DEG + 180.0f; };
+        auto Apsi = [&] { return GeometryUtils::calculate_dihedral(a.N, a.CA, a.C, a.next_N) * RAD2DEG + 180.0f; };
         int res_idx_diff = std::abs(donor.residue_index - acceptor.residue_index);
-        float Dphi, Dpsi, Aphi, Apsi;
-        donor_acceptor_rama_angles(donor, acceptor, Dphi, Dpsi, Aphi, Apsi);
         if (res_idx_diff == 4) {
             // legacy checks 'E' and 'L' as two separate if-blocks with an identical
             // body; combined here since the effect is exactly the same.
             if (donor.secondary_structure == 'E' || donor.secondary_structure == 'L' ||
                 acceptor.secondary_structure == 'E' || acceptor.secondary_structure == 'L') {
-                if (Dphi < 180.0f && Dpsi < 180.0f) return false;
-                if (Aphi < 180.0f && Apsi < 180.0f) return false;
+                if (Dphi() < 180.0f && Dpsi() < 180.0f) return false;
+                if (Aphi() < 180.0f && Apsi() < 180.0f) return false;
             }
         } else if (res_idx_diff > 4) {
-            if (Dphi > 150.0f) return false;
-            if (Dpsi > 30.0f && Dpsi < 210.0f) return false;
-            if (Aphi > 150.0f) return false;
-            if (Apsi > 30.0f && Apsi < 210.0f) return false;
             if (donor.secondary_structure == 'L' || acceptor.secondary_structure == 'L') return false;
+            if (Dphi() > 150.0f) return false;
+            const float dpsi = Dpsi();
+            if (dpsi > 30.0f && dpsi < 210.0f) return false;
+            if (Aphi() > 150.0f) return false;
+            const float apsi = Apsi();
+            if (apsi > 30.0f && apsi < 210.0f) return false;
         }
         return true;
+    }
+
+    /// int(angle / HBOND_BIN_SIZE) for angle = acos(c), without the acos when c is
+    /// clear of every bin edge. Away from an edge the bin follows from comparing c
+    /// with cos(k * 20 deg); within 1e-4 of one (where acos rounding could decide
+    /// the bin) it falls back to the acos, so the result is always identical to
+    /// int(std::acos(c) / HBOND_BIN_SIZE).
+    inline int angle_bin_from_cos(float c) {
+        static constexpr float kEdgeCos[9] = {
+            0.93969262f, 0.76604444f, 0.5f, 0.17364818f, -0.17364818f,
+            -0.5f, -0.76604444f, -0.93969262f, -1.0f};   // cos(20 deg * k), k = 1..9
+        constexpr float kMargin = 1e-4f;
+        int bin = 0;
+        bool near_edge = false;
+        for (float e : kEdgeCos) {
+            bin += (c < e) ? 1 : 0;
+            near_edge |= std::abs(c - e) < kMargin;
+        }
+        if (near_edge) return int(std::acos(c) / HBOND_BIN_SIZE);
+        return bin;
     }
 
     inline bool is_hydrogen_bond(const HBondDonors& donor, const HBondAcceptors& acceptor) {
@@ -197,39 +227,32 @@ namespace HydrogenBondUtils {
         // angle between each side's OWN chain axis (next_CA - prev_CA) -- not a cross-chain
         // comparison. calculate_a_CACA(CA1a,CA2a,CA1b,CA2b) computes angle(CA1a-CA1b,CA2a-CA2b),
         // so donor's/acceptor's next_CA must be the first two args and prev_CA the last two.
-        float angle_caca = GeometryUtils::calculate_a_CACA(donor.next_CA, acceptor.next_CA,
-                                                     donor.prev_CA, acceptor.prev_CA);
         if (res_idx_diff == 4) {
             indices[0] = 0;
         } else {
-            if (angle_caca < HBOND_CACA_HELIX_SHEET_THRESHOLD) {
-                indices[0] = 1;
-            } else {
-                indices[0] = 2;
-            }
+            // angle_caca < 90 deg, decided on its cosine; acos only when the cosine
+            // is too close to 0 for its sign to settle the comparison.
+            const float c_caca = GeometryUtils::calculate_a_CACA_cos(donor.next_CA, acceptor.next_CA,
+                                                                     donor.prev_CA, acceptor.prev_CA);
+            const bool helix_like = std::abs(c_caca) < 1e-4f
+                ? std::acos(c_caca) < HBOND_CACA_HELIX_SHEET_THRESHOLD
+                : c_caca > 0.0f;
+            indices[0] = helix_like ? 1 : 2;
         }
-        // Angles donor/acceptor residues
-        float bisector_angle = GeometryUtils::calculate_a_bCA(donor.N, donor.CA, donor.C,
-                                                          acceptor.N, acceptor.CA, acceptor.C);
-        float interplanar_angle = GeometryUtils::calculate_a_PCA(donor.N, donor.CA, donor.C,
-                                                              acceptor.N, acceptor.CA, acceptor.C);
-        indices[1] = int(interplanar_angle / HBOND_BIN_SIZE);
-        indices[2] = int(bisector_angle / HBOND_BIN_SIZE);
-
+        // Angles donor/acceptor residues (20 degree bins, see angle_bin_from_cos)
+        indices[1] = angle_bin_from_cos(GeometryUtils::calculate_a_PCA_cos(
+            donor.N, donor.CA, donor.C, acceptor.N, acceptor.CA, acceptor.C));
+        indices[2] = angle_bin_from_cos(GeometryUtils::calculate_a_bCA_cos(
+            donor.N, donor.CA, donor.C, acceptor.N, acceptor.CA, acceptor.C));
         // Angles donor/acceptor neighboring residues
-        float bisector_angle_prev = GeometryUtils::calculate_a_bCA(donor.prev_N, donor.prev_CA, donor.prev_C,
-                                                               acceptor.next_N, acceptor.next_CA, acceptor.next_C);
-        float interplanar_angle_prev = GeometryUtils::calculate_a_PCA(donor.prev_N, donor.prev_CA, donor.prev_C,
-                                                             acceptor.next_N, acceptor.next_CA, acceptor.next_C);
-        indices[3] = int(interplanar_angle_prev / HBOND_BIN_SIZE);
-        indices[4] = int(bisector_angle_prev / HBOND_BIN_SIZE);
-
+        indices[3] = angle_bin_from_cos(GeometryUtils::calculate_a_PCA_cos(
+            donor.prev_N, donor.prev_CA, donor.prev_C, acceptor.next_N, acceptor.next_CA, acceptor.next_C));
+        indices[4] = angle_bin_from_cos(GeometryUtils::calculate_a_bCA_cos(
+            donor.prev_N, donor.prev_CA, donor.prev_C, acceptor.next_N, acceptor.next_CA, acceptor.next_C));
         // Angles donor H/ acceptor O centered atoms
-        float bisector_angle_H_O = GeometryUtils::calculate_a_bCA(donor.prev_C, donor.N, donor.CA,
-                                                          acceptor.CA, acceptor.C, acceptor.next_N);
-        float interplanar_angle_H_O = GeometryUtils::calculate_a_PCA(donor.prev_C, donor.N, donor.CA,
-                                                              acceptor.CA, acceptor.C, acceptor.next_N);
-        indices[5] = int(interplanar_angle_H_O / HBOND_BIN_SIZE); // 30 degree bins
-        indices[6] = int(bisector_angle_H_O / HBOND_BIN_SIZE); // 30 degree bins
+        indices[5] = angle_bin_from_cos(GeometryUtils::calculate_a_PCA_cos(
+            donor.prev_C, donor.N, donor.CA, acceptor.CA, acceptor.C, acceptor.next_N));
+        indices[6] = angle_bin_from_cos(GeometryUtils::calculate_a_bCA_cos(
+            donor.prev_C, donor.N, donor.CA, acceptor.CA, acceptor.C, acceptor.next_N));
     }
 }
