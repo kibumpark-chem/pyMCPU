@@ -2190,18 +2190,6 @@ void MCIntegrator::run(Context& context, int num_steps, int step_offset)
     {
         const auto& ns = context.neighborStats();
         auto& b = step_stats_.pivot_mu_breakdown;
-        b.cell_walk_ns = ns.pivot_mu_cell_walk_ns;
-        b.r2_filter_ns = ns.pivot_mu_r2_filter_ns;
-        b.eval_pair_ns = ns.pivot_mu_eval_pair_ns;
-        b.overhead_ns = ns.pivot_mu_overhead_ns;
-        b.candidates = ns.pivot_mu_candidates;
-        b.in_cutoff = ns.pivot_mu_in_cutoff;
-        b.n_pivot_steps = static_cast<std::size_t>(ns.pivot_mu_n_steps);
-        b.walk_empty_cells = ns.pivot_walk_empty_cells;
-        b.walk_nonempty_cells = ns.pivot_walk_nonempty_cells;
-        b.walk_atom_visits = ns.pivot_walk_atom_visits;
-        b.walk_probe_ns = ns.pivot_walk_probe_ns;
-        b.walk_oob_cells = ns.pivot_walk_oob_cells;
         b.cell_pairs = ns.pivot_mu_cell_pairs;
         b.cell_pairs_empty = ns.pivot_mu_cell_pairs_empty;
         b.n_groups = ns.pivot_mu_n_groups;

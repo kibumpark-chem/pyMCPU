@@ -69,7 +69,7 @@ struct NeighborConfig {
     /// atoms) against +14% on actin (pivots ~740 atoms). Swept over
     /// chignolin/1igd/actin; 50 is neutral on chignolin and within noise of
     /// 100/300 on actin. The true crossover lies between 25 and 50 and is
-    /// unmeasured. Env override: MCPU_CLASH_FIRST_MIN_MOVED.
+    /// unmeasured.
     int clash_first_min_moved = 50;
 
     /// If moved atom count exceeds this, force CellOnly even for KIC/SC. O(1) check.
@@ -244,15 +244,6 @@ struct NeighborStats {
     /// Moved–moved denselist/Verlet candidates skipped for rigid pivots.
     std::uint64_t elided_rigid_mm = 0;
 
-    /// Pivot denselist Mu sub-timers (MCPU_PIVOT_MU_BREAKDOWN=1 diagnostic path).
-    /// Phased collect → r² → eval; not used on the default fused loop.
-    std::uint64_t pivot_mu_cell_walk_ns = 0;
-    std::uint64_t pivot_mu_r2_filter_ns = 0;
-    std::uint64_t pivot_mu_eval_pair_ns = 0;
-    std::uint64_t pivot_mu_overhead_ns = 0;
-    std::uint64_t pivot_mu_candidates = 0;   ///< collected (i,j) before r² cutoff
-    std::uint64_t pivot_mu_in_cutoff = 0;    ///< pairs with r² ≤ 36
-    std::uint64_t pivot_mu_n_steps = 0;
     /// Cell-pair inversion diagnostics (production denselist when use_cell_pair).
     std::uint64_t pivot_mu_cell_pairs = 0;     ///< (mc,nc) nonempty iterations
     std::uint64_t pivot_mu_cell_pairs_empty = 0; ///< stencil nc with count==0
@@ -279,13 +270,6 @@ struct NeighborStats {
     std::uint64_t cp_n_steps = 0;  ///< pivot/rigid denselist steps timed
     std::uint64_t cp_new_n_groups = 0;
     std::uint64_t cp_new_group_atoms = 0;
-
-    /// Walk sub-probe (MCPU_PIVOT_MU_BREAKDOWN=1): stencil empty vs nonempty.
-    std::uint64_t pivot_walk_empty_cells = 0;
-    std::uint64_t pivot_walk_nonempty_cells = 0;
-    std::uint64_t pivot_walk_atom_visits = 0;  ///< sum of cell_count in nonempty
-    std::uint64_t pivot_walk_probe_ns = 0;     ///< time for occupancy probe only
-    std::uint64_t pivot_walk_oob_cells = 0;
 
     /// MC steps counted in the current Integrator::run (or manual increments).
     std::uint64_t num_steps_executed = 0;

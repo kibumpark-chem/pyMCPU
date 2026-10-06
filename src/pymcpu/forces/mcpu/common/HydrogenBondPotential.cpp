@@ -298,7 +298,7 @@ EnergyChangeResult HBondPotential::calculateEnergyChange(
             const neighbor::MovedCellScope<OpenCellGrid> scope(
                 hb_ws.o_cells, g, o_sites.data(), static_cast<int>(o_sites.size()));
             const neighbor::WalkArgs wa{atom_aff.data(), atom_aff.size(), scope.counts(),
-                                        0.f, lim2, neighbor::Cells::Stencil};
+                                        0.f, lim2};
             OpenCellGrid::StencilMemo memo;
             for (int r_don : aff_list) {
                 if (!blocks[static_cast<size_t>(r_don)].amide_donor) continue;
@@ -324,7 +324,7 @@ EnergyChangeResult HBondPotential::calculateEnergyChange(
                 hb_ws.h_cells, g, h_sites.data(), static_cast<int>(h_sites.size()));
             const neighbor::WalkArgs wa{virt ? res_affected.data() : atom_aff.data(),
                                         virt ? res_affected.size() : atom_aff.size(),
-                                        scope.counts(), 0.f, lim2, neighbor::Cells::Stencil};
+                                        scope.counts(), 0.f, lim2};
             OpenCellGrid::StencilMemo memo;
             for (int r_acc : aff_list) {
                 const int o_atom = blocks[static_cast<size_t>(r_acc)].o_start;

@@ -91,32 +91,6 @@ bool contact_list_enabled() {
     return on;
 }
 
-// MCPU_CLASH_FIRST picks the clash-first pass of the contact-list delta:
-// 0 = off; 1 = the 27-offset + point-to-box cull variant (measured slower,
-// kept so the comparison can be reproduced); 2 = direct reachable-cell
-// enumeration over every moved atom; 3 (default) = the same, over the
-// clash_hot atoms the move carries only.
-int clash_first_mode() noexcept {
-    static const int mode = [] {
-        const char* e = std::getenv("MCPU_CLASH_FIRST");
-        if (!e || !e[0]) return 3;
-        if (e[0] == '0') return 0;
-        if (e[0] == '1') return 1;
-        if (e[0] == '2') return 2;
-        return 3;
-    }();
-    return mode;
-}
-
-int clash_first_min_moved_env() noexcept {
-    static const int v = [] {
-        const char* e = std::getenv("MCPU_CLASH_FIRST_MIN_MOVED");
-        if (!e || !e[0]) return -1;
-        return std::atoi(e);
-    }();
-    return v;
-}
-
 /// The atoms the Mu pair loops visit, in increasing order: every atom but the
 /// amide hydrogens. Iterating this list visits the same pairs in the same
 /// order as testing System::is_amide_h_atom on both atoms of every pair.
@@ -1184,14 +1158,10 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
         const std::vector<uint8_t>& is_moved = patch.moving_atoms;
         const std::vector<int>& moved = patch.moved_indices;
         const CoordView cnew(new_state.coord_view());
-        // Mode 1 walks the stencil cells within rq (no moved-cell skip);
-        // the others enumerate only the cells rq can reach.
-        const neighbor::WalkArgs wa{
-            is_moved.data(), is_moved.size(), mpc, rq,
-            clash_prefilter_r2_ * kSpanMaskSlack,
-            clash_first_mode() != 1 ? neighbor::Cells::WithinRadius
-                                    : neighbor::Cells::StencilWithinRadius};
-        return neighbor::hot_then_moved<neighbor::Cells::FromArgs>(
+        // Enumerates only the cells rq can reach, not the contact stencil.
+        const neighbor::WalkArgs wa{is_moved.data(), is_moved.size(), mpc, rq,
+                                    clash_prefilter_r2_ * kSpanMaskSlack};
+        return neighbor::hot_then_moved<neighbor::Cells::WithinRadius>(
             grid, cnew, context.pairScratch().clash_hot, moved.data(),
             hot_only ? 0 : static_cast<int>(moved.size()), wa,
             [&](const neighbor::Probe& p, int j, const neighbor::CellSpan& s,
@@ -1562,183 +1532,6 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
         // cell walk is ~71% of pivot Mu so splitting r² cannot win.
         const CoordView cold(old_state.coord_view());
         const CoordView cnew(new_state.coord_view());
-
-        // Optional diagnostic: O(n_moved²) rigid MM ΔE (should be ~0).
-        static const bool kDebugMmDelta = [] {
-            const char* e = std::getenv("MCPU_DEBUG_MM_DELTA");
-            return e && e[0] == '1';
-        }();
-        if (kDebugMmDelta && skip_rigid_mm && moved_indices.size() > 1) {
-            float mm = 0.f;
-            for (size_t a = 0; a < moved_indices.size(); ++a) {
-                const int i = moved_indices[a];
-                for (size_t b = a + 1; b < moved_indices.size(); ++b) {
-                    const int j = moved_indices[b];
-                    const float r2o = cold.dist2(i, j);
-                    const float r2n = cnew.dist2(i, j);
-                    if (r2o <= contact_cutoff_sq_)
-                        mm -= eval_pair<ClashCutoff::None>(i, j, r2o, nullptr);
-                    if (r2n <= contact_cutoff_sq_) {
-                        bool lc = false;
-                        mm += eval_pair(i, j, r2n, &lc);
-                        (void)lc;
-                    }
-                }
-            }
-            std::fprintf(stderr, "mm_delta=%.8g n_moved=%zu\n",
-                         static_cast<double>(mm), moved_indices.size());
-        }
-
-        // Diagnostic: phased denselist for pivot Mu (MCPU_PIVOT_MU_BREAKDOWN=1).
-        // Collect → r² filter → eval_pair; measures each phase. Not production.
-        static const bool kPivotMuBreakdown = [] {
-            const char* e = std::getenv("MCPU_PIVOT_MU_BREAKDOWN");
-            return e && e[0] == '1';
-        }();
-        const bool do_pivot_breakdown =
-            kPivotMuBreakdown &&
-            (ws.move_kind == MoveKind::Pivot || patch.is_rigid);
-
-        if (do_pivot_breakdown) {
-            using Clock = std::chrono::steady_clock;
-            const auto t_setup0 = Clock::now();
-
-            auto& cands = ws.pivot_cand_scratch;
-            auto& incut = ws.pivot_incut_scratch;
-            cands.clear();
-            incut.clear();
-            // Per-atom staging so we can early-exit on clash like the fused path.
-            cands.reserve(512);
-            incut.reserve(64);
-
-            std::uint64_t ns_walk = 0, ns_r2 = 0, ns_eval = 0;
-            std::uint64_t n_cand = 0, n_incut = 0;
-            auto to_ns = [](Clock::time_point a, Clock::time_point b) {
-                return static_cast<std::uint64_t>(
-                    std::chrono::duration_cast<std::chrono::nanoseconds>(b - a)
-                        .count());
-            };
-
-            const auto t0 = Clock::now();
-            // Per-atom phased denselist: walk → r² → eval, matching fused early-exit.
-            // Diagnostic path (MCPU_PIVOT_MU_BREAKDOWN=1); production uses packed spans below.
-            // O(n_moved × avg_neighbors) total; abort on hard-core clash.
-            for (int i : moved_indices) {
-                const float ox = cold.x(i), oy = cold.y(i), oz = cold.z(i);
-                const float nx = cnew.x(i), ny = cnew.y(i), nz = cnew.z(i);
-
-                // --- Old subtract ---
-                cands.clear();
-                auto tw0 = Clock::now();
-                ns.for_each_mu_candidate(ox, oy, oz, [&](int j) {
-                    if (j == i) return;
-                    if (is_moved[static_cast<size_t>(j)]) {
-                        if (skip_rigid_mm) {
-                            ++nstats.elided_rigid_mm;
-                            return;
-                        }
-                        if (i > j) return;
-                    }
-                    cands.push_back(
-                        MuWorkspace::PivotCand{i, j, /*is_new=*/0});
-                });
-                auto tw1 = Clock::now();
-                ns_walk += to_ns(tw0, tw1);
-
-                incut.clear();
-                auto tr0 = Clock::now();
-                for (const auto& c : cands) {
-                    const float r2 = cold.dist2(c.i, c.j);
-                    note_mu_pair_r2(nstats, r2, contact_cutoff_sq_);
-                    if (r2 <= contact_cutoff_sq_) {
-                        incut.push_back(
-                            MuWorkspace::PivotInCut{c.i, c.j, r2, c.is_new});
-                    }
-                }
-                auto tr1 = Clock::now();
-                ns_r2 += to_ns(tr0, tr1);
-                n_cand += cands.size();
-                n_incut += incut.size();
-
-                auto te0 = Clock::now();
-                for (const auto& p : incut) {
-                    delta_E -= eval_pair<ClashCutoff::None>(p.i, p.j, p.r2, nullptr);
-                }
-                auto te1 = Clock::now();
-                ns_eval += to_ns(te0, te1);
-
-                // --- New add (static + optional moved_grid) ---
-                cands.clear();
-                tw0 = Clock::now();
-                ns.for_each_mu_candidate(nx, ny, nz, [&](int j) {
-                    if (j == i) return;
-                    if (is_moved[static_cast<size_t>(j)]) return;
-                    cands.push_back(
-                        MuWorkspace::PivotCand{i, j, /*is_new=*/1});
-                });
-                if (moved_grid) {
-                    moved_grid->for_each_neighbor(nx, ny, nz, [&](int j) {
-                        ++nstats.mu_num_candidates_iterated;
-                        if (j == i) return;
-                        if (i > j) return;
-                        cands.push_back(
-                            MuWorkspace::PivotCand{i, j, /*is_new=*/1});
-                    });
-                }
-                tw1 = Clock::now();
-                ns_walk += to_ns(tw0, tw1);
-
-                incut.clear();
-                tr0 = Clock::now();
-                for (const auto& c : cands) {
-                    const float r2 = cnew.dist2(c.i, c.j);
-                    note_mu_pair_r2(nstats, r2, contact_cutoff_sq_);
-                    if (r2 <= contact_cutoff_sq_) {
-                        incut.push_back(
-                            MuWorkspace::PivotInCut{c.i, c.j, r2, c.is_new});
-                    }
-                }
-                tr1 = Clock::now();
-                ns_r2 += to_ns(tr0, tr1);
-                n_cand += cands.size();
-                n_incut += incut.size();
-
-                te0 = Clock::now();
-                for (const auto& p : incut) {
-                    bool local_clash = false;
-                    delta_E += eval_pair(p.i, p.j, p.r2, &local_clash);
-                    if (local_clash) {
-                        clash = true;
-                        break;
-                    }
-                }
-                te1 = Clock::now();
-                ns_eval += to_ns(te0, te1);
-                if (clash) break;
-            }
-            const auto t_end = Clock::now();
-
-            nstats.pivot_mu_overhead_ns += to_ns(t_setup0, t0);
-            nstats.pivot_mu_cell_walk_ns += ns_walk;
-            nstats.pivot_mu_r2_filter_ns += ns_r2;
-            nstats.pivot_mu_eval_pair_ns += ns_eval;
-            // Unaccounted gap inside the timed region (timer call overhead, etc.).
-            const auto accounted = ns_walk + ns_r2 + ns_eval;
-            const auto span = to_ns(t0, t_end);
-            if (span > accounted)
-                nstats.pivot_mu_overhead_ns += (span - accounted);
-            nstats.pivot_mu_candidates += n_cand;
-            nstats.pivot_mu_in_cutoff += n_incut;
-            ++nstats.pivot_mu_n_steps;
-
-            if (clash) {
-                ws.clear();
-                ws.clear_moved_grid();
-                return kHardCorePenalty;
-            }
-            ws.clear_moved_grid();
-            return delta_E;
-        }
 
         // CHANGED: cell-pair inversion (optional) + fused packed denselist fallback.
         const OpenCellGrid& mu_grid_ref = ns.muGrid().grid();
@@ -2495,7 +2288,7 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
             static_cast<int>(moved.size()));
         const std::uint8_t* const mpc = moved_cells.counts();
 
-        // ---- OPTIONAL PASS 0: answer "does this move overlap?" on its own ----
+        // ---- PASS 0: answer "does this move overlap?" on its own ----
         // About a third of the actin step is contact energy computed for pivot
         // moves that are then discarded for a hard-core overlap (measured:
         // 34.5% of the step, results/clash_split_summary.md). The overlap
@@ -2503,17 +2296,12 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
         // cells -- a box ~6x larger in volume. Asking it first, with a stencil
         // sized to the question, rejects those moves without doing any contact
         // work at all. Costs one extra tight pass on moves that do NOT overlap.
-        // Mode 2 (direct reachable-cell enumeration, the default) measured
-        // a further 1.16x on actin / 1.11x on 1igd on top of the contact
-        // list, and neutral on chignolin thanks to the moved-atom gate below.
-        // See clash_first_mode() and first_grid_overlap().
-        const int kClashFirstMinMoved =
-            (clash_first_min_moved_env() >= 0)
-                ? clash_first_min_moved_env()
-                : context.neighborConfig().clash_first_min_moved;
+        // It measured a further 1.16x on actin / 1.11x on 1igd on top of the
+        // contact list, and neutral on chignolin thanks to the moved-atom
+        // gate below. See first_grid_overlap().
         const bool clash_first =
-            clash_first_mode() != 0 &&
-            static_cast<int>(moved.size()) >= kClashFirstMinMoved;
+            static_cast<int>(moved.size()) >=
+            context.neighborConfig().clash_first_min_moved;
         // By default the pass tests only the clash_hot atoms. They catch
         // 98.6-99.4% of the pivots that overlap (actin, LDH-A, PGK1), while
         // testing every moved atom cost the pivots that do NOT overlap a
@@ -2522,7 +2310,7 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
         int clash_atom = -1;
         if (clash_first) {
             const int found = first_grid_overlap(context, new_state, patch, mpc,
-                                                 clash_first_mode() == 3);
+                                                 /*hot_only=*/true);
             if (found >= 0) {
                 context.pairScratch().clash_hot.note(found);
                 ws.clear();
@@ -2571,7 +2359,7 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
         // cutoff itself (moved_vs_static_r2).
         const neighbor::WalkArgs contact_wa{
             is_moved.data(), is_moved.size(), mpc, 0.f,
-            contact_cutoff_sq_, neighbor::Cells::Stencil};
+            contact_cutoff_sq_};
         const bool walked = neighbor::moved_vs_static_r2(
             grid, cnew, moved.data(), static_cast<int>(moved.size()),
             contact_wa,

@@ -51,21 +51,6 @@ struct MuWorkspace {
     bool use_trial_fallback = false;
     MoveKind move_kind = MoveKind::Other;
 
-    /// Scratch for MCPU_PIVOT_MU_BREAKDOWN phased denselist diagnostic. O(1) reuse.
-    struct PivotCand {
-        int i = 0;
-        int j = 0;
-        std::uint8_t is_new = 0;  ///< 0 = old subtract, 1 = new add
-    };
-    struct PivotInCut {
-        int i = 0;
-        int j = 0;
-        float r2 = 0.f;
-        std::uint8_t is_new = 0;
-    };
-    std::vector<PivotCand> pivot_cand_scratch;
-    std::vector<PivotInCut> pivot_incut_scratch;
-
     /// Per-side grouping of moved atoms by cell (cell-pair denselist). O(1) reuse.
     struct MovedCellGroups {
         struct CellGroup {
