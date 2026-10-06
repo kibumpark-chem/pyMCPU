@@ -96,6 +96,34 @@ private:
     bool ready_ = false;
 };
 
+/// A grow-only list of trivially copyable records for a hot loop. push_back
+/// is a capacity test and a store, always inlined; the rare growth is a
+/// std::vector call (resize), so the hot loop calls nothing in the layer.
+/// std::vector::push_back here was left out of line by LTO (1.5-2.1% of
+/// actin/PGK1 cycles in its own frame). clear() keeps the storage, so a
+/// list reused every move stops growing after a few moves. Unlike
+/// std::vector, push_back reads v after growing, so v must not refer to an
+/// element of the same buffer.
+template <class T>
+class PushBuffer {
+public:
+    [[gnu::always_inline]] inline void push_back(const T& v) {
+        if (__builtin_expect(n_ == store_.size(), 0))
+            store_.resize(store_.empty() ? 64 : 2 * store_.size());
+        store_[n_++] = v;
+    }
+    void clear() noexcept { n_ = 0; }
+    std::size_t size() const noexcept { return n_; }
+    bool empty() const noexcept { return n_ == 0; }
+    const T* begin() const noexcept { return store_.data(); }
+    const T* end() const noexcept { return store_.data() + n_; }
+    const T& operator[](std::size_t k) const noexcept { return store_[k]; }
+
+private:
+    std::vector<T> store_;
+    std::size_t n_ = 0;
+};
+
 /// Ledger changes a pending move stages: drops first, then adds, applied only
 /// if the move is accepted. Lives in per-Context scratch so replicas that share
 /// one term object cannot tread on each other.
@@ -106,8 +134,8 @@ struct PendingPairs {
         std::int32_t j;
         P payload;
     };
-    std::vector<Pair> drop;
-    std::vector<Pair> add;
+    PushBuffer<Pair> drop;
+    PushBuffer<Pair> add;
 
     void clear() noexcept {
         drop.clear();
