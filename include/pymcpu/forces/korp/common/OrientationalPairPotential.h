@@ -54,7 +54,8 @@ public:
     /// rather than only through a summed energy where errors can cancel.
     [[nodiscard]] ResidueFrame frame_of(const State& state, int residue) const;
 
-    /// Enable the moved-moved elision described in calculateEnergyChange.
+    /// Enable the moved-moved elision: skip the pairs of two residues that
+    /// both moved rigidly under a rigid move.
     ///
     /// OFF BY DEFAULT, because for this potential it is not exact. The
     /// argument for it -- two residues carried by one rigid motion keep all six
@@ -106,10 +107,11 @@ private:
 
     /// The table entry and slice weight of the pair (lo < hi): false when the
     /// pair scores zero (beyond the cutoff, too close in sequence, or under
-    /// min_r). pair_energy is weight * entry, in double.
+    /// min_r).
     bool pair_entry(const std::vector<ResidueFrame>& frames, int lo, int hi,
                     std::size_t& index, float& weight) const noexcept;
-    /// Energy of the ordered pair (lo, hi), lo < hi, or 0 if it does not count.
+    /// Energy of the ordered pair (lo, hi), lo < hi, or 0 if it does not count:
+    /// pair_entry's weight * entry, in double.
     [[nodiscard]] double pair_energy(
         const std::vector<ResidueFrame>& frames, int lo, int hi) const noexcept;
 
@@ -149,7 +151,7 @@ private:
     mutable std::vector<ResidueFrame> frames_old_, frames_new_;
     mutable std::vector<FrameClass> cls_;
     mutable std::vector<std::uint8_t> bits_;
-    mutable std::vector<int> changed_, touched_;
+    mutable std::vector<int> changed_;
 
     /// Origins of frames_new_ as separate x/y/z arrays, for the distance
     /// prefilter in calculateEnergyChange.

@@ -87,22 +87,10 @@ public:
     /// array otherwise, and this port keeps the same shape rather than adding a
     /// branch to the hot path.
     [[nodiscard]] PairBins bins(const PairVectors& pv) const noexcept {
-        int shell = 0;
-        if (padded_) {
-            // Count of inner boundaries below d: the same shell as the loop
-            // below for increasing boundaries, without its unpredictable exit.
-            for (int s = 1; s < kMaxShells; ++s) shell += pv.d > br_pad_[s];
-        } else {
-            while (pv.d > br_[static_cast<std::size_t>(shell) + 1]) ++shell;
-        }
-        PairBins out;
-        out.shell = shell;
-        out.cell_a = angular_cell(shell, pv.cos_theta_a, pv.psi_a_y, pv.psi_a_x);
-        out.cell_b = angular_cell(shell, pv.cos_theta_b, pv.psi_b_y, pv.psi_b_x);
-        const std::size_t us = static_cast<std::size_t>(shell);
-        out.chi = angle_bin(pv.chi_y, pv.chi_x, shell_dchi_[us], shell_inv_dchi_[us],
-                            shell_nchi_[us], &chi_edge_[static_cast<std::size_t>(chi_edge_offset_[us])]);
-        return out;
+#if defined(__AVX2__) && defined(__FMA__)
+        if (padded_) return bins_avx2(pv);
+#endif
+        return bins_scalar(pv);
     }
 
     /// Index into the table of the entry for (slice, type_a, type_b, bins).
@@ -136,6 +124,135 @@ public:
     }
 
 private:
+#if defined(__AVX2__) && defined(__FMA__)
+    /// c*y - s*x, four lanes, rounded as edge_below rounds it.
+    static __m256d edge_cross(__m256d c, __m256d s, __m256d y, __m256d x) noexcept {
+#if defined(MCPU_FP_CONTRACT_OFF)
+        return _mm256_sub_pd(_mm256_mul_pd(c, y), _mm256_mul_pd(s, x));
+#else
+        return _mm256_fmsub_pd(c, y, _mm256_mul_pd(s, x));
+#endif
+    }
+
+    /// bins() for a padded map, with the shell and ring counts as vector
+    /// compares and the three angle bins (psi_a, psi_b, chi) found together,
+    /// one per lane, with no data-dependent branch. Same bins as bins_scalar
+    /// in every build mode: the counts are the same comparisons, and the edge
+    /// tests round c*y - s*x the same way edge_below does (fused by default,
+    /// unfused under MCPU_FP_CONTRACT=off), so the rough guess only has to be
+    /// within one bin, which it is (see angle_bin).
+    [[nodiscard]] __attribute__((always_inline)) PairBins bins_avx2(
+        const PairVectors& pv) const noexcept
+    {
+        const __m256d vy = _mm256_setr_pd(pv.psi_a_y, pv.psi_b_y, pv.chi_y, pv.chi_y);
+        const __m256d vx = _mm256_setr_pd(pv.psi_a_x, pv.psi_b_x, pv.chi_x, pv.chi_x);
+        const __m256d zero = _mm256_setzero_pd();
+        // A zero (y, x) is angle_bin's special case; it never happens in
+        // practice, and the scalar path handles it.
+        if (__builtin_expect(_mm256_movemask_pd(_mm256_and_pd(
+                _mm256_cmp_pd(vy, zero, _CMP_EQ_OQ),
+                _mm256_cmp_pd(vx, zero, _CMP_EQ_OQ))) != 0, 0)) {
+            return bins_scalar(pv);
+        }
+        const __m256d vd = _mm256_set1_pd(pv.d);
+        unsigned above = 0;
+        for (int q = 0; q < kMaxShells / 4; ++q) {
+            above |= static_cast<unsigned>(_mm256_movemask_pd(_mm256_cmp_pd(
+                         vd, _mm256_loadu_pd(br_pad_ + 4 * q), _CMP_GT_OQ))) << (4 * q);
+        }
+        const int shell = __builtin_popcount(above & ~1u);   // boundaries 1..15
+        const std::size_t us = static_cast<std::size_t>(shell);
+        const double* rc = &ring_cos_pad_[us * kMaxRings];
+        const __m256d rc0 = _mm256_loadu_pd(rc);
+        const __m256d rc1 = _mm256_loadu_pd(rc + 4);
+        const auto ring_of = [&](double c) noexcept {
+            const __m256d vc = _mm256_set1_pd(c);
+            return __builtin_popcount(
+                static_cast<unsigned>(_mm256_movemask_pd(_mm256_cmp_pd(vc, rc0, _CMP_LT_OQ)))
+                | (static_cast<unsigned>(_mm256_movemask_pd(_mm256_cmp_pd(vc, rc1, _CMP_LT_OQ)))
+                   << 4));
+        };
+        const std::size_t ka = static_cast<std::size_t>(ring_offset_[us] + ring_of(pv.cos_theta_a));
+        const std::size_t kb = static_cast<std::size_t>(ring_offset_[us] + ring_of(pv.cos_theta_b));
+
+        // Rough angles, as angle_bin computes them, four lanes at once.
+        const __m128 fy = _mm256_cvtpd_ps(vy);
+        const __m128 fx = _mm256_cvtpd_ps(vx);
+        const __m128 sign = _mm_set1_ps(-0.f);
+        const __m128 ay = _mm_andnot_ps(sign, fy);
+        const __m128 ax = _mm_andnot_ps(sign, fx);
+        const __m128 hi = _mm_max_ps(ay, ax);
+        const __m128 lo = _mm_min_ps(ay, ax);
+        const __m128 t = _mm_and_ps(_mm_cmpgt_ps(hi, _mm_setzero_ps()),
+                                    _mm_mul_ps(lo, _mm_rcp_ps(hi)));
+        const __m128 one = _mm_set1_ps(1.f);
+        __m128 r = _mm_mul_ps(t, _mm_add_ps(_mm_set1_ps(0.78539816f),
+                       _mm_mul_ps(_mm_sub_ps(one, t),
+                                  _mm_add_ps(_mm_set1_ps(0.2447f),
+                                             _mm_mul_ps(_mm_set1_ps(0.0663f), t)))));
+        r = _mm_blendv_ps(r, _mm_sub_ps(_mm_set1_ps(1.57079633f), r), _mm_cmpgt_ps(ay, ax));
+        r = _mm_blendv_ps(r, _mm_sub_ps(_mm_set1_ps(3.14159265f), r),
+                          _mm_cmplt_ps(fx, _mm_setzero_ps()));
+        r = _mm_blendv_ps(r, _mm_xor_ps(r, sign), _mm_cmplt_ps(fy, _mm_setzero_ps()));
+        const __m128 inv_width = _mm_setr_ps(ring_inv_dpsi_[ka], ring_inv_dpsi_[kb],
+                                             shell_inv_dchi_[us], shell_inv_dchi_[us]);
+        const int na = ring_ncells_[ka], nb = ring_ncells_[kb], nc = shell_nchi_[us];
+        const __m128i nmax = _mm_setr_epi32(na - 1, nb - 1, nc - 1, nc - 1);
+        __m128i iv = _mm_cvttps_epi32(
+            _mm_mul_ps(_mm_add_ps(r, _mm_set1_ps(3.14159265f)), inv_width));
+        iv = _mm_min_epi32(_mm_max_epi32(iv, _mm_setzero_si128()), nmax);
+        const int ia = _mm_extract_epi32(iv, 0);
+        const int ib = _mm_extract_epi32(iv, 1);
+        const int ic = _mm_extract_epi32(iv, 2);
+
+        // Edge tests: below(k) is c_k*y - s_k*x < 0, rounded as edge_below's is.
+        const Edge* ea = &psi_edge_[static_cast<std::size_t>(psi_edge_offset_[ka] + ia)];
+        const Edge* eb = &psi_edge_[static_cast<std::size_t>(psi_edge_offset_[kb] + ib)];
+        const Edge* ec = &chi_edge_[static_cast<std::size_t>(chi_edge_offset_[us] + ic)];
+        const __m256d c0 = _mm256_setr_pd(ea[0].c, eb[0].c, ec[0].c, ec[0].c);
+        const __m256d s0 = _mm256_setr_pd(ea[0].s, eb[0].s, ec[0].s, ec[0].s);
+        const __m256d c1 = _mm256_setr_pd(ea[1].c, eb[1].c, ec[1].c, ec[1].c);
+        const __m256d s1 = _mm256_setr_pd(ea[1].s, eb[1].s, ec[1].s, ec[1].s);
+        const unsigned below0 = static_cast<unsigned>(_mm256_movemask_pd(_mm256_cmp_pd(
+            edge_cross(c0, s0, vy, vx), zero, _CMP_LT_OQ)));
+        const unsigned below1 = static_cast<unsigned>(_mm256_movemask_pd(_mm256_cmp_pd(
+            edge_cross(c1, s1, vy, vx), zero, _CMP_LT_OQ)));
+        const unsigned pos = static_cast<unsigned>(_mm_movemask_ps(
+            _mm_castsi128_ps(_mm_cmpgt_epi32(iv, _mm_setzero_si128()))));
+        const unsigned under = static_cast<unsigned>(_mm_movemask_ps(
+            _mm_castsi128_ps(_mm_cmpgt_epi32(nmax, iv))));
+        const unsigned down = below0 & pos;
+        const unsigned up = ~below1 & under;
+        PairBins out;
+        out.shell = shell;
+        out.cell_a = ring_first_cell_[ka] + ia - static_cast<int>(down & 1u)
+                     + static_cast<int>(up & 1u);
+        out.cell_b = ring_first_cell_[kb] + ib - static_cast<int>((down >> 1) & 1u)
+                     + static_cast<int>((up >> 1) & 1u);
+        out.chi = ic - static_cast<int>((down >> 2) & 1u) + static_cast<int>((up >> 2) & 1u);
+        return out;
+    }
+#endif
+
+    [[nodiscard]] PairBins bins_scalar(const PairVectors& pv) const noexcept {
+        int shell = 0;
+        if (padded_) {
+            // Count of inner boundaries below d: the same shell as the loop
+            // below for increasing boundaries, without its unpredictable exit.
+            for (int s = 1; s < kMaxShells; ++s) shell += pv.d > br_pad_[s];
+        } else {
+            while (pv.d > br_[static_cast<std::size_t>(shell) + 1]) ++shell;
+        }
+        PairBins out;
+        out.shell = shell;
+        out.cell_a = angular_cell(shell, pv.cos_theta_a, pv.psi_a_y, pv.psi_a_x);
+        out.cell_b = angular_cell(shell, pv.cos_theta_b, pv.psi_b_y, pv.psi_b_x);
+        const std::size_t us = static_cast<std::size_t>(shell);
+        out.chi = angle_bin(pv.chi_y, pv.chi_x, shell_dchi_[us], shell_inv_dchi_[us],
+                            shell_nchi_[us], &chi_edge_[static_cast<std::size_t>(chi_edge_offset_[us])]);
+        return out;
+    }
+
     [[nodiscard]] std::size_t block_base(int slice, int a, int b) const noexcept {
         return ((static_cast<std::size_t>(slice) * kNumTypes + static_cast<std::size_t>(a))
                 * kNumTypes + static_cast<std::size_t>(b))
@@ -145,6 +262,20 @@ private:
     /// Direction of a bin edge: the edge at angle e (pi + atan2 convention)
     /// is the unit vector at atan2-angle e - pi.
     struct Edge { double c, s; };
+
+    /// below(k): the vector (x, y) lies before edge e, i.e. c*y - s*x < 0.
+    /// The rounding is spelled out so that it does not depend on how the
+    /// compiler contracts: one fused multiply-subtract when FMA is available
+    /// (the form GCC and clang already chose for the plain expression), two
+    /// rounded products under MCPU_FP_CONTRACT=off or without FMA.
+    /// bins_avx2's edge_cross rounds the same way.
+    [[nodiscard]] static bool edge_below(const Edge& e, double y, double x) noexcept {
+#if defined(__FMA__) && !defined(MCPU_FP_CONTRACT_OFF)
+        return std::fma(e.c, y, -(e.s * x)) < 0.0;
+#else
+        return e.c * y - e.s * x < 0.0;
+#endif
+    }
 
     /// Bin of pi + atan2(y, x) in bins of `width`, clamped to [0, n - 1]:
     /// upstream's `(int)(angle / width)`, found without atan2.
@@ -187,8 +318,8 @@ private:
         int i = static_cast<int>((r + 3.14159265f) * inv_width);
         i = i >= n ? n - 1 : (i < 0 ? 0 : i);
         // below(k): the vector lies before edge k, i.e. angle < k * width.
-        const bool down = (i > 0) & (edge[i].c * y - edge[i].s * x < 0.0);
-        const bool up = (i < n - 1) & !(edge[i + 1].c * y - edge[i + 1].s * x < 0.0);
+        const bool down = (i > 0) & edge_below(edge[i], y, x);
+        const bool up = (i < n - 1) & !edge_below(edge[i + 1], y, x);
         return i - static_cast<int>(down) + static_cast<int>(up);
     }
 
