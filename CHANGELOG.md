@@ -454,6 +454,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Runs under a residue energy mask no longer pay for moves that leave the
+  neighbour grid: masked actin is 27-46% faster.** Such a move cannot use
+  the contact list. Unmasked, a check on the grid rejects nearly all of
+  them for an overlap, but it was switched off under a mask, so every one
+  ran the all-pairs delta, about 1.3 ms on actin. The check now runs under
+  a mask too. It drops the pairs `ignore_all` switches off and keeps the
+  clashes `clash_only` keeps, exactly as the delta does, and reads the
+  mask in force at each move, so an overlap it finds is one the delta
+  finds. The all-pairs delta also leaves out moved atoms of masked
+  residues where all their terms are zero (the old positions in either
+  mode, and the new ones under `ignore_all`), so a masked tail that leaves
+  the grid on its own costs almost nothing. On masked actin (residues
+  0-39 `ignore_all`, 150k steps) the delta's distance tests fell from
+  186k to 3.9k and its share of the profile from 26% to under 1%.
+  Interleaved A/B against the previous main (n=3, user cycles/step,
+  150k steps): actin `ignore_all` 0-39 -27%, `ignore_all` 150-179 -31%,
+  `clash_only` 0-39 -46%, PGK1 `ignore_all` 0-39 -15%; unmasked actin and
+  PGK1, default mix and pivot-only, unchanged (instructions/step equal).
+  Bit-identical: the parity dump, and the final energies and accept bits
+  of every A/B run. `MCPU_FALLBACK_PRECHECK` is gone; the check always
+  runs.
 - **The KIC root solver does less bookkeeping per solve.** The Sturm
   sequence is packed for vector evaluation without looking up each
   member's order per entry (that loop was about a fifth of a solve with
@@ -844,7 +865,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     actin and LDH-A take it, but they cost over a third of a pivot-only
     step, and nearly all of them end in a steric rejection. Such a move now
     runs the clash-first pass on the grid first; an overlap found there is
-    one the delta finds too. `MCPU_FALLBACK_PRECHECK=0` turns it off.
+    one the delta finds too.
   * 98.6-99.4% of the pivots that overlap are caught on an atom that
     overlapped in a recent rejected move, so the clash-first pass now tests
     only those (`MCPU_CLASH_FIRST=2` restores the full pass). The contact
