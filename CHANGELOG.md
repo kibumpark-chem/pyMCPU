@@ -454,6 +454,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Pivot bookkeeping runs over index ranges, and the rotation is
+  vectorised; bit-identical.** A pivot moves one contiguous block of each
+  atom kind, and `ProposalPatch::mark_moved_range` now records those
+  ranges, so marking, clearing the masks, copying coordinates on accept
+  and reject, the bounds test and the displacement check run per range
+  (memset, memcpy, branch-free loops) instead of per atom. Moves that mark
+  single atoms, and patches whose `moved_indices` Python sets, keep the
+  per-atom loops. `CoordsSoA::rotate_atoms` rotates four atoms per AVX
+  pass with the same fused multiply-adds the compiler emitted for the
+  scalar loop. Interleaved A/B against the previous main (n=3, user
+  cycles/step) on T4L, CA2, LDH-A, actin and PGK1: default mix -6% to
+  -12% (actin 59.7k -> 52.4k), pivot-only -15% to -26%, KIC-only
+  unchanged. Final energies, accept sequences and `arch_parity_dump` are
+  unchanged.
+
 - **Mu pair walk round 4, bit-identical.** Mu reads its per-pair topology
   flags from a compact table (a band over pairs within four residues plus
   one byte per atom-type pair and a short per-atom exception list, 91-207 KB
