@@ -454,6 +454,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **KIC proposals cost about a fifth less.** The degree-16 closure
+  polynomial is built from products whose degrees are fixed when
+  compiling, so each unrolls to straight-line code (bit-identical
+  coefficients). Each root the Sturm counts isolate is then finished by
+  Newton's method kept inside its sign-change bracket, about 9 Horner
+  passes per root where regula falsi plus sign halvings took about 50; the
+  roots are also more accurate (largest relative error against 50-digit
+  roots 4.7e-10 -> 5.7e-12), so fewer closures fail the 1e-6 rad N-CA-C
+  check. Interleaved A/B against the previous main (n=3, user
+  cycles/step) on T4L, CA2, LDH-A, actin and PGK1: KIC-only -21% to -23%,
+  default mix -8% to -11%. Not bit-identical; passes
+  `scripts/tolerance_check.py`, and KIC accept, presolve-zero and
+  reverse-missing counts over 8 seeds x 200k KIC-only steps match the
+  previous main within statistical error.
+
 - **The H-bond energy change walks the shared pair-search layer and skips
   pairs inside a rigid pivot body, which makes pivot moves 4-8% faster.**
   The walks from a moved donor's H into the O grid and from a moved
