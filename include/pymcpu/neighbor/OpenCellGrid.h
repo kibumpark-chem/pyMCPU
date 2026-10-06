@@ -661,8 +661,7 @@ public:
         int live[128];
     };
 
-    /// for_each_neighbor_cell_span_while minus the cells whose atoms all
-    /// moved; see for_each_cell_span_within_fast_unmoved.
+    /// Same as the overload below, with no memo.
     template <typename CellFunc>
     bool for_each_neighbor_cell_span_while_unmoved(float x, float y, float z,
                                                    const std::uint8_t* moved_per_cell,
@@ -671,6 +670,10 @@ public:
             x, y, z, moved_per_cell, nullptr, std::forward<CellFunc>(cell_fn));
     }
 
+    /// for_each_neighbor_cell_span_while minus the cells whose atoms all
+    /// moved; see for_each_cell_span_within_fast_unmoved. With a memo, a
+    /// probe whose home cell is the memo's reuses its list of live cells
+    /// (see StencilMemo); nullptr collects the list afresh.
     template <typename CellFunc>
     bool for_each_neighbor_cell_span_while_unmoved(float x, float y, float z,
                                                    const std::uint8_t* moved_per_cell,
