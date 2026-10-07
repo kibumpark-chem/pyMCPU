@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cmath>
 #include <stdexcept>
+#include <string>
 #include <utility>
 
 namespace mcpu {
@@ -117,7 +118,8 @@ std::vector<int> sidechain_dfs_from_ca(
 // Residue-contiguous tree-order init-only permutation
 //
 // Within each residue (external ids → emitted in this order):
-//   [N, CA] + sidechain_DFS(from CA, excluding CA–N / CA–C) + [C, O] (+ H)
+//   [N, CA] + sidechain_DFS(from CA, excluding CA–N / CA–C) + [C, O]
+//   (+ OXT on the C-terminal residue) (+ H)
 // Residues sorted by Mu cell of CA, tie-break residue id.
 // Result: all atoms of a residue occupy a contiguous internal range.
 // ---------------------------------------------------------------------------
@@ -155,6 +157,36 @@ AtomPermutation compute_init_only_atom_permutation(
         keys[static_cast<size_t>(r)].res_id = r;
     }
     std::sort(keys.begin(), keys.end());
+
+    // Atoms no block names: the C-terminal OXT (or OCT), which the builder puts
+    // in the O segment after the last residue's O. Each is emitted after its
+    // residue's O so it lands inside that residue's span and moves with it.
+    std::vector<char> named(static_cast<size_t>(n), 0);
+    auto name = [&](int e) {
+        if (e >= 0 && e < n) named[static_cast<size_t>(e)] = 1;
+    };
+    for (int r = 0; r < n_res; ++r) {
+        const BlockIndices& bl = blocks[static_cast<size_t>(r)];
+        name(bl.bb_start);
+        name(bl.ca_atom());
+        name(bl.c_atom());
+        name(bl.o_start);
+        name(bl.h_start);
+        for (int e : collect_sc_ext(sys, r)) name(e);
+    }
+    std::vector<std::vector<int>> extra_ext(static_cast<size_t>(n_res));
+    for (int e = 0; e < n; ++e) {
+        if (named[static_cast<size_t>(e)]) continue;
+        const int r = e < static_cast<int>(sys.atom_to_residue.size())
+                          ? sys.atom_to_residue[static_cast<size_t>(e)]
+                          : -1;
+        if (r < 0 || r >= n_res) {
+            throw std::runtime_error(
+                "compute_init_only_atom_permutation: atom " + std::to_string(e) +
+                " is in no residue block and has no residue");
+        }
+        extra_ext[static_cast<size_t>(r)].push_back(e);
+    }
 
     AtomPermutation perm;
     perm.int_to_ext.reserve(static_cast<size_t>(n));
@@ -198,6 +230,7 @@ AtomPermutation compute_init_only_atom_permutation(
         } else {
             nb.o_start = -1;
         }
+        for (int e : extra_ext[static_cast<size_t>(r)]) perm.int_to_ext.push_back(e);
 
         if (h_ext >= 0) {
             nb.h_start = static_cast<int>(perm.int_to_ext.size());

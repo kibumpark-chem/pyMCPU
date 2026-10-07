@@ -6,8 +6,6 @@ measured distances between unrelated atoms (a native bias of 289560 instead
 of 8). It now remaps its pairs, and a term added after the reorder is remapped
 when it is added. Contexts sharing the reordered System (REMD replicas
 share one) adopt its order, or refuse if they predate the reorder.
-
-Actin, because init_only cannot place 1UAO's terminal OXT.
 """
 
 from __future__ import annotations

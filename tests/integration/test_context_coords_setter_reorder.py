@@ -21,8 +21,7 @@ from tests.fixtures.context_builders import resolve_test_pdb
 
 @pytest.fixture(scope="module")
 def heavy() -> md.Trajectory:
-    # Actin: large enough for Mu's live contact list, and it has no terminal
-    # OXT, which init_only cannot place.
+    # Actin: large enough for Mu's live contact list.
     traj = md.load(str(resolve_test_pdb()))
     return traj.atom_slice(traj.topology.select("not element H"))
 

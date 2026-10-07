@@ -76,6 +76,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The init_only atom reorder works on a chain that ends in OXT.**
+  `Context.set_atom_reorder_mode("init_only")` raised `RuntimeError:
+  compute_init_only_atom_permutation: atom count mismatch after tree emit`
+  for any chain with a C-terminal OXT (T4L, LDHA, chignolin and most PDB
+  files; actin has none). The builder puts OXT in the O segment after the
+  last residue's O, no `BlockIndices` field names it, and the reorder emitted
+  only the atoms the blocks name, so it came up one atom short. It now emits
+  every atom no block names right after its residue's O (by
+  `atom_to_residue`), inside that residue's span, so a pivot carries OXT with
+  the last residue. Static energies match reorder off up to summation order
+  (T4L total -394.75668 off, -394.75681 init_only; largest term difference
+  9e-7 relative; actin, which already worked: 1.5e-6). Pivot, KIC and
+  side-chain moves carry OXT with its residue. The default ("off") is
+  untouched and bit-identical. `tests/integration/test_reorder_terminal_oxt.py`.
+
 - **A rigid pivot re-decides the H-bonds it carries.** Under a pivot, an
   H-bond between two residues that moved as one body was carried at its old
   energy, but the rotation rounds every moved coordinate, so such a pair
