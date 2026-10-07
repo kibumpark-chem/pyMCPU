@@ -291,7 +291,7 @@ void Context::computeTorsions() {
 }
 
 void Context::sync_geometry() {
-    // CHANGED: always propagate exact denselist cutoff from MuPotential.
+    // The Mu grid's query cutoff is Mu's exact contact cutoff.
     if (forces::mcpu08::MuPotential* mu = mu_potential()) {
         neighbors_.config().mu_denselist_cutoff_A = mu->mu_exact_cutoff();
     }

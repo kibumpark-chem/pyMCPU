@@ -12,9 +12,9 @@
 
 using namespace mcpu;
 
-// KIC FIX (fixed targets): see KicReference in System.h. Double-precision versions of
+// KIC closure targets: see KicReference in System.h. Double-precision versions of
 // GeometryUtils::calculate_bond_angle / calculate_dihedral (same formulas, same sign
-// convention), which the move used to apply in float to the current coordinates.
+// convention).
 namespace {
 double kic_ref_angle(const Eigen::Vector3d& a, const Eigen::Vector3d& b, const Eigen::Vector3d& c) {
     const Eigen::Vector3d u = (a - b).normalized();

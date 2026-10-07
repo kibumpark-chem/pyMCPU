@@ -714,8 +714,6 @@ private:
         }
     }
 
-    /// Iterates a moved list in ascending order without sorting it when it
-    /// is already ascending or descending (the usual cases).
     /// max(|x|, |y|, |z|) over the moved atoms of ``patch`` in ``coords``;
     /// 0 for none. A NaN coordinate is skipped. O(n_moved).
     static float max_abs_moved_(const CoordsSoA& coords, const ProposalPatch& patch) {
@@ -751,6 +749,8 @@ private:
         return m;
     }
 
+    /// Iterates a moved list in ascending order without sorting it when it
+    /// is already ascending or descending (the usual cases).
     struct MovedOrder {
         const int* p;
         size_t n;

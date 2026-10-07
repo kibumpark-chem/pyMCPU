@@ -205,11 +205,11 @@ public:
     long long num_sc_resample_pro() const noexcept { return num_sc_resample_pro_; }
     long long get_kic_presolve_zero() const noexcept { return kic_presolve_zero_; }
     long long get_kic_jacobian_invalid() const noexcept { return kic_jacobian_invalid_; }
-    /// KIC FIX: closures dropped by the solver's 1e-6 rad N-CA-C check (pre- and post-move solves).
+    /// closures dropped by the solver's 1e-6 rad N-CA-C check (pre- and post-move solves).
     long long get_kic_geometry_invalid() const noexcept { return kic_geometry_invalid_; }
-    /// KIC FIX: moves refused because the current window is not among its own pre-move solutions.
+    /// moves refused because the current window is not among its own pre-move solutions.
     long long get_kic_reverse_missing() const noexcept { return kic_reverse_missing_; }
-    /// KIC FIX: moves skipped because they would change a proline's phi.
+    /// moves skipped because they would change a proline's phi.
     long long get_kic_proline_skipped() const noexcept { return kic_proline_skipped_; }
     long long get_steric_rejected() const noexcept { return steric_rejected_; }
 
@@ -481,8 +481,8 @@ private:
     long long kic_presolve_zero_ = 0;
     long long kic_jacobian_invalid_ = 0;
     long long kic_geometry_invalid_ = 0;
-    long long kic_reverse_missing_ = 0;   // KIC FIX: reverse check refusals
-    long long kic_proline_skipped_ = 0;   // KIC FIX: proline-phi skips
+    long long kic_reverse_missing_ = 0;   // reverse-check refusals
+    long long kic_proline_skipped_ = 0;   // proline-phi skips
     long long steric_rejected_ = 0;
     long long rotamer_attempted_ = 0;
     long long rotamer_accepted_ = 0;
@@ -503,8 +503,7 @@ private:
     /// Slot for a [0,1) roll: 0 = Pivot, 1 = KIC, 2 = Sidechain.
     ///
     /// THE single definition of the mix. run() and verify_physics_consistency
-    /// both go through here; they previously carried the split as duplicated
-    /// literals and could drift apart without anything noticing.
+    /// both go through here, so the two cannot drift apart.
     [[nodiscard]] int select_move_slot(float roll) const noexcept {
         if (roll < move_w_pivot_) return 0;
         // A zero-weight sidechain slot must stay unreachable. In float32 the
@@ -562,7 +561,7 @@ private:
     StepStats step_stats_;
     bool step_stats_verbose_ = false;
 
-    /// ADDED: last-step move context for crash/failure snapshots.
+    /// Last-step move context for crash/failure snapshots.
     std::string last_move_kind_str_ = "unknown";
     bool last_is_rigid_ = false;
     std::vector<int> last_moved_indices_;

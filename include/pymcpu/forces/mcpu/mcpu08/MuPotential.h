@@ -59,12 +59,9 @@ namespace mcpu::forces::mcpu08 {
         /// Indexed [type_i * n_types_ + type_j]. At N_TYPES=84 that is 7056
         /// entries = 110 KB -- L2-resident, NOT L1 (32 KB L1d).
         ///
-        /// FIXED: keep sizeof == 16. A precomputed `hard_r` field briefly took
-        /// this to 20 B, which is not a divisor of the 64 B line, so 25% of
-        /// entries straddled two lines (at 16 B: none do) and the by-value copy
-        /// in eval_pair stopped being a single movups. `hard_r` was
-        /// write-only anyway -- it existed solely to feed hard_tol_r2_from() on
-        /// the following line at setup, so it is now a local there instead.
+        /// Keep sizeof == 16: it divides the 64 B line, so no entry straddles
+        /// two lines, and the by-value copy in eval_pair is a single movups
+        /// (20 B would split 25% of entries).
         struct TypePairParams {
             float hard_r2    = 0.f;
             float contact_r2 = 0.f;

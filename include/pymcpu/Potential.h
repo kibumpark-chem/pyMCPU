@@ -99,7 +99,7 @@ public:
         return calculateEnergy(context, state);
     }
 
-    /// CHANGED: return EnergyChangeResult to carry hard-rejection reason.
+    /// Energy change of a proposal, with the hard-rejection reason if any.
     virtual EnergyChangeResult calculateEnergyChange(
         const Context& context,
         const State& old_state,

@@ -618,7 +618,7 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
                          topo_flag_.size() / (1024.0 * 1024.0));
         }
         build_compact_topo();
-        // CHANGED: exact denselist cutoff from type_params_ (default ON).
+        // The query cutoff from type_params_ (see mu_exact_cutoff_).
         apply_mu_denselist_cutoff();
     }
 

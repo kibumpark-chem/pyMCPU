@@ -110,15 +110,17 @@ inline bool compute_grid_shape(const BoxBounds& b, float cell, float query_radiu
  * Dense cell grid with a wrapped cell index.
  * An atom at x is filed under cell floor((x - lo) / cell) mod n on each axis,
  * so atoms anywhere, however far outside the box the grid was sized for,
- * have a cell, and a stencil walk wraps the same way. A cell then also
- * lists atoms a whole number of grid periods (n * cell) away from the query;
- * every caller measures each candidate's true distance, so those are
- * dropped and the pairs found are exactly the pairs in range. Nothing ever
- * leaves the grid: it is rebuilt only to recentre it (set_positions) or
- * after an overflow. Inside the box the cells are the old ones, in the same
- * order, and the cells a stencil wraps into are the empty margin cells of
- * the far face, so a state that stays in the box walks the same atoms in the
- * same order as an open grid.
+ * have a cell, and a stencil walk wraps the same way. Nothing ever leaves the
+ * grid: it is rebuilt only to recentre it (set_positions) or after an
+ * overflow.
+ *
+ * The wrapping is exact. A cell can also list atoms a whole number of grid
+ * periods (n * cell) away from the query; every caller measures each
+ * candidate's true distance, so those are dropped, and the atoms in range
+ * keep their relative slot order. A walk therefore finds the pairs in range,
+ * in the order an unwrapped grid would. While every atom is inside an
+ * untrimmed box, the cells a stencil wraps into are the empty margin cells
+ * of the far face and add no candidates at all.
  *
  * Each cell keeps its atoms in one fixed block of Cap slots (ids plus packed
  * x/y/z), newest first, so a walk over a cell is one sequential read. With

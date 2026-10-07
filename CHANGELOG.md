@@ -689,9 +689,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Python API unchanged. Instructions/step within 0.1%, cycles within noise.
 
 - **The neighbour grid keeps each cell once.** With the linked lists gone
-  (see Removed), an insert or removal touches only the cell's packed block,
-  and the occupied stencil is no longer timed with two clock reads per
-  update. Bit-identical (parity vs ec954cf; actin, PGK1 and T4L default,
+  (see Removed), an insert or removal touches only the cell's packed block.
+  Bit-identical (parity vs ec954cf; actin, PGK1 and T4L default,
   actin pivot-only and KIC-only, PGK1 pivot-only, and the masked runs all
   give the same accept bits and final energy as before). Cycles per step,
   n=3, 50k steps: actin -1.3% default, -2.4% pivot-only, PGK1 -1.6% and
@@ -1488,7 +1487,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   list cannot follow takes the exact all-pairs delta, as under
   `MCPU_CONTACT_LIST=0`). Also gone: the scratch grid of moved atoms that
   walk used; the occupied-stencil modes and `MCPU_OCCUPIED_STENCIL` with
-  their timers and the end-of-run `occ_stencil` line under `MCPU_VERBOSE`; and the Mu cell-size knobs `MCPU_MU_CELL_SCALE`,
+  their timers and the end-of-run `occ_stencil` line under `MCPU_VERBOSE`;
+  and the Mu cell-size knobs `MCPU_MU_CELL_SCALE`,
   `Context.set_mu_cell_size_scale` / `set_mu_cell_size_angstrom` /
   `set_mu_cell_size_min_angstrom`, their getters and
   `effective_mu_cell_size_A`, with the matching `neighbor_proxy_stats()`

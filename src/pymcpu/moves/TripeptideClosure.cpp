@@ -578,10 +578,10 @@ void TripeptideSolver::coord_from_poly_roots(const std::vector<double>& roots,
 //     return 1.0 / std::abs(det); 
 // }
 
-// KIC FIX (F6): orientation-free Jacobian. The previous body (legacy jac_local.h:114-130) used
-// the lab x/y (or x/z) components of the CA3->C3 bond; the phi driver rotates that bond, so its J
-// was J_true / |u_z| and a phi-driver move's weight depended on how the molecule sat in the lab
-// (checked to 1e-12 on 1,240 closures). This is 1/|det| of the 6x6 matrix of Pluecker twists
+// Orientation-free Jacobian. Legacy jac_local.h:114-130 used the lab x/y (or x/z)
+// components of the CA3->C3 bond; the phi driver rotates that bond, so its J is
+// J_true / |u_z| and a phi-driver move's weight would depend on how the molecule sits in the
+// lab (checked to 1e-12 on 1,240 closures). This is 1/|det| of the 6x6 matrix of Pluecker twists
 // (u_i, p_i x u_i) of the six window torsion axes (phi1, psi1, phi2, psi2, phi3, psi3): invariant
 // under any rigid motion, equal to J_true. Moments are taken about CA1 to keep them small.
 double TripeptideSolver::calculate_jacobian(const Solution& sol) const

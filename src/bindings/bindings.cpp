@@ -134,7 +134,7 @@ PYBIND11_MODULE(mcpu_core, m) {
              py::arg("r_n1"), py::arg("r_a1"), py::arg("r_a3"), py::arg("r_c3"))
         .def("get_polynomial_coefficients", &TripeptideSolver::get_polynomial_coefficients)
         .def("calculate_jacobian", &TripeptideSolver::calculate_jacobian, py::arg("solution"))
-        // KIC FIX (F2): closures dropped by the 1e-6 rad N-CA-C check in the last solve().
+        // Closures dropped by the 1e-6 rad N-CA-C check in the last solve().
         .def("last_rejected", &TripeptideSolver::last_rejected);
 
     py::class_<mcpu::RotamerComponent>(m, "RotamerComponent")
@@ -495,7 +495,7 @@ PYBIND11_MODULE(mcpu_core, m) {
                  d["mu_grid_active"] = c.neighbors().denseActive();
                  d["mu_grid_overflows"] = s.mu_grid_overflows;
                  d["hbond_grid_overflows"] = s.hbond_grid_overflows;
-                 // ADDED: live Mu grid occupancy for cell-size tuning
+                 // Live Mu grid occupancy, for cell-size tuning.
                  if (c.neighbors().denseActive()) {
                      const auto& g = c.neighbors().muGrid().grid();
                      int n_occ = 0, sum = 0, mx = 0;
@@ -735,7 +735,7 @@ PYBIND11_MODULE(mcpu_core, m) {
         .def("get_kic_presolve_zero", &mcpu::MCIntegrator::get_kic_presolve_zero)
         .def("get_kic_jacobian_invalid", &mcpu::MCIntegrator::get_kic_jacobian_invalid)
         .def("get_kic_geometry_invalid", &mcpu::MCIntegrator::get_kic_geometry_invalid)
-        // KIC FIX (F5, F8): reverse-check refusals and proline-phi skips.
+        // KIC reverse-check refusals and proline-phi skips.
         .def("get_kic_reverse_missing", &mcpu::MCIntegrator::get_kic_reverse_missing)
         .def("get_kic_proline_skipped", &mcpu::MCIntegrator::get_kic_proline_skipped)
         .def("get_steric_rejected", &mcpu::MCIntegrator::get_steric_rejected)
@@ -1114,7 +1114,7 @@ PYBIND11_MODULE(mcpu_core, m) {
         .def("set_rama_mixture_library", &System::setRamaMixtureLibrary)
         .def("get_rama_mixture_library", &System::getRamaMixtureLibrary, py::return_value_policy::reference_internal)
         .def("set_downstream_cache",  &System::setDownstreamCache)
-        // KIC FIX (F3): closure targets from the START coordinates (3 x n_atoms, Angstrom,
+        // KIC closure targets from the START coordinates (3 x n_atoms, Angstrom,
         // build order). MCPUForceField.create_system calls it; KIC refuses to run without it.
         .def("set_kic_reference", &System::setKicReference, py::arg("start_coords"))
         .def("has_kic_reference", &System::hasKicReference)

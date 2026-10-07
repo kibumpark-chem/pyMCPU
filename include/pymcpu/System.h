@@ -67,10 +67,10 @@ struct DownstreamCache {
 };
 
 // ---------------------------------------------------------------
-// KIC FIX (fixed targets): the loop-closure move's bond lengths, bond angles
-// and omegas, measured ONCE from the start structure. The move used to
-// re-measure them from the current coordinates on every proposal, so a bad
-// closure became the next move's target and N-CA-C drifted without bound.
+// The loop-closure move's bond lengths, bond angles and omegas, measured ONCE
+// from the start structure. Re-measured from the current coordinates on every
+// proposal, a bad closure would become the next move's target and N-CA-C
+// would drift without bound.
 // Internal coordinates only (no atom indices), so an atom permutation, a
 // replica exchange or a checkpoint restore -- which replace positions, never
 // the System -- cannot change them. Double precision on the float32 start
@@ -167,7 +167,7 @@ private:
     /// reused under another (State::mu_list_mask_epoch).
     std::uint64_t energy_mask_epoch_ = 0;
 
-    KicReference kic_reference_;  // KIC FIX: start-structure closure targets (setKicReference)
+    KicReference kic_reference_;  // start-structure closure targets (setKicReference)
 
 public:
     System(int atoms, int residues);
@@ -221,7 +221,7 @@ public:
         return is_proline_[static_cast<size_t>(res_id)] != 0;
     }
 
-    /// KIC FIX: store the closure targets from the START coordinates (3 x num_atoms,
+    /// Store the KIC closure targets from the START coordinates (3 x num_atoms,
     /// Angstrom, build order -- the coordinates the replicas are positioned with).
     /// Needs block indices; refused after a Context has reordered the atoms.
     void setKicReference(const Eigen::Matrix3Xf& start_coords);

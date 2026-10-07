@@ -58,9 +58,10 @@ def _forcefield(n_res: int = 60):
 def test_long_hot_pivot_chain_keeps_the_running_total_exact():
     """Incremental total vs full recompute over 40k hot, pivot-only steps.
 
-    Skipping co-moving pairs, runs like this drifted by units to tens of
-    units from a single hidden bin flip. With exact dE the delta adds the same float
-    pair terms as the full sum, in double, so the residual is double rounding.
+    A delta that skipped co-moving pairs would drift by units to tens of units
+    here from a single hidden bin flip. With exact dE the delta adds the same
+    float pair terms as the full sum, in double, so the residual is double
+    rounding.
     """
     ff, traj = _forcefield()
     context = mcpu_core.Context(ff.create_system(traj.topology))

@@ -132,8 +132,7 @@ void recompute_sidechain_torsion(State& st, const System& system, int r) {
 // loop would push the same atom index into patch.moved_indices once per
 // range it belongs to, violating ProposalPatch::mark_moved's documented "no
 // double-push" contract and corrupting every downstream per-atom energy pass
-// (confirmed via PhysicsVerifier: duplicated indices broke the Mu-potential
-// incremental-vs-full delta-energy consistency check).
+// (the Mu delta then disagrees with a full recompute).
 //
 // Returns false (no-op, caller must leave patch.is_valid false) if `system`
 // lacks per-residue chi topology tables for r -- hand-built/synthetic
@@ -269,10 +268,8 @@ void rotate_ranges(State& proposal, const std::vector<std::pair<int, int>>& rang
 // apply_pivot_at's own rotate_residue_spans merge) so callers can pass
 // phi's and psi's range lists directly without pre-computing the union
 // themselves and without any risk of a double-push into
-// patch.moved_indices -- the exact bug class apply_chi_cascade's own
-// "union... exactly once" comment above warns about (confirmed there via
-// PhysicsVerifier: duplicated indices broke the Mu-potential incremental-
-// vs-full delta-energy consistency check). Classifies each atom into
+// patch.moved_indices (see apply_chi_cascade's "union... exactly once"
+// comment above). Classifies each atom into
 // bb/o/sc/h exactly as apply_pivot_at's mark_atom lambda does, since
 // (unlike apply_chi_cascade's single-category sidechain range) this
 // move's touched union spans all four categories.
@@ -641,8 +638,8 @@ void MCIntegrator::apply_pivot_at(Context& context, State& proposal, ProposalPat
             }
         } else if (residue_contig) {
             if (is_phi) {
-                // KIC FIX (F7): was [CA+1, res_end), which also swung H(r); H(r) is bonded to
-                // N(r) and stays with the fixed N side. Rotate SC(r), C(r) and O(r) only.
+                // Rotate SC(r), C(r) and O(r) only: H(r) is bonded to N(r) and stays
+                // with the fixed N side.
                 const auto& br = blocks[static_cast<size_t>(r)];
                 if (br.sc_start >= 0 && br.sc_count > 0)
                     rotate_and_mark(br.sc_start, br.sc_start + br.sc_count);
@@ -686,8 +683,8 @@ void MCIntegrator::apply_pivot_at(Context& context, State& proposal, ProposalPat
 
         if (residue_contig || scattered) {
             // Per-residue rotate for reordered layouts.
-            // KIC FIX (F7): psi used to rotate O(r) (bonded to C(r), which is on the axis, so it
-            // belongs to the fixed side) and to leave N(r) and SC(r) behind (both on the moving
+            // psi leaves O(r) in place (bonded to C(r), which is on the axis, so it
+            // belongs to the fixed side) and moves N(r) and SC(r) (both on the moving
             // side). H(r) is bonded to N(r), so it moves for phi and psi alike.
             if (!residue_contig) {
                 throw std::runtime_error(
@@ -707,8 +704,8 @@ void MCIntegrator::apply_pivot_at(Context& context, State& proposal, ProposalPat
             const int bb_end_nterm = is_phi ? idx_N : bb_start_contig;
             rotate_range(blocks[0].bb_start, bb_end_nterm, patch.bb_atom_moved);
 
-            // KIC FIX (F7): was [is_phi ? r : r + 1], which swung O(r) out of the peptide plane
-            // on psi. O(r) is bonded to C(r): on the axis for psi, on the fixed side for phi.
+            // O of residues [0, r): O(r) is bonded to C(r), on the axis for psi and on the
+            // fixed side for phi, so it stays in the peptide plane.
             const int o_end_nterm = system.getDownstreamCache().first_o_of_residue[
                 static_cast<size_t>(r)];
             const int o_seg_start = system.getDownstreamCache().first_o_of_residue[0];
@@ -720,8 +717,8 @@ void MCIntegrator::apply_pivot_at(Context& context, State& proposal, ProposalPat
             rotate_range(sc_seg_start, sc_end_nterm, patch.sc_atom_moved);
 
             if (system.getTotalHAtoms() > 0) {
-                // KIC FIX (F7, explicit-H layout only): was [is_phi ? r : r + 1], which left H(r)
-                // behind on phi. H(r) is bonded to N(r), so it moves with the N side for both.
+                // H of residues [0, r]: H(r) is bonded to N(r), so it moves with the N side
+                // for phi and psi alike.
                 const int h_end_nterm = system.getDownstreamCache().first_h_of_residue[
                     static_cast<size_t>(r + 1)];
                 const int h_seg_start = system.getDownstreamCache().first_h_of_residue[0];
@@ -782,10 +779,8 @@ void MCIntegrator::apply_pivot_at(Context& context, State& proposal, ProposalPat
 // !scattered fast path), applying the two rotations as two separate calls
 // into the SAME patch (the way apply_pivot_at is called for a single
 // dihedral) would double-push every shared atom index into
-// patch.moved_indices. This is exactly the bug class apply_chi_cascade's
-// "union... exactly once" comment above already warns about (confirmed
-// there via PhysicsVerifier: duplicated indices broke the Mu-potential
-// incremental-vs-full delta-energy consistency check) -- so this function
+// patch.moved_indices (see apply_chi_cascade's "union... exactly once"
+// comment above), so this function
 // applies both rotations to raw coordinates first (via rotate_ranges,
 // which never touches patch), then marks the UNION of touched ranges
 // exactly once (via mark_ranges).
@@ -1265,7 +1260,7 @@ void MCIntegrator::apply_concerted_rotation_move(Context& context, State& propos
         if (r < 2 || r > num_residues - 3) return;
     }
 
-    // KIC FIX (F8): never change a proline's phi (its ring would stay closed but N would go
+    // Never change a proline's phi (its ring would stay closed but N would go
     // non-planar). The closure changes phi of r, r+1, r+2; the phi driver also changes phi(r+3)
     // by moving C(r+2), while the psi driver changes psi(r-1) only. Legacy loop.h:77-101 refuses
     // the same residues. Depends on the sequence alone, so detailed balance is kept.
@@ -1296,9 +1291,9 @@ void MCIntegrator::apply_concerted_rotation_move(Context& context, State& propos
     Eigen::Vector3d r_c3 = proposal.atom_pos(c3).cast<double>();
 
     // 3. Initialize solver using explicit, safe indices
-    // KIC FIX (F3): the 6 lengths, 7 angles and 2 omegas come from the START structure
-    // (System::setKicReference), not from the current coordinates. Re-measuring them made
-    // every accepted closure error the next move's target, so N-CA-C random-walked.
+    // The 6 lengths, 7 angles and 2 omegas come from the START structure
+    // (System::setKicReference), not from the current coordinates: re-measured, every
+    // accepted closure error would become the next move's target and N-CA-C would random-walk.
     if (!system.hasKicReference()) {
         throw std::runtime_error(
             "KIC move: System has no start-structure closure targets; call "
@@ -1329,7 +1324,7 @@ void MCIntegrator::apply_concerted_rotation_move(Context& context, State& propos
     static thread_local std::vector<Solution> pre_solutions;
     static thread_local std::vector<Solution> new_solutions;
     solver.solv_3pep_poly(r_n1, r_a1, r_a3, r_c3, pre_solutions);
-    // KIC FIX (F2): the solver drops closures that miss an N-CA-C target by > 1e-6 rad, in
+    // The solver drops closures that miss an N-CA-C target by > 1e-6 rad, in
     // this solve and the post-move one alike, so both counts below are filtered the same way.
     kic_geometry_invalid_ += solver.last_rejected();
     int n_soln_before = static_cast<int>(pre_solutions.size());
@@ -1338,7 +1333,7 @@ void MCIntegrator::apply_concerted_rotation_move(Context& context, State& propos
         return;
     }
 
-    // KIC FIX (F5): the move is reversible only if the current window is itself one of the
+    // The move is reversible only if the current window is itself one of the
     // surviving pre-move solutions (the reverse move would have to pick it). Refuse otherwise.
     {
         constexpr double kReverseTolA = 1.0e-3;
@@ -1389,9 +1384,9 @@ void MCIntegrator::apply_concerted_rotation_move(Context& context, State& propos
         return driver_center + driver_R * (pt - driver_center);
     };
 
-    // KIC FIX (F4): round the driver-moved anchors to float BEFORE the solve, so the solver
+    // Round the driver-moved anchors to float BEFORE the solve, so the solver
     // sees exactly the coordinates stored below. The next move's pre-move solve of this window
-    // is then bit-identical to this move's reverse problem, and the reverse check (F5) passes.
+    // is then bit-identical to this move's reverse problem, and the reverse check above passes.
     if (is_phi) {
         r_a3 = apply_driver(r_a3).cast<float>().cast<double>();
         r_c3 = apply_driver(r_c3).cast<float>().cast<double>();
@@ -1402,7 +1397,7 @@ void MCIntegrator::apply_concerted_rotation_move(Context& context, State& propos
 
     // 4. Run the KIC Solver for the POST-rotation endpoints
     solver.solv_3pep_poly(r_n1, r_a1, r_a3, r_c3, new_solutions);
-    kic_geometry_invalid_ += solver.last_rejected();  // KIC FIX (F2)
+    kic_geometry_invalid_ += solver.last_rejected();
     int n_new = static_cast<int>(new_solutions.size());
     if (n_new == 0) return;
 
@@ -1510,8 +1505,8 @@ void MCIntegrator::apply_concerted_rotation_move(Context& context, State& propos
             }
 
             // Hydrogen Transform (skipped when amide H are virtual / total_h_atoms==0)
-            // KIC FIX (F7, explicit H only): with the phi driver, H(r)'s frame C(r-1), N(r), CA(r)
-            // does not move, so skip it (it used to be rewritten at rounding level, unmarked).
+            // Explicit H only: with the phi driver, H(r)'s frame C(r-1), N(r), CA(r)
+            // does not move, so skip it.
             if (system.getTotalHAtoms() > 0 && h_len > 0 && !(is_phi && i == 0)) {
                 int prev_c_idx = blocks[static_cast<size_t>(res_idx - 1)].c_atom();
                 if (prev_c_idx >= 0 && prev_c_idx < n_atoms &&
@@ -1523,15 +1518,8 @@ void MCIntegrator::apply_concerted_rotation_move(Context& context, State& propos
             }
 
             // Oxygen Transform
-            // FIX: was blocks[res_idx+1] read unconditionally -- when the
-            // psi-driver's own bounds allow res_idx to reach num_residues-1
-            // (the last residue), res_idx+1 == num_residues indexes one
-            // element past the end of blocks. Confirmed live via valgrind
-            // ("Invalid read of size 4 ... 0 bytes after a block of size
-            // 9,612 alloc'd"). The out-of-range read was already guarded
-            // before use (next_n_idx>=0 && <n_atoms), so in practice it just
-            // silently skipped the transform -- but the read itself was
-            // undefined behavior. Guard the read itself instead.
+            // The psi driver can reach the last residue, which has no
+            // next residue to read N from; it then has no O to transfer.
             if (res_idx + 1 < num_residues) {
                 int next_n_idx = blocks[static_cast<size_t>(res_idx + 1)].bb_start;
                 if (o_start >= 0 && o_len > 0 &&
@@ -1554,7 +1542,7 @@ void MCIntegrator::apply_concerted_rotation_move(Context& context, State& propos
             proposal.set_atom_pos(o_prev, o_pos.cast<float>());
         }
     }
-    // KIC FIX (F7, explicit H only): the phi driver swings C(r+2) about N(r+3)-CA(r+3), and
+    // Explicit H only: the phi driver swings C(r+2) about N(r+3)-CA(r+3), and
     // H(r+3) (bonded to N(r+3), in the C(r+2)-N(r+3)-CA(r+3) plane) must swing with it.
     const int h_next = (is_phi && system.getTotalHAtoms() > 0)
                            ? blocks[static_cast<size_t>(r + 3)].h_start : -1;
@@ -1629,19 +1617,17 @@ void MCIntegrator::apply_concerted_rotation_move(Context& context, State& propos
                 patch.mark_moved(h);
             }
         }
-        if (h_next >= 0) {  // KIC FIX (F7): H(r+3), moved by the phi driver above
+        if (h_next >= 0) {  // H(r+3), moved by the phi driver above
             patch.h_atom_moved[static_cast<size_t>(h_next)] = 1;
             patch.mark_moved(h_next);
         }
     }
     patch.is_rigid = false;
 
-    // KIC FIX (F9): residue k's cached (phi, psi, pCA, bCA) reads C(k-1), N(k-1), CA(k-1), O(k-1),
+    // Residue k's cached (phi, psi, pCA, bCA) reads C(k-1), N(k-1), CA(k-1), O(k-1),
     // N(k), CA(k), C(k), N(k+1), CA(k+1), O(k+1) (recompute_backbone_torsion). Moved atoms:
     //   phi driver: C,O of r; N,CA,C,O of r+1 and r+2        -> k = r-1 .. r+3
     //   psi driver: O of r-1; N,CA,C,O of r and r+1; N,O of r+2 -> k = r-2 .. r+3
-    // It used to refresh only r..r+3 (phi) and r-1..r+2 (psi): r-1 (phi) and r-2, r+3 (psi)
-    // kept stale pCA/bCA, and the error was billed to a later move.
     const int bb_lo = is_phi ? r - 1 : r - 2;   // >= 0: phi needs r >= 1, psi r >= 2
     const int bb_hi = std::min(r + 3, num_residues - 1);
     for (int k = bb_lo; k <= bb_hi; ++k) patch.add_distorted_bb_residue(k);
@@ -1749,7 +1735,7 @@ void MCIntegrator::run(Context& context, int num_steps, int step_offset)
     for (auto& reporter : reporters_) {
         reporter->begin_run(context, *this);
     }
-    proposal_synced_ = false; // CHANGED: sparse — resync at start of every run()
+    proposal_synced_ = false; // full proposal sync at the start of every run()
     // Time each potential's energy change during the run (step_stats
     // energy_delta_ns). Two TSC reads per potential per move; within noise.
     context.set_energy_delta_timing(true);
@@ -1793,13 +1779,9 @@ void MCIntegrator::run(Context& context, int num_steps, int step_offset)
         const int move_slot = select_move_slot(move_roll);
 
         {
-            // FIXED: gen_pivot_ns / gen_kic_ns / gen_sc_ns were declared in
-            // StepStats and exposed through the bindings but NEVER WRITTEN, so
-            // move generation reported as zero in every build and sat inside the
-            // unattributed residual. That residual is 32% of the step at
-            // chignolin and 16% at sce -- the single largest unmeasured
-            // component, and the one that sets the small-system floor. Three
-            // ScopedTimers on a path taken once per step cost ~2 clock reads.
+            // Move generation is timed per kind (gen_pivot_ns, gen_kic_ns,
+            // gen_sc_ns): it is up to a third of a small system's step. One
+            // ScopedTimer per step costs ~2 clock reads.
             if (move_slot == 0) {
                 tried_pivot = true;
                 bb_attempted_++;
@@ -1923,7 +1905,7 @@ void MCIntegrator::run(Context& context, int num_steps, int step_offset)
                 // O(n_moved) restore so the next step can skip a full copy.
                 restore_proposal_from_accepted(proposal, context.state, move_patch);
             }
-            // ADDED: retain move context for failure/crash NPZ snapshots.
+            // Keep the move context for failure/crash NPZ snapshots.
             last_move_kind_str_ =
                 tried_pivot ? "Pivot" : (tried_kic ? "KIC" : (tried_sc ? "Sidechain" : "Other"));
             last_is_rigid_ = move_patch.is_rigid;
