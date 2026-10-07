@@ -100,7 +100,6 @@ FORMAT_VERSION = 2
 _PROXY_KEYS = (
     "mu_num_pair_distance_checks",
     "mu_num_pairs_within_rcut",
-    "mu_num_pairs_evaluated",
     "mu_eval_pair_calls",
     "hbond_num_candidates_iterated",
     "hbond_num_geom_checks",

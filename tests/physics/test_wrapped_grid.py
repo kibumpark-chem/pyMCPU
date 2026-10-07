@@ -159,7 +159,7 @@ def _run_and_check(ctx, steps, seed, temperature, after_chunk=None):
     for _ in range(steps // 1000):
         ctx.reset_neighbor_proxy_stats()
         integ.run(ctx, 1000)
-        assert ctx.neighbor_aabb_rebuilds() == 0, "a grid was rebuilt during the run"
+        assert ctx.neighbor_grid_rebuilds() == 0, "a grid was rebuilt during the run"
         if after_chunk:
             after_chunk(np.asarray(ctx.get_state().coords))
     running = float(ctx.get_state().current_energy)

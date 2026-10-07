@@ -41,9 +41,6 @@ struct BlockIndices {
     int res_end   = -1;         // one-past-last atom of residue block
 
     // -- Semantic helpers: hide raw -1 checks at all call sites --
-    [[nodiscard]] bool has_sidechain() const noexcept { return sc_start != -1; }
-    [[nodiscard]] bool has_hydrogen()  const noexcept { return amide_donor; }
-    [[nodiscard]] bool has_oxygen()    const noexcept { return o_start  != -1; }
     [[nodiscard]] bool has_explicit_h() const noexcept { return h_start >= 0; }
 
     [[nodiscard]] int n_atom() const noexcept { return bb_start; }

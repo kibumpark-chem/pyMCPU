@@ -105,16 +105,12 @@ your own tables.
       coordinates. Diagnostic; replicas that share the potential share the
       count.
 
-   .. py:attribute:: mu_cutoff_sq
+   .. py:attribute:: clist_fallbacks
 
-      Read-only. ``mu_exact_cutoff`` squared, used in the denselist
-      ``r²`` prefilter.
-
-   .. rubric:: Internals
-
-   Read-only table sizes, for diagnostics and not part of the stable API:
-   ``topo_flag_size_mb`` (the per-pair flag table) and
-   ``type_params_size_kb`` (the type-pair parameter table).
+      Read-only ``int``. Moves the contact list could not follow (a grid
+      cell overflowed, or a rigid move carried past the list's drift
+      budget); each accepted one costs an O(N²) list rebuild. Diagnostic,
+      shared like ``contact_list_rebuilds``.
 
 .. py:class:: TripletPotential(loaded_params)
 
@@ -177,11 +173,6 @@ Bias term
    .. py:method:: num_pairs() -> int
 
       Number of reference contact pairs.
-
-   .. py:method:: initialize_pair_cache(state, cache) -> None
-
-      Seed the per-pair contact cache from ``state``. ``cache`` is a
-      ``Sequence[int]`` of length ``num_pairs()``.
 
    .. note::
       The usual way to attach this term is
@@ -321,9 +312,8 @@ total-energy evaluation the reason is readable from the context:
    if context.has_steric_clash():
        print("starting structure has a hard-core overlap")
 
-Both :py:meth:`Context.has_steric_clash` and
-:py:meth:`Context.has_hard_constraint_violation` describe the *most
-recent* total-energy evaluation, so call
+:py:meth:`Context.has_steric_clash` describes the *most recent*
+total-energy evaluation, so call
 :py:meth:`Context.calculate_total_energy` first. Moves are tested at the
 hard-core cutoff, and a whole state against one 0.001 Å looser, to allow
 for rounding (``mcpu_core.STATE_CLASH_BUFFER_A``). The integrator rejects a

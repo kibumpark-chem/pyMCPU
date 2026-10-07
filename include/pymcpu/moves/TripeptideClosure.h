@@ -73,19 +73,6 @@ public:
     // Closures dropped by the N-CA-C check in the last solve.
     int last_rejected() const { return n_rejected_; }
 
-    // For DEBUGGING: Expose internal state for testing
-    std::vector<double> get_xi() const {
-        return {xi[0], xi[1], xi[2]};
-    }
-    
-    std::vector<double> get_eta() const {
-        return {eta[0], eta[1], eta[2]};
-    }
-
-    std::vector<double> get_delta() const {
-        return {delta[0], delta[1], delta[2], delta[3]};
-    }
-
     std::vector<double> get_polynomial_coefficients() {
         // 1. Create a blank Eigen matrix just like your solve function does
         Eigen::Matrix<double, 17, 1> p_coeff = Eigen::Matrix<double, 17, 1>::Zero();

@@ -237,32 +237,12 @@ public:
     const char* hbond_backend_name() const noexcept {
         return hb_fallback_ ? "bruteforce_OH_after_overflow" : "opencell_typed_OH_grids";
     }
-    float hbond_cutoff_A() const noexcept { return kHBondCutoffA; }
-    float hbond_cell_size_A() const noexcept {
-        return hb_fallback_ ? 0.f : kHBondListA;
-    }
     const char* mu_backend_name() const noexcept {
         return dense_active_ ? "opencell_mu_BBO_SC" : "mu_grid_off_after_overflow";
     }
     float mu_cell_size_A() const noexcept {
         if (!dense_active_ || !mu_grid_) return 0.f;
         return mu_grid_->grid().cell_size();
-    }
-
-    /// Print backend signature once per process (stderr). Safe to call often.
-    void maybe_print_neighbor_audit(const char* where) const {
-        static bool printed = false;
-        if (printed) return;
-        printed = true;
-        std::fprintf(stderr,
-            "[neighbor-audit] where=%s "
-            "Mu candidates=%s cell=%.3f cutoff=%.3f | "
-            "HBond candidates=%s cell=%.3f cutoff=%.3f fallback=%d "
-            "lifecycle=NeighborSystem_single\n",
-            where ? where : "?",
-            mu_backend_name(), mu_cell_size_A(), mu_cutoff_A(),
-            hbond_backend_name(), hbond_cell_size_A(), kHBondCutoffA,
-            hb_fallback_ ? 1 : 0);
     }
 
     /// Read-only Mu index (BB+O+SC).
@@ -339,7 +319,7 @@ public:
     /// OpenCellGrid), so this runs only from set_positions and after an
     /// overflow.
     bool rebuild_from_accepted_state(const CoordsSoA& coords) {
-        ++stats_.num_aabb_rebuild_accept;
+        ++stats_.num_grid_rebuilds;
         if (!mask_current()) apply_energy_mask_();
         retry_rebuild_ = false;
         // Cell == cutoff: a one-cell stencil (27 cells) finds every pair,

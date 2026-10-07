@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `MuPotential.clist_fallbacks`: moves the contact list could not follow
+  (a grid overflow, or a rigid move past the drift budget). Each accepted
+  one costs an O(N^2) list rebuild, which is what slows hot replicas.
+
 - `scripts/tolerance_check.py`: accepts or rejects a build that is correct
   but not bit-identical to a reference, for speedups that change float
   rounding. It compares per-group static energies (1e-5 relative), checks
@@ -535,6 +539,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   its eight cases fail.
 
 ### Changed
+
+- `Context.neighbor_aabb_rebuilds()` is now `neighbor_grid_rebuilds()`,
+  and the `neighbor_proxy_stats()` key `num_aabb_rebuild_accept` is now
+  `num_grid_rebuilds`: since grids wrap, the counter counts full grid
+  rebuilds (set_positions and overflow recovery), not bounding-box
+  rebuilds after a move.
 
 - **With fixed residues, no step is spent on a fixed residue.** A KIC step
   drew its window once and gave up when the window touched a fixed residue;
@@ -1415,6 +1425,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the only hard-rejecting term.
 
 ### Removed
+
+- Python bindings nothing used: `Context.set_coords_from_python` (assign
+  `Context.coords`), `has_hard_constraint_violation` (same as
+  `has_steric_clash`), `print_neighbor_audit`, `print_neighbor_proxy_stats`
+  (deprecated), `mu_cell_size_A` (still in `neighbor_proxy_stats()`),
+  `coord_sync_stats`/`reset_coord_sync_stats` (on `Context` and the module;
+  the counters behind them go too), `MuPotential.mu_cutoff_sq`,
+  `topo_flag_size_mb` and `type_params_size_kb`,
+  `NativeContactsBiasPotential.initialize_pair_cache` (it filled a
+  temporary copy of its argument), `EnergyWeights.set_legacy_defaults`,
+  `set_unweighted` and `outer_weight` (use `set_use_legacy_weights` and
+  `weight_for_group`), `BlockIndices.has_sidechain`/`has_hydrogen`/
+  `has_oxygen`, six debug fields of `ProposalPatch`
+  (`first_affected_residue`, `last_affected_residue` and the
+  `*_atom_moved` masks) and `TripeptideSolver.get_xi`/`get_eta`/
+  `get_delta`. The `neighbor_proxy_stats()` key `mu_num_pairs_evaluated`,
+  an alias of `mu_num_pair_distance_checks`, goes too.
 
 - Developer switches and dumps nobody used: `MCPU_DEBUG_MOVES` (a
   per-step move, energy and RNG trace on stderr), `MCPU_GRID_OCCUPANCY` and

@@ -242,10 +242,6 @@ void Context::setPositions(const Eigen::Matrix3Xd& new_coords,
     maybe_apply_init_only_reorder_();
 }
 
-void Context::print_neighbor_proxy_stats(const char* tag) const {
-    neighbors_.stats().print(tag);
-}
-
 void Context::computeTorsions() {
     const auto& blocks = system->getBlockIndices();
     for (size_t r = 1; r < state.backbone_torsions.size() - 1; ++r) {
