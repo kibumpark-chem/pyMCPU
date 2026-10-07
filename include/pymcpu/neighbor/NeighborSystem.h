@@ -660,32 +660,6 @@ public:
         }, &stats_.neighbor_num_cell_visits);
     }
 
-    /// for_each_hbond_acceptor_candidate(x, y, z) without the cells that the
-    /// same query from (px, py, pz) visits; see
-    /// OpenCellGrid::for_each_neighbor_not_near.
-    template <typename Func>
-    void for_each_hbond_acceptor_candidate_not_near(float x, float y, float z,
-                                                    float px, float py, float pz,
-                                                    Func&& func) const {
-        if (hb_fallback_ || !hb_o_grid_) return;
-        hb_o_grid_->for_each_neighbor_not_near(x, y, z, px, py, pz, [&](int j) {
-            ++stats_.hbond_num_candidates_iterated;
-            func(j);
-        }, &stats_.neighbor_num_cell_visits);
-    }
-
-    /// The H-grid counterpart of for_each_hbond_acceptor_candidate_not_near.
-    template <typename Func>
-    void for_each_hbond_h_candidate_not_near(float x, float y, float z,
-                                             float px, float py, float pz,
-                                             Func&& func) const {
-        if (hb_fallback_ || !hb_h_grid_) return;
-        hb_h_grid_->for_each_neighbor_not_near(x, y, z, px, py, pz, [&](int j) {
-            ++stats_.hbond_num_candidates_iterated;
-            func(j);
-        }, &stats_.neighbor_num_cell_visits);
-    }
-
     template <typename Func>
     void for_each_hbond_h_candidate(const Eigen::Vector3f& pos, Func&& func) const {
         if (hb_fallback_ || !hb_h_grid_) return;

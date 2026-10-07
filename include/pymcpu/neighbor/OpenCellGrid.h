@@ -134,12 +134,6 @@ public:
         return cell_count_[static_cast<size_t>(c)];
     }
 
-    /// Cell index for arbitrary coordinates (alias of cell_index). O(1).
-    /// Returns -1 if outside grid bounds or not configured.
-    [[nodiscard]] int cell_of(float x, float y, float z) const noexcept {
-        return cell_index(x, y, z);
-    }
-
     float cell_size() const noexcept { return cell_size_; }
     int nx() const noexcept { return nx_; }
     int ny() const noexcept { return ny_; }
@@ -154,18 +148,6 @@ public:
     /// atom was left out (atom_cell == -1), so the grid is incomplete and its
     /// owner must stop using it until a rebuild fits.
     bool overflowed() const noexcept { return overflowed_; }
-
-    /// True if denselist geometry matches ``b``/``cell`` (skip reconfigure). O(1).
-    bool matches_geometry(const BoxBounds& b, float cell,
-                          const NeighborConfig& cfg) const {
-        if (!configured_ || !b.valid) return false;
-        if (cell_size_ != cell) return false;
-        int nx = 0, ny = 0, nz = 0;
-        if (!compute_grid_shape(b, cell, cfg, nx, ny, nz)) return false;
-        return nx == nx_ && ny == ny_ && nz == nz_ &&
-               bounds_.lo.x() == b.lo.x() && bounds_.lo.y() == b.lo.y() &&
-               bounds_.lo.z() == b.lo.z();
-    }
 
     /// Diagnostic: count empty vs nonempty stencil cells at (x,y,z). O(stencil).
     /// Temporary for walk characterization; not used in production denselist.
@@ -228,44 +210,9 @@ public:
     }
 
     /**
-     * Visit each in-stencil neighbor cell as contiguous id+coord spans.
-     * Empty cells skipped. O(stencil × avg_occ).
-     * cell_fn(atoms, cx, cy, cz, count).
-     */
-    template <typename CellFunc>
-    void for_each_neighbor_cell_span(float x, float y, float z,
-                                     CellFunc&& cell_fn,
-                                     std::uint64_t* cell_visits = nullptr) const {
-        if (!configured_ || neighbor_offsets_.empty()) return;
-        const int ix0 =
-            static_cast<int>(std::floor((x - bounds_.lo.x()) * inv_cell_));
-        const int iy0 =
-            static_cast<int>(std::floor((y - bounds_.lo.y()) * inv_cell_));
-        const int iz0 =
-            static_cast<int>(std::floor((z - bounds_.lo.z()) * inv_cell_));
-        if (cell_visits) {
-            *cell_visits +=
-                static_cast<std::uint64_t>(neighbor_offsets_.size());
-        }
-        for (const CellOffset& o : neighbor_offsets_) {
-            const int ix = ix0 + o.dx;
-            const int iy = iy0 + o.dy;
-            const int iz = iz0 + o.dz;
-            if (ix < 0 || iy < 0 || iz < 0 || ix >= nx_ || iy >= ny_ ||
-                iz >= nz_)
-                continue;
-            const int c = (ix * ny_ + iy) * nz_ + iz;
-            const int count = cell_count_[static_cast<size_t>(c)];
-            if (count == 0) continue;
-            const size_t base = static_cast<size_t>(c) * CELL_CAPACITY;
-            cell_fn(cell_atoms_.data() + base, cell_x_.data() + base,
-                    cell_y_.data() + base, cell_z_.data() + base, count);
-        }
-    }
-
-    /**
-     * Visit only the cells that can hold an atom within `radius`, WITHOUT
-     * enumerating the 27-cell stencil first.
+     * Visit only the cells that can hold an atom within `radius` and an atom
+     * the pending move did not displace, WITHOUT enumerating the 27-cell
+     * stencil first.
      *
      * Why: a hard-core overlap needs r < ~2.8 A, but the cells are sized for the
      * ~5.1 A Mu cutoff, so the full 27-cell stencil sweeps a box ~5.8x larger
@@ -280,74 +227,11 @@ public:
      * within `radius` of the high face. With radius 2.83 A in ~5.1 A cells that
      * is 1 or 2 cells per axis, so 1-8 cells total (~3.8 on average) with no
      * per-offset rejection test at all.
-     */
-    template <typename CellFunc>
-    bool for_each_cell_span_within_fast(float x, float y, float z, float radius,
-                                        CellFunc&& cell_fn) const {
-        if (!configured_) return true;
-        const float fx = (x - bounds_.lo.x()) * inv_cell_;
-        const float fy = (y - bounds_.lo.y()) * inv_cell_;
-        const float fz = (z - bounds_.lo.z()) * inv_cell_;
-        const int ix0 = static_cast<int>(std::floor(fx));
-        const int iy0 = static_cast<int>(std::floor(fy));
-        const int iz0 = static_cast<int>(std::floor(fz));
-        // offset in Angstrom from this cell's low face, per axis
-        const float ox = (fx - static_cast<float>(ix0)) * cell_size_;
-        const float oy = (fy - static_cast<float>(iy0)) * cell_size_;
-        const float oz = (fz - static_cast<float>(iz0)) * cell_size_;
-        // FIXED: was int[3][2]. When the query radius exceeds HALF a cell, an
-        // atom can be within `radius` of BOTH faces along an axis, so all three
-        // of {i0-1, i0, i0+1} are needed -- three entries, not two. That is the
-        // case here: radius ~2.83 A against ~5.1 A cells, which happens for
-        // 2.24 < offset < 2.83, i.e. 11.6% of positions per axis and ~31% of
-        // atoms on at least one axis. The old size wrote the third entry into
-        // the next axis's slot (x, y) or past the array entirely (z), so those
-        // atoms were tested against a WRONG cell. It never changed a result only
-        // because the full contact walk that follows repeats the clash test, so
-        // a miss was caught there; a false positive would have been silent.
-        int axs[3][3];
-        int nax[3];
-        const float hi = cell_size_ - radius;
-        auto fill = [&](int k, int i0, float off) {
-            int n = 0;
-            if (off < radius) axs[k][n++] = i0 - 1;
-            axs[k][n++] = i0;
-            if (off > hi) axs[k][n++] = i0 + 1;
-            nax[k] = n;
-        };
-        fill(0, ix0, ox);
-        fill(1, iy0, oy);
-        fill(2, iz0, oz);
-        for (int a = 0; a < nax[0]; ++a) {
-            const int ix = axs[0][a];
-            if (ix < 0 || ix >= nx_) continue;
-            for (int b = 0; b < nax[1]; ++b) {
-                const int iy = axs[1][b];
-                if (iy < 0 || iy >= ny_) continue;
-                for (int cc = 0; cc < nax[2]; ++cc) {
-                    const int iz = axs[2][cc];
-                    if (iz < 0 || iz >= nz_) continue;
-                    const int c = (ix * ny_ + iy) * nz_ + iz;
-                    const int count = cell_count_[static_cast<size_t>(c)];
-                    if (count == 0) continue;
-                    const size_t base = static_cast<size_t>(c) * CELL_CAPACITY;
-                    if (!cell_fn(cell_atoms_.data() + base, cell_x_.data() + base,
-                                 cell_y_.data() + base, cell_z_.data() + base,
-                                 count))
-                        return false;
-                }
-            }
-        }
-        return true;
-    }
-
-    /**
-     * for_each_cell_span_within_fast for a query that skips every atom a move
-     * displaced: `moved_per_cell[c]` counts the atoms listed in cell c that
-     * the pending move displaces. A cell whose atoms all moved (count ==
-     * moved_per_cell[c], which also covers an empty cell) holds nothing such
-     * a query keeps, so it is not visited. The cells still visited come in
-     * the unfiltered order, and their spans are the same.
+     *
+     * `moved_per_cell[c]` counts the atoms listed in cell c that the pending
+     * move displaces. A cell whose atoms all moved (count == moved_per_cell[c],
+     * which also covers an empty cell) holds nothing such a query keeps, so it
+     * is not visited.
      */
     template <typename CellFunc>
     bool for_each_cell_span_within_fast_unmoved(float x, float y, float z,
@@ -434,8 +318,10 @@ public:
             x, y, z, moved_per_cell, nullptr, std::forward<CellFunc>(cell_fn));
     }
 
-    /// for_each_neighbor_cell_span_while minus the cells whose atoms all
-    /// moved; see for_each_cell_span_within_fast_unmoved. With a memo, a
+    /// Visit the stencil cells around (x, y, z) that hold an atom the
+    /// pending move did not displace (see
+    /// for_each_cell_span_within_fast_unmoved), as contiguous id and
+    /// coordinate spans, until cell_fn returns false. With a memo, a
     /// probe whose home cell is the memo's reuses its list of live cells
     /// (see StencilMemo); nullptr collects the list afresh.
     template <typename CellFunc>
@@ -544,41 +430,6 @@ public:
             const int count = cell_count_[static_cast<size_t>(c)];
             if (count == static_cast<int>(moved_per_cell[static_cast<size_t>(c)]))
                 continue;
-            const size_t base = static_cast<size_t>(c) * CELL_CAPACITY;
-            if (!cell_fn(cell_atoms_.data() + base, cell_x_.data() + base,
-                         cell_y_.data() + base, cell_z_.data() + base, count))
-                return false;
-        }
-        return true;
-    }
-
-    /// Like for_each_neighbor_cell_span but stops if cell_fn returns false. O(stencil×occ).
-    template <typename CellFunc>
-    bool for_each_neighbor_cell_span_while(float x, float y, float z,
-                                           CellFunc&& cell_fn,
-                                           std::uint64_t* cell_visits = nullptr) const {
-        if (!configured_ || neighbor_offsets_.empty())
-            return true;
-        const int ix0 =
-            static_cast<int>(std::floor((x - bounds_.lo.x()) * inv_cell_));
-        const int iy0 =
-            static_cast<int>(std::floor((y - bounds_.lo.y()) * inv_cell_));
-        const int iz0 =
-            static_cast<int>(std::floor((z - bounds_.lo.z()) * inv_cell_));
-        if (cell_visits) {
-            *cell_visits +=
-                static_cast<std::uint64_t>(neighbor_offsets_.size());
-        }
-        for (const CellOffset& o : neighbor_offsets_) {
-            const int ix = ix0 + o.dx;
-            const int iy = iy0 + o.dy;
-            const int iz = iz0 + o.dz;
-            if (ix < 0 || iy < 0 || iz < 0 || ix >= nx_ || iy >= ny_ ||
-                iz >= nz_)
-                continue;
-            const int c = (ix * ny_ + iy) * nz_ + iz;
-            const int count = cell_count_[static_cast<size_t>(c)];
-            if (count == 0) continue;
             const size_t base = static_cast<size_t>(c) * CELL_CAPACITY;
             if (!cell_fn(cell_atoms_.data() + base, cell_x_.data() + base,
                          cell_y_.data() + base, cell_z_.data() + base, count))
@@ -781,50 +632,6 @@ public:
             if (ix < 0 || iy < 0 || iz < 0 || ix >= nx_ || iy >= ny_ ||
                 iz >= nz_)
                 continue;
-            const int c = (ix * ny_ + iy) * nz_ + iz;
-            const int* atoms =
-                cell_atoms_.data() + static_cast<size_t>(c) * CELL_CAPACITY;
-            const int count = cell_count_[static_cast<size_t>(c)];
-            for (int k = 0; k < count; ++k) func(atoms[k]);
-        }
-    }
-
-    /// for_each_neighbor(x, y, z) minus the cells that for_each_neighbor(px,
-    /// py, pz) visits. A caller that has just walked (px, py, pz) and dedupes
-    /// what it sees gets nothing new from the cells the two stencils share, so
-    /// it can skip them. The cells it does visit come in the same order as in
-    /// the full walk.
-    template <typename Func>
-    void for_each_neighbor_not_near(float x, float y, float z,
-                                    float px, float py, float pz,
-                                    Func&& func,
-                                    std::uint64_t* cell_visits = nullptr) const {
-        if (!configured_ || neighbor_offsets_.empty()) return;
-        const int ix0 =
-            static_cast<int>(std::floor((x - bounds_.lo.x()) * inv_cell_));
-        const int iy0 =
-            static_cast<int>(std::floor((y - bounds_.lo.y()) * inv_cell_));
-        const int iz0 =
-            static_cast<int>(std::floor((z - bounds_.lo.z()) * inv_cell_));
-        const int jx0 =
-            static_cast<int>(std::floor((px - bounds_.lo.x()) * inv_cell_));
-        const int jy0 =
-            static_cast<int>(std::floor((py - bounds_.lo.y()) * inv_cell_));
-        const int jz0 =
-            static_cast<int>(std::floor((pz - bounds_.lo.z()) * inv_cell_));
-        if (ix0 == jx0 && iy0 == jy0 && iz0 == jz0) return;
-        const int R = stencil_radius_;
-        for (const CellOffset& o : neighbor_offsets_) {
-            const int ix = ix0 + o.dx;
-            const int iy = iy0 + o.dy;
-            const int iz = iz0 + o.dz;
-            if (ix < 0 || iy < 0 || iz < 0 || ix >= nx_ || iy >= ny_ ||
-                iz >= nz_)
-                continue;
-            if (std::abs(ix - jx0) <= R && std::abs(iy - jy0) <= R &&
-                std::abs(iz - jz0) <= R)
-                continue;
-            if (cell_visits) ++*cell_visits;
             const int c = (ix * ny_ + iy) * nz_ + iz;
             const int* atoms =
                 cell_atoms_.data() + static_cast<size_t>(c) * CELL_CAPACITY;
