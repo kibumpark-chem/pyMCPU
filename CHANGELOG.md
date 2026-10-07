@@ -570,6 +570,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   builds, which is every run with a force field and the default
   `reference_pdb`, are unchanged.
 
+- **The triplet tables are memory-mapped instead of read into memory.**
+  `MCPUForceField` read the backbone and sidechain triplet tables
+  (673 MiB together, 633 MiB of it the sidechain table) into each process,
+  although `create_system` copies only the windows of the sequence into the
+  engine. They are now mapped read-only (`np.memmap`), so a process touches
+  only its own windows and every process on a node shares one copy through
+  the page cache. Actin (377 residues), after 2,000 steps: RSS per process
+  1,059 to 453 MiB, peak 1,165 to 559 MiB; with 4 processes, PSS per
+  process 996 to 341 MiB. For a 60-replica job on one node that is about
+  38 GiB less. `MCPUForceField()` takes 0.14 s instead of 0.38 s with the
+  file cached. `ff.bb_triplet` and `ff.sc_triplet` are now read-only
+  `np.memmap` arrays with the same shape and values; code that wrote into
+  them must copy first. Energies and trajectories are bit-identical.
+
 - **With fixed residues, no step is spent on a fixed residue.** A KIC step
   drew its window once and gave up when the window touched a fixed residue;
   it now draws again, as pivot and sidechain steps already did, so the
