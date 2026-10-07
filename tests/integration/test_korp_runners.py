@@ -207,9 +207,7 @@ def test_run_from_config_hands_the_forcefield_to_the_mpi_runner(
     assert seen["forcefield_options"] == _korp_options()
 
 
-def test_mpi_engine_builds_korp(
-    korp_pdb: str, tmp_path: Path, mock_comm_rank0, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def _mpi_korp_engine(korp_pdb: str, tmp_path: Path, comm, monkeypatch):
     import pymcpu.sampling.mpi_replica_exchange as mmod
     from unittest.mock import MagicMock
 
@@ -217,17 +215,38 @@ def test_mpi_engine_builds_korp(
         fake = MagicMock(TAG_UB=32767, LOR=object())
         monkeypatch.setattr(mmod, "MPI", fake)
         monkeypatch.setattr(mmod, "_require_mpi", lambda: fake)
-
-    rex = mmod.MPIReplicaExchange(
-        mock_comm_rank0, korp_pdb, temperatures=[0.5, 0.6], n_targets=[0.0],
+    return mmod.MPIReplicaExchange(
+        comm, korp_pdb, temperatures=[0.5, 0.6], n_targets=[0.0],
         k_bias=0.0, log_interval=1, output_dir=str(tmp_path), output_prefix="rex",
         seed=1, move_weights=tuple(BACKBONE_MOVES),
         forcefield="korp", forcefield_options=_korp_options(),
     )
+
+
+def test_mpi_engine_builds_korp(
+    korp_pdb: str, tmp_path: Path, mock_comm_rank0, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    rex = _mpi_korp_engine(korp_pdb, tmp_path, mock_comm_rank0, monkeypatch)
     assert isinstance(rex.forcefield, KORPForceField)
     assert rex.system.get_num_atoms() == rex.forcefield.n_atoms
     assert rex.top_path == str(tmp_path / "rex_topology.pdb")
     assert md.load(rex.top_path).n_atoms == rex.forcefield.n_atoms
+
+
+def test_mpi_topology_write_error_reaches_every_rank(
+    korp_pdb: str, tmp_path: Path, mock_comm_rank0, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Rank 0's write error is broadcast, so no rank waits in a barrier."""
+    import pymcpu.sampling.mpi_replica_exchange as mmod
+
+    def fail(*args, **kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(mmod, "trajectory_topology_path", fail)
+    with pytest.raises(RuntimeError, match="disk full"):
+        _mpi_korp_engine(korp_pdb, tmp_path, mock_comm_rank0, monkeypatch)
+    sent = [c.args[0] for c in mock_comm_rank0.bcast.call_args_list]
+    assert any(isinstance(x, str) and "disk full" in x for x in sent)
 
 
 # ── resume ───────────────────────────────────────────────────────────

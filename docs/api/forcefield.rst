@@ -18,6 +18,8 @@ all build it through :func:`pymcpu.forcefields.load_forcefield`; an unknown
 name fails when the config is loaded. Both classes follow
 :class:`~pymcpu.forcefields.base.BaseForceField`.
 
+.. autofunction:: pymcpu.forcefields.load_forcefield
+
 MCPUForceField (mcpu08)
 =======================
 

@@ -348,11 +348,20 @@ class MPIReplicaExchange:
         )
         n_res = self.system.get_num_residues()
         # Topology for XTC truncation (mdtraj). Rank 0 writes it when the
-        # force field simulates fewer atoms than the input (KORP).
-        self.top_path = trajectory_topology_path(
-            self.forcefield, pdb_path, self.reference_pdb,
-            f"{self.output_prefix}_topology.pdb", write=self.rank == 0)
-        comm.Barrier()
+        # force field simulates fewer atoms than the input (KORP). Its error,
+        # if any, is broadcast so the other ranks raise instead of waiting.
+        top_error = None
+        try:
+            self.top_path = trajectory_topology_path(
+                self.forcefield, pdb_path, self.reference_pdb,
+                f"{self.output_prefix}_topology.pdb", write=self.rank == 0)
+        except Exception as exc:
+            if self.rank != 0:
+                raise
+            top_error = f"rank 0 could not write the trajectory topology: {exc!r}"
+        top_error = comm.bcast(top_error, root=0)
+        if top_error:
+            raise RuntimeError(top_error)
 
         n_contacts = float(self.q_cv.n_contacts)
         self.n_targets = resolve_n_targets(n_targets_raw, q_targets_raw, n_contacts)

@@ -146,8 +146,9 @@ def check_move_weights(
         raise ValueError(
             f"forcefield {label} has no sidechains, so sidechain moves are "
             f"impossible, but move_weights gives them {weights[2]:.3g} of the "
-            f"moves; set integrator.move_weights to [pivot, kic, 0.0], e.g. "
-            f"[0.5, 0.5, 0.0]"
+            f"moves; set move_weights (top-level in a flat config, or "
+            f"integrator.move_weights in a nested one) to [pivot, kic, 0.0], "
+            f"e.g. [0.5, 0.5, 0.0]"
         )
 
 
