@@ -261,10 +261,8 @@ the parameters in this order and uses the first match:
 1. ``MCPU_PARAMS_DIR``: a directory containing ``constants/`` and
    ``mcpu_params/``
 2. The source tree, when installed from a checkout with ``pip install -e``
-3. The cache (``MCPU_CACHE_DIR``, default ``~/.cache/pymcpu``), if it is
-   already filled
-4. ``MCPU_PARAMS_BUNDLE``: a local ``.tar.gz``, unpacked into the cache
-5. The copy shipped inside the package, unpacked into the cache on first use
+3. The copy shipped inside the package, unpacked into the cache
+   (``MCPU_CACHE_DIR``, default ``~/.cache/pymcpu``) on first use
 
 A directory you set explicitly therefore always wins over the shipped copy.
 On a cluster, a node-local cache is usually faster than a shared home

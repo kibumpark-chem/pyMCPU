@@ -318,7 +318,7 @@ class MCPUForceField(BaseForceField):
                 raise FileNotFoundError(
                     f"MCPU parameter file not found: {name}\n"
                     f"Expected at: {path}\n"
-                    f"Hint: export MCPU_PARAMS_DIR or run `mcpu download-params` "
+                    f"Hint: export MCPU_PARAMS_DIR or run `mcpu materialize-params` "
                     f"(see pymcpu.params.ensure_params)."
                 )
         with open(required_paths["amino acids template"], "r") as f:

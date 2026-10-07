@@ -1,7 +1,7 @@
 """``mcpu`` command-line entry point.
 
-Subcommands: ``version``, ``download-params``, ``materialize-params``,
-``run`` and ``validate``. See docs/cli.rst.
+Subcommands: ``version``, ``materialize-params``, ``run`` and ``validate``.
+See docs/cli.rst.
 """
 
 from __future__ import annotations
@@ -21,21 +21,6 @@ def _add_checkpoint_args(parser: argparse.ArgumentParser) -> None:
         checkpoint_dir_default=None,
         keep_last_n_default=None,
     )
-
-
-def _cmd_download_params(args: argparse.Namespace) -> int:
-    from pymcpu.params import ParamsError, download_params
-
-    try:
-        path = download_params(
-            args.set,
-            dest=args.dir,
-        )
-    except ParamsError as exc:
-        print(exc, file=sys.stderr)
-        return 1
-    print(path)
-    return 0
 
 
 def _cmd_version(_: argparse.Namespace) -> int:
@@ -132,23 +117,6 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_ver = sub.add_parser("version", help="Print package version")
     p_ver.set_defaults(func=_cmd_version)
-
-    p_dl = sub.add_parser(
-        "download-params",
-        help="Resolve/download pretrained parameters and print the final path",
-    )
-    p_dl.add_argument(
-        "--set",
-        default="mcpu08",
-        help="Parameter set name from the registry (default: mcpu08)",
-    )
-    p_dl.add_argument(
-        "--dir",
-        type=Path,
-        default=None,
-        help="Optional staging directory to copy resolved params into",
-    )
-    p_dl.set_defaults(func=_cmd_download_params)
 
     p_mat = sub.add_parser(
         "materialize-params",

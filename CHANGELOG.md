@@ -1474,6 +1474,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `step_stats`: they cost no measurable time (actin, 34.8k vs 34.9k
   cycles/step) and always run.
 
+- **The parameter download path and the `pooch` dependency.** The registry
+  never had a URL, so the download could only raise. Gone with it:
+  `MCPU_PARAMS_BUNDLE` (a local `.tar.gz` unpacked into the cache), the
+  lookup step that reused a cache those two filled, `MCPU_NO_DOWNLOAD`,
+  the registry's `archive`/`url`/`sha256`/`unpack_root` keys,
+  `scripts/pack_params.py`, `pymcpu.params.download_params`, the
+  deprecated `include_sc` argument of `ensure_params` and `params_path`,
+  and the `mcpu download-params` command, which only printed the path
+  `mcpu materialize-params` prints or copied the set elsewhere. Parameters
+  now come from `MCPU_PARAMS_DIR`, the source tree, or the copy shipped in
+  the package, in that order. The cache root is `MCPU_CACHE_DIR` or
+  `~/.cache/pymcpu` on every platform (pooch used `~/Library/Caches` on
+  macOS and honoured `XDG_CACHE_HOME`), shared with the KORP map lookup. Setting `MCPU_NO_DOWNLOAD` is
+  now harmless and does nothing.
+
 - The overlap check on the grid before Mu's all-pairs fallback delta
   (`fallback_grid_overlap`), which round 8 also ran under energy masks. It
   served moves that left the grid; with wrapped grids the fallback runs

@@ -252,7 +252,6 @@ def _child_env(import_root: str, params_dir: str | None, korp_map: Path | None) 
     env = {k: v for k, v in os.environ.items() if not k.startswith("MCPU_")}
     if params_dir:
         env["MCPU_PARAMS_DIR"] = params_dir
-    env["MCPU_NO_DOWNLOAD"] = "1"
     for var in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS",
                 "NUMEXPR_NUM_THREADS", "VECLIB_MAXIMUM_THREADS"):
         env[var] = "1"

@@ -51,10 +51,10 @@ already trusts, so it is worth being explicit about where the boundaries are.
 
 ## Notes for the cautious
 
-- **Parameter downloads are checksum-verified.** `pymcpu/params.py` refuses to
-  download without a recorded SHA-256. To avoid the network entirely, set
-  `MCPU_NO_DOWNLOAD=1`, or point `MCPU_PARAMS_DIR` at a directory you control;
-  a `pip`-installed wheel already carries its parameters and needs no network.
+- **Parameters never come from the network.** A `pip`-installed wheel carries
+  its parameters, and each table is checked against a recorded SHA-256 when it
+  is unpacked. To use your own, point `MCPU_PARAMS_DIR` at a directory you
+  control.
 - **The compiled extension is built from source** on install unless you take a
   published wheel. `mcpu_core.build_info()` reports the compiler, the resolved
   `-march`, the LTO state and the floating-point flags of the binary you are

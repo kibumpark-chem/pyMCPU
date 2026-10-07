@@ -37,6 +37,7 @@ from pymcpu import mcpu_core
 from pymcpu.forcefields.base import BaseForceField
 from pymcpu.forcefields.builders.korp_builder import KorpPotentialBuilder
 from pymcpu.forcefields.korp_map import KORP_RESIDUE_ORDER, KorpMapError, load_korp_map
+from pymcpu.params import cache_root
 
 logger = logging.getLogger(__name__)
 
@@ -168,9 +169,7 @@ class KORPForceField(BaseForceField):
         params_dir = os.environ.get("MCPU_PARAMS_DIR")
         if params_dir:
             candidates.append(Path(params_dir) / "korp6Dv1.bin")
-        cache = os.environ.get("MCPU_CACHE_DIR")
-        cache_root = Path(cache) if cache else Path.home() / ".cache" / "pymcpu"
-        candidates.append(cache_root / "korp" / "Korp6Dv1" / "korp6Dv1.bin")
+        candidates.append(cache_root() / "korp" / "Korp6Dv1" / "korp6Dv1.bin")
 
         for path in candidates:
             if path.is_file():

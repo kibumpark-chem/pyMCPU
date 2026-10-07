@@ -1,23 +1,18 @@
-"""Pretrained parameter resolution, download, checksum, and cache.
+"""Pretrained parameter resolution and cache.
 
 Resolution order for ``ensure_params(set_name)``:
 
 1. ``MCPU_PARAMS_DIR`` — use as-is (must contain ``constants/`` + ``mcpu_params/``).
 2. Dev tree ``local_source`` under the package (repo checkout).
-3. A cache directory that is already populated.
-4. ``MCPU_PARAMS_BUNDLE`` — path to a ``.tar.gz`` to unpack into the cache.
-5. The compact archive shipped **inside the wheel**, decoded into the cache.
+3. The compact archive shipped **inside the wheel**, decoded into the cache.
    This is what makes a plain ``pip install pymcpu`` work offline. It sits
-   deliberately below steps 1-4 so a pre-staged HPC root or a locally refitted
+   deliberately below steps 1-2 so a pre-staged HPC root or a locally refitted
    table still wins.
-6. Registry URL via ``pooch`` (requires a published Release + sha256).
 
 Environment:
 
 - ``MCPU_PARAMS_DIR``: offline / HPC pre-placed params root
 - ``MCPU_CACHE_DIR``: override cache parent (default ``~/.cache/pymcpu``)
-- ``MCPU_PARAMS_BUNDLE``: local archive override for the requested set
-- ``MCPU_NO_DOWNLOAD=1``: refuse network / missing URL (fail clearly)
 """
 
 from __future__ import annotations
@@ -28,11 +23,9 @@ import logging
 import os
 import shutil
 import socket
-import tarfile
 import tempfile
 import time
 import uuid
-import warnings
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -56,19 +49,17 @@ def _load_registry() -> dict[str, Any]:
         return json.load(fh)
 
 
-def get_cache_dir() -> Path:
-    """Return the cache root for downloaded / unpacked parameter sets."""
+def cache_root() -> Path:
+    """Return the pyMCPU cache root: ``MCPU_CACHE_DIR`` or ``~/.cache/pymcpu``."""
     override = os.environ.get("MCPU_CACHE_DIR", "").strip()
     if override:
-        root = Path(override).expanduser().resolve()
-    else:
-        try:
-            import pooch
+        return Path(override).expanduser().resolve()
+    return Path.home() / ".cache" / "pymcpu"
 
-            root = Path(pooch.os_cache("pymcpu"))
-        except Exception:
-            root = Path.home() / ".cache" / "pymcpu"
-    params = root / "params"
+
+def get_cache_dir() -> Path:
+    """Return the cache directory for materialized parameter sets."""
+    params = cache_root() / "params"
     params.mkdir(parents=True, exist_ok=True)
     return params
 
@@ -80,27 +71,6 @@ def _set_entry(set_name: str) -> dict[str, Any]:
         known = ", ".join(sorted(sets)) or "(none)"
         raise ParamsError(f"Unknown parameter set {set_name!r}. Known: {known}")
     return sets[set_name]
-
-
-def _warn_if_include_sc(include_sc: bool | None) -> None:
-    """``include_sc`` is accepted and ignored; warn once per call site.
-
-    The core/optional split existed only because
-    ``sidechain_triplet_potentials.bin`` was 633 MB. In the shipped compact
-    format it is ~1 MB, so the split bought nothing -- and it never actually
-    worked: ``MCPUForceField._load_parameters`` lists the SC table as
-    unconditionally required, so a core-only root was always rejected
-    downstream.
-    """
-    if include_sc is None:
-        return
-    warnings.warn(
-        "ensure_params(include_sc=...) is deprecated and ignored: the "
-        "sidechain-triplet table is part of every complete parameter set. "
-        "The argument will be removed in a future release.",
-        DeprecationWarning,
-        stacklevel=3,
-    )
 
 
 def _layout(set_name: str) -> dict[str, Any]:
@@ -122,9 +92,9 @@ def required_files(set_name: str = _DEFAULT_SET) -> dict[str, str]:
 
     This is the single source of truth. It is consumed by
     ``ensure_params``'s completeness check, by
-    ``MCPUForceField._load_parameters``, by ``scripts/pack_params.py``, and by
-    the test stubs -- so those four can no longer disagree about what
-    "complete" means. Two bugs came from them disagreeing: the packer omitted
+    ``MCPUForceField._load_parameters``, and by the test stubs -- so those can
+    no longer disagree about what "complete" means. Two bugs came from them
+    disagreeing: a release packer omitted
     ``constants/bbind02.May.lib`` (so the archive it built was rejected by
     ``_ensure_files``), and the registry omitted
     ``mcpu_params/hbond_seq_dep.bin`` (so ``ensure_params`` could succeed and
@@ -166,10 +136,8 @@ def _complete_error(set_name: str, detail: str) -> ParamsError:
         f"{detail}\n\n"
         f"Tried to resolve pretrained set {set_name!r}. Options:\n"
         f"  1. Set MCPU_PARAMS_DIR to a directory containing constants/ and mcpu_params/\n"
-        f"  2. Set MCPU_PARAMS_BUNDLE to a local .tar.gz of the set\n"
-        f"  3. Place a GitHub Release URL + sha256 in pymcpu/data/params_registry.json\n"
-        f"  4. Run: mcpu download-params --set {set_name}\n"
-        f"  5. For HPC offline nodes, pre-stage params and export MCPU_PARAMS_DIR\n"
+        f"  2. Install a pyMCPU wheel, which ships the parameters, and run:\n"
+        f"     mcpu materialize-params --set {set_name}\n"
         f"Cache directory: {get_cache_dir()}"
     )
 
@@ -183,37 +151,6 @@ def _resolve_local_source(entry: dict[str, Any]) -> Path | None:
     if files and _looks_like_params_root(candidate, files):
         return candidate
     return None
-
-
-def _unpack_archive(archive: Path, dest: Path) -> None:
-    dest.mkdir(parents=True, exist_ok=True)
-    with tarfile.open(archive, "r:*") as tf:
-        # Python 3.12+ supports filter=; keep portable extraction.
-        try:
-            tf.extractall(dest, filter="data")
-        except TypeError:
-            tf.extractall(dest)
-
-
-def _download_with_pooch(url: str, sha256: str, fname: str, path: Path) -> Path:
-    import pooch
-
-    if not sha256:
-        raise ParamsError(
-            f"Registry URL is set for {fname} but sha256 is missing. "
-            "Refuse to download without a checksum."
-        )
-    path.mkdir(parents=True, exist_ok=True)
-    known_hash = sha256 if sha256.startswith("sha256:") else f"sha256:{sha256}"
-    return Path(
-        pooch.retrieve(
-            url=url,
-            known_hash=known_hash,
-            fname=fname,
-            path=str(path),
-            progressbar=True,
-        )
-    )
 
 
 def bundled_tables_path(set_name: str = _DEFAULT_SET) -> Path | None:
@@ -407,16 +344,11 @@ def _ensure_files(root: Path, files: list[str], set_name: str) -> None:
         )
 
 
-def ensure_params(
-    set_name: str = _DEFAULT_SET,
-    *,
-    include_sc: bool | None = None,
-) -> Path:
+def ensure_params(set_name: str = _DEFAULT_SET) -> Path:
     """Return a directory with pretrained parameters for ``set_name``.
 
     The returned path contains ``constants/`` and ``mcpu_params/``.
     """
-    _warn_if_include_sc(include_sc)
     entry = _set_entry(set_name)
     required = list(required_files(set_name).values())
 
@@ -429,118 +361,28 @@ def ensure_params(
 
     # 2) In-tree / editable install source (developer & shared lab checkouts)
     local = _resolve_local_source(entry)
-    if local is not None and _looks_like_params_root(local, required):
+    if local is not None:
         return local
 
-    # 3) Cache already populated
-    cache_root = get_cache_dir() / (entry.get("unpack_root") or set_name)
-    if _looks_like_params_root(cache_root, required):
-        return cache_root
-
-    no_download = os.environ.get("MCPU_NO_DOWNLOAD", "").strip() in {
-        "1",
-        "true",
-        "True",
-        "YES",
-        "yes",
-    }
-
-    # 4) Local bundle override
-    bundle = os.environ.get("MCPU_PARAMS_BUNDLE", "").strip()
-    if bundle:
-        archive = Path(bundle).expanduser().resolve()
-        if not archive.is_file():
-            raise _complete_error(set_name, f"MCPU_PARAMS_BUNDLE is not a file: {archive}")
-        _unpack_archive(archive, cache_root)
-        # Archives may unpack with or without a top-level mcpu08/ directory.
-        if not _looks_like_params_root(cache_root, required):
-            nested = cache_root / (entry.get("unpack_root") or set_name)
-            if _looks_like_params_root(nested, required):
-                return nested
-            # Flatten one nested directory if present
-            kids = [p for p in cache_root.iterdir() if p.is_dir()]
-            if len(kids) == 1 and _looks_like_params_root(kids[0], required):
-                return kids[0]
-        _ensure_files(cache_root, required, set_name)
-        return cache_root
-
-    # 5) Compact archive shipped inside the package.
+    # 3) Compact archive shipped inside the package.
     #
-    # Deliberately BELOW the four steps above: anyone whose parameters resolve
-    # today keeps resolving the same way, byte for byte. In particular a lab
-    # member who refits a table into src/pymcpu/parameters/ still sees their
-    # edit (step 2) rather than the shipped one, and an HPC user with
-    # MCPU_PARAMS_DIR pre-staged is untouched (step 1).
-    #
-    # It is above the pooch download so a fresh `pip install` works offline
-    # with no network and no environment variables at all.
+    # Deliberately below the two steps above: a lab member who refits a table
+    # into src/pymcpu/parameters/ still sees their edit (step 2) rather than
+    # the shipped one, and an HPC user with MCPU_PARAMS_DIR pre-staged is
+    # untouched (step 1).
     if bundled_tables_path(set_name) is not None:
         root = materialize_from_wheel(set_name)
         logger.info("pretrained params %r resolved via in-wheel archive -> %s",
                     set_name, root)
         return root
 
-    if no_download:
-        raise _complete_error(
-            set_name,
-            "Parameters not found locally and MCPU_NO_DOWNLOAD=1 forbids download.",
-        )
-
-    # 5) Remote download via pooch
-    url = entry.get("url")
-    sha = entry.get("sha256")
-    archive_name = entry.get("archive") or f"{set_name}.tar.gz"
-    if not url:
-        raise _complete_error(
-            set_name,
-            "No local parameters and registry URL is null "
-            "(GitHub Release not published yet).",
-        )
-
-    archived = _download_with_pooch(
-        url=str(url),
-        sha256=str(sha or ""),
-        fname=str(archive_name),
-        path=get_cache_dir() / "downloads",
+    raise _complete_error(
+        set_name,
+        "No parameters found: MCPU_PARAMS_DIR is unset, there is no in-tree "
+        "parameter source, and no compact archive ships with this install.",
     )
-    if cache_root.exists():
-        shutil.rmtree(cache_root)
-    _unpack_archive(archived, cache_root)
-    if not _looks_like_params_root(cache_root, required):
-        nested = cache_root / (entry.get("unpack_root") or set_name)
-        if _looks_like_params_root(nested, required):
-            cache_root = nested
-    _ensure_files(cache_root, required, set_name)
-
-    return cache_root
 
 
-def params_path(
-    set_name: str, filename: str, *, include_sc: bool | None = None
-) -> Path:
+def params_path(set_name: str, filename: str) -> Path:
     """Convenience: ``ensure_params(set_name) / filename``."""
-    return ensure_params(set_name, include_sc=include_sc) / filename
-
-
-def download_params(
-    set_name: str = _DEFAULT_SET,
-    *,
-    dest: Path | str | None = None,
-    include_sc: bool = True,
-) -> Path:
-    """Download/unpack (or resolve) params; optionally copy into ``dest``."""
-    root = ensure_params(set_name, include_sc=include_sc)
-    if dest is None:
-        return root
-    dest_path = Path(dest).expanduser().resolve()
-    dest_path.mkdir(parents=True, exist_ok=True)
-    # Copy tree contents into dest for explicit staging directories.
-    for item in root.iterdir():
-        target = dest_path / item.name
-        if item.is_dir():
-            if target.exists():
-                shutil.rmtree(target)
-            shutil.copytree(item, target)
-        else:
-            shutil.copy2(item, target)
-    return dest_path
+    return ensure_params(set_name) / filename

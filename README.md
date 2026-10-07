@@ -181,7 +181,6 @@ documentation:
 mcpu version
 mcpu run config.yaml                   # run a JSON/YAML simulation config
 mcpu validate config.yaml              # check a config without running
-mcpu download-params --set mcpu08     # resolve parameters, print the path
 mcpu materialize-params --set mcpu08  # decode the bundled tables once
 ```
 
@@ -194,13 +193,10 @@ order; the first hit wins:
 |---|---|
 | 1 | `MCPU_PARAMS_DIR` — a pre-staged root (offline / HPC) |
 | 2 | Editable-checkout tree (`src/pymcpu/parameters/pretrained/mcpu08`) |
-| 3 | An already-populated cache (`MCPU_CACHE_DIR`, default `~/.cache/pymcpu`) |
-| 4 | `MCPU_PARAMS_BUNDLE` — a local `.tar.gz` |
-| 5 | **The compact archive shipped inside the package**, decoded into the cache |
-| 6 | Registry URL via `pooch` (needs a published release + checksum) |
+| 3 | **The compact archive shipped inside the package**, decoded into the cache (`MCPU_CACHE_DIR`, default `~/.cache/pymcpu`) |
 
-Step 5 is what makes a plain `pip install` work with no network. It sits below
-steps 1–4 deliberately: a pre-staged HPC root, or a table you refitted locally,
+Step 3 is what makes a plain `pip install` work with no network. It sits below
+steps 1–2 deliberately: a pre-staged HPC root, or a table you refitted locally,
 still takes precedence over the shipped one.
 
 For multi-rank MPI jobs, decode once before launching so N ranks do not race

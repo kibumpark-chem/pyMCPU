@@ -389,7 +389,6 @@ def _child_env(import_root: str | None) -> dict[str, str]:
         env["MCPU_PARAMS_DIR"] = str(ensure_params("mcpu08"))
     except Exception:  # noqa: BLE001 -- fall back to the child's own resolution
         pass
-    env["MCPU_NO_DOWNLOAD"] = "1"
 
     for var in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS",
                 "NUMEXPR_NUM_THREADS", "VECLIB_MAXIMUM_THREADS"):

@@ -1,9 +1,9 @@
 """Tests for ``pymcpu.params``'s parameter-directory resolution logic:
 ``ensure_params``, ``get_cache_dir``.
 
-No network: a local stub params tree is built per-test and env vars are used
-to force each resolution branch (``MCPU_PARAMS_DIR`` override, cache-dir
-override, no-download failure, incomplete directory failure).
+A local stub params tree is built per-test and env vars are used to force each
+resolution branch (``MCPU_PARAMS_DIR`` override, cache-dir override, in-wheel
+archive, nothing-available failure, incomplete directory failure).
 
 The required filename list is READ FROM the registry via
 ``pymcpu.params.required_files()`` rather than mirrored by hand. The previous
@@ -31,7 +31,7 @@ _STUB_CONTENT = {
 }
 
 
-def _stub_params_download_tree(root: Path, *, with_sc: bool = True) -> None:
+def _stub_params_tree(root: Path, *, with_sc: bool = True) -> None:
     """Build a minimal on-disk tree satisfying ``_looks_like_params_root``.
 
     ``with_sc=False`` deliberately omits the large SC-triplet table to produce
@@ -46,9 +46,8 @@ def _stub_params_download_tree(root: Path, *, with_sc: bool = True) -> None:
 
 
 def test_mcpu_params_dir_override(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    _stub_params_download_tree(tmp_path)
+    _stub_params_tree(tmp_path)
     monkeypatch.setenv("MCPU_PARAMS_DIR", str(tmp_path))
-    monkeypatch.delenv("MCPU_PARAMS_BUNDLE", raising=False)
     root = ensure_params("mcpu08")
     assert root == tmp_path.resolve()  # MCPU_PARAMS_DIR is used as-is (resolution step 1)
     assert (root / "constants" / "atom_types.csv").is_file()
@@ -63,14 +62,12 @@ def test_mcpu_cache_dir_override(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     assert cache.is_dir()  # get_cache_dir() creates the directory eagerly
 
 
-def test_no_download_succeeds_via_the_in_wheel_archive(
+def test_resolves_via_the_in_wheel_archive(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """``MCPU_NO_DOWNLOAD=1`` must now SUCCEED, because nothing needs downloading.
+    """A fresh install resolves parameters offline with no environment variables.
 
-    This is the point of shipping the compact archive: a fresh install resolves
-    parameters offline with no environment variables set. Before the archive
-    existed this same configuration raised ``ParamsError``.
+    This is the point of shipping the compact archive.
     """
     import pymcpu.params as params_mod
 
@@ -78,10 +75,8 @@ def test_no_download_succeeds_via_the_in_wheel_archive(
         pytest.skip("no in-wheel archive (run scripts/encode_params.py)")
 
     monkeypatch.delenv("MCPU_PARAMS_DIR", raising=False)
-    monkeypatch.delenv("MCPU_PARAMS_BUNDLE", raising=False)
-    monkeypatch.setenv("MCPU_NO_DOWNLOAD", "1")
     monkeypatch.setenv("MCPU_CACHE_DIR", str(tmp_path / "cache"))
-    # Force a miss on the dev-tree step so step 5 is what answers.
+    # Force a miss on the dev-tree step so step 3 is what answers.
     monkeypatch.setattr(params_mod, "_resolve_local_source", lambda entry: None)
 
     root = ensure_params("mcpu08")
@@ -89,14 +84,12 @@ def test_no_download_succeeds_via_the_in_wheel_archive(
         assert (root / rel).is_file(), f"materialized root missing {rel}"
 
 
-def test_no_download_fails_clearly_when_nothing_is_available(
+def test_fails_clearly_when_nothing_is_available(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """With no env override, no dev tree, no cache AND no in-wheel archive, the
-    failure must still name the ways out."""
+    """With no env override, no dev tree AND no in-wheel archive, the failure
+    must still name the ways out."""
     monkeypatch.delenv("MCPU_PARAMS_DIR", raising=False)
-    monkeypatch.delenv("MCPU_PARAMS_BUNDLE", raising=False)
-    monkeypatch.setenv("MCPU_NO_DOWNLOAD", "1")
     monkeypatch.setenv("MCPU_CACHE_DIR", str(tmp_path / "empty_cache"))
     import pymcpu.params as params_mod
 
@@ -107,7 +100,7 @@ def test_no_download_fails_clearly_when_nothing_is_available(
         ensure_params("mcpu08")
     msg = str(excinfo.value)
     assert "MCPU_PARAMS_DIR" in msg  # _complete_error's boilerplate lists this as an option
-    assert "MCPU_NO_DOWNLOAD" in msg or "forbids download" in msg
+    assert "materialize-params" in msg
 
 
 def test_incomplete_params_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

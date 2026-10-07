@@ -20,33 +20,6 @@ Print the installed pyMCPU version.
    $ mcpu version
    0.1.0
 
-``mcpu download-params``
-------------------------
-
-.. program:: mcpu download-params
-
-Find the parameter set the way the force field does (the order is under
-"MCPU parameter lookup" in :doc:`installation`) and print its directory.
-Despite the name it needs no network: if nothing else provides the set, it
-unpacks the copy shipped with pyMCPU. If no source has the set, it says what
-to do and exits with status 1.
-
-.. code-block:: bash
-
-   mcpu download-params --set mcpu08
-   mcpu download-params --set mcpu08 --dir /scratch/$USER/mcpu_params
-
-.. option:: --set SET
-
-   Parameter set name. Default ``mcpu08``.
-
-.. option:: --dir DIR
-
-   Copy the parameters into ``DIR`` and print ``DIR`` instead, for example to
-   put them on node-local scratch; then ``export MCPU_PARAMS_DIR=DIR``. Run it
-   with ``MCPU_PARAMS_DIR`` unset: if that already points at ``DIR``, the
-   command copies ``DIR`` onto itself, which fails and can delete part of it.
-
 ``mcpu materialize-params``
 ---------------------------
 
@@ -65,7 +38,7 @@ home directory:
    mpirun -n 32 python my_remd_run.py
 
 The command always unpacks the shipped copy, even when an earlier step of the
-lookup, such as ``MCPU_PARAMS_BUNDLE``, would supply other parameters; in that
+lookup, such as ``MCPU_PARAMS_DIR``, would supply other parameters; in that
 case do not export its output. The directory name includes a hash of the
 shipped tables, so a release with different tables unpacks into a new
 directory, and running the command again is quick.
