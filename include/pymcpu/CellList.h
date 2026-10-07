@@ -31,12 +31,12 @@ public:
     /// Default: cell_size = query = cutoff (HB / baseline Mu).
     /// ``cell_size_override`` &gt; 0 sets the cell edge apart from the query
     /// radius (the stencil then spans ceil(query / cell) cells).
-    bool configure(const BoxBounds& bounds, const NeighborConfig& cfg,
+    bool configure(const BoxBounds& bounds, std::uint64_t max_cells,
                    float cell_size_override = -1.f) {
         const float query = cutoff_;
         const float cell =
             (cell_size_override > 0.f) ? cell_size_override : query;
-        return grid_.configure(bounds, cell, cfg, query);
+        return grid_.configure(bounds, cell, max_cells, query);
     }
 
     void ensure_atom_capacity(int n) { grid_.ensure_atom_capacity(n); }

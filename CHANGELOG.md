@@ -529,6 +529,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The neighbour grids wrap: an atom outside the grid's box is filed in
+  the cell its coordinates give mod the cell count, instead of leaving the
+  grid.** Hot and unfolded replicas spent most of their time on atoms
+  outside the box: such a trial could not use the Mu contact list and took
+  the all-pairs delta, and an accepted one rebuilt every grid (O(box
+  volume)) and dropped the list. Now a cell may also list atoms whole grid
+  periods away; every walk measures true distances, so they are dropped
+  and the pairs found are the same. No move leaves a grid, so the
+  out-of-box rebuild and the per-move box test (`trial_in_bounds`) are
+  gone; a grid is rebuilt, centred on the atoms, only by `set_positions`
+  or after a cell overflows. Grids have at least 2R + 1 cells per axis
+  (R = stencil radius) and at most 16 cells per atom (at least 32,768): a
+  folded protein keeps its exact box, an unfolded one a trimmed grid, so
+  memory no longer grows with the unfolded volume. NaN and huge
+  coordinates get a cell instead of an undefined int conversion. The
+  rigid-carry rounding bound now follows atoms past the box.
+  States that stay in the box are bit-identical (parity vs d38a246; the
+  production `sce` checkpoint at T=0.4 and 0.65, actin and PGK1 at
+  T=0.4-1.0: same energies, accept counts and final coordinates). Once
+  atoms pass the old box, the contact list replaces the all-pairs delta:
+  exact, with sums in another order (running vs full energy within 4e-14
+  relative over 1e6 steps on five hot states, no overflow). User-space
+  cycles per step against the previous commit, n=3, 50k steps: production
+  `sce` checkpoint at T=0.95 -24.7%, T=1.0 -23.7%, T<=0.91 within
+  -5.4%..+1.3%; melted `sce` -49.9%, melted actin -59.0%, melted PGK1
+  -55.9%..-59.1%. Peak RSS of a melted actin or PGK1 replica: about 2.0 GB
+  -> 1.2 GB (the native level).
+
 - **`Simulation.full_energy_every` is now `full_energy_every_steps`, counted
   in MC steps, default 1,000,000.** The old setting counted `step()` calls
   and defaulted to 1, so every 10k-step exchange paid a full O(N^2)
@@ -1351,6 +1379,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the only hard-rejecting term.
 
 ### Removed
+
+- `Context.trial_in_bounds`, `Context.boxBounds`, the `num_trial_fallback`
+  and `num_dense_cap_fallback` counters (with `num_trial_fallback` in
+  `neighbor_proxy_stats()` and `Context.neighbor_dense_cap_fallbacks()`)
+  and `NeighborConfig::max_cells_total`/`max_nx`/`max_ny`/`max_nz`: with
+  wrapped grids no move leaves a grid and no grid is refused for its size.
 
 - **The neighbour grid's linked lists and the knobs around them.** Each
   grid kept every cell twice, as a fixed 48-slot block and as a linked list

@@ -652,8 +652,9 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
             const float carry_bound =
                 carries ? context.rigid_carry_bound_A(new_state, patch) : 0.f;
             const float budget = kContactBandA - kContactBandSlackA;
-            // The live list is only valid where the dense contiguous grid sees
-            // every candidate pair and the carry fits the drift budget. Under
+            // The live list is only valid where the grid sees every candidate
+            // pair (it is on: no cell overflowed) and the carry fits the drift
+            // budget. Under
             // an energy mask it holds no masked pair (eval_pair scores them 0
             // and the clash tests still see ClashOnly ones), so it is valid
             // for the mask it was built under; a mask change drops it, or a
@@ -665,9 +666,7 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
                 old_state.mu_contact_invalidate();
             }
             const bool usable =
-                context.denseGridsActive() &&
-                context.trial_in_bounds(new_state, patch) &&
-                carry_bound <= budget;
+                context.denseGridsActive() && carry_bound <= budget;
             if (usable) {
                 if (!old_state.mu_contacts.ready() &&
                     old_state.mu_contact_list_prebuilt) {
@@ -728,9 +727,9 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
                     (clist_fallbacks_ == 1 || (clist_fallbacks_ % 1000) == 0)) {
                     std::fprintf(stderr,
                         "NOTE: Mu move #%llu that cannot use the contact "
-                        "list (it leaves the neighbour grid, or there is "
-                        "none). An accepted one costs an O(N^2) list "
-                        "rebuild.\n",
+                        "list (a grid cell overflowed, or a rigid move "
+                        "carries past its drift budget). An accepted one "
+                        "costs an O(N^2) list rebuild.\n",
                         static_cast<unsigned long long>(clist_fallbacks_));
                 }
             }
@@ -984,9 +983,9 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
         }
 
         // Hot pair loop #3: moved-vs-all, the exact delta for every move the
-        // contact list cannot follow: one that leaves the grid, a carry past
-        // the list's drift budget, a run whose grid is off (overflowed, or
-        // built for another energy mask), and every move under
+        // contact list cannot follow: a carry past the list's drift budget,
+        // a run whose grid is off (overflowed, or built for another energy
+        // mask), and every move under
         // MCPU_CONTACT_LIST=0, where it is the slow reference.
         return delta_moved_vs_all(context, old_state, new_state, patch,
                                   *moved_ptr, list_exact);

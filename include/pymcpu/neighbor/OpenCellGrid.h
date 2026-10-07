@@ -1,5 +1,6 @@
 #pragma once
-/// Dense open-boundary cell grid (NO PBC / no wrap / no minimum-image).
+/// Dense cell grid with a wrapped cell index (no PBC: distances are never
+/// wrapped, only the cell an atom is filed under).
 #include <Eigen/Dense>
 #include <algorithm>
 #include <cassert>
@@ -68,45 +69,56 @@ inline BoxBounds aabb_of_coords(const CoordsSoA& coords, float margin) {
     return b;
 }
 
-inline bool point_in_bounds(const Eigen::Vector3f& p, const BoxBounds& b) {
-    return b.valid
-        && p.x() >= b.lo.x() && p.x() < b.hi.x()
-        && p.y() >= b.lo.y() && p.y() < b.hi.y()
-        && p.z() >= b.lo.z() && p.z() < b.hi.z();
+/// Cells per axis on each side of the home cell that a query of
+/// `query_radius` can reach: ceil(query_radius / cell), at least 1.
+inline int stencil_radius_for(float query_radius, float cell) {
+    const float cs = cell > 0.f ? cell : 1.f;
+    const float qr = query_radius > 0.f ? query_radius : cs;
+    return std::max(1, static_cast<int>(std::ceil(static_cast<double>(qr) / cs)));
 }
 
-inline bool point_in_bounds(float px, float py, float pz, const BoxBounds& b) {
-    return b.valid
-        && px >= b.lo.x() && px < b.hi.x()
-        && py >= b.lo.y() && py < b.hi.y()
-        && pz >= b.lo.z() && pz < b.hi.z();
-}
-
-/// Returns false if required cell count exceeds caps.
-inline bool compute_grid_shape(const BoxBounds& b, float cell,
-                               const NeighborConfig& cfg,
+/// Grid shape for box `b`: enough cells of edge `cell` to cover it, then
+/// at least 2R + 1 per axis (R = ceil(query_radius / cell)) so a stencil
+/// never meets the same cell twice after wrapping, then, while the total is
+/// over `max_cells`, the longest axis trimmed (never below 2R + 1). A
+/// trimmed grid still files every atom (the index wraps); it only lists
+/// more far-away atoms per cell. Returns false for an invalid box.
+inline bool compute_grid_shape(const BoxBounds& b, float cell, float query_radius,
+                               std::uint64_t max_cells,
                                int& nx, int& ny, int& nz) {
-    if (!b.valid || cell <= 0.f) return false;
+    if (!b.valid || !(cell > 0.f)) return false;
+    const int min_n = 2 * stencil_radius_for(query_radius, cell) + 1;
     auto dim = [&](float lo, float hi) -> int {
-        return std::max(1, static_cast<int>(std::ceil((hi - lo) / cell)));
+        return std::max(min_n, static_cast<int>(std::ceil((hi - lo) / cell)));
     };
     nx = dim(b.lo.x(), b.hi.x());
     ny = dim(b.lo.y(), b.hi.y());
     nz = dim(b.lo.z(), b.hi.z());
-    if (cfg.max_nx > 0 && nx > cfg.max_nx) return false;
-    if (cfg.max_ny > 0 && ny > cfg.max_ny) return false;
-    if (cfg.max_nz > 0 && nz > cfg.max_nz) return false;
-    const std::uint64_t total =
-        static_cast<std::uint64_t>(nx) *
-        static_cast<std::uint64_t>(ny) *
-        static_cast<std::uint64_t>(nz);
-    if (total > cfg.max_cells_total) return false;
+    auto total = [&] {
+        return static_cast<std::uint64_t>(nx) * static_cast<std::uint64_t>(ny) *
+               static_cast<std::uint64_t>(nz);
+    };
+    while (total() > max_cells) {
+        int& m = (nx >= ny && nx >= nz) ? nx : (ny >= nz ? ny : nz);
+        if (m <= min_n) break;
+        m = std::max(min_n, m - std::max(1, m / 8));
+    }
     return true;
 }
 
 /**
- * Dense cell grid with open boundaries.
- * Cell index from floor((x-lo)/cell); neighbor stencil is clipped (no wrap).
+ * Dense cell grid with a wrapped cell index.
+ * An atom at x is filed under cell floor((x - lo) / cell) mod n on each axis,
+ * so atoms anywhere, however far outside the box the grid was sized for,
+ * have a cell, and a stencil walk wraps the same way. A cell then also
+ * lists atoms a whole number of grid periods (n * cell) away from the query;
+ * every caller measures each candidate's true distance, so those are
+ * dropped and the pairs found are exactly the pairs in range. Nothing ever
+ * leaves the grid: it is rebuilt only to recentre it (set_positions) or
+ * after an overflow. Inside the box the cells are the old ones, in the same
+ * order, and the cells a stencil wraps into are the empty margin cells of
+ * the far face, so a state that stays in the box walks the same atoms in the
+ * same order as an open grid.
  *
  * Each cell keeps its atoms in one fixed block of Cap slots (ids plus packed
  * x/y/z), newest first, so a walk over a cell is one sequential read. With
@@ -155,29 +167,17 @@ public:
         std::size_t empty = 0;
         std::size_t nonempty = 0;
         std::size_t atoms = 0;   ///< sum of cell_count over nonempty in-stencil cells
-        std::size_t oob = 0;     ///< stencil offsets clipped by grid boundary
     };
     StencilOccupancy probe_stencil_occupancy(float x, float y, float z) const {
         StencilOccupancy s;
         if (!configured_ || neighbor_offsets_.empty()) return s;
-        const int ix0 =
-            static_cast<int>(std::floor((x - bounds_.lo.x()) * inv_cell_));
-        const int iy0 =
-            static_cast<int>(std::floor((y - bounds_.lo.y()) * inv_cell_));
-        const int iz0 =
-            static_cast<int>(std::floor((z - bounds_.lo.z()) * inv_cell_));
+        const int ix0 = wrap_(unwrapped_cell_(x, bounds_.lo.x()), nx_);
+        const int iy0 = wrap_(unwrapped_cell_(y, bounds_.lo.y()), ny_);
+        const int iz0 = wrap_(unwrapped_cell_(z, bounds_.lo.z()), nz_);
         for (const CellOffset& o : neighbor_offsets_) {
-            const int ix = ix0 + o.dx;
-            const int iy = iy0 + o.dy;
-            const int iz = iz0 + o.dz;
-            if (ix < 0 || iy < 0 || iz < 0 || ix >= nx_ || iy >= ny_ ||
-                iz >= nz_) {
-                ++s.oob;
-                continue;
-            }
-            const int c = (ix * ny_ + iy) * nz_ + iz;
-            int count = 0;
-            count = cell_count_[static_cast<size_t>(c)];
+            const int c = cell_at_(wrap_(ix0 + o.dx, nx_), wrap_(iy0 + o.dy, ny_),
+                                   wrap_(iz0 + o.dz, nz_));
+            const int count = cell_count_[static_cast<size_t>(c)];
             if (count == 0) {
                 ++s.empty;
             } else {
@@ -241,43 +241,34 @@ public:
         static_assert(CELL_CAPACITY <= 255,
                       "moved_per_cell holds per-cell counts in a uint8");
         if (!configured_) return true;
-        const float fx = (x - bounds_.lo.x()) * inv_cell_;
-        const float fy = (y - bounds_.lo.y()) * inv_cell_;
-        const float fz = (z - bounds_.lo.z()) * inv_cell_;
-        const int ix0 = static_cast<int>(std::floor(fx));
-        const int iy0 = static_cast<int>(std::floor(fy));
-        const int iz0 = static_cast<int>(std::floor(fz));
-        const float ox = (fx - static_cast<float>(ix0)) * cell_size_;
-        const float oy = (fy - static_cast<float>(iy0)) * cell_size_;
-        const float oz = (fz - static_cast<float>(iz0)) * cell_size_;
         int axs[3][3];
         int nax[3];
         const float hi = cell_size_ - radius;
-        auto fill = [&](int k, int i0, float off) {
+        // Per axis: the query's cell, plus the one below (above) when the
+        // point is within `radius` of its low (high) face, all wrapped. The
+        // offset in the cell is taken before wrapping.
+        auto fill = [&](int k, float p, float lo, int n_axis) {
+            const int i = unwrapped_cell_(p, lo);
+            const float off = ((p - lo) * inv_cell_ - static_cast<float>(i)) * cell_size_;
+            const int i0 = wrap_(i, n_axis);
             int n = 0;
-            if (off < radius) axs[k][n++] = i0 - 1;
+            if (off < radius) axs[k][n++] = wrap_(i0 - 1, n_axis);
             axs[k][n++] = i0;
-            if (off > hi) axs[k][n++] = i0 + 1;
+            if (off > hi) axs[k][n++] = wrap_(i0 + 1, n_axis);
             nax[k] = n;
         };
-        fill(0, ix0, ox);
-        fill(1, iy0, oy);
-        fill(2, iz0, oz);
+        fill(0, x, bounds_.lo.x(), nx_);
+        fill(1, y, bounds_.lo.y(), ny_);
+        fill(2, z, bounds_.lo.z(), nz_);
         // Collect the cells to visit first, without branching on the skip
         // test (data-dependent, so a frequent mispredict), then visit them
         // in the same order.
         int live[27];
         int n_live = 0;
         for (int a = 0; a < nax[0]; ++a) {
-            const int ix = axs[0][a];
-            if (ix < 0 || ix >= nx_) continue;
             for (int b = 0; b < nax[1]; ++b) {
-                const int iy = axs[1][b];
-                if (iy < 0 || iy >= ny_) continue;
                 for (int cc = 0; cc < nax[2]; ++cc) {
-                    const int iz = axs[2][cc];
-                    if (iz < 0 || iz >= nz_) continue;
-                    const int c = (ix * ny_ + iy) * nz_ + iz;
+                    const int c = cell_at_(axs[0][a], axs[1][b], axs[2][cc]);
                     live[n_live] = c;
                     n_live += (cell_count_[static_cast<size_t>(c)] !=
                                static_cast<int>(moved_per_cell[static_cast<size_t>(c)]));
@@ -331,12 +322,11 @@ public:
                                                    CellFunc&& cell_fn) const {
         if (!configured_ || neighbor_offsets_.empty())
             return true;
-        const int ix0 =
-            static_cast<int>(std::floor((x - bounds_.lo.x()) * inv_cell_));
-        const int iy0 =
-            static_cast<int>(std::floor((y - bounds_.lo.y()) * inv_cell_));
-        const int iz0 =
-            static_cast<int>(std::floor((z - bounds_.lo.z()) * inv_cell_));
+        // The home cell is wrapped first, so a probe outside the box still
+        // takes the interior path below when its wrapped cell is interior.
+        const int ix0 = wrap_(unwrapped_cell_(x, bounds_.lo.x()), nx_);
+        const int iy0 = wrap_(unwrapped_cell_(y, bounds_.lo.y()), ny_);
+        const int iz0 = wrap_(unwrapped_cell_(z, bounds_.lo.z()), nz_);
         constexpr std::size_t kMaxLive = 128;
         if (neighbor_offsets_.size() <= kMaxLive) {
             // Branch-free collection, then the visits in the same order; see
@@ -390,13 +380,8 @@ public:
                 }
             } else {
                 for (const CellOffset& o : neighbor_offsets_) {
-                    const int ix = ix0 + o.dx;
-                    const int iy = iy0 + o.dy;
-                    const int iz = iz0 + o.dz;
-                    if (ix < 0 || iy < 0 || iz < 0 || ix >= nx_ || iy >= ny_ ||
-                        iz >= nz_)
-                        continue;
-                    const int c = (ix * ny_ + iy) * nz_ + iz;
+                    const int c = cell_at_(wrap_(ix0 + o.dx, nx_), wrap_(iy0 + o.dy, ny_),
+                                           wrap_(iz0 + o.dz, nz_));
                     live[n_live] = c;
                     n_live += (cell_count_[static_cast<size_t>(c)] !=
                                static_cast<int>(moved_per_cell[static_cast<size_t>(c)]));
@@ -420,13 +405,8 @@ public:
             return true;
         }
         for (const CellOffset& o : neighbor_offsets_) {
-            const int ix = ix0 + o.dx;
-            const int iy = iy0 + o.dy;
-            const int iz = iz0 + o.dz;
-            if (ix < 0 || iy < 0 || iz < 0 || ix >= nx_ || iy >= ny_ ||
-                iz >= nz_)
-                continue;
-            const int c = (ix * ny_ + iy) * nz_ + iz;
+            const int c = cell_at_(wrap_(ix0 + o.dx, nx_), wrap_(iy0 + o.dy, ny_),
+                                   wrap_(iz0 + o.dz, nz_));
             const int count = cell_count_[static_cast<size_t>(c)];
             if (count == static_cast<int>(moved_per_cell[static_cast<size_t>(c)]))
                 continue;
@@ -443,21 +423,22 @@ public:
             atom_cell_.resize(static_cast<size_t>(n), -1);
     }
 
-    /// Configure / resize dense cells from bounds.
-    /// ``cell`` = denselist bin size; ``query_radius`` = interaction range for stencil
-    /// (typically r_cut). Returns false if caps exceeded.
-    bool configure(const BoxBounds& b, float cell, const NeighborConfig& cfg,
+    /// Configure / resize dense cells for box ``b`` (see compute_grid_shape).
+    /// ``cell`` = bin size; ``query_radius`` = interaction range for the
+    /// stencil (typically r_cut). Returns false only for an invalid box.
+    bool configure(const BoxBounds& b, float cell, std::uint64_t max_cells,
                    float query_radius = -1.f) {
         int nx = 0, ny = 0, nz = 0;
-        if (!compute_grid_shape(b, cell, cfg, nx, ny, nz)) {
+        const float qr = (query_radius > 0.f) ? query_radius : cell;
+        if (!compute_grid_shape(b, cell, qr, max_cells, nx, ny, nz)) {
             configured_ = false;
             return false;
         }
         cell_size_ = cell;
         inv_cell_ = 1.f / cell;
-        query_radius_ = (query_radius > 0.f) ? query_radius : cell;
+        query_radius_ = qr;
         bounds_ = b;
-        // Snap hi to exact multiple so hi is exclusive-friendly
+        // hi = lo + n * cell: one grid period past lo on each axis
         bounds_.hi.x() = bounds_.lo.x() + static_cast<float>(nx) * cell;
         bounds_.hi.y() = bounds_.lo.y() + static_cast<float>(ny) * cell;
         bounds_.hi.z() = bounds_.lo.z() + static_cast<float>(nz) * cell;
@@ -497,21 +478,20 @@ public:
         overflowed_ = false;
     }
 
+    /// The (wrapped) cell of a point; -1 only before configure. O(1).
     inline int cell_index(float px, float py, float pz) const {
         if (!configured_) return -1;
-        const int ix = static_cast<int>(std::floor((px - bounds_.lo.x()) * inv_cell_));
-        const int iy = static_cast<int>(std::floor((py - bounds_.lo.y()) * inv_cell_));
-        const int iz = static_cast<int>(std::floor((pz - bounds_.lo.z()) * inv_cell_));
-        if (ix < 0 || iy < 0 || iz < 0 || ix >= nx_ || iy >= ny_ || iz >= nz_)
-            return -1;
-        return (ix * ny_ + iy) * nz_ + iz;
+        return cell_at_(wrap_(unwrapped_cell_(px, bounds_.lo.x()), nx_),
+                        wrap_(unwrapped_cell_(py, bounds_.lo.y()), ny_),
+                        wrap_(unwrapped_cell_(pz, bounds_.lo.z()), nz_));
     }
 
     inline int cell_index(const Eigen::Vector3f& pos) const {
         return cell_index(pos.x(), pos.y(), pos.z());
     }
 
-    /// Linear cell id containing atom, or -1 if not inserted / out of bounds.
+    /// Linear cell id containing atom, or -1 if not inserted (or left out by
+    /// an overflow).
     inline int atom_cell(int atom_id) const noexcept {
         if (atom_id < 0 || atom_id >= static_cast<int>(atom_cell_.size())) return -1;
         return atom_cell_[static_cast<size_t>(atom_id)];
@@ -570,7 +550,7 @@ public:
             return;
         }
         remove(atom_id);
-        if (nc >= 0) insert(atom_id, px, py, pz);
+        insert(atom_id, px, py, pz);
     }
 
     /// Update packed cell coords for atom after an in-cell position change. O(occ).
@@ -614,25 +594,17 @@ public:
                            std::uint64_t* cell_visits = nullptr,
                            float /*r_cut2*/ = -1.f) const {
         if (!configured_ || neighbor_offsets_.empty()) return;
-        const int ix0 =
-            static_cast<int>(std::floor((x - bounds_.lo.x()) * inv_cell_));
-        const int iy0 =
-            static_cast<int>(std::floor((y - bounds_.lo.y()) * inv_cell_));
-        const int iz0 =
-            static_cast<int>(std::floor((z - bounds_.lo.z()) * inv_cell_));
+        const int ix0 = wrap_(unwrapped_cell_(x, bounds_.lo.x()), nx_);
+        const int iy0 = wrap_(unwrapped_cell_(y, bounds_.lo.y()), ny_);
+        const int iz0 = wrap_(unwrapped_cell_(z, bounds_.lo.z()), nz_);
 
         const std::uint64_t stencil =
             static_cast<std::uint64_t>(neighbor_offsets_.size());
         if (cell_visits) *cell_visits += stencil;
 
         for (const CellOffset& o : neighbor_offsets_) {
-            const int ix = ix0 + o.dx;
-            const int iy = iy0 + o.dy;
-            const int iz = iz0 + o.dz;
-            if (ix < 0 || iy < 0 || iz < 0 || ix >= nx_ || iy >= ny_ ||
-                iz >= nz_)
-                continue;
-            const int c = (ix * ny_ + iy) * nz_ + iz;
+            const int c = cell_at_(wrap_(ix0 + o.dx, nx_), wrap_(iy0 + o.dy, ny_),
+                                   wrap_(iz0 + o.dz, nz_));
             const int* atoms =
                 cell_atoms_.data() + static_cast<size_t>(c) * CELL_CAPACITY;
             const int count = cell_count_[static_cast<size_t>(c)];
@@ -692,6 +664,34 @@ public:
 #endif
 
 private:
+    /// Cell coordinates past this bound are clamped before the conversion to
+    /// int (2^30 cells, far beyond any real coordinate), so a huge or NaN
+    /// coordinate still gets a cell instead of an undefined conversion.
+    static constexpr float kMaxCellCoord = 1073741824.f;
+
+    /// floor((p - lo) / cell) along one axis, before wrapping. NaN goes to
+    /// the low clamp.
+    int unwrapped_cell_(float p, float lo) const noexcept {
+        float f = std::floor((p - lo) * inv_cell_);
+        f = f > -kMaxCellCoord ? f : -kMaxCellCoord;
+        f = f < kMaxCellCoord ? f : kMaxCellCoord;
+        return static_cast<int>(f);
+    }
+
+    /// The one wrap of the grid: cell coordinate i taken mod n into [0, n).
+    /// Inside the box (and for the stencil of an interior cell) i is already
+    /// there and this is one well-predicted compare.
+    static int wrap_(int i, int n) noexcept {
+        if (static_cast<unsigned>(i) < static_cast<unsigned>(n)) return i;
+        i %= n;
+        return i < 0 ? i + n : i;
+    }
+
+    /// Linear id of wrapped cell coordinates.
+    int cell_at_(int ix, int iy, int iz) const noexcept {
+        return (ix * ny_ + iy) * nz_ + iz;
+    }
+
     struct CellOffset {
         int dx = 0;
         int dy = 0;
@@ -795,10 +795,7 @@ private:
 
     void precompute_neighbor_offsets_() {
         neighbor_offsets_.clear();
-        const float cs = cell_size_ > 0.f ? cell_size_ : 1.f;
-        const float qr = query_radius_ > 0.f ? query_radius_ : cs;
-        int R = static_cast<int>(std::ceil(static_cast<double>(qr) / cs));
-        if (R < 1) R = 1;
+        const int R = stencil_radius_for(query_radius_, cell_size_);
         stencil_radius_ = R;
         const int extent = 2 * R + 1;
         neighbor_offsets_.reserve(static_cast<size_t>(extent) * extent * extent);
@@ -814,7 +811,7 @@ private:
             }
         }
         // The same offsets as linear cell ids, valid for a home cell at
-        // least R cells from every face (see
+        // least R cells from every face, where no stencil cell wraps (see
         // for_each_neighbor_cell_span_while_unmoved).
         neighbor_lin_.clear();
         neighbor_lin_.reserve(neighbor_offsets_.size());

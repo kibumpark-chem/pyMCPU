@@ -367,8 +367,8 @@ namespace mcpu::forces::mcpu08 {
 
         /// The delta without the contact list. list_exact: the old state's
         /// list is exact for this move (ready, and within its drift budget
-        /// after it), so a rigid move out of the grid re-decides only the
-        /// carried pairs it lists.
+        /// after it), so a rigid move re-decides only the carried pairs it
+        /// lists.
         double calculateEnergyChange_fast(
             const Context& context,
             const State& old_state,

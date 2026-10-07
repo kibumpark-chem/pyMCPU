@@ -349,7 +349,6 @@ public:
     [[nodiscard]] forces::mcpu08::MuPotential* mu_potential();
     [[nodiscard]] const forces::mcpu08::MuPotential* mu_potential() const;
 
-    const BoxBounds& boxBounds() const noexcept { return neighbors_.bounds(); }
     bool denseGridsActive() const noexcept { return neighbors_.denseActive(); }
     /// Bring the Mu grid membership up to the System's energy mask after a
     /// mask change (NeighborSystem::sync_energy_mask). Until then the grid
@@ -370,9 +369,6 @@ public:
     /// How many recomputes ensure_energy_current() has done.
     std::uint64_t energy_resyncs() const noexcept { return energy_resyncs_; }
 
-    bool trial_in_bounds(const State& proposal, const ProposalPatch& patch) const {
-        return neighbors_.trial_in_bounds(proposal.coords_soa, patch);
-    }
     static float max_moved_displacement(const State& accepted, const State& proposal,
                                         const ProposalPatch& patch) {
         return NeighborSystem::max_moved_displacement(

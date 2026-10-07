@@ -1,5 +1,5 @@
 #pragma once
-#if defined(__AVX2__) && defined(__FMA__)
+#if defined(__AVX2__)
 #include <immintrin.h>
 #endif
 /// NeighborSystem: single lifecycle owner for Mu + HBond spatial indices (NO PBC).
@@ -9,6 +9,7 @@
 #include <Eigen/Dense>
 #include <algorithm>
 #include <cassert>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <memory>
@@ -35,6 +36,13 @@ public:
     /// The H-bond ledger lists every donor-acceptor pair whose H and O are
     /// closer than this (HBondStateCache), so the H-bond cells are this big.
     static constexpr float kHBondListA = 2.55f;
+    /// Each grid may have up to kGridCellsPerAtom cells per atom (at least
+    /// kMinGridCells). A folded protein's box is well under this, so its
+    /// grids keep their exact box; an unfolded one gets a grid trimmed to
+    /// this size whose index wraps, which lists a few more far-away
+    /// candidates per cell instead of growing with the unfolded volume.
+    static constexpr std::uint64_t kGridCellsPerAtom = 16;
+    static constexpr std::uint64_t kMinGridCells = 32768;
 
     /// Active Mu denselist cutoff (Å): from MuPotential (exact) or fallback 6.0.
     [[nodiscard]] float mu_cutoff_A() const noexcept {
@@ -117,6 +125,8 @@ public:
         in_mu_base_ = in_mu_;
         sys_ = &sys;
         apply_energy_mask_();
+        max_grid_cells_ = std::max(kMinGridCells,
+                                   kGridCellsPerAtom * static_cast<std::uint64_t>(n_atoms_));
 
         mu_grid_ = std::make_unique<CellListMC>(kMuCutoffFallbackA, n_atoms_);
         hb_o_grid_ = std::make_unique<CellListMC>(kHBondListA, n_atoms_);
@@ -196,7 +206,6 @@ public:
     NeighborConfig& config() noexcept { return cfg_; }
     const NeighborConfig& config() const noexcept { return cfg_; }
     NeighborStats& stats() const noexcept { return stats_; }
-    const BoxBounds& bounds() const noexcept { return bounds_; }
     /// The Mu grid can answer queries: it is built, and its membership
     /// follows the System's current energy mask (see sync_energy_mask).
     bool denseActive() const noexcept { return dense_active_ && mask_current(); }
@@ -237,14 +246,14 @@ public:
 
     /// One-shot audit label for HBond candidate source (current NeighborSystem).
     const char* hbond_backend_name() const noexcept {
-        return hb_fallback_ ? "bruteforce_OH_cap_fallback" : "opencell_typed_OH_grids";
+        return hb_fallback_ ? "bruteforce_OH_after_overflow" : "opencell_typed_OH_grids";
     }
     float hbond_cutoff_A() const noexcept { return kHBondCutoffA; }
     float hbond_cell_size_A() const noexcept {
         return hb_fallback_ ? 0.f : kHBondListA;
     }
     const char* mu_backend_name() const noexcept {
-        return dense_active_ ? "opencell_mu_BBO_SC" : "mu_dense_cap_fallback";
+        return dense_active_ ? "opencell_mu_BBO_SC" : "mu_grid_off_after_overflow";
     }
     float mu_cell_size_A() const noexcept {
         if (!dense_active_ || !mu_grid_) return 0.f;
@@ -270,73 +279,14 @@ public:
     /// Read-only Mu index (BB+O+SC).
     const CellListMC& muGrid() const { return *mu_grid_; }
 
-    bool trial_in_bounds(const CoordsSoA& trial_coords,
-                         const ProposalPatch& patch) const {
-        if (!bounds_.valid) return true;
-        if (patch.moved_as_ranges()) {
-            // A pivot marks its atoms as a few index ranges (one per atom
-            // kind), so test each range with the branch-free pass below; the
-            // ranges are exactly the moved atoms, so the answer is the same.
-            const float* x = trial_coords.x.data();
-            const float* y = trial_coords.y.data();
-            const float* z = trial_coords.z.data();
-            const float lx = bounds_.lo.x(), ly = bounds_.lo.y(), lz = bounds_.lo.z();
-            const float hx = bounds_.hi.x(), hy = bounds_.hi.y(), hz = bounds_.hi.z();
-            int ok = 1;
-            for (const auto& rg : patch.moved_ranges) {
-                for (size_t k = static_cast<size_t>(rg.first);
-                     k < static_cast<size_t>(rg.second); ++k) {
-                    ok &= static_cast<int>(x[k] >= lx) & static_cast<int>(x[k] < hx)
-                        & static_cast<int>(y[k] >= ly) & static_cast<int>(y[k] < hy)
-                        & static_cast<int>(z[k] >= lz) & static_cast<int>(z[k] < hz);
-                }
-            }
-            return ok != 0;
-        }
-        if (!patch.moved_indices.empty()) {
-            // moved_indices holds no duplicates, so when its span max - min + 1
-            // equals its size it is exactly the range [min, max] (every pivot
-            // move): test that range with one branch-free, vectorisable pass
-            // instead of a gather and six branches per atom. Same predicate
-            // (a NaN coordinate still fails), so the same answer.
-            int imin = patch.moved_indices.front(), imax = imin;
-            for (int i : patch.moved_indices) {   // branch-free min/max reduction
-                imin = std::min(imin, i);
-                imax = std::max(imax, i);
-            }
-            const size_t lo = static_cast<size_t>(imin);
-            const size_t hi = static_cast<size_t>(imax);
-            if (imin >= 0 && hi - lo + 1 == patch.moved_indices.size()) {
-                const float* x = trial_coords.x.data();
-                const float* y = trial_coords.y.data();
-                const float* z = trial_coords.z.data();
-                const float lx = bounds_.lo.x(), ly = bounds_.lo.y(), lz = bounds_.lo.z();
-                const float hx = bounds_.hi.x(), hy = bounds_.hi.y(), hz = bounds_.hi.z();
-                int ok = 1;
-                for (size_t k = lo; k <= hi; ++k) {
-                    ok &= static_cast<int>(x[k] >= lx) & static_cast<int>(x[k] < hx)
-                        & static_cast<int>(y[k] >= ly) & static_cast<int>(y[k] < hy)
-                        & static_cast<int>(z[k] >= lz) & static_cast<int>(z[k] < hz);
-                }
-                return ok != 0;
-            }
-            for (int i : patch.moved_indices) {
-                const size_t k = static_cast<size_t>(i);
-                if (!point_in_bounds(trial_coords.x[k], trial_coords.y[k],
-                                     trial_coords.z[k], bounds_))
-                    return false;
-            }
-            return true;
-        }
-        for (size_t i = 0; i < patch.moving_atoms.size(); ++i) {
-            if (patch.moving_atoms[i]) {
-                const size_t k = i;
-                if (!point_in_bounds(trial_coords.x[k], trial_coords.y[k],
-                                     trial_coords.z[k], bounds_))
-                    return false;
-            }
-        }
-        return true;
+    /// A bound on |x|, |y| and |z| over the accepted state and the moved
+    /// atoms of ``trial``: the reach of the box the grids were last built
+    /// on, raised by every accepted atom that has since wrapped past it and
+    /// by the trial's own moved atoms (the float rounding of a rigid move
+    /// scales with it; see Context::rigid_carry_bound_A). A state that stays
+    /// in the box gets the box's reach. O(n_moved).
+    float coord_reach(const CoordsSoA& trial, const ProposalPatch& patch) const {
+        return std::max(reach_, max_abs_moved_(trial, patch));
     }
 
     static float max_moved_displacement(const CoordsSoA& accepted,
@@ -393,29 +343,28 @@ public:
     }
 
     /// Full rebuild from accepted coords. Only public mutator besides commit.
+    ///
+    /// Every grid is centred on the current atoms: the box is their bounding
+    /// box plus a margin, its cell count capped at max_grid_cells_ (see
+    /// kGridCellsPerAtom). Atoms that later wander past the box wrap (see
+    /// OpenCellGrid), so this runs only from set_positions and after an
+    /// overflow.
     bool rebuild_from_accepted_state(const CoordsSoA& coords) {
         ++stats_.num_aabb_rebuild_accept;
         if (!mask_current()) apply_energy_mask_();
         retry_rebuild_ = false;
-        // AABB margin gives AutoExpand headroom around the Mu cutoff.
-        // Denselist cell + query stay at mu_cutoff (legacy 6 Å or exact contact).
         // Cell == cutoff: a one-cell stencil (27 cells) finds every pair,
         // and the hard core bounds what a cell of that size can hold.
         const float r_mu = mu_cutoff_A();
         const float mu_cell = r_mu;
-        const float margin = cfg_.effective_margin(r_mu);
-        BoxBounds b = aabb_of_coords(coords, margin);
-        bounds_ = b;
-
-        // --- Mu grid ---
-        int nx = 0, ny = 0, nz = 0;
-        bool mu_ok = compute_grid_shape(b, mu_cell, cfg_, nx, ny, nz);
+        const BoxBounds b = aabb_of_coords(coords, cfg_.effective_margin(r_mu));
         dense_active_ = false;
         hb_fallback_ = false;
 
-        if (mu_ok) {
-            mu_grid_->set_cutoff(r_mu); // CHANGED: denselist query matches cell cut
-            if (mu_grid_->configure(b, cfg_, mu_cell)) {
+        // --- Mu grid ---
+        {
+            mu_grid_->set_cutoff(r_mu);
+            if (mu_grid_->configure(b, max_grid_cells_, mu_cell)) {
                 mu_grid_->reset(n_atoms_);
                 for (int i = 0; i < n_atoms_; ++i) {
                     if (in_mu_[static_cast<size_t>(i)]) mu_grid_->insert(i, coords);
@@ -468,20 +417,20 @@ public:
                     }
                 }
             } else {
-                ++stats_.num_dense_cap_fallback;
                 stats_.neighbor_offsets_count = 0;
             }
-        } else {
-            ++stats_.num_dense_cap_fallback;
-            stats_.neighbor_offsets_count = 0;
+        }
+        reach_ = 0.f;
+        for (const BoxBounds& box : {b, mu_grid_->grid().bounds()}) {
+            if (!box.valid) continue;
+            for (int d = 0; d < 3; ++d)
+                reach_ = std::max({reach_, std::fabs(box.lo[d]), std::fabs(box.hi[d])});
         }
 
-        // --- HBond O / H grids (same lo/hi, smaller cell) ---
+        // --- HBond O / H grids (same lo, smaller cell) ---
         const float hb_cell = kHBondListA;
-        bool hb_ok = compute_grid_shape(b, hb_cell, cfg_, nx, ny, nz);
-        if (hb_ok &&
-            hb_o_grid_->configure(b, cfg_) &&
-            hb_h_grid_->configure(b, cfg_)) {
+        if (hb_o_grid_->configure(b, max_grid_cells_) &&
+            hb_h_grid_->configure(b, max_grid_cells_)) {
             hb_o_grid_->reset(n_atoms_);
             hb_h_grid_->reset(virtual_amide_h_
                 ? static_cast<int>(amide_donor_.size())
@@ -526,13 +475,11 @@ public:
             hb_fallback_ = hbond_overflowed_();
         } else {
             hb_fallback_ = true;
-            ++stats_.num_dense_cap_fallback;
         }
 
         // --- Registered subset grids ---
         for (SubsetGrid& g : subset_grids_) {
-            g.active = compute_grid_shape(b, g.spec.cell_A, cfg_, nx, ny, nz) &&
-                       g.grid->configure(b, cfg_, g.spec.cell_A);
+            g.active = g.grid->configure(b, max_grid_cells_, g.spec.cell_A);
             if (!g.active) continue;
             g.grid->reset(n_atoms_);
             for (int i : g.spec.members) {
@@ -551,23 +498,11 @@ public:
     void commit_accepted_move(const ProposalPatch& patch,
                               const CoordsSoA& coords_new) {
         sync_energy_mask(coords_new);
-        bool left_bounds = false;
-        if (bounds_.valid) {
-            if (!patch.moved_indices.empty()) {
-                for (int i : patch.moved_indices) {
-                    const size_t k = static_cast<size_t>(i);
-                    if (!point_in_bounds(coords_new.x[k], coords_new.y[k],
-                                         coords_new.z[k], bounds_)) {
-                        left_bounds = true;
-                        break;
-                    }
-                }
-            }
-        }
+        reach_ = std::max(reach_, max_abs_moved_(coords_new, patch));
 
         // A grid retired by an overflow is rebuilt on every accept until
         // the atoms spread out enough for it to fit.
-        if (left_bounds || retry_rebuild_) {
+        if (retry_rebuild_) {
             rebuild_from_accepted_state(coords_new);
             return;
         }
@@ -886,6 +821,41 @@ private:
 
     /// Iterates a moved list in ascending order without sorting it when it
     /// is already ascending or descending (the usual cases).
+    /// max(|x|, |y|, |z|) over the moved atoms of ``patch`` in ``coords``;
+    /// 0 for none. A NaN coordinate is skipped. O(n_moved).
+    static float max_abs_moved_(const CoordsSoA& coords, const ProposalPatch& patch) {
+        float m = 0.f;
+        auto consider = [&](size_t k) {
+            m = std::max({m, std::fabs(coords.x[k]), std::fabs(coords.y[k]),
+                          std::fabs(coords.z[k])});
+        };
+        if (patch.moved_as_ranges()) {
+            for (const auto& rg : patch.moved_ranges) {
+                int i = rg.first;
+#if defined(__AVX2__)
+                const __m256 sign = _mm256_set1_ps(-0.f);
+                __m256 vmax = _mm256_setzero_ps();
+                for (; i + 8 <= rg.second; i += 8) {
+                    const size_t k = static_cast<size_t>(i);
+                    vmax = _mm256_max_ps(_mm256_andnot_ps(sign, _mm256_loadu_ps(coords.x.data() + k)), vmax);
+                    vmax = _mm256_max_ps(_mm256_andnot_ps(sign, _mm256_loadu_ps(coords.y.data() + k)), vmax);
+                    vmax = _mm256_max_ps(_mm256_andnot_ps(sign, _mm256_loadu_ps(coords.z.data() + k)), vmax);
+                }
+                alignas(32) float lanes[8];
+                _mm256_store_ps(lanes, vmax);
+                for (float v : lanes) m = std::max(m, v);
+#endif
+                for (; i < rg.second; ++i) consider(static_cast<size_t>(i));
+            }
+        } else if (!patch.moved_indices.empty()) {
+            for (int i : patch.moved_indices) consider(static_cast<size_t>(i));
+        } else {
+            for (size_t i = 0; i < patch.moving_atoms.size(); ++i)
+                if (patch.moving_atoms[i]) consider(i);
+        }
+        return m;
+    }
+
     struct MovedOrder {
         const int* p;
         size_t n;
@@ -1019,7 +989,10 @@ private:
 
     NeighborConfig cfg_{};
     mutable NeighborStats stats_{};
-    BoxBounds bounds_{};
+    /// Cells allowed per grid (see kGridCellsPerAtom), set by init.
+    std::uint64_t max_grid_cells_ = kMinGridCells;
+    /// See coord_reach: the box's reach, raised by accepted moves.
+    float reach_ = 0.f;
     bool dense_active_ = false;
     bool hb_fallback_ = false;
     bool retry_rebuild_ = false;  ///< a grid overflowed: rebuild on the next accept
