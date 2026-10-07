@@ -492,6 +492,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **GCC 15 is the default compiler, and the wheels are built with it.** Its
+  extension runs about 3-15% faster than GCC 8.5's in user-space cycles per
+  step: about 10% on pivot moves (actin, same trajectory), 14% with KORP,
+  and 3-5% averaged over seeds on the default move mix and KIC. Instructions
+  per step fall 5-11%, so the gain is code generation, not layout. On RHEL 8
+  the compiler is gcc-toolset-15 (`source /opt/rh/gcc-toolset-15/enable`).
+  Its binutils 2.44 pads branches, and it links the libstdc++ parts newer
+  than RHEL 8's into the extension, so the symbol floor stays GLIBC_2.27,
+  GLIBCXX_3.4.21 and CXXABI_1.3.11, the same as GCC 8.5, and the extension
+  imports under a conda Python with no extra flags. The wheel job installs
+  the toolset in manylinux_2_28 and puts it first on PATH, and
+  `ci_check_wheel.py` fails a wheel built with an older GCC. A new CI job
+  builds and tests with the same toolset and image; the ubuntu GCC 13 job
+  stays as the older-compiler check. GCC 8.5 is still the supported
+  minimum, and CMake warns when it finds a GCC older than 15. The install
+  docs replace `module load gcc` (a module GCC 14 or newer fails to import
+  under a stock Miniforge or Mambaforge Python) with the toolset. Not
+  bit-identical to GCC 8.5: chignolin trajectories part at step 1188 (seed
+  1337) and 939 (seed 42), likely from different multiply-add fusion, as
+  between other GCC versions. `scripts/tolerance_check.py` passes in full mode
+  with KORP against ec954cf.
+
 - **Energy sums, deltas and the running total are kept in double
   precision, so the running energy no longer drifts from a full
   recompute.** Every energy accumulator and total is double: the per-term

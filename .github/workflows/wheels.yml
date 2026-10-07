@@ -49,10 +49,20 @@ jobs:
           CIBW_BUILD: "${{ matrix.python }}-manylinux_x86_64"
           CIBW_ARCHS_LINUX: x86_64
 
-          # manylinux_2_28 ships GCC 12. The project is C++20 and uses
-          # <numbers>/concepts-era features; the older manylinux2014 image
-          # (GCC 10) is not a safe target for it.
+          # manylinux_2_28 is AlmaLinux 8 (glibc 2.28; auditwheel holds the
+          # wheel to that floor). The project is C++20; the older
+          # manylinux2014 image is not a safe target for it.
           CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_28
+
+          # The shipping compiler is GCC 15 from gcc-toolset-15 (AlmaLinux 8
+          # AppStream), not the image's default toolset: its extension runs
+          # 3-15% faster than GCC 8.5's (pivot ~10%, KORP ~14%). Its
+          # binutils 2.44 pads branches, and it links the libstdc++ parts
+          # newer than RHEL 8's statically (libstdc++_nonshared), so the
+          # symbol floor stays GLIBCXX_3.4.21 / CXXABI_1.3.11. PATH below puts
+          # it first; ci_check_wheel.py asserts GCC >= 15 in the wheel.
+          CIBW_BEFORE_ALL_LINUX: >
+            dnf install -y gcc-toolset-15-gcc-c++ gcc-toolset-15-binutils
 
           # The published baseline. x86-64-v3 is AVX2+FMA+BMI2 (Haswell /
           # Excavator, 2013+). Set EXPLICITLY rather than relying on the
@@ -66,9 +76,11 @@ jobs:
           # pyproject.toml's `default = "v3"` to supply the value by coincidence.
           # MCPU_JCC_PAD=ON turns "this toolchain cannot pad branches" into a
           # configure error instead of a silently slower wheel (6-13% on
-          # Skylake-family Intel). manylinux_2_28 ships gcc-toolset >= 12,
-          # whose binutils (>= 2.38) and LTO driver both support it.
-          CIBW_ENVIRONMENT: MCPU_ARCH=v3 MCPU_JCC_PAD=ON
+          # Skylake-family Intel). gcc-toolset-15's binutils (2.44) and LTO
+          # driver both support it.
+          CIBW_ENVIRONMENT: >
+            PATH=/opt/rh/gcc-toolset-15/root/usr/bin:$PATH
+            MCPU_ARCH=v3 MCPU_JCC_PAD=ON
 
           CIBW_BUILD_VERBOSITY: "1"
 

@@ -148,6 +148,15 @@ else()
     set(MCPU_WARN_FLAGS "")
 endif()
 
+# GCC 15 is the default compiler and what the wheels ship; GCC 8.5 is the
+# supported minimum. Older GCC builds and gives the same results within float
+# rounding, but the extension is slower (pivot ~10%, KORP ~14%).
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS 15)
+    message(WARNING
+        "GCC ${CMAKE_CXX_COMPILER_VERSION} works, but the extension runs about 3-15% slower than with GCC 15.\n"
+        "On RHEL 8: source /opt/rh/gcc-toolset-15/enable, then reconfigure in a fresh build dir (a CXX variable overrides PATH).")
+endif()
+
 # ---------------------------------------------------------------------------
 # Build type defaults
 # ---------------------------------------------------------------------------

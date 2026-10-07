@@ -80,13 +80,16 @@ Two ways to satisfy it:
   so they cannot drift apart. Note that a conda interpreter carries an RPATH of
   `$ORIGIN/../lib`, so the environment's own `lib/libstdc++.so.6` wins over
   `LD_LIBRARY_PATH` — you cannot fix a mismatch by setting that variable.
-- **On a module-based HPC system**, load at run time the same compiler you
-  built with, and make sure it is not newer than the interpreter's runtime. A
-  stock Miniforge/Mambaforge base environment ships a `libstdc++` capped at
-  `CXXABI_1.3.14`, which GCC 14 exceeds; GCC 13 and older do not.
+- **On a RHEL 8 or Rocky 8 cluster** (FASRC included), run
+  `source /opt/rh/gcc-toolset-15/enable` before `pip install`. The toolset
+  compiles the parts of the C++ runtime newer than the system's into the
+  extension, so the result imports under any Python. Do not `module load gcc`
+  instead: a stock Miniforge/Mambaforge base environment ships a `libstdc++`
+  capped at `CXXABI_1.3.14`, which a module GCC 14 or newer exceeds.
 
-C++20 is required. GCC 8.5 is the oldest version verified to build and pass the
-full test suite.
+C++20 is required. GCC 15 is the default compiler and the one the wheels are
+built with. GCC 8.5 is the oldest version verified to build and pass the full
+test suite; its builds run about 3-15% slower, and CMake warns about it.
 
 ## Quickstart
 
