@@ -234,9 +234,6 @@ private:
                                   const std::optional<Eigen::Vector3d>& frame_offset);
 
 public:
-    float contactCutoffA() const noexcept { return neighbors_.mu_cutoff_A(); }
-    static constexpr float hbondCutoffA() noexcept { return NeighborSystem::kHBondCutoffA; }
-
     explicit Context(std::shared_ptr<System> sys);
     /// Places the atoms, in build order and the user's frame. The first
     /// placement fixes the frame offset (utils/FrameOffset.h) unless
@@ -420,9 +417,6 @@ public:
     [[nodiscard]] State&            getState() { return state; }
     [[nodiscard]] const System&     getSystem() const { return *system; }
     [[nodiscard]] System&           getSystem() { return *system; }
-
-    /// Mu index only (BB+O+SC).
-    [[nodiscard]] const CellListMC& getGridContact() const { return neighbors_.muGrid(); }
 
 };
 

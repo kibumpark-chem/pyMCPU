@@ -3,7 +3,7 @@
 Every move in pyMCPU is meant to keep bond lengths and bond angles fixed. Before
 this fix they did not:
 
-* The KIC solver's back-substitution (``calc_t2`` / ``calc_t1``) became rounding
+* The KIC solver's back-substitution (as half-tangent ratios) became rounding
   noise when a torsion was near 180 degrees, and returned "closed" windows with
   N-CA-C wrong by up to ~40 degrees. Nothing checked them, and each move took its
   targets from the current coordinates, so every bad closure became the next

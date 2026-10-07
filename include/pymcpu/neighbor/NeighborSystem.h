@@ -193,15 +193,6 @@ public:
             }
         }
     }
-    /// Number of registered grids, built-ins included. O(1).
-    int num_grids() const noexcept { return static_cast<int>(grids_.size()); }
-    /// A registered subset grid, or nullptr if `id` is a built-in or unknown
-    /// or the grid could not be built for the current bounds. O(1).
-    const CellListMC* subset_grid(neighbor::GridId id) const noexcept {
-        if (id >= grids_.size() || grids_[id].subset < 0) return nullptr;
-        const SubsetGrid& g = subset_grids_[static_cast<size_t>(grids_[id].subset)];
-        return g.active ? g.grid.get() : nullptr;
-    }
 
     NeighborConfig& config() noexcept { return cfg_; }
     const NeighborConfig& config() const noexcept { return cfg_; }
@@ -237,12 +228,10 @@ public:
     bool hbondUsesFallback() const noexcept { return hb_fallback_; }
     /// The O and H grids, for walks on the pair-search layer; null before
     /// setup. Their ids are O atoms, and H atoms or (virtual amide H) donor
-    /// residues; see hbondHIdIsResidue().
+    /// residues.
     const CellListMC* hbond_o_cells() const noexcept { return hb_o_grid_.get(); }
     const CellListMC* hbond_h_cells() const noexcept { return hb_h_grid_.get(); }
-    int hBegin() const noexcept { return h_begin_; }
     bool virtualAmideH() const noexcept { return virtual_amide_h_; }
-    bool hbondHIdIsResidue() const noexcept { return hb_h_ids_are_residues_; }
 
     /// One-shot audit label for HBond candidate source (current NeighborSystem).
     const char* hbond_backend_name() const noexcept {

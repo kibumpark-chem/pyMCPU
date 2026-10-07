@@ -85,7 +85,5 @@ public:
         grid_.for_each_neighbor(x, y, z, std::forward<Func>(func), cell_visits,
                                 r_cut2);
     }
-
-
 };
 } // namespace mcpu

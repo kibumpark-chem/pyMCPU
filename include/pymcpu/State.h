@@ -81,9 +81,6 @@ public:
         mu_list_drift = 0.0;
     }
 
-    [[nodiscard]] bool has_mu_contact_list() const noexcept {
-        return mu_contacts.ready();
-    }
     /// Hard-Q native pair cache (accepted state). Empty on proposal buffers.
     std::vector<uint8_t> q_pair_cache;
 

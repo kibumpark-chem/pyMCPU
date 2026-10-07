@@ -15,12 +15,8 @@ enum class MoveKind : int {
 
 struct NeighborConfig {
     float max_atom_displacement_hard = 12.f;
-
-    bool rebuild_from_aabb = true;
     float margin_angstrom = -1.f; // <0 => 2*r_cut
     int margin_cells = -1;
-
-
 
     /// If true (default), the pairs a rigid pivot (``patch.is_rigid``) carries
     /// -- both atoms moved -- are not re-measured: a rigid rotation keeps their

@@ -421,22 +421,6 @@ double System::getTotalEnergy(const Context& ctx, const State& state, int target
     return total;
 }
 
-double System::getDeltaEnergyRaw(
-    const Context& ctx,
-    const State& old_state,
-    const State& proposed_state,
-    const ProposalPatch& patch) const
-{
-    double delta = 0.0;
-    for (const auto& potential : potentials) {
-        if (!potential->isEnabled()) continue;
-        delta += potential->calculateEnergyChange(
-                    ctx, old_state, proposed_state, patch)
-                     .delta_energy;
-    }
-    return delta;
-}
-
 double System::getDeltaEnergy(
     const Context& ctx,
     const State& old_state,

@@ -188,26 +188,6 @@ public:
         return s;
     }
 
-    /// Atom-id span for cell ``c``. O(1).
-    [[nodiscard]] std::pair<const int*, int> cell_atoms_span(int c) const noexcept {
-        if (c < 0 ||
-            c >= static_cast<int>(cell_count_.size())) {
-            return {nullptr, 0};
-        }
-        return {cell_atoms_.data() + static_cast<size_t>(c) * CELL_CAPACITY,
-                cell_count_[static_cast<size_t>(c)]};
-    }
-
-    /// Packed x/y/z spans parallel to cell_atoms_span. O(1).
-    [[nodiscard]] const float* cell_x_span(int c) const noexcept {
-        return cell_x_.data() + static_cast<size_t>(c) * CELL_CAPACITY;
-    }
-    [[nodiscard]] const float* cell_y_span(int c) const noexcept {
-        return cell_y_.data() + static_cast<size_t>(c) * CELL_CAPACITY;
-    }
-    [[nodiscard]] const float* cell_z_span(int c) const noexcept {
-        return cell_z_.data() + static_cast<size_t>(c) * CELL_CAPACITY;
-    }
 
     /**
      * Visit only the cells that can hold an atom within `radius` and an atom
@@ -495,16 +475,6 @@ public:
     inline int atom_cell(int atom_id) const noexcept {
         if (atom_id < 0 || atom_id >= static_cast<int>(atom_cell_.size())) return -1;
         return atom_cell_[static_cast<size_t>(atom_id)];
-    }
-
-    /// Walk atoms currently in cell ``c`` (read-only). O(cell_count).
-    template <typename Func>
-    void for_each_in_cell(int c, Func&& func) const {
-        if (!configured_ || c < 0 || c >= static_cast<int>(cell_count_.size())) return;
-        const int* atoms =
-            cell_atoms_.data() + static_cast<size_t>(c) * CELL_CAPACITY;
-        const int count = cell_count_[static_cast<size_t>(c)];
-        for (int k = 0; k < count; ++k) func(atoms[k]);
     }
 
     void insert(int atom_id, float px, float py, float pz) {

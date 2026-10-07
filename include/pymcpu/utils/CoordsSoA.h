@@ -38,14 +38,10 @@ struct CoordsSoA {
         std::fill(z.begin(), z.end(), 0.f);
     }
 
-    void set_xyz(int i, float xi, float yi, float zi) noexcept {
-        x[static_cast<size_t>(i)] = xi;
-        y[static_cast<size_t>(i)] = yi;
-        z[static_cast<size_t>(i)] = zi;
-    }
-
     void set_atom(int i, const Eigen::Vector3f& p) noexcept {
-        set_xyz(i, p.x(), p.y(), p.z());
+        x[static_cast<size_t>(i)] = p.x();
+        y[static_cast<size_t>(i)] = p.y();
+        z[static_cast<size_t>(i)] = p.z();
     }
 
     [[nodiscard]] Eigen::Vector3f atom(int i) const {
@@ -155,19 +151,6 @@ struct CoordsSoA {
             set_atom(i, p.cast<float>());
         }
 #endif
-    }
-
-    [[nodiscard]] float max_displacement_sq(const CoordsSoA& other,
-                                            const std::vector<int>& indices) const {
-        float d2max = 0.f;
-        for (int i : indices) {
-            const float dx = x[static_cast<size_t>(i)] - other.x[static_cast<size_t>(i)];
-            const float dy = y[static_cast<size_t>(i)] - other.y[static_cast<size_t>(i)];
-            const float dz = z[static_cast<size_t>(i)] - other.z[static_cast<size_t>(i)];
-            const float d2 = pair_r2(dx, dy, dz);
-            if (d2 > d2max) d2max = d2;
-        }
-        return d2max;
     }
 };
 

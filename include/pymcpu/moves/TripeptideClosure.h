@@ -46,7 +46,6 @@ private:
     double len_na[3], len_ac[3], len_aa[3];
 
     // Stack-allocated matrix state for high performance
-    Eigen::Matrix<double, 17, 5> Q;
     Eigen::Matrix<double, 17, 3> R;
     Eigen::Matrix3d C0;
     Eigen::Matrix3d C1;
@@ -92,7 +91,7 @@ public:
         Eigen::Matrix<double, 17, 1> p_coeff = Eigen::Matrix<double, 17, 1>::Zero();
         
         // 2. Call your existing internal function to fill it
-        // (This works because solve() already populated the Q and R matrices!)
+        // (solve() already set up the geometry it reads.)
         this->get_poly_coeff(p_coeff);
         
         // 3. Convert to a standard C++ vector for Python
@@ -117,9 +116,6 @@ private:
                                const Vec3& r_n1, const Vec3& r_a1, 
                                const Vec3& r_a3, const Vec3& r_c3,
                                std::vector<Solution>& solutions);
-
-    double calc_t2(double t0) const;                 // no longer called; kept for reference
-    double calc_t1(double t0, double t2) const;      // no longer called; kept for reference
 
     void build_trig_coeff();
     void back_substitute(double c3, double s3, double& c1, double& s1, double& c2, double& s2) const;

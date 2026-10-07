@@ -13,8 +13,6 @@ namespace mcpu {
 }
 
 namespace mcpu::forces {
-    static constexpr float kPi = mcpu::PI_F;
-
     class TripletPotential : public Potential {
     private:
         std::vector<float> params;

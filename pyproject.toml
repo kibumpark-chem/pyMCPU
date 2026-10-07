@@ -193,18 +193,10 @@ wheel.exclude = [
     # installed, so anything outside pymcpu/ is excluded from the wheel by
     # construction rather than by a list that has to be maintained.
 ]
-# NOTE: there is deliberately no `cmake.args` here any more. It is a LIST, and
-# `-Ccmake.args=...` on the command line REPLACES the list wholesale -- which
-# silently dropped the baseline pin. `cmake.define` is a MAPPING and merges, so
-# a user overriding one key cannot lose the others.
-#
-# The six entries that used to live in cmake.args are gone for these reasons:
-#   -DBUILD_TESTING=OFF          the option no longer exists (dead block removed)
-#   -DMCPU_FAST_MU_DELTA=ON      the option no longer exists (legacy Mu removed)
-#   -DMCPU_ARCH=skylake-avx512   replaced by the env-backed define below
-#   -DCMAKE_CXX_STANDARD=20      INERT, not merely redundant: CMakeLists.txt:4
-#   -DCMAKE_CXX_STANDARD_REQUIRED  uses plain set(), which SHADOWS the cache
-#   -DCMAKE_CXX_EXTENSIONS=OFF     entry these -D flags create. Never had effect.
+# NOTE: there is deliberately no `cmake.args` here. It is a LIST, and
+# `-Ccmake.args=...` on the command line REPLACES the list wholesale, which
+# would silently drop the baseline pin. `cmake.define` is a MAPPING and merges,
+# so a user overriding one key cannot lose the others.
 
 [tool.scikit-build.cmake.define]
 # The CPU baseline, and the fix for a bug that made every documented override a

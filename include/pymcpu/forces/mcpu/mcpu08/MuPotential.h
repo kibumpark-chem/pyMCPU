@@ -508,10 +508,7 @@ namespace mcpu::forces::mcpu08 {
         [[nodiscard]] float mu_cutoff_sq() const noexcept {
             return contact_cutoff_sq_;
         }
-        [[nodiscard]] float contact_cutoff_sq() const noexcept {
-            return contact_cutoff_sq_;
-        }
-        /// Recompute mu_exact_cutoff_ from type_params_ (or matrices) + env override.
+        /// Recompute mu_exact_cutoff_ from type_params_ (or the matrices).
         void apply_mu_denselist_cutoff();
         [[nodiscard]] double topo_flag_size_mb() const noexcept {
             return static_cast<double>(topo_flag_.size()) / (1024.0 * 1024.0);
