@@ -477,6 +477,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **A neighbour-grid cell that fills up switches its grid off instead of
+  falling back to linked lists.** Cells hold 48 atoms. A cell asked to hold
+  more used to switch the whole grid to per-cell linked lists for the rest
+  of the grid's life, about 35x slower (actin with 10 A cells: 398 s against
+  11 s per million steps). The atom is now left out, the grid goes inactive
+  (Mu takes the exact all-pairs delta, H-bonds the brute-force search), and
+  every accepted move retries the rebuild until the grid fits.
+  `neighbor_proxy_stats()` gains `mu_grid_active`, `mu_grid_overflows` and
+  `hbond_grid_overflows`; the warning prints once under `MCPU_VERBOSE`.
+
 - **The Mu neighbour grid leaves out the atoms of residues an `ignore_all`
   energy mask switches off.** Every pair with such an atom scores 0 and
   cannot clash, so only zero terms go and the order of the other atoms in

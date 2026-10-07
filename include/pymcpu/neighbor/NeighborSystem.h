@@ -223,6 +223,8 @@ public:
             if (in_mu_[k]) mu_grid_->insert(i, coords);
             else mu_grid_->remove(i);
         }
+        if (note_overflow_(*mu_grid_, "Mu", stats_.mu_grid_overflows))
+            dense_active_ = false;
     }
     bool hbondUsesFallback() const noexcept { return hb_fallback_; }
     /// The O and H grids, for walks on the pair-search layer; null before
@@ -395,6 +397,7 @@ public:
     bool rebuild_from_accepted_state(const CoordsSoA& coords) {
         ++stats_.num_aabb_rebuild_accept;
         if (!mask_current()) apply_energy_mask_();
+        retry_rebuild_ = false;
         // AABB margin gives AutoExpand headroom around the Mu cutoff.
         // Denselist cell + query stay at mu_cutoff (legacy 6 Å or exact contact).
         const float r_mu = mu_cutoff_A();
@@ -420,7 +423,8 @@ public:
                 // HB/scratch grids stay Off (never call enable_occupied_stencil).
                 mu_grid_->grid().enable_occupied_stencil(
                     OpenCellGrid::occupied_mode_from_env());
-                dense_active_ = true;
+                dense_active_ = !note_overflow_(*mu_grid_, "Mu",
+                                                stats_.mu_grid_overflows);
                 stats_.neighbor_offsets_count =
                     static_cast<std::uint64_t>(
                         mu_grid_->grid().neighbor_offsets_count());
@@ -524,7 +528,7 @@ public:
                         kHBondCutoffA);
                 }
             }
-            hb_fallback_ = false;
+            hb_fallback_ = hbond_overflowed_();
         } else {
             hb_fallback_ = true;
             ++stats_.num_dense_cap_fallback;
@@ -538,6 +542,10 @@ public:
             g.grid->reset(n_atoms_);
             for (int i : g.spec.members) {
                 if (i >= 0 && i < n_atoms_) g.grid->insert(i, coords);
+            }
+            if (g.grid->grid().overflowed()) {
+                g.active = false;
+                retry_rebuild_ = true;
             }
         }
 
@@ -562,7 +570,9 @@ public:
             }
         }
 
-        if (left_bounds) {
+        // A grid retired by an overflow is rebuilt on every accept until
+        // the atoms spread out enough for it to fit.
+        if (left_bounds || retry_rebuild_) {
             rebuild_from_accepted_state(coords_new);
             return;
         }
@@ -601,6 +611,20 @@ public:
                 if (!virtual_amide_h_xyz_(coords_new, static_cast<size_t>(r), hx, hy, hz)) return;
                 hb_h_grid_->update_position(r, Eigen::Vector3f(hx, hy, hz));
             });
+        }
+
+        // A cell that filled up during the update leaves its grid
+        // incomplete: retire it (Mu takes the all-pairs delta, H-bonds the
+        // brute-force search) until the next accept rebuilds it.
+        if (dense_active_ &&
+            note_overflow_(*mu_grid_, "Mu", stats_.mu_grid_overflows))
+            dense_active_ = false;
+        if (!hb_fallback_ && hbond_overflowed_()) hb_fallback_ = true;
+        for (SubsetGrid& g : subset_grids_) {
+            if (g.active && g.grid->grid().overflowed()) {
+                g.active = false;
+                retry_rebuild_ = true;
+            }
         }
 
 #if !defined(NDEBUG)
@@ -1025,6 +1049,42 @@ private:
         }
     }
 
+    /// True (and counted, with one MCPU_VERBOSE warning per process) when
+    /// ``g`` had to leave an atom out because its cell was full. The caller
+    /// then retires the grid: the exact fallbacks for an inactive grid take
+    /// over, and the next accepted move rebuilds it. CELL_CAPACITY stays a
+    /// compile-time constant so the hot walks keep their fixed strides; the
+    /// hard core keeps real occupancy near half of it (peaks of 20-24 on
+    /// actin and PGK1), so this is a guard, not a path runs live on.
+    bool note_overflow_(const CellListMC& g, const char* name,
+                        std::uint64_t& counter) {
+        if (!g.grid().overflowed()) return false;
+        ++counter;
+        retry_rebuild_ = true;
+        static bool warned = false;
+        static const bool kVerbose = [] {
+            const char* e = std::getenv("MCPU_VERBOSE");
+            return e && e[0] && e[0] != '0';
+        }();
+        if (kVerbose && !warned) {
+            warned = true;
+            std::fprintf(stderr,
+                "WARN: a %s grid cell is over its capacity of %d atoms; the "
+                "grid is off (exact fallback) until an accepted move "
+                "rebuilds it.\n",
+                name, OpenCellGrid::CELL_CAPACITY);
+        }
+        return true;
+    }
+    /// Either H-bond grid overflowed (both are checked and counted).
+    bool hbond_overflowed_() {
+        const bool o = note_overflow_(*hb_o_grid_, "H-bond O",
+                                      stats_.hbond_grid_overflows);
+        const bool h = note_overflow_(*hb_h_grid_, "H-bond H",
+                                      stats_.hbond_grid_overflows);
+        return o || h;
+    }
+
     std::vector<RegisteredGrid> grids_;
     std::vector<SubsetGrid> subset_grids_;
     std::vector<int> commit_order_;
@@ -1034,6 +1094,7 @@ private:
     BoxBounds bounds_{};
     bool dense_active_ = false;
     bool hb_fallback_ = false;
+    bool retry_rebuild_ = false;  ///< a grid overflowed: rebuild on the next accept
     bool virtual_amide_h_ = false;
     bool hb_h_ids_are_residues_ = false;
 

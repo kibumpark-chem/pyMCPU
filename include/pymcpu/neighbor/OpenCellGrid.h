@@ -332,6 +332,10 @@ public:
     bool use_contiguous() const noexcept { return use_contiguous_; }
     void set_use_contiguous(bool on) noexcept { use_contiguous_ = on; }
     int peak_cell_occupancy() const noexcept { return peak_cell_occupancy_; }
+    /// An insert found its cell full since the last configure/clear. The
+    /// atom was left out (atom_cell == -1), so the grid is incomplete and its
+    /// owner must stop using it until a rebuild fits.
+    bool overflowed() const noexcept { return overflowed_; }
 
     /// True if denselist geometry matches ``b``/``cell`` (skip reconfigure). O(1).
     bool matches_geometry(const BoxBounds& b, float cell,
@@ -817,6 +821,7 @@ public:
         cell_y_.resize(pack, 0.f);
         cell_z_.resize(pack, 0.f);
         peak_cell_occupancy_ = 0;
+        overflowed_ = false;
         init_contiguous_default_();
         configured_ = true;
         // Clear atom membership (caller must re-insert)
@@ -845,6 +850,7 @@ public:
         std::fill(atom_cell_.begin(), atom_cell_.end(), -1);
         std::fill(cell_count_.begin(), cell_count_.end(), 0);
         peak_cell_occupancy_ = 0;
+        overflowed_ = false;
         init_contiguous_default_();
         if (occ_mode_ != OccupiedStencilMode::Off)
             occupied_stencil_.assign(head_.size(), NeighborCellList{});
@@ -1311,11 +1317,10 @@ private:
         int& count = cell_count_[static_cast<size_t>(cell)];
         const bool was_empty = (count == 0);
         if (count >= CELL_CAPACITY) {
-            use_contiguous_ = false;
-            std::fprintf(stderr,
-                "WARN: contiguous_add overflow cell=%d count=%d. "
-                "Switching to linked-list fallback.\n",
-                cell, count);
+            // Leave the atom out and flag the grid; NeighborSystem retires
+            // it until a rebuild fits (see overflowed()).
+            overflowed_ = true;
+            atom_cell_[static_cast<size_t>(atom)] = -1;
             return;
         }
         const size_t base = static_cast<size_t>(cell) * CELL_CAPACITY;
@@ -1542,6 +1547,7 @@ private:
     std::vector<float> cell_y_;   ///< packed y; size n_cells_ * CELL_CAPACITY
     std::vector<float> cell_z_;   ///< packed z; size n_cells_ * CELL_CAPACITY
     int peak_cell_occupancy_ = 0;
+    bool overflowed_ = false;
 
     OccupiedStencilMode occ_mode_ = OccupiedStencilMode::Off;
     std::vector<NeighborCellList> valid_stencil_;

@@ -122,6 +122,11 @@ struct NeighborStats {
     // --- lifecycle / policy ---
     std::uint64_t num_trial_fallback = 0;
     std::uint64_t num_dense_cap_fallback = 0;
+    /// Times a cell of the Mu grid / an H-bond grid was asked to hold more
+    /// atoms than its capacity; the grid then goes inactive until a rebuild
+    /// fits (NeighborSystem::note_overflow_).
+    std::uint64_t mu_grid_overflows = 0;
+    std::uint64_t hbond_grid_overflows = 0;
     std::uint64_t num_reject_hard_disp = 0;
     std::uint64_t num_aabb_rebuild_accept = 0;
 

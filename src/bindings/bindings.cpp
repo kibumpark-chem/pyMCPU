@@ -529,6 +529,9 @@ PYBIND11_MODULE(mcpu_core, m) {
                      c.neighbors().denseActive()
                          ? c.neighbors().muGrid().grid().stencil_radius()
                          : 0;
+                 d["mu_grid_active"] = c.neighbors().denseActive();
+                 d["mu_grid_overflows"] = s.mu_grid_overflows;
+                 d["hbond_grid_overflows"] = s.hbond_grid_overflows;
                  // ADDED: live Mu grid occupancy for cell-size tuning
                  if (c.neighbors().denseActive()) {
                      const auto& g = c.neighbors().muGrid().grid();
