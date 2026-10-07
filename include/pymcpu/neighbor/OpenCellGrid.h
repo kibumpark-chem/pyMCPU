@@ -82,14 +82,22 @@ inline int stencil_radius_for(float query_radius, float cell) {
 /// never meets the same cell twice after wrapping, then, while the total is
 /// over `max_cells`, the longest axis trimmed (never below 2R + 1). A
 /// trimmed grid still files every atom (the index wraps); it only lists
-/// more far-away atoms per cell. Returns false for an invalid box.
+/// more far-away atoms per cell. Before trimming, an axis has at most
+/// kMaxAxisCells cells (a huge or infinite extent, which would overflow the
+/// int conversion and the cell-count product) and a NaN or negative extent
+/// gets 2R + 1.
+/// Returns false for an invalid box.
 inline bool compute_grid_shape(const BoxBounds& b, float cell, float query_radius,
                                std::uint64_t max_cells,
                                int& nx, int& ny, int& nz) {
     if (!b.valid || !(cell > 0.f)) return false;
     const int min_n = 2 * stencil_radius_for(query_radius, cell) + 1;
+    constexpr int kMaxAxisCells = 1 << 20;
     auto dim = [&](float lo, float hi) -> int {
-        return std::max(min_n, static_cast<int>(std::ceil((hi - lo) / cell)));
+        const float n = std::ceil((hi - lo) / cell);
+        if (!(n >= 0.0f)) return min_n;
+        if (n >= static_cast<float>(kMaxAxisCells)) return std::max(min_n, kMaxAxisCells);
+        return std::max(min_n, static_cast<int>(n));
     };
     nx = dim(b.lo.x(), b.hi.x());
     ny = dim(b.lo.y(), b.hi.y());

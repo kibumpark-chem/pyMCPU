@@ -80,6 +80,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The neighbour grid's shape for a huge, infinite or NaN box: the cell
+  count per axis went through an undefined float-to-int conversion (an
+  atom at 1e12 A gave a 3x3x3 Mu grid on x86), and boxes near 1e9 A on
+  all three axes could overflow the cell-count product. An axis now has
+  at most 2^20 cells before the usual trimming, and a NaN extent gets the
+  stencil minimum. Pairs were always exact (the grid wraps); only absurd
+  coordinates are affected.
+
 - **A fixed first residue stays in place.** A pivot that rotates the
   N-terminal end moves residues 0 to r-1, but the fixed-residue check
   looked at residues 1 to r-1 only, so a fixed residue 0 moved whenever
