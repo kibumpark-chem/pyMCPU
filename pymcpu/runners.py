@@ -53,6 +53,8 @@ def run_folding(
     fixed_residues: list[int] | None = None,
     linker_residues: list[int] | None = None,
     linker_energy_mode: str = "ignore_all",
+    forcefield: str = "mcpu08",
+    forcefield_options: dict[str, Any] | None = None,
     checkpoint_dir: str | Path | None = None,
     checkpoint_interval: int = 50,
     resume: str | Path | bool | None = None,
@@ -95,6 +97,8 @@ def run_folding(
         fixed_residues=fixed_residues,
         linker_residues=linker_residues,
         linker_energy_mode=linker_energy_mode,
+        forcefield=forcefield,
+        forcefield_options=forcefield_options,
         checkpoint_config=ckpt_cfg,
         verbose=verbose,
     )
@@ -132,6 +136,10 @@ def run_replica_exchange_2d(
     fixed_residues: list[int] | None = None,
     linker_residues: list[int] | None = None,
     linker_energy_mode: str = "ignore_all",
+    forcefield: str = "mcpu08",
+    forcefield_options: dict[str, Any] | None = None,
+    param_set: str = "mcpu08",
+    param_dir: str | Path | None = None,
     checkpoint_dir: str | Path | None = None,
     checkpoint_interval: int = 50,
     resume: str | Path | bool | None = None,
@@ -182,6 +190,7 @@ def run_replica_exchange_2d(
     if verbose:
         print(f"PDB: {pdb_path}")
         print(f"Reference: {ref}")
+        print(f"Force field: {forcefield}")
         print(f"Temperatures: {list(np.asarray(temperatures))}")
         print(f"N targets: {None if n_targets is None else list(np.asarray(n_targets))}")
         print(f"Q targets: {None if q_targets is None else list(np.asarray(q_targets))}")
@@ -207,6 +216,10 @@ def run_replica_exchange_2d(
         fixed_residues=fixed_residues,
         linker_residues=linker_residues,
         linker_energy_mode=linker_energy_mode,
+        forcefield=forcefield,
+        forcefield_options=forcefield_options,
+        param_set=param_set,
+        param_dir=param_dir,
         contact_atom_mode=contact_atom_mode,
         native_contact_pairs=native_contact_pairs,
         checkpoint_dir=checkpoint_dir,
@@ -263,6 +276,10 @@ def run_mpi_replica_exchange_2d(
     fixed_residues: list[int] | None = None,
     linker_residues: list[int] | None = None,
     linker_energy_mode: str = "ignore_all",
+    forcefield: str = "mcpu08",
+    forcefield_options: dict[str, Any] | None = None,
+    param_set: str = "mcpu08",
+    param_dir: str | Path | None = None,
     checkpoint_dir: str | Path | None = None,
     checkpoint_interval: int = 50,
     resume: str | Path | bool | None = None,
@@ -327,6 +344,7 @@ def run_mpi_replica_exchange_2d(
     if verbose and rank == 0:
         print(f"PDB: {pdb_path}")
         print(f"Reference: {ref}")
+        print(f"Force field: {forcefield}")
         if checkpoint_dir:
             print(f"Checkpoint: dir={checkpoint_dir}  interval={checkpoint_interval}")
         if resume_path:
@@ -346,6 +364,10 @@ def run_mpi_replica_exchange_2d(
         "fixed_residues": fixed_residues,
         "linker_residues": linker_residues,
         "linker_energy_mode": linker_energy_mode,
+        "forcefield": forcefield,
+        "forcefield_options": forcefield_options,
+        "param_set": param_set,
+        "param_dir": param_dir,
         "checkpoint_config": ckpt_cfg,
         "exchange_log": exchange_log,
         "state_log_interval": state_log_interval,
@@ -425,6 +447,8 @@ def run_from_config(
             fixed_residues=fixed,
             linker_residues=linker,
             linker_energy_mode=linker_mode,
+            forcefield=cfg.forcefield,
+            forcefield_options=cfg.forcefield_options,
             checkpoint_dir=cfg.checkpoint.checkpoint_dir,
             checkpoint_interval=cfg.checkpoint.checkpoint_interval,
             resume=cfg.checkpoint.resume,
@@ -457,6 +481,10 @@ def run_from_config(
             fixed_residues=fixed,
             linker_residues=linker,
             linker_energy_mode=linker_mode,
+            forcefield=cfg.forcefield,
+            forcefield_options=cfg.forcefield_options,
+            param_set=cfg.param_set,
+            param_dir=cfg.param_dir,
             checkpoint_dir=cfg.checkpoint.checkpoint_dir,
             checkpoint_interval=cfg.checkpoint.checkpoint_interval,
             resume=cfg.checkpoint.resume,

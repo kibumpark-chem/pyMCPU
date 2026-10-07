@@ -71,7 +71,7 @@ def test_a_clashing_start_structure_raises(spec: EngineSpec) -> None:
 
     def build(coords: np.ndarray):
         return build_replica_simulation(
-            filtered_traj=SimpleNamespace(topology=sim.topology), system=sim.system,
+            topology=sim.topology, system=sim.system,
             temperature=0.6, seed=1, replica_idx=0, fixed_residues=[], n_res=0,
             coords_angstroms=coords.T, k_bias=0.0, n_target=0.0, step_size_rad=0.1,
             move_settings=normalize_move_settings(),

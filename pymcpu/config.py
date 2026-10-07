@@ -40,6 +40,7 @@ __all__ = [
     "check_yaml_keys",
     "normalize_linker_energy_mode",
     "normalize_move_weights",
+    "check_move_weights",
     "normalize_pivot_rama_probability",
     "normalize_pivot_rama_schedule",
     "normalize_sidechain_move_mode",
@@ -126,6 +127,28 @@ def normalize_move_weights(
             f"move_weights must have a positive, finite sum, got {weights!r}"
         )
     return (values[0] / total, values[1] / total, values[2] / total)
+
+
+def check_move_weights(
+    forcefield: Any, move_weights: Sequence[float] | None, name: str = ""
+) -> None:
+    """Refuse sidechain moves on a force field that has no sidechains.
+
+    The engine refuses them too, but only when it first steps -- after a
+    replica-exchange run has opened its output files. KORP is backbone-only,
+    so a config that selects it must set the sidechain weight to zero; it is
+    not zeroed silently, because that would change the pivot/KIC mix the
+    config asked for.
+    """
+    weights = normalize_move_weights(move_weights)
+    if weights[2] > 0.0 and int(getattr(forcefield, "total_sc_atoms", 1)) == 0:
+        label = repr(name) if name else type(forcefield).__name__
+        raise ValueError(
+            f"forcefield {label} has no sidechains, so sidechain moves are "
+            f"impossible, but move_weights gives them {weights[2]:.3g} of the "
+            f"moves; set integrator.move_weights to [pivot, kic, 0.0], e.g. "
+            f"[0.5, 0.5, 0.0]"
+        )
 
 
 def normalize_pivot_rama_schedule(
@@ -336,6 +359,13 @@ class SimulationConfig:
     replica_exchange: ReplicaExchangeConfig | None = None
     constraints: ConstraintsConfig = field(default_factory=ConstraintsConfig)
     checkpoint: CheckpointConfig = field(default_factory=CheckpointConfig)
+
+    def __post_init__(self) -> None:
+        # A typo'd name is reported when the config loads, not after the
+        # run has set up its output directory.
+        from pymcpu.forcefields import get_forcefield
+        get_forcefield(self.forcefield)
+        self.forcefield_options = dict(self.forcefield_options or {})
 
     def resolve_pdb(self, *, repo_root: Path | None = None, cwd: Path | None = None) -> Path:
         return resolve_path(self.pdb, repo_root=repo_root, cwd=cwd)

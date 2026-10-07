@@ -24,6 +24,7 @@ from pymcpu.checkpointing import (
     CheckpointConfig,
     CheckpointState,
     checkpoint_cycle_filename,
+    checkpoint_forcefield_error,
     checkpoint_layout_error,
     load_checkpoint,
     save_checkpoint,
@@ -47,7 +48,11 @@ from pymcpu.sampling.replica_exchange_core import (
     unbiased_energy,
     write_rex_stats,
 )
-from pymcpu.trajectory_utils import truncate_csv_to_row, truncate_xtc_to_frame
+from pymcpu.trajectory_utils import (
+    trajectory_topology_path,
+    truncate_csv_to_row,
+    truncate_xtc_to_frame,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -180,6 +185,10 @@ class MPIReplicaExchange:
         fixed_residues: list[int] | None = None,
         linker_residues: list[int] | None = None,
         linker_energy_mode: str = "ignore_all",
+        forcefield: str = "mcpu08",
+        forcefield_options: dict[str, Any] | None = None,
+        param_set: str = "mcpu08",
+        param_dir: str | Path | None = None,
         checkpoint_config: CheckpointConfig | None = None,
         checkpoint_dir: str | Path | None = None,
         checkpoint_interval: int | None = None,
@@ -266,7 +275,6 @@ class MPIReplicaExchange:
             self.output_dir = None
             self.output_prefix = output_prefix
         self.traj_dir = str(Path(self.output_prefix).parent)
-        self.top_path = str(self.reference_pdb)
         self._traj_writers: dict[str, Any] = {}
         self.traj_frame_counts: dict[str, int] = {}
         self._traj_prior_frames: dict[str, int] = {}
@@ -318,7 +326,8 @@ class MPIReplicaExchange:
         self.local_replica_indices: list[int] = self.assignments[self.rank]
         self.replicas_per_rank = len(self.local_replica_indices)
 
-        self.system, self.forcefield, self.filtered_traj, coords_angstroms, self.q_cv = (
+        self.forcefield_name = forcefield
+        self.system, self.forcefield, self.topology, coords_angstroms, self.q_cv = (
             build_system_and_cv(
                 pdb_path,
                 reference_pdb=self.reference_pdb,
@@ -330,9 +339,20 @@ class MPIReplicaExchange:
                 fixed_residues=self.fixed_residues,
                 linker_residues=self.linker_residues,
                 linker_energy_mode=self.linker_energy_mode,
+                forcefield=forcefield,
+                forcefield_options=forcefield_options,
+                param_set=param_set,
+                param_dir=None if param_dir is None else str(param_dir),
+                move_weights=self.move_settings["move_weights"],
             )
         )
         n_res = self.system.get_num_residues()
+        # Topology for XTC truncation (mdtraj). Rank 0 writes it when the
+        # force field simulates fewer atoms than the input (KORP).
+        self.top_path = trajectory_topology_path(
+            self.forcefield, pdb_path, self.reference_pdb,
+            f"{self.output_prefix}_topology.pdb", write=self.rank == 0)
+        comm.Barrier()
 
         n_contacts = float(self.q_cv.n_contacts)
         self.n_targets = resolve_n_targets(n_targets_raw, q_targets_raw, n_contacts)
@@ -353,7 +373,7 @@ class MPIReplicaExchange:
                 local_replica_index, self.temperatures, self.n_targets
             )
             simulation = build_replica_simulation(
-                filtered_traj=self.filtered_traj,
+                topology=self.topology,
                 system=self.system,
                 temperature=temperature,
                 seed=self.seed,
@@ -607,6 +627,7 @@ class MPIReplicaExchange:
                 format_version=CHECKPOINT_FORMAT_VERSION,
                 kind="mpi_replica_exchange",
                 pdb_path=str(self.pdb_path),
+                forcefield=self.forcefield_name,
                 reference_pdb=str(self.reference_pdb),
                 temperatures=np.asarray(self.temperatures, dtype=np.float64),
                 n_targets=np.asarray(self.n_targets, dtype=np.float64),
@@ -693,7 +714,9 @@ class MPIReplicaExchange:
         # would leave the other ranks waiting in the next collective.
         layout_error = None
         if rank == 0 and state is not None:
-            layout_error = checkpoint_layout_error(
+            layout_error = checkpoint_forcefield_error(
+                state.get("forcefield"), self.forcefield_name, last_chk
+            ) or checkpoint_layout_error(
                 state.get("replica_coords"), self.system.get_num_atoms(), last_chk
             )
 

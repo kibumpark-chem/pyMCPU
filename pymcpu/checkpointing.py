@@ -72,6 +72,10 @@ class CheckpointState:
     kind: str = "replica_exchange"
     pdb_path: str = ""
     reference_pdb: str = ""
+    #: Registered name of the force field the run was built with. Empty in
+    #: checkpoints written before it was recorded; those runs could only
+    #: build mcpu08, so that is what an empty value means on resume.
+    forcefield: str = ""
     temperatures: Any = None
     n_targets: Any = None
     k_bias: float = 0.0
@@ -387,6 +391,32 @@ def set_integrator_rng_states(replicas: list[Any], states: list[Any]) -> None:
                     "Rebuild with C++20 toolchain to activate exact RNG restore."
                 )
                 warned = True
+
+
+def checkpoint_forcefield_error(
+    saved: str | None, current: str, source: Any = None
+) -> str | None:
+    """Why a checkpoint written with force field ``saved`` cannot resume a run
+    built with ``current``, or None.
+
+    Checked before the atom layout, whose message would otherwise blame an
+    older pyMCPU. Aliases of one force field ("mcpu" and "mcpu08") match.
+    """
+    from pymcpu.forcefields import get_forcefield
+
+    saved_name = saved or "mcpu08"
+    try:
+        same = get_forcefield(saved_name) is get_forcefield(current)
+    except ValueError:
+        same = False
+    if same:
+        return None
+    label = f"checkpoint {source}" if source else "the checkpoint"
+    return (
+        f"{label} was written by a {saved_name!r} run, but this run builds "
+        f"forcefield {current!r}; resume it with the force field it was "
+        "started with, or start a new run without resume"
+    )
 
 
 def checkpoint_layout_error(

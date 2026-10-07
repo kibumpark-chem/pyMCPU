@@ -16,6 +16,7 @@ from pymcpu.checkpointing import (
     CheckpointConfig,
     FoldingCheckpointState,
     checkpoint_cycle_filename,
+    checkpoint_forcefield_error,
     checkpoint_layout_error,
     get_integrator_move_counters,
     get_integrator_rng_states,
@@ -24,7 +25,7 @@ from pymcpu.checkpointing import (
     set_integrator_move_counters,
     set_integrator_rng_states,
 )
-from pymcpu.forcefields.mcpu import MCPUForceField
+from pymcpu.forcefields import load_forcefield
 from pymcpu.sampling.collective_variables import (
     NativeContactsCV,
     build_ca_index,
@@ -36,7 +37,10 @@ from pymcpu.sampling.collective_variables import (
 from pymcpu.sampling.folding_bias import BasinTracker, FoldingBias
 from pymcpu.sampling.replica_exchange import get_coords
 from pymcpu.simulation import Simulation, check_state_clash
-from pymcpu.trajectory_utils import truncate_all_trajectories_on_resume
+from pymcpu.trajectory_utils import (
+    trajectory_topology_path,
+    truncate_all_trajectories_on_resume,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +69,8 @@ class FoldingRunner:
         seed: int = 42,
         param_dir: str | Path | None = None,
         param_set: str = "mcpu08",
+        forcefield: str = "mcpu08",
+        forcefield_options: dict[str, Any] | None = None,
         compute_dssp: bool = False,
         dssp_coil_state: str = "C",
         step_size_rad: float = 0.1,
@@ -169,7 +175,6 @@ class FoldingRunner:
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.traj_dir = str(self.output_dir)
-        self.top_path = str(self.pdb_path)
         self.output_prefix = str(self.output_dir / self.prefix)
 
         self._cycle = 0
@@ -184,20 +189,20 @@ class FoldingRunner:
         self.convergence_history: list[Any] = []
         self.folding_events: list[Any] = []
 
-        traj = md.load(str(self.pdb_path))
-        indices = traj.topology.select("not element H")
-        self.filtered = traj.atom_slice(indices)
+        from pymcpu.config import check_move_weights
 
-        ff_kwargs: dict[str, Any] = {
-            "param_set": param_set,
-            "compute_dssp": self.compute_dssp,
-            "dssp_coil_state": self.dssp_coil_state,
-        }
-        if param_dir is not None:
-            ff_kwargs["param_dir"] = str(param_dir)
-
-        self.forcefield = MCPUForceField(self.filtered, **ff_kwargs)
-        self.system = self.forcefield.create_system(self.filtered.topology)
+        self.forcefield_name = forcefield
+        self.forcefield = load_forcefield(
+            self.pdb_path, forcefield, forcefield_options,
+            param_set=param_set, param_dir=param_dir,
+            compute_dssp=self.compute_dssp, dssp_coil_state=self.dssp_coil_state,
+        )
+        check_move_weights(self.forcefield, self.move_weights, forcefield)
+        self.topology = self.forcefield.output_topology
+        self.top_path = trajectory_topology_path(
+            self.forcefield, self.pdb_path, self.pdb_path,
+            f"{self.output_prefix}_topology.pdb")
+        self.system = self.forcefield.create_system(self.topology)
         self.mapping = self.forcefield.inverse_mapping
 
         from pymcpu.config import apply_linker_energy_mask
@@ -227,7 +232,7 @@ class FoldingRunner:
             )
 
         self.simulation = Simulation(
-            self.filtered.topology, self.system, integrator
+            self.topology, self.system, integrator
         )
         self.simulation.full_energy_every_steps = self.full_energy_every_steps
         coords_angstroms = self.forcefield.coords[0] * 10.0
@@ -612,6 +617,7 @@ class FoldingRunner:
             kind="folding",
             checkpoint_type="folding",
             pdb_path=str(self.pdb_path),
+            forcefield=self.forcefield_name,
             reference_pdb=str(self.reference_pdb),
             temperatures=np.asarray([self.temperature], dtype=np.float64),
             n_targets=None,
@@ -672,7 +678,9 @@ class FoldingRunner:
             )
 
         # Restore coordinates / step / RNG
-        layout_error = checkpoint_layout_error(
+        layout_error = checkpoint_forcefield_error(
+            state.forcefield, self.forcefield_name, checkpoint_path
+        ) or checkpoint_layout_error(
             state.replica_coords, self.system.get_num_atoms(), checkpoint_path
         )
         if layout_error:

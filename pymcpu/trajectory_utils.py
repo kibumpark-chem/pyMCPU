@@ -10,7 +10,10 @@ from __future__ import annotations
 
 import logging
 import os
+from pathlib import Path
 from typing import Any
+
+import numpy as np
 
 logger = logging.getLogger(__name__)
 
@@ -323,3 +326,36 @@ def truncate_all_trajectories_on_resume(
             logger.warning(
                 f"[Trajectory] Unknown format, skipping truncation: {fname}"
             )
+
+
+def trajectory_topology_path(
+    forcefield: Any,
+    input_pdb: str | Path,
+    default: str | Path,
+    out_path: str | Path,
+    *,
+    write: bool = True,
+) -> str:
+    """Topology file to read this run's XTC trajectories against.
+
+    The XTC reporters write the force field's ``output_topology``. For MCPU
+    that is the input's heavy atoms, so ``default`` (an input PDB) is
+    returned unchanged. A force field that simulates fewer atoms, such as
+    backbone-only KORP, gets its topology and starting coordinates written to
+    ``out_path``, which is returned; read its trajectories against that file.
+    ``write=False`` returns the path without writing, for MPI ranks other
+    than the one that writes it.
+    """
+    import mdtraj as md
+
+    top = forcefield.output_topology
+    heavy = md.load_topology(str(input_pdb)).select("not element H").size
+    if top.n_atoms == heavy:
+        return str(default)
+    if not write:
+        return str(out_path)
+    xyz = np.zeros((1, top.n_atoms, 3), dtype=np.float32)
+    xyz[0, np.asarray(forcefield.inverse_mapping)] = np.asarray(forcefield.coords[0])
+    Path(out_path).parent.mkdir(parents=True, exist_ok=True)
+    md.Trajectory(xyz, top).save_pdb(str(out_path))
+    return str(out_path)
