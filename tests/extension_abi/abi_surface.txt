@@ -65,7 +65,6 @@ Context.mu_potential
 Context.native_contacts_bias_k
 Context.native_contacts_bias_n_target
 Context.neighbor_aabb_rebuilds
-Context.neighbor_dense_cap_fallbacks
 Context.neighbor_proxy_stats
 Context.output_internal_order
 Context.print_neighbor_audit

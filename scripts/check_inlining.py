@@ -41,7 +41,6 @@ import sys
 # at least one symbol, or the check cannot vouch for it (exit 2).
 HOT_FUNCTIONS = (
     "MuPotential::calculateEnergyChange_clist(",
-    "MuPotential::fallback_grid_overlap(",
 )
 
 # A called function is a frame the layer should not add when its own name

@@ -4,9 +4,9 @@ A rigid pivot does not re-measure the pairs it carries: the rotation keeps
 their distances. It rounds each carried coordinate to float, though, so a pair
 sitting on its contact cutoff can be carried across it. The contact list
 therefore also holds every contact pair less than 0.05 A outside its cutoff,
-and a rigid move re-decides each listed pair it carries. A move that leaves the
-neighbour grid re-decides them too: the listed ones, or every carried pair if
-there is no list.
+and a rigid move re-decides each listed pair it carries, or every carried pair
+if there is no list. A move far past the box the neighbour grids were built
+for is no different: the grids wrap, so it uses the same list.
 
 TYR1 CD2 and GLY6 CA, a contact pair, are placed just inside or just outside
 their contact distance; residues 0-6 are turned rigidly by small random angles (in
@@ -109,12 +109,11 @@ def test_every_carried_crossing_is_scored(outside: bool, refilled: bool) -> None
     [(None, False), (None, True), ("ignore_all", False)],
     ids=["unlisted", "listed", "masked"],
 )
-def test_a_carry_out_of_the_grid_is_scored_too(mask, listed: bool) -> None:
-    """Shifted 30 A, the segment leaves the neighbour grid, and the delta
-    takes the moved-vs-all path, which re-decides every carried pair, or with
-    a contact list (``listed``) the carried pairs it lists. Under a mask (on a
-    residue the pair is not in) no list is built, so ``masked`` re-decides
-    every carried pair too."""
+def test_a_carry_past_the_grid_box_is_scored_too(mask, listed: bool) -> None:
+    """Shifted 30 A, the segment passes the box the neighbour grids were
+    built for; its cells wrap, and the delta re-decides the carried pairs on
+    the contact list (built by the trial itself, or beforehand: ``listed``),
+    under a mask too (on a residue the pair is not in)."""
     ctx, coords, moved, i, j = _setup(False, mask)
     if listed:
         assert mcpu_core.Integrator(temperature=0.6).debug_force_pivot(ctx, 8, False)
@@ -127,10 +126,10 @@ def test_a_carry_out_of_the_grid_is_scored_too(mask, listed: bool) -> None:
     assert crossings >= 3
 
 
-def test_a_rejected_trial_out_of_the_grid_keeps_the_list() -> None:
-    """A move out of the neighbour grid cannot use the contact list, so the
-    list is dropped if the move is accepted. A rejected trial leaves it, and
-    the next move does not pay an O(N^2) rebuild."""
+def test_a_trial_past_the_grid_box_keeps_the_list() -> None:
+    """A trial far past the box the neighbour grids were built for uses the
+    contact list like any other: the next move does not pay an O(N^2)
+    rebuild."""
     ctx, coords, moved, _, _ = _setup(False)
     mu = ctx.mu_potential
     old = ctx.get_state()
@@ -150,15 +149,16 @@ def test_a_rejected_trial_out_of_the_grid_keeps_the_list() -> None:
 
     trial((0.0, 0.0, 0.5))  # builds the list
     built = mu.contact_list_rebuilds
-    trial((30.0, 0.0, 0.0))  # out of the grid, never committed
+    trial((30.0, 0.0, 0.0))  # past the grid box, never committed
     trial((0.0, 0.0, 0.5))
     assert mu.contact_list_rebuilds == built
 
 
-def test_an_accepted_move_out_of_the_grid_drops_the_list() -> None:
-    """Chignolin, hot and with large steps, so that moves out of the
-    neighbour grid are accepted (two in these 10k steps). Each must drop the
-    list, which the next move rebuilds: kept, it would be stale."""
+def test_accepted_moves_past_the_grid_box_keep_the_list() -> None:
+    """Chignolin, hot and with large steps, so that moves past the box the
+    neighbour grids were built for are accepted. The grids wrap, so the
+    contact list follows them: the running energy stays exact and the list
+    is built once."""
     traj = md.load(str(default_example_pdb()))
     heavy = traj.atom_slice(traj.topology.select("not element H"))
     ff = MCPUForceField(heavy)
@@ -174,7 +174,7 @@ def test_an_accepted_move_out_of_the_grid_drops_the_list() -> None:
         running = float(ctx.get_state().current_energy)
         full = float(ctx.energy_breakdown(True)["weighted_total"])
         assert abs(running - full) < 1e-3, (chunk, running, full)
-    assert mu.contact_list_rebuilds - rebuilds >= 3  # the first, then one per drop
+    assert mu.contact_list_rebuilds - rebuilds == 1
 
 
 @pytest.mark.parametrize("mask", [None, "ignore_all"], ids=["list", "masked"])
@@ -247,8 +247,7 @@ def test_the_drift_budget_rebuilds_the_list_in_time(capfd) -> None:
     carried distance by 2.1e-4 A and the 0.05 A band is used up after about
     230 accepted pivots. Pivot-only, with nothing resetting the running
     energy: it must still equal the full energy, and the list must have been
-    rebuilt on schedule. Small pivots keep every move inside the neighbour
-    grid, so no rebuild comes from a move that leaves it."""
+    rebuilt on schedule, never for a move that cannot use it."""
     traj = md.load(str(resolve_test_pdb()))
     heavy = traj.atom_slice(traj.topology.select("not element H"))
     ff = MCPUForceField(heavy)
@@ -266,7 +265,7 @@ def test_the_drift_budget_rebuilds_the_list_in_time(capfd) -> None:
         running = float(ctx.get_state().current_energy)
         full = float(ctx.energy_breakdown(True)["weighted_total"])
         assert abs(running - full) < 5e-3, (chunk, running, full)
-    assert "leaves the neighbour grid" not in capfd.readouterr().err
+    assert "cannot use the contact" not in capfd.readouterr().err
     accepted = integ.get_bb_accepted()
     assert accepted > 2000
     assert mu.contact_list_rebuilds - rebuilds_before >= accepted // 240 - 1

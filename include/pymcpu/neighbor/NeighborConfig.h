@@ -20,10 +20,6 @@ struct NeighborConfig {
     float margin_angstrom = -1.f; // <0 => 2*r_cut
     int margin_cells = -1;
 
-    std::uint64_t max_cells_total = 2'000'000ull;
-    int max_nx = 0;
-    int max_ny = 0;
-    int max_nz = 0;
 
 
     /// If true (default), the pairs a rigid pivot (``patch.is_rigid``) carries
@@ -76,9 +72,6 @@ struct NeighborProxyReport {
 
 struct NeighborStats {
     // --- lifecycle / policy ---
-    /// Trial moves whose coordinates left the grid bounds (counted only).
-    std::uint64_t num_trial_fallback = 0;
-    std::uint64_t num_dense_cap_fallback = 0;
     /// Times a cell of the Mu grid / an H-bond grid was asked to hold more
     /// atoms than its capacity; the grid then goes inactive until a rebuild
     /// fits (NeighborSystem::note_overflow_).
@@ -143,7 +136,7 @@ struct NeighborStats {
         std::fprintf(stderr,
             "[%s] steps=%llu | mu_r2=%llu mu_rcut=%llu "
             "hb_cand=%llu hb_geom=%llu cell_visits=%llu | "
-            "aabb_rebuild=%llu trial_fb=%llu\n",
+            "grid_rebuilds=%llu\n",
             t,
             static_cast<unsigned long long>(steps),
             static_cast<unsigned long long>(mu_num_pair_distance_checks),
@@ -151,8 +144,7 @@ struct NeighborStats {
             static_cast<unsigned long long>(hbond_num_candidates_iterated),
             static_cast<unsigned long long>(hbond_num_geom_checks),
             static_cast<unsigned long long>(neighbor_num_cell_visits),
-            static_cast<unsigned long long>(num_aabb_rebuild_accept),
-            static_cast<unsigned long long>(num_trial_fallback));
+            static_cast<unsigned long long>(num_aabb_rebuild_accept));
 
         std::fprintf(stderr,
             "[%s] derived: avg_mu_r2/step=%.1f avg_mu_rcut/step=%.1f "

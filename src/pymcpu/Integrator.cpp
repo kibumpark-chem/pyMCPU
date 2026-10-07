@@ -1937,11 +1937,6 @@ void MCIntegrator::run(Context& context, int num_steps, int step_offset)
         else if (tried_kic) move_kind = MoveKind::KIC;
         else if (tried_sc) move_kind = MoveKind::Sidechain;
 
-        if (move_patch.is_valid) {
-            if (!context.trial_in_bounds(proposal, move_patch))
-                ++context.neighborStats().num_trial_fallback;
-        }
-
         uint8_t accepted_bit = 0;
         if (move_patch.is_valid) {
             step_stats_.n_valid_moves += 1;

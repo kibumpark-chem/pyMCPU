@@ -2,6 +2,7 @@
 #include <pybind11/numpy.h>
 #include <pybind11/eigen.h> // Necessary for Eigen matrices
 #include <pybind11/stl.h>   // Necessary for std::vector
+#include <array>
 #include <sstream>
 #include <iomanip>
 
@@ -10,6 +11,7 @@
 #include "pymcpu/State.h"
 #include "pymcpu/System.h"
 #include "pymcpu/Context.h"
+#include "pymcpu/neighbor/OpenCellGrid.h"
 #include "pymcpu/EnergyWeights.h"
 #include "pymcpu/Integrator.h"
 
@@ -441,10 +443,6 @@ PYBIND11_MODULE(mcpu_core, m) {
              [](const Context& c) {
                  return c.neighborStats().num_aabb_rebuild_accept;
              })
-        .def("neighbor_dense_cap_fallbacks",
-             [](const Context& c) {
-                 return c.neighborStats().num_dense_cap_fallback;
-             })
         .def("hbond_index_ok",
              [](const Context& c) {
                  return c.neighbors().count_hbond_candidate_mismatches(c.getState().coords_soa) == 0;
@@ -572,7 +570,6 @@ PYBIND11_MODULE(mcpu_core, m) {
                      d["mu_grid_cell_capacity"] = OpenCellGrid::CELL_CAPACITY;
                  }
                  d["num_aabb_rebuild_accept"] = s.num_aabb_rebuild_accept;
-                 d["num_trial_fallback"] = s.num_trial_fallback;
                  d["num_reject_hard_disp"] = s.num_reject_hard_disp;
                  d["num_steps_executed"] = s.num_steps_executed;
                  d["total_steps"] = r.total_steps;
@@ -1058,6 +1055,59 @@ PYBIND11_MODULE(mcpu_core, m) {
         "type, LTO, FP policy and feature flags. Every value derives from a "
         "real macro -- see build_info() in src/bindings/bindings.cpp.");
 
+    // Test hook for the cell grid on its own: file the atoms of ``xyz``
+    // (3 x N, A) in a grid over the box [lo, hi), then list, for each probe
+    // (3 x M), the atoms one walk visits, in visit order. ``walk`` is
+    // "stencil" (for_each_neighbor), "spans" (the moved-aware stencil walk
+    // with no atom moved) or "within" (the radius walk, with ``radius``).
+    // Returns (lists, (nx, ny, nz), overflowed).
+    m.def("_cell_grid_walk",
+        [](py::array_t<float, py::array::c_style | py::array::forcecast> xyz,
+           float cell, float query_radius, std::array<float, 3> lo,
+           std::array<float, 3> hi, std::uint64_t max_cells,
+           py::array_t<float, py::array::c_style | py::array::forcecast> probes,
+           const std::string& walk, float radius) {
+            if (xyz.ndim() != 2 || xyz.shape(0) != 3 || probes.ndim() != 2 ||
+                probes.shape(0) != 3)
+                throw std::invalid_argument("xyz and probes must be 3 x N");
+            const auto a = xyz.unchecked<2>();
+            const auto p = probes.unchecked<2>();
+            const int n = static_cast<int>(xyz.shape(1));
+            BoxBounds b;
+            b.lo = Eigen::Vector3f(lo[0], lo[1], lo[2]);
+            b.hi = Eigen::Vector3f(hi[0], hi[1], hi[2]);
+            b.valid = true;
+            OpenCellGrid g(cell, n);
+            if (!g.configure(b, cell, max_cells, query_radius))
+                throw std::invalid_argument("invalid box");
+            for (int i = 0; i < n; ++i) g.insert(i, a(0, i), a(1, i), a(2, i));
+            const std::vector<std::uint8_t> none(static_cast<size_t>(g.num_cells()) + 8, 0);
+            std::vector<std::vector<int>> out(static_cast<size_t>(probes.shape(1)));
+            for (py::ssize_t k = 0; k < probes.shape(1); ++k) {
+                std::vector<int>& ids = out[static_cast<size_t>(k)];
+                auto span = [&](const int* id, const float*, const float*,
+                                const float*, int count) {
+                    ids.insert(ids.end(), id, id + count);
+                    return true;
+                };
+                if (walk == "stencil")
+                    g.for_each_neighbor(p(0, k), p(1, k), p(2, k),
+                                        [&](int j) { ids.push_back(j); });
+                else if (walk == "spans")
+                    g.for_each_neighbor_cell_span_while_unmoved(
+                        p(0, k), p(1, k), p(2, k), none.data(), span);
+                else if (walk == "within")
+                    g.for_each_cell_span_within_fast_unmoved(
+                        p(0, k), p(1, k), p(2, k), radius, none.data(), span);
+                else
+                    throw std::invalid_argument("unknown walk");
+            }
+            return py::make_tuple(out, py::make_tuple(g.nx(), g.ny(), g.nz()),
+                                  g.overflowed());
+        },
+        py::arg("xyz"), py::arg("cell"), py::arg("query_radius"), py::arg("lo"),
+        py::arg("hi"), py::arg("max_cells"), py::arg("probes"), py::arg("walk"),
+        py::arg("radius") = 0.f);
     m.def("reset_coord_sync_stats", []() { mcpu::coord_sync_stats().reset(); });
     m.def("coord_sync_stats", []() {
         const auto& s = mcpu::coord_sync_stats();
