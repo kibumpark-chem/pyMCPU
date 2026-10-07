@@ -543,7 +543,7 @@ void MCIntegrator::apply_pivot_at(Context& context, State& proposal, ProposalPat
     // is the one without fixed residues.
     bool rotate_n_term = (r < num_residues / 2);
     if (segmentContainsFixed(r + 1, num_residues)) rotate_n_term = true;
-    else if (segmentContainsFixed(1, r)) rotate_n_term = false;
+    else if (segmentContainsFixed(0, r)) rotate_n_term = false;
 
     int idx_N  = blocks[static_cast<size_t>(r)].bb_start;
     int idx_CA = blocks[static_cast<size_t>(r)].ca_atom();

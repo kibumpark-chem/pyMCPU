@@ -162,9 +162,11 @@ class TestFixedResiduesEnforcement:
         )
         assert not np.array_equal(coords_before, coords_after)
 
-    @pytest.mark.parametrize("end", ["last"])
+    @pytest.mark.parametrize("end", ["first", "last"])
     def test_pivot_leaves_a_fixed_chain_end_in_place(self, end) -> None:
-        """A fixed last residue sends every pivot to the N-terminal end."""
+        """An N-terminal pivot rotates residues [0, r), so a fixed first
+        residue must send every pivot to the C-terminal end (and a fixed
+        last residue every pivot to the N-terminal end)."""
         context, integrator, _ = _build_context_with_fixed([])
         n_res = context.get_system().get_num_residues()
         fixed = 0 if end == "first" else n_res - 1

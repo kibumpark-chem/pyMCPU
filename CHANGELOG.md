@@ -76,6 +76,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A fixed first residue stays in place.** A pivot that rotates the
+  N-terminal end moves residues 0 to r-1, but the fixed-residue check
+  looked at residues 1 to r-1 only, so a fixed residue 0 moved whenever
+  residue 1 was free (up to 1.3 A in 2,000 pivot steps on T4 lysozyme).
+  Such a pivot now rotates the C-terminal end, and is redrawn if that end
+  holds a fixed residue too. Runs that do not fix residue 0 are unchanged.
+
 - **The running energy is exact after a run, whatever changed before it.**
   `current_energy` is updated from each accepted move's delta, so it kept a
   constant offset until the next full recompute whenever something other than

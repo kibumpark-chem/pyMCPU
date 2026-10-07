@@ -625,7 +625,7 @@ private:
     // without one, or the shorter end when both are free.
     bool pivotTouchesFixed_(int r, int n_res) const noexcept {
         return isResidueFixed(r) ||
-               (segmentContainsFixed(1, r) && segmentContainsFixed(r + 1, n_res));
+               (segmentContainsFixed(0, r) && segmentContainsFixed(r + 1, n_res));
     }
     // Ramachandran pivot at r: it rotates the C-terminal end only, so r and
     // everything after it must be free.
