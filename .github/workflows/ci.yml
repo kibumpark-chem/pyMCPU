@@ -241,7 +241,8 @@ jobs:
           python -m pytest -q
           tests/physics/test_mu_pair_walk.py
           tests/physics/test_mu_delta_hotpath.py
-          tests/physics/test_mu_cell_size.py
+          tests/physics/test_mu_grid_membership.py
+          tests/physics/test_grid_overflow.py
           tests/physics/test_potential_delta_consistency.py
           tests/physics/forcefield/test_mu_*.py
           tests/physics/moves

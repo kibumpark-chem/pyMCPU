@@ -76,6 +76,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The x86-64-v2 build compiles again.** `CoordsSoA.h` included
+  `pair_r2.h` only inside its AVX2+FMA block, so a `MCPU_ARCH=v2` build failed
+  with "'pair_r2' was not declared" (the CI job for that tier had failed
+  since the pair-distance change). The include is now unconditional. The CI
+  job also named `tests/physics/test_mu_cell_size.py`, which the overflow-proof
+  grid removed; it now runs `test_mu_grid_membership.py` and
+  `test_grid_overflow.py` in its place. The default v3 build is unchanged.
+
 - **The init_only atom reorder works on a chain that ends in OXT.**
   `Context.set_atom_reorder_mode("init_only")` raised `RuntimeError:
   compute_init_only_atom_permutation: atom count mismatch after tree emit`
