@@ -37,14 +37,14 @@ The four checks
    for EACH build (a self-consistency check of the delta paths, not an
    A-vs-B one).
 
-   Why the 1e-5*|E| allowance: current main cannot meet a flat 1e-3. The
-   running energy is accumulated in float32, so it random-walks by about
-   one ULP per few accepted moves: main measures 2.9e-3 (t4l) and 3.3e-3
-   (actin) after 200k steps, 8.1e-3 (actin) after 1M (sqrt(5)x the 200k
-   value, i.e. a random walk), and 9.8e-3 for KORP on actin after 20k steps
-   (|E| ~ 9200, where one float32 ULP is already 9.8e-4). All of these are
-   below 1e-5 relative (<= 7e-6). A delta-path bug is systematic and grows
-   linearly instead -- see the validation notes for what it looks like.
+   Energy sums and the running total are double, so a correct build stays
+   within about 1e-10 of a full recompute (actin: 3e-11 after 1e7 steps;
+   KORP: exactly 0) and passes either criterion with room to spare. The
+   1e-5*|E| allowance is for reference builds from before that change,
+   which accumulated in float32 and random-walked past a flat 1e-3 (actin
+   8.1e-3 after 1M steps, KORP actin 9.8e-3 after 20k), still below 1e-5
+   relative. A delta-path bug is systematic and grows linearly instead --
+   see the validation notes for what it looks like.
    ``--running-rtol 0`` restores the flat absolute criterion.
    Cases: the ``--proteins`` structures (default chignolin and actin) with
    the default move mix, actin under an energy mask

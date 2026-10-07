@@ -95,18 +95,20 @@ control that:
    How often, measured in :meth:`~pymcpu.Simulation.step` calls, to do
    the full recompute. ``1`` (the default) recomputes after every call,
    which keeps ``context.get_state().current_energy`` exact -- the value
-   replica exchange reads for its acceptance test. Raising it trades
-   that exactness for speed and turns the recompute into a periodic
-   drift check.
+   replica exchange reads for its acceptance test. Energy sums are
+   double, so between recomputes the running total stays within about
+   1e-10 of a full one; raising it saves the recompute and turns it into
+   a periodic drift check.
 
 .. py:attribute:: pymcpu.Simulation.energy_drift_warn_atol
    :type: float
    :value: 0.001
 
    Absolute tolerance for the incremental-versus-recomputed comparison.
-   A larger disagreement logs a warning. Only checked on recompute
-   cycles, so raising :attr:`full_energy_every` also makes this check
-   less frequent.
+   A larger disagreement logs a warning. Rounding stays far below it, so
+   a warning points to a pair the incremental path missed or a stale
+   cache. Only checked on recompute cycles, so raising
+   :attr:`full_energy_every` also makes this check less frequent.
 
 .. py:attribute:: pymcpu.Simulation.steric_clash_events
    :type: int

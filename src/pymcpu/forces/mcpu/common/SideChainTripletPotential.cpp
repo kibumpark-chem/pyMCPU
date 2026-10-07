@@ -34,7 +34,7 @@ namespace mcpu::forces {
         const State& proposed_state, 
         const ProposalPatch& patch
     ) const {
-        float delta_energy = 0.0f;
+        double delta_energy = 0.0;
         
         const System& sys = context.getSystem();
 
@@ -63,7 +63,7 @@ namespace mcpu::forces {
                               get_bin(new_chi[2]), 
                               get_bin(new_chi[3]));
 
-            delta_energy += (e_new - e_old);
+            delta_energy += static_cast<double>(e_new) - static_cast<double>(e_old);
         }
 
         // Must scale down by 1000.0 to match Total E
@@ -73,8 +73,8 @@ namespace mcpu::forces {
     // ---------------------------------------------------------
     // THE TOTAL ENERGY CALCULATOR (Ground Truth)
     // ---------------------------------------------------------
-    float SidechainTripletPotential::calculateEnergy(const Context& context, const State& state) const {
-        float total_energy = 0.0f;
+    double SidechainTripletPotential::calculateEnergy(const Context& context, const State& state) const {
+        double total_energy = 0.0;
         const System& sys = context.getSystem();
         for (int r = 0; r < n_pos; ++r) {
             if (sys.is_residue_energy_ignored(r + 1)) continue;

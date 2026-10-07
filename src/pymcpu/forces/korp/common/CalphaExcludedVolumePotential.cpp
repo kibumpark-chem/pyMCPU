@@ -72,7 +72,7 @@ bool CalphaExcludedVolumePotential::pair_is_checked(int a, int b) const noexcept
     return std::abs(seq_number_[v] - seq_number_[u]) >= min_separation_;
 }
 
-float CalphaExcludedVolumePotential::calculateEnergy(
+double CalphaExcludedVolumePotential::calculateEnergy(
     const Context& /*context*/, const State& state) const
 {
     const int n = num_residues();

@@ -85,7 +85,7 @@ public:
     /// body and says so.
     virtual void permute_atom_indices(const AtomPermutation& perm) = 0;
 
-    virtual float calculateEnergy(
+    virtual double calculateEnergy(
         const Context& context,
         const State& state
     ) const = 0;
@@ -95,7 +95,7 @@ public:
     /// term that keeps incremental bookkeeping on the state rebuilds it from
     /// the same pass here, so the two are reset together; calculateEnergy
     /// leaves that bookkeeping alone.
-    virtual float resyncEnergy(const Context& context, const State& state) const {
+    virtual double resyncEnergy(const Context& context, const State& state) const {
         return calculateEnergy(context, state);
     }
 
@@ -136,7 +136,7 @@ public:
     }
 
     /// Map a total-energy sentinel to a RejectReason (used by evaluateTotalEnergy).
-    virtual RejectReason rejectionForEnergy(float /*energy*/) const noexcept {
+    virtual RejectReason rejectionForEnergy(double /*energy*/) const noexcept {
         return RejectReason::None;
     }
 };

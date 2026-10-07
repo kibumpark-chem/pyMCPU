@@ -56,7 +56,7 @@ namespace mcpu::forces {
             const ProposalPatch& patch
         ) const override;
 
-        float calculateEnergy(
+        double calculateEnergy(
             const Context& context, 
             const State& state
         ) const override;

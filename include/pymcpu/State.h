@@ -69,7 +69,7 @@ public:
     mutable bool mu_contact_list_prebuilt = false;
     /// Upper bound (A) on how far any pair's distance can have changed through
     /// accepted rigid carries since the list was last measured from coordinates.
-    mutable float mu_list_drift = 0.f;
+    mutable double mu_list_drift = 0.0;
     /// System::energy_mask_epoch() the list was built under. Masked pairs are
     /// never listed, so a list from another mask is stale.
     mutable std::uint64_t mu_list_mask_epoch = 0;
@@ -78,7 +78,7 @@ public:
     void mu_contact_invalidate() const {
         mu_contacts.invalidate();
         mu_contact_list_prebuilt = false;
-        mu_list_drift = 0.f;
+        mu_list_drift = 0.0;
     }
 
     [[nodiscard]] bool has_mu_contact_list() const noexcept {
@@ -103,7 +103,7 @@ public:
         hbond_cache.invalidate();
     }
 
-    float getEnergy() const noexcept { return current_energy; }
+    double getEnergy() const noexcept { return current_energy; }
 
     explicit State(int num_atoms, int num_residues)
         : coords_soa(num_atoms)
@@ -157,7 +157,7 @@ public:
     }
 
 private:
-    float current_energy = 0.0f;
+    double current_energy = 0.0;
     friend class Context;
     friend class MCIntegrator;
 };

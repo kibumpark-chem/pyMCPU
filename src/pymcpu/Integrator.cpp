@@ -311,7 +311,7 @@ void mark_ranges(ProposalPatch& patch, const System& system,
 
 } // namespace
 
-MCIntegrator::MCIntegrator(float temperature, float step_size_rad,
+MCIntegrator::MCIntegrator(double temperature, float step_size_rad,
                            float sidechain_step_size_rad)
     : temperature(temperature),
       step_size_rad(step_size_rad),
@@ -1787,7 +1787,7 @@ void MCIntegrator::run(Context& context, int num_steps, int step_offset)
     ensure_proposal_buffers(context);
 
     std::uniform_real_distribution<float> move_type_dist(0.0f, 1.0f);
-    const float beta = 1 / temperature;
+    const double beta = 1.0 / temperature;
 
     State& proposal = *proposal_;
     ProposalPatch& move_patch = patch_;
@@ -1982,7 +1982,7 @@ void MCIntegrator::run(Context& context, int num_steps, int step_offset)
                 mk.moved_atoms_sum += move_patch.moved_indices.size();
                 mk.n_steps += 1;
             }
-            const float delta_E = energy_change.delta_energy;
+            const double delta_E = energy_change.delta_energy;
             bool accept = false;
             if (kDebugMoves) {
                 std::fprintf(stderr,
@@ -2000,14 +2000,15 @@ void MCIntegrator::run(Context& context, int num_steps, int step_offset)
                 (void)coin_flip(rng);
                 if (kDebugMoves) std::fprintf(stderr, "[rng] step=%d clash_consume\n", step_offset + step);
             } else {
-                float total_beta_E = (delta_E * beta) - move_patch.log_jacobian_weight;
-                // float32 Mu pair sums can leave |ΔE|~1e-8 of either sign for a
-                // move whose true ΔE is 0, depending on summation order. Strict
-                // `> 0` would then consume a Metropolis coin_flip on one pair
-                // path only -> RNG desync -> cascading accept-bit divergence
-                // between equivalent evaluation paths. Treat tiny positive
-                // beta*ΔE as zero; threshold ≪ any physical contact.
-                constexpr float kMetropolisZeroEps = 1e-5f;
+                double total_beta_E = (delta_E * beta) - move_patch.log_jacobian_weight;
+                // Treat a tiny positive beta*dE as zero. A move whose true dE is 0
+                // (a pure rotation of an isolated piece, a contact-list and an
+                // all-pairs evaluation of the same pairs) can come out as
+                // +-1e-8 from float32 per-pair terms summed in a different
+                // order. Strict `> 0` would then draw a Metropolis coin_flip on
+                // one path and not the other, and the RNG streams would split.
+                // The threshold is far below any physical contact energy.
+                constexpr double kMetropolisZeroEps = 1e-5;
                 const bool need_flip = total_beta_E > kMetropolisZeroEps;
                 accept = (!need_flip || coin_flip(rng) < std::exp(-total_beta_E));
                 if (kDebugMoves) {
@@ -2046,7 +2047,7 @@ void MCIntegrator::run(Context& context, int num_steps, int step_offset)
                 tried_pivot ? "Pivot" : (tried_kic ? "KIC" : (tried_sc ? "Sidechain" : "Other"));
             last_is_rigid_ = move_patch.is_rigid;
             last_moved_indices_ = move_patch.moved_indices;
-            last_delta_e_ = accept ? delta_E : 0.f;
+            last_delta_e_ = accept ? delta_E : 0.0;
             
             // DIAGNOSTIC (MCPU_CLASH_TRACE=1): catch a hard-core violation at the move that
             // INTRODUCES it, not at the next full recompute thousands of steps later. The

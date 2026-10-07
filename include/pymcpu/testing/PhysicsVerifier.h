@@ -13,8 +13,8 @@ class MCIntegrator;
 
 struct PotentialDeltaCheck {
     int energy_group = -1;
-    float delta_incremental = 0.0f;
-    float delta_direct = 0.0f;
+    double delta_incremental = 0.0;
+    double delta_direct = 0.0;
     bool passed = false;
     std::string message;
 };

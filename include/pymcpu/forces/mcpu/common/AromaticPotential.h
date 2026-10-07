@@ -50,7 +50,7 @@ namespace mcpu::forces {
 
         void permute_atom_indices(const AtomPermutation& perm) override;
 
-        float calculateEnergy(
+        double calculateEnergy(
             const Context& context,
             const State& state
         ) const override;

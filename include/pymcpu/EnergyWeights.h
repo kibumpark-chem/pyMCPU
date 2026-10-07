@@ -120,11 +120,11 @@ struct EnergyWeights {
 
 struct EnergyBreakdown {
     /// Raw (unweighted) per-group energies from Potential::calculateEnergy.
-    std::unordered_map<int, float> raw_by_group;
+    std::unordered_map<int, double> raw_by_group;
     /// weight_for_group(g) * raw for each group.
-    std::unordered_map<int, float> weighted_by_group;
-    float raw_total = 0.0f;
-    float weighted_total = 0.0f;
+    std::unordered_map<int, double> weighted_by_group;
+    double raw_total = 0.0;
+    double weighted_total = 0.0;
 };
 
 }  // namespace mcpu

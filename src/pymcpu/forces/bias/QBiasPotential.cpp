@@ -93,7 +93,7 @@ void QBiasPotential::initializePairCache(
     }
 }
 
-float QBiasPotential::calculateEnergy(const Context& context, const State& state) const {
+double QBiasPotential::calculateEnergy(const Context& context, const State& state) const {
     const float k_bias = context.getQBiasK();
     if (k_bias <= 0.0f) {
         return 0.0f;
