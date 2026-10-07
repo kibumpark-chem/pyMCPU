@@ -115,11 +115,8 @@ attributes control it:
    replica-exchange drivers also recompute before every checkpoint save,
    and the YAML config sets it with ``full_energy_every_steps``.
    Assigning the old name ``full_energy_every`` raises ``AttributeError``.
-
-.. py:method:: pymcpu.Simulation.recompute_energy() -> float
-
-   Do that recompute now: replace ``current_energy`` with a full
-   recompute, check it for a clash and for drift, and return it.
+   :meth:`~pymcpu.Simulation.recompute_energy` does the same recompute on
+   demand.
 
 .. py:attribute:: pymcpu.Simulation.energy_drift_warn_atol
    :type: float
