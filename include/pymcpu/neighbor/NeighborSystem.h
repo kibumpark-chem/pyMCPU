@@ -420,9 +420,6 @@ public:
                 for (int i = 0; i < n_atoms_; ++i) {
                     if (in_mu_[static_cast<size_t>(i)]) mu_grid_->insert(i, coords);
                 }
-                // Bulk insert, then the occupied stencil (Mu grid only: the
-                // H-bond grids walk the full stencil, measured wall-neutral).
-                mu_grid_->grid().enable_occupied_stencil();
                 dense_active_ = !note_overflow_(*mu_grid_, "Mu",
                                                 stats_.mu_grid_overflows);
                 stats_.neighbor_offsets_count =
@@ -485,8 +482,6 @@ public:
         if (hb_ok &&
             hb_o_grid_->configure(b, cfg_) &&
             hb_h_grid_->configure(b, cfg_)) {
-            // Occupied stencil stays Off for HB (empty≈89% but wall-neutral;
-            // maintenance cost not worth enabling).
             hb_o_grid_->reset(n_atoms_);
             hb_h_grid_->reset(virtual_amide_h_
                 ? static_cast<int>(amide_donor_.size())
@@ -631,7 +626,6 @@ public:
         if (dense_active_ && mu_grid_) {
             mu_grid_->grid().verify_sync();
             mu_grid_->grid().verify_packed_coords(coords_new);
-            mu_grid_->grid().verify_occupied_stencil();
         }
         if (!hb_fallback_ && hb_o_grid_) {
             hb_o_grid_->grid().verify_sync();

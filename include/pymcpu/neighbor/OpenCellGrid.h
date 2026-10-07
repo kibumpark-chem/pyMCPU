@@ -9,7 +9,6 @@
 #include <cstdlib>
 #include <cstring>
 #include <limits>
-#include <unordered_set>
 #include <vector>
 
 #if defined(__AVX2__)
@@ -20,34 +19,6 @@
 #include "pymcpu/utils/CoordsSoA.h"
 
 namespace mcpu {
-
-/// Occupied/valid neighbor-cell list (R≤2 → ≤125 entries).
-struct NeighborCellList {
-    /// Production runs stencil radius 1 (cell size == cutoff), which needs 27
-    /// entries. kCap was 125 -- sized for radius 2 -- so ~78% of every entry was
-    /// padding that still occupied cache lines: valid_stencil_ + occupied_stencil_
-    /// came to 3.97 MB at sce, competing with the 8.66 MB topo_flag_ table for a
-    /// 35.75 MB shared L3. Deriving the cap from the max supported radius cuts
-    /// that ~4.5x.
-    ///
-    /// Raising kMaxStencilRadius to 2 restores the old capacity; the grid now
-    /// REFUSES to build a stencil that would not fit rather than silently
-    /// truncating it (see build_valid_stencil_), because a dropped neighbour cell
-    /// means dropped pairs and a wrong energy.
-    static constexpr int kMaxStencilRadius = 1;
-    static constexpr int kCap =
-        (2 * kMaxStencilRadius + 1) * (2 * kMaxStencilRadius + 1) *
-        (2 * kMaxStencilRadius + 1);
-    std::int16_t count = 0;
-    // FIX: was std::int16_t (max 32767) -- silently wrapped for any grid
-    // exceeding 32767 total cells, well within NeighborConfig::max_cells_total
-    // (2,000,000, NeighborConfig.h). A wrapped (negative) value sign-extended
-    // to size_t produced a wild out-of-bounds index into occupied_stencil_
-    // (confirmed via valgrind: "Invalid read ... not stack'd, malloc'd or
-    // freed" in build_occupied_stencil(), OpenCellGrid.h). int32_t comfortably
-    // covers the full configured cell-count range.
-    std::int32_t cells[kCap] = {};
-};
 
 struct BoxBounds {
     Eigen::Vector3f lo = Eigen::Vector3f::Zero();
@@ -168,114 +139,6 @@ public:
     [[nodiscard]] int cell_of(float x, float y, float z) const noexcept {
         return cell_index(x, y, z);
     }
-
-    /// Decode linear cell id to (ix,iy,iz). O(1). Assumes valid in-grid id.
-    void decode_cell(int c, int& ix, int& iy, int& iz) const noexcept {
-        iz = c % nz_;
-        const int t = c / nz_;
-        iy = t % ny_;
-        ix = t / ny_;
-    }
-
-    /**
-     * Visit in-grid neighbor cells of linear cell ``c``.
-     * With the occupied stencil on: occupied neighbors only. Else: the full
-     * stencil. O(stencil).
-     */
-    template <typename Func>
-    void for_each_neighbor_cell_of(int c, Func&& func) const {
-        if (!configured_ || c < 0 ||
-            c >= static_cast<int>(cell_count_.size()))
-            return;
-        const bool use_occ =
-            occupied_on_ && static_cast<size_t>(c) < occupied_stencil_.size();
-        if (use_occ) {
-            const auto& occ = occupied_stencil_[static_cast<size_t>(c)];
-            for (int k = 0; k < occ.count; ++k)
-                func(static_cast<int>(occ.cells[k]));
-            return;
-        }
-        if (neighbor_offsets_.empty()) return;
-        int ix0 = 0, iy0 = 0, iz0 = 0;
-        decode_cell(c, ix0, iy0, iz0);
-        for (const CellOffset& o : neighbor_offsets_) {
-            const int ix = ix0 + o.dx;
-            const int iy = iy0 + o.dy;
-            const int iz = iz0 + o.dz;
-            if (ix < 0 || iy < 0 || iz < 0 || ix >= nx_ || iy >= ny_ ||
-                iz >= nz_)
-                continue;
-            func((ix * ny_ + iy) * nz_ + iz);
-        }
-    }
-
-    /// Keep, for every cell, the list of occupied cells in its stencil, and
-    /// walk those instead of all 27 (the Mu grid; most of its stencil cells
-    /// are empty). Updated only when a cell turns empty or occupied.
-    /// O(N_CELLS x stencil).
-    void enable_occupied_stencil() {
-        occupied_on_ = true;
-        build_valid_stencil_();
-        build_occupied_stencil();
-    }
-    bool occupied_stencil_on() const noexcept { return occupied_on_; }
-
-    /// Rebuild occupied_stencil_ from cell_count_. O(N_CELLS × stencil).
-    void build_occupied_stencil() {
-        if (!occupied_on_) return;
-        // NOTE: this count-only staleness check is theoretically coarser than
-        // checking actual grid shape (nx_/ny_/nz_), but configure() always
-        // unconditionally clears valid_stencil_ (see configure(), below), so
-        // the "same total count, different shape" scenario this could in
-        // principle miss never actually arises via any reachable call path
-        // (verified).
-        if (valid_stencil_.size() != cell_count_.size()) build_valid_stencil_();
-        const size_t n_cells = cell_count_.size();
-        occupied_stencil_.assign(n_cells, NeighborCellList{});
-        for (size_t c = 0; c < n_cells; ++c) {
-            if (cell_count_[c] == 0) continue;
-            const auto& vs = valid_stencil_[c];
-            for (int k = 0; k < vs.count; ++k) {
-                const int nc = vs.cells[k];
-                // Defensive bounds check (matches the same guard already used
-                // in stencil_cell_became_occupied_/_empty_ below) -- belt and
-                // suspenders alongside the int32_t widening above.
-                if (nc < 0 || static_cast<size_t>(nc) >= occupied_stencil_.size())
-                    continue;
-                auto& s = occupied_stencil_[static_cast<size_t>(nc)];
-                if (s.count >= NeighborCellList::kCap) continue;
-                s.cells[s.count++] = static_cast<std::int32_t>(c);
-            }
-        }
-    }
-
-#ifndef NDEBUG
-    /// Verify occupied vs valid∩occupied. O(N_CELLS × stencil). Debug only.
-    void verify_occupied_stencil() const {
-        if (!occupied_on_) return;
-        if (valid_stencil_.size() != cell_count_.size() ||
-            occupied_stencil_.size() != cell_count_.size())
-            return;
-        for (size_t c = 0; c < cell_count_.size(); ++c) {
-            std::unordered_set<int> expected;
-            const auto& vs = valid_stencil_[c];
-            for (int k = 0; k < vs.count; ++k) {
-                const int nc = static_cast<int>(vs.cells[k]);
-                if (cell_count_[static_cast<size_t>(nc)] > 0)
-                    expected.insert(nc);
-            }
-            std::unordered_set<int> actual;
-            const auto& occ = occupied_stencil_[c];
-            for (int k = 0; k < occ.count; ++k)
-                actual.insert(static_cast<int>(occ.cells[k]));
-            if (expected != actual) {
-                std::fprintf(stderr,
-                    "occupied stencil mismatch: cell=%zu exp=%zu actual=%d\n",
-                    c, expected.size(), static_cast<int>(occ.count));
-            }
-        }
-    }
-#endif
 
     float cell_size() const noexcept { return cell_size_; }
     int nx() const noexcept { return nx_; }
@@ -767,15 +630,10 @@ public:
         // Clear atom membership (caller must re-insert)
         std::fill(atom_cell_.begin(), atom_cell_.end(), -1);
         precompute_neighbor_offsets_();
-        // Always start off; NeighborSystem turns it on for the Mu grid only.
-        occupied_on_ = false;
-        valid_stencil_.clear();
-        occupied_stencil_.clear();
         return true;
     }
 
     int stencil_radius() const noexcept { return stencil_radius_; }
-    [[nodiscard]] bool stencil_overflow() const noexcept { return stencil_overflow_; }
     float query_radius() const noexcept { return query_radius_; }
     std::size_t neighbor_offsets_count() const noexcept {
         return neighbor_offsets_.size();
@@ -786,8 +644,6 @@ public:
         std::fill(cell_count_.begin(), cell_count_.end(), 0);
         peak_cell_occupancy_ = 0;
         overflowed_ = false;
-        if (occupied_on_)
-            occupied_stencil_.assign(cell_count_.size(), NeighborCellList{});
     }
 
     inline int cell_index(float px, float py, float pz) const {
@@ -818,46 +674,6 @@ public:
             cell_atoms_.data() + static_cast<size_t>(c) * CELL_CAPACITY;
         const int count = cell_count_[static_cast<size_t>(c)];
         for (int k = 0; k < count; ++k) func(atoms[k]);
-    }
-
-    /**
-     * Visit every in-grid neighbor cell for query (x,y,z) using the precomputed
-     * open-boundary stencil (radius = ceil(query_radius/cell_size)).
-     */
-    template <typename Func>
-    void for_each_neighbor_cell(float x, float y, float z, Func&& func) const {
-        if (!configured_ || neighbor_offsets_.empty()) return;
-        const int ix0 = static_cast<int>(std::floor((x - bounds_.lo.x()) * inv_cell_));
-        const int iy0 = static_cast<int>(std::floor((y - bounds_.lo.y()) * inv_cell_));
-        const int iz0 = static_cast<int>(std::floor((z - bounds_.lo.z()) * inv_cell_));
-        for (const CellOffset& o : neighbor_offsets_) {
-            const int ix = ix0 + o.dx;
-            const int iy = iy0 + o.dy;
-            const int iz = iz0 + o.dz;
-            if (ix < 0 || iy < 0 || iz < 0 || ix >= nx_ || iy >= ny_ || iz >= nz_)
-                continue;
-            func((ix * ny_ + iy) * nz_ + iz);
-        }
-    }
-
-    /**
-     * Append unique linear cell ids from the Mu/HB stencil around (x,y,z).
-     * Dedup via stamp array (no hash set).
-     */
-    void collect_neighbor_cells(float x, float y, float z,
-                                std::uint32_t stamp,
-                                std::vector<std::uint32_t>& cell_stamp,
-                                std::vector<int>& unique_cells) const {
-        if (!configured_ || stamp == 0) return;
-        if (static_cast<std::uint64_t>(cell_stamp.size()) < num_cells()) {
-            cell_stamp.assign(static_cast<size_t>(num_cells()), 0u);
-        }
-        for_each_neighbor_cell(x, y, z, [&](int c) {
-            const size_t ck = static_cast<size_t>(c);
-            if (cell_stamp[ck] == stamp) return;
-            cell_stamp[ck] = stamp;
-            unique_cells.push_back(c);
-        });
     }
 
     void insert(int atom_id, float px, float py, float pz) {
@@ -1093,7 +909,6 @@ private:
     /// Insert atom at the front of its cell block (newest first). O(occ).
     void contiguous_add_front_(int atom, int cell, float px, float py, float pz) {
         int& count = cell_count_[static_cast<size_t>(cell)];
-        const bool was_empty = (count == 0);
         if (count >= CELL_CAPACITY) {
             // Leave the atom out and flag the grid; NeighborSystem retires
             // it until a rebuild fits (see overflowed()).
@@ -1118,8 +933,6 @@ private:
         z_base[0] = pz;
         ++count;
         peak_cell_occupancy_ = std::max(peak_cell_occupancy_, count);
-        // Only on empty→occupied, not on every add.
-        if (was_empty && occupied_on_) stencil_cell_became_occupied_(cell);
     }
 
     /// Remove atom from contiguous cell, preserving relative order. O(occ).
@@ -1165,88 +978,12 @@ private:
                     z_base[j] = z_base[j + 1];
                 }
                 --count;
-                // Only on occupied→empty.
-                if (count == 0 && occupied_on_) stencil_cell_became_empty_(cell);
                 return;
             }
         }
         std::fprintf(stderr,
             "ERROR: contiguous_remove: atom %d not found in cell %d\n", atom,
             cell);
-    }
-
-    /// Build per-cell in-bounds stencil. O(N_CELLS × stencil).
-    void build_valid_stencil_() {
-        const size_t n_cells = cell_count_.size();
-        stencil_overflow_ = false;
-        if (neighbor_offsets_.size() > static_cast<size_t>(NeighborCellList::kCap)) {
-            // Cell size smaller than the query radius pushed the stencil past
-            // radius kMaxStencilRadius. Refuse rather than truncate.
-            stencil_overflow_ = true;
-            valid_stencil_.clear();
-            occupied_stencil_.clear();
-            return;
-        }
-        valid_stencil_.assign(n_cells, NeighborCellList{});
-        for (size_t c = 0; c < n_cells; ++c) {
-            int ix0 = 0, iy0 = 0, iz0 = 0;
-            decode_cell(static_cast<int>(c), ix0, iy0, iz0);
-            auto& vs = valid_stencil_[c];
-            for (const CellOffset& o : neighbor_offsets_) {
-                const int ix = ix0 + o.dx;
-                const int iy = iy0 + o.dy;
-                const int iz = iz0 + o.dz;
-                if (ix < 0 || iy < 0 || iz < 0 || ix >= nx_ || iy >= ny_ ||
-                    iz >= nz_)
-                    continue;
-                if (vs.count >= NeighborCellList::kCap) {
-                    // Truncating here would silently drop neighbour cells, and
-                    // therefore pairs, producing a quietly wrong energy. Bail out
-                    // and let the caller fall back to an exact enumeration.
-                    stencil_overflow_ = true;
-                    return;
-                }
-                vs.cells[vs.count++] =
-                    static_cast<std::int32_t>((ix * ny_ + iy) * nz_ + iz);
-            }
-        }
-    }
-
-    /// Notify valid neighbors that cell is now occupied. O(stencil).
-    void stencil_cell_became_occupied_(int cell) {
-        if (static_cast<size_t>(cell) >= valid_stencil_.size()) return;
-        const auto& vs = valid_stencil_[static_cast<size_t>(cell)];
-        for (int k = 0; k < vs.count; ++k) {
-            const int nc = static_cast<int>(vs.cells[k]);
-            if (static_cast<size_t>(nc) >= occupied_stencil_.size()) continue;
-            auto& s = occupied_stencil_[static_cast<size_t>(nc)];
-            bool found = false;
-            for (int i = 0; i < s.count; ++i) {
-                if (s.cells[i] == static_cast<std::int32_t>(cell)) {
-                    found = true;
-                    break;
-                }
-            }
-            if (!found && s.count < NeighborCellList::kCap)
-                s.cells[s.count++] = static_cast<std::int32_t>(cell);
-        }
-    }
-
-    /// Notify valid neighbors that cell is now empty. O(stencil).
-    void stencil_cell_became_empty_(int cell) {
-        if (static_cast<size_t>(cell) >= valid_stencil_.size()) return;
-        const auto& vs = valid_stencil_[static_cast<size_t>(cell)];
-        for (int k = 0; k < vs.count; ++k) {
-            const int nc = static_cast<int>(vs.cells[k]);
-            if (static_cast<size_t>(nc) >= occupied_stencil_.size()) continue;
-            auto& s = occupied_stencil_[static_cast<size_t>(nc)];
-            for (int i = 0; i < s.count; ++i) {
-                if (s.cells[i] == static_cast<std::int32_t>(cell)) {
-                    s.cells[i] = s.cells[--s.count];
-                    break;
-                }
-            }
-        }
     }
 
     void precompute_neighbor_offsets_() {
@@ -1282,9 +1019,6 @@ private:
     float inv_cell_ = 1.f;
     float query_radius_ = 1.f;
     int stencil_radius_ = 1;
-    /// Set when the neighbour stencil does not fit NeighborCellList::kCap. The
-    /// stencil is then left empty and callers must not rely on it.
-    bool stencil_overflow_ = false;
     BoxBounds bounds_{};
     int nx_ = 0, ny_ = 0, nz_ = 0;
     bool configured_ = false;
@@ -1302,10 +1036,6 @@ private:
     std::vector<float> cell_z_;   ///< packed z; size n_cells_ * CELL_CAPACITY
     int peak_cell_occupancy_ = 0;
     bool overflowed_ = false;
-
-    bool occupied_on_ = false;
-    std::vector<NeighborCellList> valid_stencil_;
-    std::vector<NeighborCellList> occupied_stencil_;
 };
 
 /// The grid every term uses today: 48 slots per cell.

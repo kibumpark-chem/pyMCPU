@@ -60,6 +60,8 @@ struct QBiasWorkspace {
         bool new_value;
     };
     std::vector<PairUpdate> pending_updates;
+    /// Scratch for the pairs one move touches; refilled by every ΔE call.
+    std::vector<int> pairs_to_check;
 
     void clear() { pending_updates.clear(); }
 };
