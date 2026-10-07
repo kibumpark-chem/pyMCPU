@@ -21,6 +21,7 @@ silently ignored.
 from __future__ import annotations
 
 import inspect
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Mapping
 
 from pymcpu.forcefields.base import BaseForceField
@@ -33,6 +34,7 @@ __all__ = [
     "available_forcefields",
     "build_forcefield",
     "get_forcefield",
+    "load_forcefield",
     "register_forcefield",
 ]
 
@@ -101,6 +103,54 @@ def build_forcefield(
                 )
 
     return cls(cls.prepare_trajectory(trajectory), **options)
+
+
+def load_forcefield(
+    structure: "str | Path | md.Trajectory",
+    name: str = "mcpu08",
+    options: Mapping[str, Any] | None = None,
+    *,
+    param_set: str = "mcpu08",
+    param_dir: str | Path | None = None,
+    compute_dssp: bool = False,
+    dssp_coil_state: str = "C",
+) -> BaseForceField:
+    """Build the force field a run configuration names, from a PDB path or a
+    loaded trajectory.
+
+    The one place a config becomes a force field: the folding runner, both
+    replica-exchange engines and :class:`~pymcpu.sampling.EngineSession` all
+    call it, so they cannot disagree about which force field a config means.
+
+    ``param_set``, ``param_dir`` and the DSSP settings are top-level config
+    fields because they predate ``forcefield_options``, but they belong to
+    MCPU. They are forwarded to an MCPU force field (an explicit entry in
+    ``options`` wins) and refused for any other: KORP has no parameter set,
+    and silently dropping a ``param_dir`` someone set would hide a mistake.
+    """
+    import mdtraj as md
+    from pymcpu.forcefields.mcpu import MCPUForceField
+
+    cls = get_forcefield(name)
+    merged: dict[str, Any] = dict(options or {})
+    if issubclass(cls, MCPUForceField):
+        merged.setdefault("param_set", param_set)
+        merged.setdefault("compute_dssp", compute_dssp)
+        merged.setdefault("dssp_coil_state", dssp_coil_state)
+        if param_dir is not None:
+            merged.setdefault("param_dir", str(param_dir))
+    else:
+        if param_dir is not None or param_set != "mcpu08":
+            raise ValueError(
+                f"param_set/param_dir configure the MCPU force field and do "
+                f"not apply to forcefield {name!r}; remove them (its own "
+                f"options go in forcefield_options)"
+            )
+        if compute_dssp:
+            raise ValueError(
+                f"compute_dssp applies to the MCPU force field, not {name!r}")
+    trajectory = structure if isinstance(structure, md.Trajectory) else md.load(str(structure))
+    return build_forcefield(name, trajectory, merged)
 
 
 def _register_builtins() -> None:

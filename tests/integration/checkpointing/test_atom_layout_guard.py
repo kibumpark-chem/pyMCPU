@@ -160,6 +160,7 @@ def _bare_mpi_rex(system, checkpoint_dir: Path):
     rex = object.__new__(MPIReplicaExchange)  # only what _mpi_load_checkpoint reads
     rex.checkpoint_config = CheckpointConfig(checkpoint_dir=str(checkpoint_dir))
     rex.system = system
+    rex.forcefield_name = "mcpu08"
     rex.local_replica_indices = []
     rex.replicas = {}
     return rex

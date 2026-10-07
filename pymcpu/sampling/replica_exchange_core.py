@@ -24,7 +24,7 @@ import mdtraj as md
 import numpy as np
 
 from pymcpu import mcpu_core
-from pymcpu.forcefields.mcpu import MCPUForceField
+from pymcpu.forcefields import BaseForceField, load_forcefield
 from pymcpu.sampling.collective_variables import (
     NativeContactsCV,
     attach_native_contacts_bias_potential,
@@ -373,20 +373,27 @@ def build_system_and_cv(
     linker_residues: list[int],
     linker_energy_mode: str,
     native_contact_pairs: Sequence[Sequence[int]] | np.ndarray | None = None,
-) -> tuple[mcpu_core.System, MCPUForceField, md.Trajectory, np.ndarray, NativeContactsCV]:
-    """Load the structure, build the C++ System, and attach the native-contacts
-    bias force -- identical setup shared by the serial and MPI engines.
+    forcefield: str = "mcpu08",
+    forcefield_options: Mapping[str, Any] | None = None,
+    param_set: str = "mcpu08",
+    param_dir: str | None = None,
+    move_weights: Sequence[float] | None = None,
+) -> tuple[mcpu_core.System, BaseForceField, md.Topology, np.ndarray, NativeContactsCV]:
+    """Load the structure, build the configured force field and its C++
+    System, and attach the native-contacts bias force -- identical setup
+    shared by the serial and MPI engines.
 
-    Returns ``(system, forcefield, filtered_traj, coords_angstroms, q_cv)``.
+    Returns ``(system, forcefield, topology, coords_angstroms, q_cv)``, where
+    ``topology`` is the one the engine simulates (backbone-only for KORP).
     """
-    from pymcpu.config import apply_linker_energy_mask
+    from pymcpu.config import apply_linker_energy_mask, check_move_weights
 
-    traj = md.load(pdb_path)
-    indices_to_keep = traj.topology.select("not element H")
-    filtered_traj = traj.atom_slice(indices_to_keep)
-
-    forcefield = MCPUForceField(filtered_traj)
-    system = forcefield.create_system(filtered_traj.topology)
+    ff_name = forcefield
+    forcefield = load_forcefield(
+        pdb_path, ff_name, forcefield_options, param_set=param_set, param_dir=param_dir)
+    check_move_weights(forcefield, move_weights, ff_name)
+    topology = forcefield.output_topology
+    system = forcefield.create_system(topology)
     coords_angstroms = forcefield.coords[0] * 10.0
     n_res = system.get_num_residues()
 
@@ -424,12 +431,12 @@ def build_system_and_cv(
     )
     attach_native_contacts_bias_potential(system, q_cv)
 
-    return system, forcefield, filtered_traj, coords_angstroms, q_cv
+    return system, forcefield, topology, coords_angstroms, q_cv
 
 
 def build_replica_simulation(
     *,
-    filtered_traj: md.Trajectory,
+    topology: md.Topology,
     system: mcpu_core.System,
     temperature: float,
     seed: int,
@@ -456,7 +463,7 @@ def build_replica_simulation(
         integrator.set_seed(replica_seed(seed, replica_idx))
     if fixed_residues:
         integrator.set_fixed_residues(fixed_residues, n_res)
-    simulation = Simulation(filtered_traj.topology, system, integrator)
+    simulation = Simulation(topology, system, integrator)
     simulation.context.set_positions(coords_angstroms.T.astype(np.float32))
     simulation.context.set_native_contacts_bias(k_bias, float(n_target))
     simulation.context.calculate_total_energy(-1)

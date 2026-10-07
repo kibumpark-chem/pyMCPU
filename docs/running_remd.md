@@ -50,6 +50,28 @@ output_prefix: out/run1
 
 `examples/configs/template.yaml` shows the common keys with their defaults.
 
+## Force field
+
+`forcefield:` picks the force field, `mcpu08` (all-atom, the default) or
+`korp` (backbone-only); see [Force fields](api/forcefield.rst). KORP's own
+options go in `forcefield_options:`. KORP has no sidechains, so a KORP config
+must set the sidechain move weight to zero, or the run stops before it
+starts; `param_set` and `param_dir` belong to mcpu08 and are refused with
+KORP. Native-contact windows, fixed residues and `linker_residues` work with
+either, but contacts must use `contact_atom_mode: ca`.
+
+```yaml
+pdb: protein.pdb
+forcefield: korp
+forcefield_options:
+  map_path: /path/to/korp6Dv1.bin   # or set KORP_MAP_PATH
+  map_mmap: true                    # ranks on a node share one copy of the map
+move_weights: [0.5, 0.5, 0.0]       # pivot, KIC, sidechain
+temperatures: [0.40, 0.45, 0.50, 0.55]
+k_bias: 0
+output_prefix: out/korp1
+```
+
 ## Running on one process
 
 ```bash
@@ -114,6 +136,9 @@ part, `run1` for `output_prefix: out/run1`:
   window YY. A slot keeps its temperature and window while replicas move
   between slots; the `walker_id` column says which replica was there.
 - `run1_rex_stats.json`: exchange attempts and acceptance rates.
+- With `forcefield: korp`, `run1_topology.pdb`: the backbone-only topology
+  (and starting structure) the XTC files hold. Load them against this file,
+  not against `pdb`.
 - With `exchange_log: all`, `run1_exchange.csv` records every attempt. With
   `state_log_interval: K`, `run1_state.csv` records each slot's N, Q and
   energy every K cycles. With `hdf5: FILE`, the per-cycle samples go to FILE

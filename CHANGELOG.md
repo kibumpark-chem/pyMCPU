@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **KORP in `mcpu run` and the replica-exchange and folding runners.**
+  `forcefield: korp` with `forcefield_options` (`map_path`, `map_mmap`) now
+  runs KORP in folding and in replica exchange, serial and MPI. The runners,
+  and `EngineSession`, build the force field through one function,
+  `pymcpu.forcefields.load_forcefield`. A KORP config must set the sidechain
+  move weight to 0 (`move_weights: [0.5, 0.5, 0.0]`); otherwise the run stops
+  before it writes anything, with the weights to use. A run whose force field
+  simulates fewer atoms than the input writes `<prefix>_topology.pdb`; read
+  its XTC files against that. Checkpoints record the force field, and a
+  resume with a different one is refused (checkpoints from before count as
+  mcpu08).
 - `MuPotential.clist_fallbacks`: moves the contact list could not follow
   (a grid overflow, or a rigid move past the drift budget). Each accepted
   one costs an O(N^2) list rebuild, which is what slows hot replicas.
@@ -80,6 +91,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The runners ignored `forcefield`.** `mcpu run`, `run_from_config`,
+  `FoldingRunner` and both replica-exchange engines always built mcpu08, so
+  `forcefield: korp` in a config ran mcpu08 without a warning. Replica
+  exchange also ignored `param_set` and `param_dir`; they are now passed to
+  mcpu08, and refused with KORP. An unknown `forcefield` name now fails when
+  the config is loaded. mcpu08 runs are unchanged (bit-identical).
 - The neighbour grid's shape for a huge, infinite or NaN box: the cell
   count per axis went through an undefined float-to-int conversion (an
   atom at 1e12 A gave a 3x3x3 Mu grid on x86), and boxes near 1e9 A on

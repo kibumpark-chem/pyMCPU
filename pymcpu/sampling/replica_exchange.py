@@ -13,10 +13,12 @@ import numpy as np
 
 from pymcpu import mcpu_core
 from pymcpu.simulation import check_state_clash
+from pymcpu.trajectory_utils import trajectory_topology_path
 from pymcpu.checkpointing import (
     CHECKPOINT_FORMAT_VERSION,
     CheckpointConfig,
     checkpoint_cycle_filename,
+    checkpoint_forcefield_error,
     checkpoint_layout_error,
     find_latest_checkpoint,
     get_integrator_move_counters,
@@ -138,6 +140,10 @@ class ReplicaExchange:
       fixed_residues: list[int] | None = None,
       linker_residues: list[int] | None = None,
       linker_energy_mode: str = "ignore_all",
+      forcefield: str = "mcpu08",
+      forcefield_options: dict[str, Any] | None = None,
+      param_set: str = "mcpu08",
+      param_dir: str | Path | None = None,
       checkpoint_dir: str | Path | None = None,
       checkpoint_interval: int = 50,
       keep_last_n: int | None = 3,
@@ -219,7 +225,8 @@ class ReplicaExchange:
       self._exchange_records: list[ExchangeRecord] = []
       self._state_records: list[ReplicaState] = []
 
-      self.system, self.forcefield, self.filtered_traj, coords_angstroms, self.q_cv = (
+      self.forcefield_name = forcefield
+      self.system, self.forcefield, self.topology, coords_angstroms, self.q_cv = (
         build_system_and_cv(
           pdb_path,
           reference_pdb=self.reference_pdb,
@@ -231,6 +238,11 @@ class ReplicaExchange:
           linker_residues=self.linker_residues,
           linker_energy_mode=self.linker_energy_mode,
           native_contact_pairs=self.native_contact_pairs,
+          forcefield=forcefield,
+          forcefield_options=forcefield_options,
+          param_set=param_set,
+          param_dir=None if param_dir is None else str(param_dir),
+          move_weights=self.move_settings["move_weights"],
         )
       )
 
@@ -248,7 +260,8 @@ class ReplicaExchange:
       self._reporters_attached = False
       self.sample_writer = None
       # Topology for XTC truncation (mdtraj); PDB path is fine.
-      self.top_path = str(self.reference_pdb)
+      self.top_path = trajectory_topology_path(
+        self.forcefield, pdb_path, self.reference_pdb, f"{self.output_prefix}_topology.pdb")
       self.traj_dir = str(Path(self.output_prefix).parent)
 
     @property
@@ -344,6 +357,7 @@ class ReplicaExchange:
         "global_step": int(self._cycle),  # RE progress unit is cycle
         "seed": int(self.seed),
         "pdb_path": str(self.pdb_path),
+        "forcefield": self.forcefield_name,
         "reference_pdb": str(self.reference_pdb),
         "temperatures": np.asarray(self.temperatures, dtype=np.float64),
         "n_targets": np.asarray(self.n_targets, dtype=np.float64),
@@ -410,7 +424,9 @@ class ReplicaExchange:
       kind = checkpoint.get("kind", "replica_exchange")
       if kind != "replica_exchange":
         raise ValueError(f"Unsupported checkpoint kind: {kind!r}")
-      layout_error = checkpoint_layout_error(
+      layout_error = checkpoint_forcefield_error(
+        checkpoint.get("forcefield"), self.forcefield_name
+      ) or checkpoint_layout_error(
         checkpoint.get("replica_coords"), self.system.get_num_atoms()
       )
       if layout_error:
@@ -845,7 +861,7 @@ class ReplicaExchange:
           # Reporters are attached in run() so resume can truncate then append;
           # the tag's parent directory is created there (_attach_traj_reporters).
           simulation = build_replica_simulation(
-            filtered_traj=self.filtered_traj,
+            topology=self.topology,
             system=self.system,
             temperature=float(temperature),
             seed=self.seed,

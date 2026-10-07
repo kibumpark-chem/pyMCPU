@@ -93,6 +93,7 @@ def _make_minimal_folding_runner(
     )
     runner.contact_atom_mode = "ca"
     runner.system = MagicMock()
+    runner.forcefield_name = "mcpu08"
     runner.system.get_num_atoms.return_value = n_atoms
     runner.pdb_path = Path(pdb_path) if pdb_path is not None else None
     runner.reference_pdb = str(reference_pdb) if reference_pdb is not None else None

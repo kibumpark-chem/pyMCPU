@@ -30,11 +30,14 @@ import mdtraj as md
 import numpy as np
 
 from pymcpu import mcpu_core
-from pymcpu.config import EngineSpec, apply_linker_energy_mask, configure_integrator
-from pymcpu.forcefields import build_forcefield as _build_registered_forcefield
-from pymcpu.forcefields import get_forcefield
+from pymcpu.config import (
+    EngineSpec,
+    apply_linker_energy_mask,
+    check_move_weights,
+    configure_integrator,
+)
+from pymcpu.forcefields import load_forcefield
 from pymcpu.forcefields.base import BaseForceField
-from pymcpu.forcefields.mcpu import MCPUForceField
 from pymcpu.sampling.cv_factory import build_cv
 from pymcpu.simulation import Simulation, check_state_clash
 
@@ -62,26 +65,6 @@ def compute_fingerprint(
     return hashlib.sha256(payload).hexdigest()[:16]
 
 
-def _forcefield_options(spec: EngineSpec, *, include_dssp: bool = True) -> dict[str, Any]:
-    """Constructor options for the force field ``spec`` names.
-
-    `param_set` and friends are top-level EngineSpec fields because they
-    predate forcefield_options and existing configs set them there. They are
-    MCPU's, though, so they are only forwarded to MCPU -- KORP has no
-    parameter set and would reject them. An explicit entry in
-    forcefield_options still wins.
-    """
-    options: dict[str, Any] = dict(spec.forcefield_options)
-    if issubclass(get_forcefield(spec.forcefield), MCPUForceField):
-        options.setdefault("param_set", spec.param_set)
-        if include_dssp:
-            options.setdefault("compute_dssp", spec.compute_dssp)
-            options.setdefault("dssp_coil_state", spec.dssp_coil_state)
-        if spec.param_dir is not None:
-            options.setdefault("param_dir", spec.param_dir)
-    return options
-
-
 def build_forcefield(spec: EngineSpec) -> tuple[BaseForceField, md.Topology]:
     """Load ``spec.pdb`` and build the force field it names.
 
@@ -95,9 +78,19 @@ def build_forcefield(spec: EngineSpec) -> tuple[BaseForceField, md.Topology]:
     sidechains, so trajectories written from it must be read back against
     the returned topology.
     """
-    forcefield = _build_registered_forcefield(
-        spec.forcefield, md.load(str(spec.pdb)), _forcefield_options(spec))
+    forcefield = _load_spec_forcefield(spec, spec.pdb)
     return forcefield, forcefield.output_topology
+
+
+def _load_spec_forcefield(
+    spec: EngineSpec, structure: Any, *, compute_dssp: bool | None = None
+) -> BaseForceField:
+    return load_forcefield(
+        structure, spec.forcefield, spec.forcefield_options,
+        param_set=spec.param_set, param_dir=spec.param_dir,
+        compute_dssp=spec.compute_dssp if compute_dssp is None else compute_dssp,
+        dssp_coil_state=spec.dssp_coil_state,
+    )
 
 
 class EngineSession:
@@ -106,7 +99,7 @@ class EngineSession:
 
     def __init__(self, spec: EngineSpec):
         self.spec = spec
-        self._forcefield: MCPUForceField | None = None
+        self._forcefield: BaseForceField | None = None
         self._topology: md.Topology | None = None
         self._sim: Simulation | None = None
         self._cv: Any = None
@@ -116,7 +109,7 @@ class EngineSession:
     # ------------------------------------------------------------------
     # Lazy construction
     # ------------------------------------------------------------------
-    def _ensure_forcefield(self) -> MCPUForceField:
+    def _ensure_forcefield(self) -> BaseForceField:
         if self._forcefield is None:
             self._forcefield, self._topology = build_forcefield(self.spec)
         return self._forcefield
@@ -129,6 +122,7 @@ class EngineSession:
     def _ensure_sim(self) -> Simulation:
         if self._sim is None:
             ff = self._ensure_forcefield()
+            check_move_weights(ff, self.spec.move_weights, self.spec.forcefield)
             system = ff.create_system(self._topology)
             apply_linker_energy_mask(
                 system,
@@ -262,9 +256,7 @@ class EngineSession:
             # The session's own force field, so the coordinates come out in
             # its layout (KORP keeps only the backbone). DSSP is skipped: this
             # throwaway force field is used only for its coordinates.
-            local_ff = _build_registered_forcefield(
-                self.spec.forcefield, md.load(str(path)),
-                _forcefield_options(self.spec, include_dssp=False))
+            local_ff = _load_spec_forcefield(self.spec, path, compute_dssp=False)
             coords = (local_ff.coords[0] * 10.0).T.astype(np.float32)
         else:
             raise ValueError(
