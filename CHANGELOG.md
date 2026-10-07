@@ -154,15 +154,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   recompute after each `step()` resets it anyway). A pivot out of the
   neighbour grid re-decides them too: the listed ones, or every carried pair
   when there is no list. The running energy now equals the full energy after
-  every move, except under a residue energy mask, which takes a path
-  without the list. The Mu neighbour
-  cutoff grows by the band (5.0765 to 5.1265 Å on actin), and
-  `MuPotential.contact_list_rebuilds` counts rebuilds. The full Mu energy now
-  skips pairs beyond that cutoff, which makes the actin recompute about 40%
-  faster again. Moves inside the neighbour grid take the same time; a pivot
-  out of it with no list to go by (under a mask, say) takes up to 1.3x
-  longer. Trajectories match the previous build until the first such
-  crossing.
+  every move. The Mu neighbour cutoff grows by the band (5.0765 to 5.1265 Å on
+  actin), and `MuPotential.contact_list_rebuilds` counts rebuilds. The full Mu
+  energy now skips pairs beyond that cutoff, which makes the actin recompute
+  about 40% faster again. Moves inside the neighbour grid take the same time;
+  a pivot out of it with no list to go by (under a mask, say) takes up to 1.3x
+  longer. Trajectories match the previous build until the first such crossing.
 
 - **Replica exchange and folding read coordinates in the order they write
   them.** `pymcpu.sampling.get_coords`, which exchanges, checkpoints and the
@@ -481,26 +478,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **Runs under a residue energy mask no longer pay for moves that leave the
-  neighbour grid: masked actin is 27-46% faster.** Such a move cannot use
-  the contact list. Unmasked, a check on the grid rejects nearly all of
-  them for an overlap, but it was switched off under a mask, so every one
-  ran the all-pairs delta, about 1.3 ms on actin. The check now runs under
-  a mask too. It drops the pairs `ignore_all` switches off and keeps the
-  clashes `clash_only` keeps, exactly as the delta does, and reads the
-  mask in force at each move, so an overlap it finds is one the delta
-  finds. The all-pairs delta also leaves out moved atoms of masked
-  residues where all their terms are zero (the old positions in either
-  mode, and the new ones under `ignore_all`), so a masked tail that leaves
-  the grid on its own costs almost nothing. On masked actin (residues
-  0-39 `ignore_all`, 150k steps) the delta's distance tests fell from
-  186k to 3.9k and its share of the profile from 26% to under 1%.
-  Interleaved A/B against the previous main (n=3, user cycles/step,
-  150k steps): actin `ignore_all` 0-39 -27%, `ignore_all` 150-179 -31%,
-  `clash_only` 0-39 -46%, PGK1 `ignore_all` 0-39 -15%; unmasked actin and
-  PGK1, default mix and pivot-only, unchanged (instructions/step equal).
-  Bit-identical: the parity dump, and the final energies and accept bits
-  of every A/B run. `MCPU_FALLBACK_PRECHECK` is gone; the check always
-  runs.
+  neighbour grid: masked actin uses 27-46% fewer cycles per step.** Such a
+  move cannot use the contact list. Unmasked, a check on the grid rejects
+  nearly all of them for an overlap, but it was switched off under a mask, so
+  every one ran the all-pairs delta, about 1.3 ms on actin. The check now runs
+  under a mask too. It drops the pairs `ignore_all` switches off and keeps the
+  clashes `clash_only` keeps, exactly as the delta does, and reads the mask in
+  force at each move, so an overlap it finds is one the delta finds. The
+  all-pairs delta also leaves out moved atoms of masked residues where all
+  their terms are zero (the old positions in either mode, and the new ones
+  under `ignore_all`), so a masked tail that leaves the grid on its own costs
+  almost nothing. On masked actin (residues 0-39 `ignore_all`, 150k steps) the
+  delta's distance tests fell from 186k to 3.9k and its share of the profile
+  from 26% to under 1%. Interleaved A/B against the previous main (n=3, user
+  cycles/step, 150k steps): actin `ignore_all` 0-39 -27%, `ignore_all` 150-179
+  -31%, `clash_only` 0-39 -46%, PGK1 `ignore_all` 0-39 -15%; unmasked actin
+  and PGK1, default mix and pivot-only, unchanged (instructions/step equal).
+  Bit-identical: the parity dump, and the final energies and accept bits of
+  every A/B run.
 - **The KORP map is read into memory on 2 MiB pages by default.** The
   energy table is far larger than what 4 KiB pages keep in the TLB, so
   with the old memory-mapped default about 11% of every KORP step's
@@ -515,16 +510,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   per process (actin: RSS 422 -> 526 MB) and a longer start: ~0.15 s when
   the file is in the page cache, 10-17 s when it is read cold from NFS
   (the memory-mapped mode paid that time as 4 KiB page faults during the
-  first steps instead). The old behaviour, one copy shared through the page cache
-  by every process on a node, is `KORPForceField(..., map_mmap=True)`
-  (`forcefield_options: {map_mmap: true}` in a config) or
-  `load_korp_map(path, mmap=True)`; use it when many ranks share a node
-  short of memory. Loads of the same unchanged file in the same mode now
-  return one shared `KorpMap` per process, so several force fields or
-  systems hold one table. `sha256=True` works in both modes and, in the
-  default one, digests the bytes already read instead of reading the file
-  again. Bit-identical: the parity dump, the KORP checks of
-  `scripts/tolerance_check.py` (zero difference against the previous
+  first steps instead). The old behaviour, one copy shared through the page
+  cache by every process on a node, is `KORPForceField(..., map_mmap=True)`
+  (`forcefield_options: {map_mmap: true}` in a config) or `load_korp_map(path,
+  mmap=True)`; use it when many ranks share a node short of memory. Loads of
+  the same unchanged file in the same mode now return one shared `KorpMap` per
+  process, so several force fields or systems hold one table. `sha256=True`
+  works in both modes and, in the default one, digests the bytes already read
+  instead of reading the file again. Bit-identical: the parity dump, the KORP
+  checks of `scripts/tolerance_check.py` (zero difference against the previous
   main) and the accept counts and final energies of every A/B run match.
 - **The KIC root solver does less bookkeeping per solve.** The Sturm
   sequence is packed for vector evaluation without looking up each
@@ -827,8 +821,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   The contact walk's per-cell callback, which the compiler had kept out of
   line, is now inlined: cycles per step -4.9% to -5.7% on the default move
   mix and -7.6% to -8.6% pivot-only on T4 lysozyme, CA2, LDH-A, actin and
-  PGK1 (interleaved, n=3, against the parent). `scripts/check_inlining.py` disassembles the built extension and
-  fails if the hot functions call into the layer or a lambda.
+  PGK1 (interleaved, n=3, against the parent). `scripts/check_inlining.py`
+  disassembles the built extension and fails if the hot functions call into
+  the layer or a lambda.
 
 - **Ordinary runs no longer print a Mu contact-list NOTE.** The engine
   printed "NOTE: Mu move #1 that cannot use the contact list ..." to stderr
@@ -956,8 +951,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   * The clash-first pass tests first the atoms that overlapped in recent
     rejected moves, then the moved atoms from the end of the move's list
     (for a pivot, side chains before backbone). It used to test about 30%
-    of a rejected actin pivot's atoms before it found the overlap. -12% and -20% on actin; chignolin's moves
-    are too small for the pass.
+    of a rejected actin pivot's atoms before it found the overlap. -12% and
+    -20% on actin; chignolin's moves are too small for the pass.
   * Both walks test eight slots of a cell at once against the cutoff (AVX2,
     in the default `v3` build) and look at the survivors one by one, as
     before; they used to branch on every slot. They also gather the cells
@@ -1206,11 +1201,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `MuPotential` properties and the `MCPU_MM_CLASH_MARGIN` and
   `MCPU_MM_DOUBLE_BOUNDARY` environment variables. They were experiments for
   the rigid-move clash problem (see Changed), and only one Mu pair walk,
-  since removed, read them. The double-boundary check had become the default check without
-  its prefilter, so it changed only speed. The margin rejected rigid moves
-  that have no clash, on that one path only, so a masked run's trajectory
-  depended on which path a move took. Runs that did not set them are
-  bit-identical.
+  since removed, read them. The double-boundary check had become the default
+  check without its prefilter, so it changed only speed. The margin rejected
+  rigid moves that have no clash, on that one path only, so a masked run's
+  trajectory depended on which path a move took. Runs that did not set them
+  are bit-identical.
 - `MCPUAtom.to_write` and `MCPUAtom.is_sidechain`. They existed to tell
   glycine's second CA slot (see Changed) apart from real atoms. `to_write`
   was then false only for explicit amide hydrogens, exactly when
@@ -1236,7 +1231,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Context.clash_first_min_moved()` atoms (set with
   `set_clash_first_min_moved`). The other modes are gone: off (`0`), the
   27-cell stencil with a point-to-box cull (`1`, measured slower) and every
-  moved atom (`2`), with the stencil walker only mode `1` used.
+  moved atom (`2`). Mode `1` was the only user of the 27-cell stencil walker,
+  which goes too.
 - **The Mu Verlet neighbour list.** It was opt-in (skin > 0), ran in no
   default run and was 22-28x slower than the default on actin and an
   8k-atom protein; the live Mu contact list now does the reuse it was meant
@@ -1246,17 +1242,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `verlet_partial_threshold`, `set_invalidate_verlet_on_pivot_accept`,
   `invalidate_verlet_on_pivot_accept`, `maybe_rebuild_verlet` and
   `invalidate_verlet_pivot_accept`; the environment variables
-  `MCPU_MU_SKIN` and `MCPU_VERLET_PARTIAL_THRESHOLD`; the `neighbor_proxy_stats()`
-  keys `mu_skin`, `mu_verlet_enabled`, `invalidate_verlet_on_pivot_accept`,
-  `num_verlet_*`, `num_pivot_accepts*`, `verlet_*`, `verlet_use_rate`,
-  `rebuild_rate_per_step`, `low_use_rate` and `high_rebuild_rate` (also from
-  its `derived` dict); the `Integrator.step_stats()` keys `verlet_used`,
-  `verlet_fallback_cell`, `verlet_rebuilds`, `verlet_partial_rebuilds`,
-  `verlet_partial_affected_sum`, `verlet_stats`, `verlet_use_rate` and
-  `verlet_rebuild_rate_per_step`; the `verlet_mode` and `skin` fields of the
-  `MCPU_DEBUG_MOVES` log; and `scripts/parity_verlet_vs_cellonly.py`.
-  Scripts that called `set_mu_skin(0.0)` only restated the default and can
-  drop the call. Results are bit-identical.
+  `MCPU_MU_SKIN` and `MCPU_VERLET_PARTIAL_THRESHOLD`; the
+  `neighbor_proxy_stats()` keys `mu_skin`, `mu_verlet_enabled`,
+  `invalidate_verlet_on_pivot_accept`, `num_verlet_*`, `num_pivot_accepts*`,
+  `verlet_*`, `verlet_use_rate`, `rebuild_rate_per_step`, `low_use_rate` and
+  `high_rebuild_rate` (also from its `derived` dict); the
+  `Integrator.step_stats()` keys `verlet_used`, `verlet_fallback_cell`,
+  `verlet_rebuilds`, `verlet_partial_rebuilds`, `verlet_partial_affected_sum`,
+  `verlet_stats`, `verlet_use_rate` and `verlet_rebuild_rate_per_step`; the
+  `verlet_mode` and `skin` fields of the `MCPU_DEBUG_MOVES` log; and
+  `scripts/parity_verlet_vs_cellonly.py`. Scripts that called
+  `set_mu_skin(0.0)` only restated the default and can drop the call. Results
+  are bit-identical.
 - `Context.set_proxy_print_every()`. The 0.1.0 notes list it as removed, but
   the deprecated no-op binding was still there; it is gone now.
 - **The cell-pair Mu walk.** `calculateEnergyChange_fast` carried a second
@@ -1271,12 +1268,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `cell_pair_breakdown` and `pivot_mu_breakdown` entries of
   `Integrator.step_stats()` (the latter held only cell-pair counters by
   then: `cell_pairs`, `cell_pairs_empty`, `n_groups`, `group_atoms`,
-  `cell_pair_evals` and the averages and fractions built from them); the `mu_span_slots_scanned` and
-  `mu_stencil_cells_culled` entries of `Context.neighbor_proxy_stats()`;
-  and `scripts/parity_cell_pair_vs_per_atom.py`. `MCPU_CONTACT_LIST=0`
-  now sends every Mu move to the all-pairs moved-vs-all delta, an exact
-  reference that costs O(n_moved x N) per move, for checks only. Each
-  `Context` is about 200 KB smaller. Default runs are bit-identical.
+  `cell_pair_evals` and the averages and fractions built from them); the
+  `mu_span_slots_scanned` and `mu_stencil_cells_culled` entries of
+  `Context.neighbor_proxy_stats()`; and
+  `scripts/parity_cell_pair_vs_per_atom.py`. `MCPU_CONTACT_LIST=0` now sends
+  every Mu move to the all-pairs moved-vs-all delta, an exact reference that
+  costs O(n_moved x N) per move, for checks only. Each `Context` is about 200
+  KB smaller. Default runs are bit-identical.
 - **The second, hand-mirrored copy of the Mu pair rules.** `MuPotential`
   could decide which pairs clash or make contacts either from the per-pair
   flag table built in `cache_necessary_data` (the default) or by decoding

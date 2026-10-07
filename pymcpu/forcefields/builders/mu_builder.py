@@ -3,9 +3,8 @@
 Assembles the C++ ``mcpu_core.MuPotential`` energy term: loads the MCPU08
 atom-type/radius lookup table and the raw contact-energy matrix, computes the
 coordinate-independent clash/contact eligibility masks consumed by the C++
-engine, and includes a Python port of the
-relevant parts of legacy MCPU's ``pdb_util.h`` atom-classification logic that
-those computations depend on.
+engine, and includes a Python port of the relevant parts of legacy MCPU's
+``pdb_util.h`` atom-classification logic that those computations depend on.
 """
 
 from __future__ import annotations

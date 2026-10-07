@@ -99,8 +99,6 @@ void TripeptideSolver::initialize(
     b_ang0 = b_ang;
     t_ang0 = t_ang;
 
-    using Vector5d = Eigen::Matrix<double, 5, 1>;
-
     Eigen::Vector3d rr_c1(0.0, 0.0, 0.0);
     Eigen::Vector3d axis(1.0, 0.0, 0.0);
 

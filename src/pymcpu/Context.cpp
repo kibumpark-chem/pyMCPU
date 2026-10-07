@@ -251,14 +251,12 @@ void Context::computeTorsions() {
         const int n   = blocks[r].bb_start;
         const int ca  = blocks[r].ca_atom();
         const int c   = blocks[r].c_atom();
-        const int o   = blocks[r].o_start;
         const int n_prev = blocks[r - 1].bb_start;
         const int ca_prev = blocks[r - 1].ca_atom();
         const int c_prev = blocks[r - 1].c_atom();
         const int o_prev = blocks[r - 1].o_start;
         const int n_next = blocks[r + 1].bb_start;
         const int ca_next = blocks[r + 1].ca_atom();
-        const int c_next = blocks[r + 1].c_atom();
         const int o_next = blocks[r + 1].o_start;
 
         float phi = GeometryUtils::calculate_dihedral(
