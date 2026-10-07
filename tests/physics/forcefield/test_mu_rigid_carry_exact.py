@@ -112,8 +112,9 @@ def test_every_carried_crossing_is_scored(outside: bool, refilled: bool) -> None
 def test_a_carry_out_of_the_grid_is_scored_too(mask, listed: bool) -> None:
     """Shifted 30 A, the segment leaves the neighbour grid, and the delta
     takes the moved-vs-all path, which re-decides every carried pair, or with
-    a contact list (``listed``) the carried pairs it lists. Under a mask (on
-    a residue the pair is not in) there is no list."""
+    a contact list (``listed``) the carried pairs it lists. Under a mask (on a
+    residue the pair is not in) no list is built, so ``masked`` re-decides
+    every carried pair too."""
     ctx, coords, moved, i, j = _setup(False, mask)
     if listed:
         assert mcpu_core.Integrator(temperature=0.6).debug_force_pivot(ctx, 8, False)
@@ -240,7 +241,6 @@ def test_a_pair_under_its_hard_core_keeps_its_contact_energy(mask) -> None:
     assert delta == pytest.approx(e_new - e_outside, abs=1e-4)
 
 
-@pytest.mark.slow
 def test_the_drift_budget_rebuilds_the_list_in_time(capfd) -> None:
     """Actin run 1000 A from the origin (frame_offset 0 keeps the engine
     there), where a float step is up to 1.2e-4 A, so a pivot can move a

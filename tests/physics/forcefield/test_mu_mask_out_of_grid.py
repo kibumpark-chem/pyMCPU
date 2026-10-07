@@ -7,8 +7,9 @@ for the all-pairs delta. These tests pin down that, under a mask:
 * the grid check rejects exactly the overlaps the delta would (ignore_all
   switches a masked pair off, clash_only keeps its clash), and reads the mask
   in force at the time of the move, not the one of an earlier move;
-* the all-pairs delta, which leaves out moved atoms of ignore_all residues,
-  still equals the change in the full energy.
+* the all-pairs delta, which leaves out the moved atoms of masked residues
+  where all their terms are zero (their old positions under either mode, the
+  new ones under ignore_all too), still equals the change in the full energy.
 
 The trial: the atoms a psi pivot at residue 5 of chignolin moves, carried
 100 A out of the grid, except one sidechain atom of residue 8 left 0.6 A
@@ -125,6 +126,22 @@ def test_out_of_grid_trial_under_a_mask(heavy, trial, residues, mode, clash) -> 
         assert distance_checks == 0
     else:
         assert distance_checks > 0
+
+
+@pytest.mark.parametrize("residues", [[TIP_RES], TAIL], ids=["tip", "tail"])
+def test_a_clash_only_trial_that_clears_the_grid(heavy, trial, residues) -> None:
+    """The same trial with the tip carried along, so nothing overlaps. Under
+    clash_only the all-pairs delta runs, with the masked moved atoms in its
+    new half only, and still equals the change in the full energy."""
+    coords, _, moved = trial
+    new_coords = coords.copy()
+    new_coords[0, moved] += np.float32(SHIFT_A)
+    sim = _sim(heavy, coords)
+    _set_mask(sim, residues, "clash_only")
+    check, distance_checks = _check(sim, new_coords, moved)
+    assert check.passed, check.message
+    assert check.delta_incremental < CLASH
+    assert distance_checks > 0
 
 
 def test_the_grid_check_follows_mask_changes(heavy, trial) -> None:
