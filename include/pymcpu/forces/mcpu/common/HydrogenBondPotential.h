@@ -55,8 +55,19 @@ namespace mcpu::forces {
             const System& sys
         ) const;
 
-        // Fill state.hbond_cache with every nonzero pair of `state`, which
-        // must be the accepted state the neighbour grids describe.
+        // evaluate_directional, plus in `slack` how much ledger drift
+        // (HBondStateCache::drift) the score is certain to survive under
+        // rigid carries; see the .cpp.
+        float evaluate_with_slack(int r_don, int r_acc, const State& state, const System& sys,
+                                  float& slack) const;
+
+        // The one body of both (`slack` is null unless kSlack).
+        template <bool kSlack>
+        float evaluate_(int r_don, int r_acc, const State& state, const System& sys, float* slack) const;
+
+        // Fill state.hbond_cache with every listed pair of `state` (H...O
+        // within NeighborSystem::kHBondListA), with its energy and slack;
+        // `state` must be the accepted state the neighbour grids describe.
         void build_cache_(const Context& context, const State& state) const;
 
         // Debug check behind HBondWorkspace::ledger_check.

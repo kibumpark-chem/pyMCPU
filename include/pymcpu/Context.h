@@ -129,7 +129,7 @@ struct HBondWorkspace {
     // nonzero, against the cache generation it read. aff_list (above) names
     // the residues whose pairs it replaces. Checked and consumed by
     // HBondPotential::commitAcceptedMove.
-    struct PendingPair { int d, a; float e; };
+    struct PendingPair { int d, a; float e, fresh_until; };
     std::vector<PendingPair> pending;
     // The ledger drift the proposed state would have if accepted.
     float pending_drift = 0.f;

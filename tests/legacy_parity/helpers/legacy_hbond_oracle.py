@@ -222,7 +222,7 @@ class LegacyHBondOracle:
         # CA-CA orientation prefilter (hbonds.h ~409-423: d_CA_n0=D2(donor5,acceptor3),
         # d_CA_0p=D2(donor2,acceptor6), d_CA_np=D2(donor5,acceptor6), d_CA_00=D2(donor2,acceptor3);
         # donor5=don.prev_CA, donor2=don.CA, acceptor3=acc.CA, acceptor6=acc.next_CA.
-        # Matches the current (already-correct) C++ is_hydrogen_bond() exactly.)
+        # Matches the current (already-correct) C++ passes_ca_geometry_gate() exactly.)
         min1 = min(
             float(np.sum((don.prev_CA - acc.CA) ** 2)),
             float(np.sum((don.prev_CA - acc.next_CA) ** 2)),

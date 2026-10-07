@@ -14,7 +14,8 @@
 /// A residue rarely has more than three. Listing the pairs just outside the
 /// 2.5 A H-bond cutoff lets a rigid move re-decide each pair it carries;
 /// `drift` bounds how far the unlisted ones can have moved since they were
-/// last measured (see HBondPotential::calculateEnergyChange).
+/// last measured, and each entry's `fresh_until` is the drift up to which
+/// its energy is still exact (see HBondPotential::calculateEnergyChange).
 ///
 /// Like KorpStateCache, a copy starts EMPTY (a copied State has its
 /// coordinates changed without telling the cache), and a move carries the
@@ -31,6 +32,10 @@ public:
     struct Entry {
         std::int32_t partner;
         float energy;
+        /// A rigid move may carry the pair at `energy` while the ledger's
+        /// drift stays at or below this: the drift when the pair was scored,
+        /// plus its slack (HBondPotential::evaluate_with_slack).
+        float fresh_until;
     };
 
     HBondStateCache() = default;
@@ -86,24 +91,32 @@ public:
         }
         return 0.f;
     }
-    void add(int d, int a, float e) {
-        don_[static_cast<std::size_t>(d)].push_back(Entry{a, e});
-        acc_[static_cast<std::size_t>(a)].push_back(Entry{d, e});
+    void add(int d, int a, float e, float fresh_until) {
+        don_[static_cast<std::size_t>(d)].push_back(Entry{a, e, fresh_until});
+        acc_[static_cast<std::size_t>(a)].push_back(Entry{d, e, fresh_until});
     }
-    /// Unlist every pair with d as donor.
-    void clear_donor(int d) noexcept {
-        auto& row = don_[static_cast<std::size_t>(d)];
-        for (const Entry& e : row) drop_(acc_[static_cast<std::size_t>(e.partner)], d);
-        row.clear();
-    }
-    /// Unlist every pair with a as acceptor.
-    void clear_acceptor(int a) noexcept {
-        auto& row = acc_[static_cast<std::size_t>(a)];
-        for (const Entry& e : row) drop_(don_[static_cast<std::size_t>(e.partner)], a);
-        row.clear();
+    /// Unlist every pair with r as donor or acceptor, except those `keep`
+    /// accepts. keep(entry) sees each of r's entries once, with the other
+    /// residue as partner, and must give both copies of a pair one answer.
+    template <class Keep>
+    void unlist_except(int r, Keep keep) {
+        filter_(don_[static_cast<std::size_t>(r)], acc_, r, keep);
+        filter_(acc_[static_cast<std::size_t>(r)], don_, r, keep);
     }
 
 private:
+    template <class Keep>
+    static void filter_(std::vector<Entry>& row, std::vector<std::vector<Entry>>& mirror, int r, Keep& keep) {
+        std::size_t kept = 0;
+        for (std::size_t k = 0; k < row.size(); ++k) {
+            if (keep(row[k])) {
+                row[kept++] = row[k];
+            } else {
+                drop_(mirror[static_cast<std::size_t>(row[k].partner)], r);
+            }
+        }
+        row.resize(kept);
+    }
     static void drop_(std::vector<Entry>& row, int partner) noexcept {
         for (std::size_t k = 0; k < row.size(); ++k) {
             if (row[k].partner == partner) {

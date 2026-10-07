@@ -1,5 +1,7 @@
 #pragma once
 
+#include <algorithm>
+#include <array>
 #include <Eigen/Dense>
 #include "pymcpu/utils/geometry_utils.h"
 #include "pymcpu/utils/virtual_amide_h.h"
@@ -37,7 +39,8 @@ struct HBondAcceptors {
     Eigen::Vector3f prev_CA;
 };
 
-constexpr float HBOND_CUTOFF_SQUARED = 2.5f * 2.5f;
+constexpr float HBOND_CUTOFF = 2.5f;
+constexpr float HBOND_CUTOFF_SQUARED = HBOND_CUTOFF * HBOND_CUTOFF;
 constexpr float HBOND_ORIENTATION_CUTOFF_SQUARED_HELIX = 5.8f * 5.8f;
 constexpr float HBOND_ORIENTATION_CUTOFF_SQUARED_HELIX_ALL = 5.5f * 5.5f;
 constexpr float HBOND_ORIENTATION_CUTOFF_SQUARED_SHEET = 6.0f * 6.0f;
@@ -186,32 +189,38 @@ namespace HydrogenBondUtils {
         return true;
     }
 
+    /// The angle bins' edges, cos(20 deg * k) for k = 1..9, and the band
+    /// around each edge in which angle_bin_from_cos bins by acos instead.
+    inline constexpr float kBinEdgeCos[9] = {
+        0.93969262f, 0.76604444f, 0.5f, 0.17364818f, -0.17364818f,
+        -0.5f, -0.76604444f, -0.93969262f, -1.0f};
+    inline constexpr float kBinEdgeBand = 1e-4f;
+    /// The band around 0 in which hydrogen_bond_indices decides the CA-CA
+    /// orientation by acos instead of by the sign of its cosine.
+    inline constexpr float kCacaSignBand = 1e-4f;
+
     /// int(angle / HBOND_BIN_SIZE) for angle = acos(c), without the acos when c is
     /// clear of every bin edge. Away from an edge the bin follows from comparing c
     /// with cos(k * 20 deg); within 1e-4 of one (where acos rounding could decide
     /// the bin) it falls back to the acos, so the result is always identical to
     /// int(std::acos(c) / HBOND_BIN_SIZE).
     inline int angle_bin_from_cos(float c) {
-        static constexpr float kEdgeCos[9] = {
-            0.93969262f, 0.76604444f, 0.5f, 0.17364818f, -0.17364818f,
-            -0.5f, -0.76604444f, -0.93969262f, -1.0f};   // cos(20 deg * k), k = 1..9
-        constexpr float kMargin = 1e-4f;
         int bin = 0;
         bool near_edge = false;
-        for (float e : kEdgeCos) {
+        for (float e : kBinEdgeCos) {
             bin += (c < e) ? 1 : 0;
-            near_edge |= std::abs(c - e) < kMargin;
+            near_edge |= std::abs(c - e) < kBinEdgeBand;
         }
         if (near_edge) return int(std::acos(c) / HBOND_BIN_SIZE);
         return bin;
     }
 
-    inline bool is_hydrogen_bond(const HBondDonors& donor, const HBondAcceptors& acceptor) {
-        return passes_ca_geometry_gate(donor, acceptor) && passes_ramachandran_gate(donor, acceptor);
-    }
-
-    inline void hydrogen_bond_indices(HBondDonors& donor, HBondAcceptors& acceptor, std::array<int, 7>& indices) {
-        
+    /// With `cosines`, also stores the quantities it decides by: [0] the
+    /// CA-CA orientation cos (pairs more than 4 apart), [1..6] the cos that
+    /// indices[1..6] bin.
+    inline void hydrogen_bond_indices(HBondDonors& donor, HBondAcceptors& acceptor, std::array<int, 7>& indices,
+                                      float* cosines = nullptr) {
+        float c[7] = {};
         // Helix Sheet
         int res_idx_diff = std::abs(donor.residue_index - acceptor.residue_index);
         // legacy hbonds.h: ang_CACA = Angle(donor7-donor5, acceptor6-acceptor8), i.e. the
@@ -225,25 +234,28 @@ namespace HydrogenBondUtils {
             // is too close to 0 for its sign to settle the comparison.
             const float c_caca = GeometryUtils::calculate_a_CACA_cos(donor.next_CA, acceptor.next_CA,
                                                                      donor.prev_CA, acceptor.prev_CA);
-            const bool helix_like = std::abs(c_caca) < 1e-4f
+            const bool helix_like = std::abs(c_caca) < kCacaSignBand
                 ? std::acos(c_caca) < HBOND_CACA_HELIX_SHEET_THRESHOLD
                 : c_caca > 0.0f;
             indices[0] = helix_like ? 1 : 2;
+            c[0] = c_caca;
         }
         // Angles donor/acceptor residues (20 degree bins, see angle_bin_from_cos)
-        indices[1] = angle_bin_from_cos(GeometryUtils::calculate_a_PCA_cos(
-            donor.N, donor.CA, donor.C, acceptor.N, acceptor.CA, acceptor.C));
-        indices[2] = angle_bin_from_cos(GeometryUtils::calculate_a_bCA_cos(
-            donor.N, donor.CA, donor.C, acceptor.N, acceptor.CA, acceptor.C));
+        c[1] = GeometryUtils::calculate_a_PCA_cos(
+            donor.N, donor.CA, donor.C, acceptor.N, acceptor.CA, acceptor.C);
+        c[2] = GeometryUtils::calculate_a_bCA_cos(
+            donor.N, donor.CA, donor.C, acceptor.N, acceptor.CA, acceptor.C);
         // Angles donor/acceptor neighboring residues
-        indices[3] = angle_bin_from_cos(GeometryUtils::calculate_a_PCA_cos(
-            donor.prev_N, donor.prev_CA, donor.prev_C, acceptor.next_N, acceptor.next_CA, acceptor.next_C));
-        indices[4] = angle_bin_from_cos(GeometryUtils::calculate_a_bCA_cos(
-            donor.prev_N, donor.prev_CA, donor.prev_C, acceptor.next_N, acceptor.next_CA, acceptor.next_C));
+        c[3] = GeometryUtils::calculate_a_PCA_cos(
+            donor.prev_N, donor.prev_CA, donor.prev_C, acceptor.next_N, acceptor.next_CA, acceptor.next_C);
+        c[4] = GeometryUtils::calculate_a_bCA_cos(
+            donor.prev_N, donor.prev_CA, donor.prev_C, acceptor.next_N, acceptor.next_CA, acceptor.next_C);
         // Angles donor H/ acceptor O centered atoms
-        indices[5] = angle_bin_from_cos(GeometryUtils::calculate_a_PCA_cos(
-            donor.prev_C, donor.N, donor.CA, acceptor.CA, acceptor.C, acceptor.next_N));
-        indices[6] = angle_bin_from_cos(GeometryUtils::calculate_a_bCA_cos(
-            donor.prev_C, donor.N, donor.CA, acceptor.CA, acceptor.C, acceptor.next_N));
+        c[5] = GeometryUtils::calculate_a_PCA_cos(
+            donor.prev_C, donor.N, donor.CA, acceptor.CA, acceptor.C, acceptor.next_N);
+        c[6] = GeometryUtils::calculate_a_bCA_cos(
+            donor.prev_C, donor.N, donor.CA, acceptor.CA, acceptor.C, acceptor.next_N);
+        for (int k = 1; k < 7; ++k) indices[k] = angle_bin_from_cos(c[k]);
+        if (cosines) std::copy(c, c + 7, cosines);
     }
 }
