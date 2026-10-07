@@ -7,9 +7,9 @@
 #include <cstddef>
 #include <cstring>
 #include <vector>
+#include "pymcpu/utils/pair_r2.h"
 #if defined(__AVX2__) && defined(__FMA__)
 #include <immintrin.h>
-#include "pymcpu/utils/pair_r2.h"
 #endif
 
 namespace mcpu {
