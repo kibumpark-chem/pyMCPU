@@ -196,16 +196,9 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
     void MuPotential::apply_mu_denselist_cutoff() {
         float max_contact_r2 = 0.f;
         float max_hard_r2 = 0.f;
-        if (!type_params_.empty()) {
-            for (const auto& p : type_params_) {
-                max_contact_r2 = std::max(max_contact_r2, p.contact_r2);
-                max_hard_r2 = std::max(max_hard_r2, p.hard_r2);
-            }
-        } else {
-            if (contact_dist_sq.size() > 0)
-                max_contact_r2 = contact_dist_sq.maxCoeff();
-            if (hard_core_sq.size() > 0)
-                max_hard_r2 = hard_core_sq.maxCoeff();
+        for (const auto& p : type_params_) {
+            max_contact_r2 = std::max(max_contact_r2, p.contact_r2);
+            max_hard_r2 = std::max(max_hard_r2, p.hard_r2);
         }
         // No pair overlaps beyond the largest hard-core radius (see
         // clash_prefilter_r2_): + 0.001 (rounding resolution) + 0.001 (float slack).
@@ -235,8 +228,7 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
         }
         mu_exact_cutoff_ = exact;
         contact_cutoff_sq_ = exact * exact;
-        // Print once type_params_ is authoritative (skip matrix-only ctor pass).
-        if (!type_params_.empty() && mcpu_verbose_enabled()) {
+        if (mcpu_verbose_enabled()) {
             std::fprintf(stderr,
                 "INFO: Mu denselist cutoff=%.6f Å "
                 "(max_contact_r2=%.6f + band %.6f, max_hard_r2=%.6f).\n",
@@ -266,37 +258,58 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
     }
 
     MuPotential::MuPotential(
-        Eigen::MatrixXf contact_energies,
-        Eigen::MatrixXf contact_dist_sq,
-        Eigen::MatrixXf hard_core_sq,
+        const Eigen::MatrixXf& contact_energies,
+        const Eigen::MatrixXf& contact_dist_sq,
+        const Eigen::MatrixXf& hard_core_sq,
         std::vector<int> atom_types,
         std::vector<int> atom_to_residue
-    ) : contact_energies(std::move(contact_energies)),
-        contact_dist_sq(std::move(contact_dist_sq)),
-        hard_core_sq(std::move(hard_core_sq)),
-        atom_types(std::move(atom_types)),
+    ) : atom_types(std::move(atom_types)),
         atom_to_residue(std::move(atom_to_residue)) {
-        if (this->contact_dist_sq.size() > 0 &&
-            this->contact_dist_sq.maxCoeff() > kMaxParamCutoffSq) {
+        const Eigen::Index n = static_cast<Eigen::Index>(this->atom_types.size());
+        for (const Eigen::MatrixXf* m : {&contact_energies, &contact_dist_sq, &hard_core_sq}) {
+            if (m->rows() != n || m->cols() != n) {
+                throw std::invalid_argument(
+                    "MuPotential: energies, dist_sq and hard_core must be "
+                    "(n, n) with n = len(types)");
+            }
+        }
+        if (n > 0 && contact_dist_sq.maxCoeff() > kMaxParamCutoffSq) {
             throw std::invalid_argument(
                 "MuPotential: contact distance exceeds the 6 A neighbor cutoff");
         }
-        if (this->hard_core_sq.size() > 0 &&
-            this->hard_core_sq.maxCoeff() > kMaxParamCutoffSq) {
+        if (n > 0 && hard_core_sq.maxCoeff() > kMaxParamCutoffSq) {
             throw std::invalid_argument(
                 "MuPotential: hard-core distance exceeds the 6 A neighbor cutoff");
         }
-        // Exact denselist cutoff from parameter matrices (refined after
-        // type_params_ in cache_necessary_data). Default ON.
+
+        // One entry per type pair, from the per-atom-pair matrices. O(N²).
+        int max_t = -1;
+        for (int t : this->atom_types) max_t = std::max(max_t, t);
+        n_types_ = max_t + 1;
+        const size_t NT = static_cast<size_t>(n_types_);
+        type_params_.assign(NT * NT, TypePairParams{});
+        std::vector<uint8_t> filled(NT * NT, 0);
+        for (int i = 0; i < n; ++i) {
+            for (int j = i + 1; j < n; ++j) {
+                if (this->atom_types[static_cast<size_t>(i)] < 0 ||
+                    this->atom_types[static_cast<size_t>(j)] < 0) {
+                    continue;
+                }
+                TypePairParams tp;
+                tp.hard_r2 = hard_core_sq(i, j);
+                tp.contact_r2 = contact_dist_sq(i, j);
+                tp.energy = contact_energies(i, j);
+                const float hr = (tp.hard_r2 > 0.f) ? std::sqrt(tp.hard_r2) : 0.f;
+                tp.hard_tol_r2 = hard_tol_r2_from(hr);
+                store_type_pair_params(filled, i, j, tp);
+            }
+        }
         apply_mu_denselist_cutoff();
     }
 
     void MuPotential::permute_atom_indices(const AtomPermutation& perm) {
         if (perm.is_identity()) return;
         const int n = perm.n_atoms();
-        if (n != num_atoms_cached_ && num_atoms_cached_ != 0) {
-            // Still allow permute before cache if sizes match atom_types.
-        }
         if (static_cast<int>(atom_types.size()) != n) {
             throw std::runtime_error("MuPotential::permute_atom_indices: type size mismatch");
         }
@@ -311,41 +324,19 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
         permute_vec_int(atom_types);
         permute_vec_int(atom_to_residue);
 
-        auto permute_mat = [&](Eigen::MatrixXf& m) {
-            if (m.rows() != n || m.cols() != n) return;
-            Eigen::MatrixXf tmp(n, n);
-            for (int i = 0; i < n; ++i) {
-                const int ei = perm.int_to_ext[static_cast<size_t>(i)];
-                for (int j = 0; j < n; ++j) {
-                    const int ej = perm.int_to_ext[static_cast<size_t>(j)];
-                    tmp(i, j) = m(ei, ej);
+        const size_t N = static_cast<size_t>(n);
+        if (topo_flag_.size() == N * N) {
+            std::vector<uint8_t> tmp(N * N);
+            for (size_t i = 0; i < N; ++i) {
+                const size_t ei = static_cast<size_t>(perm.int_to_ext[i]);
+                for (size_t j = 0; j < N; ++j) {
+                    tmp[i * N + j] =
+                        topo_flag_[ei * N + static_cast<size_t>(perm.int_to_ext[j])];
                 }
             }
-            m.swap(tmp);
-        };
-        permute_mat(contact_energies);
-        permute_mat(contact_dist_sq);
-        permute_mat(hard_core_sq);
-
-        auto permute_flat = [&](auto& v) {
-            if (static_cast<int>(v.size()) != n * n) return;
-            using T = typename std::decay_t<decltype(v)>::value_type;
-            std::vector<T> tmp(static_cast<size_t>(n) * static_cast<size_t>(n));
-            for (int i = 0; i < n; ++i) {
-                const int ei = perm.int_to_ext[static_cast<size_t>(i)];
-                for (int j = 0; j < n; ++j) {
-                    const int ej = perm.int_to_ext[static_cast<size_t>(j)];
-                    tmp[static_cast<size_t>(i) * static_cast<size_t>(n) + static_cast<size_t>(j)] =
-                        v[static_cast<size_t>(ei) * static_cast<size_t>(n) + static_cast<size_t>(ej)];
-                }
-            }
-            v.swap(tmp);
-        };
-        permute_flat(topo_contact_mask_);
-        permute_flat(topo_clash_mask_);
-        permute_flat(topo_flag_);
+            topo_flag_.swap(tmp);
+        }
         num_atoms_cached_ = n;
-        rebuild_type_params_from_matrices();
         build_compact_topo();
     }
 
@@ -463,42 +454,6 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
         }
     }
 
-    void MuPotential::rebuild_type_params_from_matrices() {
-        const size_t N = static_cast<size_t>(num_atoms_cached_);
-        if (N == 0) {
-            type_params_.clear();
-            n_types_ = 0;
-            return;
-        }
-
-        int max_t = -1;
-        for (int t : atom_types) {
-            if (t > max_t) max_t = t;
-        }
-        n_types_ = max_t + 1;
-        const size_t NT = static_cast<size_t>(std::max(n_types_, 0));
-        type_params_.assign(NT * NT, TypePairParams{});
-        std::vector<uint8_t> filled(NT * NT, 0);
-
-        for (size_t i = 0; i < N; ++i) {
-            for (size_t j = i + 1; j < N; ++j) {
-                const int ti = atom_types[i];
-                const int tj = atom_types[j];
-                if (ti < 0 || tj < 0 || NT == 0) continue;
-
-                TypePairParams tp;
-                tp.hard_r2 = hard_core_sq(static_cast<int>(i), static_cast<int>(j));
-                tp.contact_r2 =
-                    contact_dist_sq(static_cast<int>(i), static_cast<int>(j));
-                tp.energy = contact_energies(static_cast<int>(i), static_cast<int>(j));
-                const float hr = (tp.hard_r2 > 0.f) ? std::sqrt(tp.hard_r2) : 0.f;
-                tp.hard_tol_r2 = hard_tol_r2_from(hr);
-                store_type_pair_params(filled, static_cast<int>(i), static_cast<int>(j), tp);
-            }
-        }
-        apply_mu_denselist_cutoff();
-    }
-
     void MuPotential::store_type_pair_params(
         std::vector<uint8_t>& filled, int i, int j, const TypePairParams& tp)
     {
@@ -540,25 +495,20 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
         soa_tmp.load_from_eigen(coords);
         const CoordView cv(soa_tmp);
 
-        topo_contact_mask_.assign(n2, 0);
-        topo_clash_mask_.assign(n2, 0);
-
         topo_flag_.assign(n2, uint8_t{0});
-
-        int max_t = -1;
-        for (int t : atom_types) {
-            if (t > max_t) max_t = t;
-        }
-        n_types_ = max_t + 1;
-        const size_t NT = static_cast<size_t>(std::max(n_types_, 0));
-        type_params_.assign(NT * NT, TypePairParams{});
-        std::vector<uint8_t> filled(NT * NT, 0);
-
+        const size_t NT = static_cast<size_t>(n_types_);
 
         for (int i = 0; i < num_atoms; ++i) {
             for (int j = i + 1; j < num_atoms; ++j) {
                 const int matrix_idx = i * num_atoms + j;
                 const int matrix_idx_sym = j * num_atoms + i;
+                // An untyped atom (H) has no parameters: zero radii and energy.
+                const int ti = atom_types[static_cast<size_t>(i)];
+                const int tj = atom_types[static_cast<size_t>(j)];
+                const TypePairParams tp =
+                    (ti >= 0 && tj >= 0)
+                        ? type_params_[static_cast<size_t>(ti) * NT + static_cast<size_t>(tj)]
+                        : TypePairParams{};
 
                 bool check_clash = topo_clash_mask[static_cast<size_t>(matrix_idx)] != 0;
                 bool check_contact = topo_contact_mask[static_cast<size_t>(matrix_idx)] != 0;
@@ -569,48 +519,19 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
                 // it would be rejected. The test is the move cutoff, not the
                 // exact hard core: a pair between the two clashes under
                 // neither, and exempting it would drop its protection for good.
-                if (check_clash) {
-                    const float dist_sq = cv.dist2(i, j);
-                    const float hc = hard_core_sq(i, j);
-                    if (is_hard_clash(dist_sq,
-                                      hard_tol_r2_from(hc > 0.f ? std::sqrt(hc) : 0.f))) {
-                        check_clash = false;
-                    }
+                if (check_clash && is_hard_clash(cv.dist2(i, j), tp.hard_tol_r2)) {
+                    check_clash = false;
                 }
-
-                topo_clash_mask_[static_cast<size_t>(matrix_idx)] =
-                    topo_clash_mask_[static_cast<size_t>(matrix_idx_sym)] =
-                        static_cast<uint8_t>(check_clash ? 1 : 0);
-
                 // A zero-energy contact pair is no contact pair.
-                const float e_ij = contact_energies(i, j);
-                if (check_contact && e_ij == 0.0f) {
+                if (check_contact && tp.energy == 0.0f) {
                     check_contact = false;
                 }
-                topo_contact_mask_[static_cast<size_t>(matrix_idx)] =
-                    topo_contact_mask_[static_cast<size_t>(matrix_idx_sym)] =
-                        static_cast<uint8_t>(check_contact ? 1 : 0);
-
-                const float hc = hard_core_sq(i, j);
-                const float cd = contact_dist_sq(i, j);
 
                 uint8_t flag = 0;
                 if (check_clash) flag |= 1u;
                 if (check_contact) flag |= 2u;
                 topo_flag_[static_cast<size_t>(matrix_idx)] =
                     topo_flag_[static_cast<size_t>(matrix_idx_sym)] = flag;
-
-                const int ti = atom_types[static_cast<size_t>(i)];
-                const int tj = atom_types[static_cast<size_t>(j)];
-                if (ti >= 0 && tj >= 0 && NT > 0) {
-                    TypePairParams tp;
-                    tp.hard_r2 = hc;
-                    tp.contact_r2 = cd;
-                    tp.energy = e_ij;
-                    const float hr = (hc > 0.f) ? std::sqrt(hc) : 0.f;
-                    tp.hard_tol_r2 = hard_tol_r2_from(hr);
-                    store_type_pair_params(filled, i, j, tp);
-                }
             }
         }
         if (mcpu_verbose_enabled()) {
@@ -618,8 +539,6 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
                          topo_flag_.size() / (1024.0 * 1024.0));
         }
         build_compact_topo();
-        // The query cutoff from type_params_ (see mu_exact_cutoff_).
-        apply_mu_denselist_cutoff();
     }
 
     // ---------------------------------------------------------
@@ -975,10 +894,7 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
         std::vector<int> atoms;
         mu_pair_atoms(sys, N, atoms);
         mu_for_each_near_pair(cv, atoms, contact_cutoff_sq_, [&](int i, int j, float r2) {
-                const size_t idx = static_cast<size_t>(i) *
-                                       static_cast<size_t>(N) +
-                                   static_cast<size_t>(j);
-                if (!topo_contact_mask_[idx]) return false;
+                if (!(topo_flag(i, j) & 2u)) return false;
                 // No clash test (ClashCutoff::None): a pair that rounding
                 // carried under its hard-core cutoff is listed with the
                 // contact energy the running energy holds for it.
@@ -1217,12 +1133,7 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
         // cutoff (see mu_exact_cutoff_), so only pairs within it are visited.
         const bool clashed = mu_for_each_near_pair(
             cv, atoms, contact_cutoff_sq_, [&](int i, int j, float dist_sq) {
-                const int matrix_idx = i * num_atoms + j;
-
-                if (!topo_contact_mask_[static_cast<size_t>(matrix_idx)] &&
-                    !topo_clash_mask_[static_cast<size_t>(matrix_idx)]) {
-                    return false;
-                }
+                if (topo_flag(i, j) == 0) return false;
                 bool local_clash = false, near = false;
                 // The state cutoff: see ClashCutoff.
                 const float e = eval_pair<ClashCutoff::State>(
@@ -1274,8 +1185,7 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
                                 ? int(energy_mask_ptr_[static_cast<size_t>(ri)]) : 0,
                             energy_mask_ptr_
                                 ? int(energy_mask_ptr_[static_cast<size_t>(rj)]) : 0,
-                            int(topo_clash_mask_[static_cast<size_t>(matrix_idx)]),
-                            int(topo_contact_mask_[static_cast<size_t>(matrix_idx)]));
+                            int(topo_flag(i, j) & 1u), int(topo_flag(i, j) >> 1));
                     }
                     // A clashing state's list is half rewritten; drop it, and
                     // the next move rebuilds it.

@@ -584,6 +584,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `np.memmap` arrays with the same shape and values; code that wrote into
   them must copy first. Energies and trajectories are bit-identical.
 
+- **Mu keeps no per-atom-pair matrix besides its pair-flag table.** The
+  constructor reduces the energy, contact-distance and hard-core matrices
+  (n x n floats each) to the per-type-pair table at once and drops them;
+  the clash and contact masks were the two bits of the pair-flag table
+  kept a second time, and every reader now uses that table. This frees
+  14 bytes per atom pair: per process VmRSS falls from 1057 to 943 MB on
+  actin (2,943 atoms), 1070 to 939 MB on PGK1 and 977 to 915 MB on the
+  sce setup. Energies and trajectories are bit-identical. The constructor
+  now checks that the three matrices are n x n with n = len(types), and a
+  type pair whose atom pairs disagree is refused at construction instead
+  of in `cache_necessary_data`. The unused `System.mu_hard_core_sq` is gone.
+
 - **With fixed residues, no step is spent on a fixed residue.** A KIC step
   drew its window once and gave up when the window touched a fixed residue;
   it now draws again, as pivot and sidechain steps already did, so the

@@ -70,9 +70,17 @@ def _cache(mu: mcpu_core.MuPotential) -> None:
 
 def test_the_engine_refuses_two_radii_for_one_type() -> None:
     # Pairs (0, 2) and (1, 2) are both type pair (0, 1), with different distances.
+    # The constructor refuses it; it keeps only the per-type table.
     with pytest.raises(ValueError, match=r"atoms 1 and 2 \(types 0 and 1\)"):
-        _cache(_three_atom_mu([1.88, 1.90, 1.88]))
+        _three_atom_mu([1.88, 1.90, 1.88])
 
 
 def test_the_engine_accepts_one_radius_per_type() -> None:
     _cache(_three_atom_mu([1.88, 1.88, 1.88]))
+
+
+def test_the_engine_refuses_matrices_of_the_wrong_size() -> None:
+    m = np.zeros((3, 3), dtype=np.float32)
+    with pytest.raises(ValueError, match=r"\(n, n\) with n = len\(types\)"):
+        mcpu_core.MuPotential(m, m, np.zeros((2, 2), dtype=np.float32),
+                              [0, 0, 1], [0, 1, 2])

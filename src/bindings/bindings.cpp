@@ -1177,8 +1177,8 @@ PYBIND11_MODULE(mcpu_core, m) {
     .def("get_name", &Potential::getName)
     .def("set_enabled", &Potential::setEnabled, py::arg("enabled"))
     .def("is_enabled", &Potential::isEnabled);
-    // @note: Matrices are copied from numpy arrays at construction.
-    //        This is a one-time cost — simulation performance is unaffected.
+    // The per-atom-pair matrices are reduced to one entry per atom-type pair
+    // at construction and not kept.
     py::class_<m08::MuPotential, Potential, std::shared_ptr<m08::MuPotential>>(m, "MuPotential",
         "Pairwise contact/solvation potential between MCPU atom types\n"
         "(energy group 1, default outer weight 0.4).\n\n"
