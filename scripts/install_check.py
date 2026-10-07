@@ -74,8 +74,8 @@ def check_xtc_reporter():
 def check_build_info():
     try:
         import pymcpu
-        features = pymcpu.mcpu_core.build_info()["features"]
-        print(f"[OK] Build flags: POOLED_PROPOSAL={features['MCPU_USE_POOLED_PROPOSAL']}")
+        arch = pymcpu.mcpu_core.build_info()["arch"]
+        print(f"[OK] Build: arch tier {arch['tier']}")
         return True
     except Exception as e:
         print(f"[FAIL] build_info: {e}")

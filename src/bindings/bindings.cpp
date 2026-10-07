@@ -611,19 +611,6 @@ PYBIND11_MODULE(mcpu_core, m) {
              "Sets pivot_rama_probability() from a piecewise-linear schedule "
              "evaluated once against this Integrator's own (fixed) "
              "temperature, in pyMCPU's reduced-temperature units.")
-        .def("set_use_pooled_proposal", &mcpu::MCIntegrator::set_use_pooled_proposal,
-             py::arg("on"),
-             "If True (default when compiled with MCPU_USE_POOLED_PROPOSAL=1): "
-             "pooled proposal buffer + sparse patch reset. "
-             "If False: emulate vanilla whole-State copy + per-step patch alloc + reject restore.")
-        .def("use_pooled_proposal", &mcpu::MCIntegrator::use_pooled_proposal)
-        .def_property(
-            "use_sparse_proposal",
-            &mcpu::MCIntegrator::use_sparse_proposal,
-            &mcpu::MCIntegrator::set_use_sparse_proposal,
-            "If True (default): skip per-step copy_dynamic_from; O(n_moved) restore on reject.")
-        .def("set_use_sparse_proposal", &mcpu::MCIntegrator::set_use_sparse_proposal,
-             py::arg("on"))
         .def("last_move_kind", &mcpu::MCIntegrator::last_move_kind,
              "Kind of the last proposed move (Pivot/KIC/Sidechain/Other), from "
              "run() or the last debug_force_* call that proposed a move.")
@@ -639,16 +626,6 @@ PYBIND11_MODULE(mcpu_core, m) {
         .def("last_log_jacobian_weight", &mcpu::MCIntegrator::last_log_jacobian_weight,
              "Metropolis-Hastings correction term of the last forced proposal "
              "from a debug_force_* call (0 for a symmetric move).")
-        .def("reject_restore_enabled", &mcpu::MCIntegrator::reject_restore_enabled)
-        .def("proposal_lifecycle_info",
-             [](const mcpu::MCIntegrator& integ) {
-                 const auto info = integ.proposal_lifecycle_info();
-                 py::dict d;
-                 d["pooled_proposal_compiled_in"] = info.pooled_proposal_compiled_in;
-                 d["use_pooled_proposal"] = info.use_pooled_proposal;
-                 d["reject_restore_enabled"] = info.reject_restore_enabled;
-                 return d;
-             })
         .def("set_step_stats_verbose", &mcpu::MCIntegrator::set_step_stats_verbose,
              py::arg("on"))
         .def("step_stats_verbose", &mcpu::MCIntegrator::step_stats_verbose)
@@ -855,9 +832,6 @@ PYBIND11_MODULE(mcpu_core, m) {
 #if !defined(MCPU_BUILD_ARCH_TIER) || !defined(MCPU_BUILD_LTO) || !defined(MCPU_BUILD_JCC_PAD)
 #error "BuildConfig.h was not generated; configure through CMake."
 #endif
-#if !defined(MCPU_USE_POOLED_PROPOSAL)
-#error "Feature-flag defines missing; configure through CMake."
-#endif
     m.def(
         "build_info",
         []() {
@@ -984,14 +958,6 @@ PYBIND11_MODULE(mcpu_core, m) {
             fp["reciprocal_math"] = false;
 #endif
 
-            py::dict features;
-            features["MCPU_USE_POOLED_PROPOSAL"] = (MCPU_USE_POOLED_PROPOSAL != 0);
-#if defined(EIGEN_NO_DEBUG)
-            features["EIGEN_NO_DEBUG"] = true;
-#else
-            features["EIGEN_NO_DEBUG"] = false;
-#endif
-
             py::dict deps;
             deps["eigen"] = std::to_string(EIGEN_WORLD_VERSION) + "." +
                             std::to_string(EIGEN_MAJOR_VERSION) + "." +
@@ -1005,7 +971,6 @@ PYBIND11_MODULE(mcpu_core, m) {
             d["compiler"] = compiler;
             d["build"] = build;
             d["fp"] = fp;
-            d["features"] = features;
             d["deps"] = deps;
             return d;
         },

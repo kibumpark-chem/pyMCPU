@@ -52,7 +52,6 @@ def run_hotpath(
     reseed_offset: int = 1_000_003,
     temperature: float = 0.6,
     step_size_rad: float = 0.05,
-    pooled_proposal: bool = True,
 ) -> HotpathRun:
     """Build a fresh test context, run the Integrator, and collect stats.
 
@@ -66,8 +65,6 @@ def run_hotpath(
     ctx, _ = build_test_context(with_qbias=False)
     integ = mcpu_core.Integrator(temperature=temperature, step_size_rad=step_size_rad)
     integ.set_seed(seed)
-    if pooled_proposal and hasattr(integ, "set_use_pooled_proposal"):
-        integ.set_use_pooled_proposal(True)
 
     if warmup:
         integ.run(ctx, warmup)

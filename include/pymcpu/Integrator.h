@@ -13,10 +13,6 @@
 #include "pymcpu/State.h"
 #include "pymcpu/reporters/Reporter.h"
 
-#ifndef MCPU_USE_POOLED_PROPOSAL
-#define MCPU_USE_POOLED_PROPOSAL 1
-#endif
-
 namespace mcpu {
     class System;
     class Context;
@@ -31,13 +27,6 @@ namespace mcpu {
 enum class SidechainMoveMode : std::uint8_t {
     Continuous = 0,
     RotamerLibrary = 1,
-};
-
-/// Snapshot of proposal-lifecycle knobs (bench / smoke logging).
-struct ProposalLifecycleInfo {
-    bool pooled_proposal_compiled_in = (MCPU_USE_POOLED_PROPOSAL != 0);
-    bool use_pooled_proposal = true;
-    bool reject_restore_enabled = false;
 };
 
 /// Per-move-kind Mu ΔE accumulators (Pivot=0, KIC=1, Sidechain=2).
@@ -381,25 +370,6 @@ public:
     /// Size == num_steps of last run. For determinism regression tests.
     const std::vector<uint8_t>& last_accept_bits() const noexcept { return last_accept_bits_; }
 
-    /// Toggle the pooled proposal buffer (sparse sync, reused patch) vs the
-    /// vanilla cost model (whole-State copy and a fresh patch every step).
-    /// No-op (stays false) when compiled with ``MCPU_USE_POOLED_PROPOSAL=0``.
-    void set_use_pooled_proposal(bool on);
-
-    bool use_pooled_proposal() const noexcept { return use_pooled_proposal_; }
-    bool reject_restore_enabled() const noexcept { return !use_pooled_proposal_; }
-    static bool pooled_proposal_compiled_in() noexcept {
-        return MCPU_USE_POOLED_PROPOSAL != 0;
-    }
-
-    ProposalLifecycleInfo proposal_lifecycle_info() const noexcept {
-        ProposalLifecycleInfo info;
-        info.pooled_proposal_compiled_in = pooled_proposal_compiled_in();
-        info.use_pooled_proposal = use_pooled_proposal_;
-        info.reject_restore_enabled = !use_pooled_proposal_;
-        return info;
-    }
-
     /// Cumulative timing from the most recent ``run`` (reset at each ``run`` start).
     [[nodiscard]] const StepStats& step_stats() const noexcept { return step_stats_; }
 
@@ -409,14 +379,6 @@ public:
     void set_step_stats_verbose(bool on) noexcept { step_stats_verbose_ = on; }
 
     [[nodiscard]] bool step_stats_verbose() const noexcept { return step_stats_verbose_; }
-
-    /// Skip per-step ``copy_dynamic_from``; sync once then O(n_moved) restore on reject.
-    void set_use_sparse_proposal(bool on) noexcept {
-        use_sparse_proposal_ = on;
-        proposal_synced_ = false; // CHANGED: sparse — force resync after toggle
-    }
-
-    [[nodiscard]] bool use_sparse_proposal() const noexcept { return use_sparse_proposal_; }
 
     /// Last proposed move context: updated by each step of ``run`` that moves
     /// atoms, and by every debug_force_* call that proposes a move.
@@ -586,14 +548,14 @@ private:
     /// treatment as angle_dist -- see get_rng_state/set_rng_state/set_seed.
     std::normal_distribution<float> unit_normal_dist_{0.0f, 1.0f};
 
-    /// Proposal buffer, reused across steps.
+    /// Proposal buffer and patch, reused across steps. The buffer is synced
+    /// with the accepted state once per run; after a step that does not
+    /// commit, restore_proposal_from_accepted puts back only the moved
+    /// atoms, O(n_moved).
     std::unique_ptr<State> proposal_;
     ProposalPatch patch_;
-    int pooled_num_atoms_ = -1;
-    int pooled_num_residues_ = -1;
-    bool use_pooled_proposal_ = (MCPU_USE_POOLED_PROPOSAL != 0);
-    /// When true (default): skip per-step full proposal sync; restore on reject. O(n_moved).
-    bool use_sparse_proposal_ = true;
+    int proposal_num_atoms_ = -1;
+    int proposal_num_residues_ = -1;
     /// False until first ``copy_dynamic_from`` in the current ``run``.
     bool proposal_synced_ = false;
     std::vector<uint8_t> last_accept_bits_;

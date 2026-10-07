@@ -70,8 +70,6 @@ endif()
 # ---------------------------------------------------------------------------
 # Feature flags
 # ---------------------------------------------------------------------------
-option(MCPU_USE_POOLED_PROPOSAL
-    "Reused proposal State + sparse ProposalPatch" ON)
 
 
 # ---------------------------------------------------------------------------
@@ -365,19 +363,6 @@ endif()
 # ---------------------------------------------------------------------------
 target_compile_definitions(MCPU_lib  PRIVATE EIGEN_DONT_ALIGN_STATICALLY)
 target_compile_definitions(mcpu_core PRIVATE EIGEN_DONT_ALIGN_STATICALLY)
-
-# ---------------------------------------------------------------------------
-# Feature-flag compile definitions
-# ---------------------------------------------------------------------------
-if(MCPU_USE_POOLED_PROPOSAL)
-    target_compile_definitions(MCPU_lib  PUBLIC MCPU_USE_POOLED_PROPOSAL=1)
-    target_compile_definitions(mcpu_core PUBLIC MCPU_USE_POOLED_PROPOSAL=1)
-    message(STATUS "MCPU_USE_POOLED_PROPOSAL=1")
-else()
-    target_compile_definitions(MCPU_lib  PUBLIC MCPU_USE_POOLED_PROPOSAL=0)
-    target_compile_definitions(mcpu_core PUBLIC MCPU_USE_POOLED_PROPOSAL=0)
-    message(STATUS "MCPU_USE_POOLED_PROPOSAL=0")
-endif()
 
 target_compile_definitions(MCPU_lib  PUBLIC MCPU_UNSAFE_MATH=0)
 target_compile_definitions(mcpu_core PUBLIC MCPU_UNSAFE_MATH=0)

@@ -1426,6 +1426,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- The proposal toggles `Integrator.set_use_pooled_proposal`,
+  `use_pooled_proposal`, `use_sparse_proposal`/`set_use_sparse_proposal`,
+  `reject_restore_enabled` and `proposal_lifecycle_info`, the CMake option
+  `MCPU_USE_POOLED_PROPOSAL`, the `features` section of `build_info()` and
+  the scripts `parity_sparse_proposal.py`, `parity_rigid_mm_elision.py` and
+  `_parity_common.py`. The reused proposal buffer with O(n_moved) restore,
+  the default, is now the only path; the off paths only reproduced an old
+  cost model for benchmarks.
+
 - `OrientationalPairPotential.set_rigid_skip_enabled` and
   `rigid_skip_enabled` (KORP). The skip of pairs carried by one rigid pivot
   was off by default because it is not exact for a nearest-bin table in

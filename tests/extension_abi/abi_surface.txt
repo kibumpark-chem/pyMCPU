@@ -121,8 +121,6 @@ Integrator.num_pivot_resample_pro_phi
 Integrator.num_reporters
 Integrator.num_sc_resample_pro
 Integrator.pivot_rama_probability
-Integrator.proposal_lifecycle_info
-Integrator.reject_restore_enabled
 Integrator.reset_step_stats
 Integrator.run
 Integrator.set_fixed_residues
@@ -135,14 +133,10 @@ Integrator.set_seed
 Integrator.set_sidechain_move_mode
 Integrator.set_sidechain_step_size_rad
 Integrator.set_step_stats_verbose
-Integrator.set_use_pooled_proposal
-Integrator.set_use_sparse_proposal
 Integrator.sidechain_move_mode
 Integrator.sidechain_step_size_rad
 Integrator.step_stats
 Integrator.step_stats_verbose
-Integrator.use_pooled_proposal
-Integrator.use_sparse_proposal
 Integrator.verify_physics_consistency
 State.backbone_torsions
 State.coords

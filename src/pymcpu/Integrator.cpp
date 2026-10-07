@@ -71,10 +71,10 @@ void print_step_stats_summary(const StepStats& stats) {
 // distorted_bb_residues/distorted_sc_residues, on the *proposal* state,
 // before energy evaluation. TripletPotential/SidechainTripletPotential's
 // calculateEnergyChange() reads these cached angles directly rather than
-// recomputing from coordinates; with the default pooled/sparse proposal
-// reuse the `proposal` object is never otherwise fully resynced between
-// steps, so a residue whose angle isn't refreshed here keeps
-// old_state.<angle> == proposed_state.<angle> (both frozen at whatever the
+// recomputing from coordinates; the reused `proposal` buffer is synced once
+// per run and is never otherwise fully resynced between steps, so a residue
+// whose angle isn't refreshed here keeps old_state.<angle> ==
+// proposed_state.<angle> (both frozen at whatever the
 // last full resync produced) — making that residue's contribution to the
 // Metropolis delta silently zero for this move, regardless of what was
 // actually proposed. (Confirmed via a same-engine setPositions
@@ -450,32 +450,18 @@ std::string MCIntegrator::sidechain_move_mode() const {
         ? "rotamer_library" : "continuous";
 }
 
-void MCIntegrator::set_use_pooled_proposal(bool on) {
-#if MCPU_USE_POOLED_PROPOSAL
-    if (use_pooled_proposal_ == on) return;
-    use_pooled_proposal_ = on;
-    // Recreate the proposal buffer, and so fully resync it, on the next run.
-    pooled_num_atoms_ = -1;
-    pooled_num_residues_ = -1;
-    proposal_.reset();
-#else
-    (void)on;
-    use_pooled_proposal_ = false;
-#endif
-}
-
 void MCIntegrator::ensure_proposal_buffers(const Context& context) {
     const int num_atoms = context.getSystem().getNumAtoms();
     const int num_residues = context.getSystem().getNumResidues();
-    if (proposal_ && pooled_num_atoms_ == num_atoms &&
-        pooled_num_residues_ == num_residues) {
+    if (proposal_ && proposal_num_atoms_ == num_atoms &&
+        proposal_num_residues_ == num_residues) {
         return;
     }
     proposal_ = std::make_unique<State>(num_atoms, num_residues);
     patch_.ensure_capacity(num_atoms);
-    pooled_num_atoms_ = num_atoms;
-    pooled_num_residues_ = num_residues;
-    proposal_synced_ = false; // CHANGED: sparse — new buffer needs a full sync
+    proposal_num_atoms_ = num_atoms;
+    proposal_num_residues_ = num_residues;
+    proposal_synced_ = false; // a new buffer needs a full sync
 }
 
 void MCIntegrator::restore_proposal_from_accepted(State& proposal, const State& accepted,
@@ -1787,27 +1773,14 @@ void MCIntegrator::run(Context& context, int num_steps, int step_offset)
         ScopedTimer step_timer(&step_stats_.step_total_ns);
         {
             ScopedTimer copy_timer(&step_stats_.copy_dynamic_ns);
-            // CHANGED: sparse — gate full O(N) sync to run-start / desync only.
-            const bool need_full_sync =
-                !use_sparse_proposal_ || !use_pooled_proposal_ || !proposal_synced_;
-            if (need_full_sync) {
-                if (use_pooled_proposal_) {
-                    proposal.copy_dynamic_from(context.state);
-                } else {
-                    // Vanilla cost model: a whole State copy, contact list included.
-                    proposal = context.state;
-                }
+            // A full O(N) sync only at run start; later steps restore the
+            // moved atoms instead (see restore_proposal_from_accepted).
+            if (!proposal_synced_) {
+                proposal.copy_dynamic_from(context.state);
                 proposal_synced_ = true;
             }
         }
-        {
-            if (use_pooled_proposal_) {
-                move_patch.reset_for_step();
-            } else {
-                // Vanilla: allocate/zero all length-N masks each step.
-                move_patch = ProposalPatch(context.getSystem().getNumAtoms());
-            }
-        }
+        move_patch.reset_for_step();
 
         bool tried_pivot = false;
         bool tried_kic   = false;
@@ -1946,9 +1919,8 @@ void MCIntegrator::run(Context& context, int num_steps, int step_offset)
                         rotamer_accepted_++;
                     }
                 }
-            } else if (use_sparse_proposal_ || !use_pooled_proposal_) {
-                // CHANGED: sparse — O(n_moved) restore so next step can skip full copy.
-                // Vanilla (!pooled) keeps historical reject-restore dead-work.
+            } else {
+                // O(n_moved) restore so the next step can skip a full copy.
                 restore_proposal_from_accepted(proposal, context.state, move_patch);
             }
             // ADDED: retain move context for failure/crash NPZ snapshots.
@@ -1985,9 +1957,8 @@ void MCIntegrator::run(Context& context, int num_steps, int step_offset)
                     std::fflush(stderr);
                 }
             }
-        } else if ((use_sparse_proposal_ || !use_pooled_proposal_) &&
-                   !move_patch.moved_indices.empty()) {
-            // CHANGED: sparse — invalid move may have already mutated proposal.
+        } else if (!move_patch.moved_indices.empty()) {
+            // An invalid move may have already changed the proposal.
             restore_proposal_from_accepted(proposal, context.state, move_patch);
             last_move_kind_str_ =
                 tried_pivot ? "Pivot" : (tried_kic ? "KIC" : (tried_sc ? "Sidechain" : "Other"));

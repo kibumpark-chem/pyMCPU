@@ -30,7 +30,7 @@ def info() -> dict:
 
 
 def test_top_level_sections_present(info) -> None:
-    for section in ("arch", "isa", "compiler", "build", "fp", "features", "deps"):
+    for section in ("arch", "isa", "compiler", "build", "fp", "deps"):
         assert section in info, f"build_info() is missing the {section!r} section"
         assert isinstance(info[section], dict)
 
@@ -101,10 +101,6 @@ def test_no_value_is_an_empty_placeholder(info) -> None:
         if isinstance(v, str) and v.startswith("@") and v.endswith("@")
     ]
     assert not leftovers, f"configure_file did not substitute: {leftovers}"
-
-
-def test_feature_flags_are_real_macro_reads(info) -> None:
-    assert isinstance(info["features"]["MCPU_USE_POOLED_PROPOSAL"], bool)
 
 
 def test_release_builds_actually_get_lto(info) -> None:
