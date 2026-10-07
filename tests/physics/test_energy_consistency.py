@@ -15,6 +15,9 @@ import pytest
 from pymcpu import mcpu_core
 from tests.fixtures.context_builders import ATOL
 
+# Running total vs a full recompute (see test_accepted_move_energy_drift).
+RUNNING_ATOL = 1e-6
+
 pytestmark = pytest.mark.slow
 
 
@@ -54,10 +57,10 @@ def test_accepted_move_energy_drift(chignolin_context) -> None:
     integrator.run(chignolin_context, num_steps=10)
     e_cached = chignolin_context.get_state().current_energy
     e_recalc = chignolin_context.calculate_total_energy(-1)
-    # ATOL: internal self-consistency tolerance (float32 accumulation noise
-    # between the incremental-update path and a full recompute), not a
-    # legacy-comparison tolerance -- see tests/fixtures/context_builders.py.
-    assert e_cached == pytest.approx(e_recalc, abs=ATOL)
+    # Energy sums are double, so the running total matches a recompute to
+    # rounding; 1e-6 leaves room for FMA contraction differing between the
+    # delta and full paths. The shared ATOL (1e-3) is for other comparisons.
+    assert e_cached == pytest.approx(e_recalc, abs=RUNNING_ATOL)
 
 
 def test_per_group_sum_equals_total(chignolin_context) -> None:

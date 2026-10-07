@@ -65,7 +65,8 @@ def test_long_hot_pivot_chain_keeps_the_running_total_exact():
     """Incremental total vs full recompute over 40k hot, pivot-only steps.
 
     With the elision on, runs like this drift by units to tens of units from
-    a single hidden bin flip. With exact dE the residual is float32 summation.
+    a single hidden bin flip. With exact dE the delta adds the same float
+    pair terms as the full sum, in double, so the residual is double rounding.
     """
     ff, traj = _forcefield()
     context = mcpu_core.Context(ff.create_system(traj.topology))
@@ -80,7 +81,7 @@ def test_long_hot_pivot_chain_keeps_the_running_total_exact():
         integrator.run(context, 2000)
         incremental = context.get_state().current_energy
         worst = max(worst, abs(incremental - context.calculate_total_energy(-1)))
-    assert worst < 1e-2, f"running total drifted {worst:.4g} from a full recompute"
+    assert worst < 1e-6, f"running total drifted {worst:.4g} from a full recompute"
 
 
 def test_table_outlives_its_python_map_object():

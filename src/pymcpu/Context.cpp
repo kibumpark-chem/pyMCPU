@@ -417,7 +417,7 @@ void Context::commit_accepted_move(const State& proposed_state, const ProposalPa
 
 
 // --- PHYSICS EVALUATION ---
-float Context::calculate_total_energy(int target_group) {
+double Context::calculate_total_energy(int target_group) {
     require_current_atom_order();
     // Asks the System to loop through all its Potentials and calculate baseline energy
     // (legacy-weighted by default via energy_weights_).
@@ -425,7 +425,7 @@ float Context::calculate_total_energy(int target_group) {
     // resync: terms rebuild their incremental bookkeeping in the same pass.
     const TotalEnergyResult result = system->evaluateTotalEnergy(
         *this, state, target_group, /*resync=*/target_group == -1);
-    const float e = result.energy;
+    const double e = result.energy;
 
     if (target_group == -1) {
         last_total_reject_reason_ = result.reject_reason;
@@ -446,12 +446,12 @@ float Context::calculate_total_energy(int target_group) {
     return e;
 }
 
-float Context::calculate_total_energy_raw(int target_group) const {
+double Context::calculate_total_energy_raw(int target_group) const {
     require_current_atom_order();
     return system->getTotalEnergyRaw(*this, state, target_group);
 }
 
-float Context::calculate_delta_energy(const State& proposed_state, const ProposalPatch& patch) const {
+double Context::calculate_delta_energy(const State& proposed_state, const ProposalPatch& patch) const {
     // Asks the System to loop through all Potentials and calculate the CHANGE in energy.
     // Because this method is CONST, it guarantees the master grids are not touched!
     return system->getDeltaEnergy(*this, state, proposed_state, patch);

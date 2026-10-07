@@ -38,7 +38,7 @@ struct MuWorkspace {
     neighbor::PendingPairs<float> pending_contacts;
     /// The pending rigid move's bound on carried-distance change, added to
     /// State::mu_list_drift if it is accepted.
-    float pending_list_drift = 0.f;
+    double pending_list_drift = 0.0;
     /// The pending move could not use the contact list, so the list is
     /// dropped if the move is accepted.
     bool pending_list_invalidate = false;
@@ -48,7 +48,7 @@ struct MuWorkspace {
 
     void clear() {
         pending_contacts.clear();
-        pending_list_drift = 0.f;
+        pending_list_drift = 0.0;
         pending_list_invalidate = false;
     }
 
@@ -110,7 +110,7 @@ struct HBondWorkspace {
     struct PendingPair { int d, a; float e, fresh_until; };
     std::vector<PendingPair> pending;
     // The ledger drift the proposed state would have if accepted.
-    float pending_drift = 0.f;
+    double pending_drift = 0.0;
     bool pending_valid = false;
     const void* pending_old_state = nullptr;
     const void* pending_proposed_state = nullptr;
@@ -231,9 +231,9 @@ public:
     /// Context created on an already reordered System adopts its permutation.
     void require_current_atom_order() const;
     void commit_accepted_move(const State& proposed_state, const ProposalPatch& patch);
-    float calculate_total_energy(int target_group = -1);
-    float calculate_total_energy_raw(int target_group = -1) const;
-    float calculate_delta_energy(const State& proposed_state, const ProposalPatch& patch) const;
+    double calculate_total_energy(int target_group = -1);
+    double calculate_total_energy_raw(int target_group = -1) const;
+    double calculate_delta_energy(const State& proposed_state, const ProposalPatch& patch) const;
     [[nodiscard]] bool has_hard_constraint_violation() const noexcept {
         return last_total_reject_reason_ != RejectReason::None;
     }

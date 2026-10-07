@@ -61,7 +61,7 @@ public:
         for (auto& r : don_) r.clear();
         for (auto& r : acc_) r.clear();
         ready_ = true;
-        drift = 0.f;
+        drift = 0.0;
         ++generation_;
     }
     /// True when built by this potential, for n residues, under this mask.
@@ -149,7 +149,7 @@ public:
     /// Sum of the carry bounds (Context::rigid_carry_bound_A, times
     /// HBondPotential's factor for the virtual H) of the rigid moves folded in
     /// since the ledger was built from the coordinates.
-    float drift = 0.f;
+    double drift = 0.0;
 };
 
 }  // namespace mcpu::forces

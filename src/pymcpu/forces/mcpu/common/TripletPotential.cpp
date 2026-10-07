@@ -23,7 +23,7 @@ namespace mcpu::forces {
         const State& proposed_state, 
         const ProposalPatch& patch
     ) const {
-        float delta_energy = 0.0f;
+        double delta_energy = 0.0;
         const float pi = mcpu::PI_F;
         
         const System& sys = context.getSystem();
@@ -51,7 +51,7 @@ namespace mcpu::forces {
                               get_bin_60(new_bb.phi + pi), 
                               get_bin_60(new_bb.psi + pi));
 
-            delta_energy += (e_new - e_old);
+            delta_energy += static_cast<double>(e_new) - static_cast<double>(e_old);
         }
 
         // Must scale down by 1000 to match Total E
@@ -61,8 +61,8 @@ namespace mcpu::forces {
     // ---------------------------------------------------------
     // THE TOTAL ENERGY CALCULATOR (Ground Truth)
     // ---------------------------------------------------------
-    float TripletPotential::calculateEnergy(const Context& context, const State& state) const {
-        float total_energy = 0.0f;
+    double TripletPotential::calculateEnergy(const Context& context, const State& state) const {
+        double total_energy = 0.0;
         const float pi = mcpu::PI_F;
         const System& sys = context.getSystem();
 

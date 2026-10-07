@@ -353,7 +353,7 @@ namespace mcpu::forces::mcpu08 {
 
         /// calculateEnergyChange_fast's moved-vs-all scan, for a trial out of
         /// the neighbour grid (or with none).
-        float delta_moved_vs_all(const Context& context, const State& old_state,
+        double delta_moved_vs_all(const Context& context, const State& old_state,
                                  const State& new_state, const ProposalPatch& patch,
                                  const std::vector<int>& moved_indices,
                                  bool list_exact) const;
@@ -362,14 +362,14 @@ namespace mcpu::forces::mcpu08 {
         /// atoms in moved), re-decided from the new coordinates without a
         /// clash test (ClashCutoff::None). O(n_moved^2); for moves without
         /// an exact contact list.
-        float carried_pairs_delta(const State& old_state, const State& new_state,
+        double carried_pairs_delta(const State& old_state, const State& new_state,
                                   const std::vector<int>& moved) const;
 
         /// The delta without the contact list. list_exact: the old state's
         /// list is exact for this move (ready, and within its drift budget
         /// after it), so a rigid move out of the grid re-decides only the
         /// carried pairs it lists.
-        float calculateEnergyChange_fast(
+        double calculateEnergyChange_fast(
             const Context& context,
             const State& old_state,
             const State& new_state,
@@ -420,11 +420,11 @@ namespace mcpu::forces::mcpu08 {
 
         /// calculateEnergy and resyncEnergy: the O(N^2) full energy; with
         /// resync, also rewrites the state's live contact list.
-        float full_energy(const Context& context, const State& state, bool resync) const;
+        double full_energy(const Context& context, const State& state, bool resync) const;
 
         /// Delta using the live contact list (default; MCPU_CONTACT_LIST=0 turns
         /// it off). carry_bound is Context::rigid_carry_bound_A for a rigid move, else 0.
-        float calculateEnergyChange_clist(
+        double calculateEnergyChange_clist(
             const Context& context,
             const State& old_state,
             const State& new_state,
@@ -477,11 +477,11 @@ namespace mcpu::forces::mcpu08 {
         }
 
 
-        float calculateEnergy(const Context& context, const State& state) const override;
+        double calculateEnergy(const Context& context, const State& state) const override;
         /// Also rewrites the state's live contact list from the same pass.
-        float resyncEnergy(const Context& context, const State& state) const override;
+        double resyncEnergy(const Context& context, const State& state) const override;
         bool canHardReject() const noexcept override { return true; }
-        RejectReason rejectionForEnergy(float energy) const noexcept override {
+        RejectReason rejectionForEnergy(double energy) const noexcept override {
             return energy >= 99999.0f * 0.5f
                 ? RejectReason::StericClash
                 : RejectReason::None;

@@ -13,8 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   but not bit-identical to a reference, for speedups that change float
   rounding. It compares per-group static energies (1e-5 relative), checks
   the running energy against a full recompute after long runs
-  (max(1e-3, 1e-5·|E|); float32 accumulation already drifts past a flat
-  1e-3 on main), compares sampling statistics over several seeds within
+  (max(1e-3, 1e-5·|E|); the relative term admits reference builds that
+  accumulated in float32), compares sampling statistics over several seeds within
   statistical error, and checks KORP against the reference `korpe`
   energies. `CONTRIBUTING.md` says when to use it instead of
   `arch_parity_dump.py`.
@@ -491,6 +491,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   its eight cases fail.
 
 ### Changed
+
+- **Energy sums, deltas and the running total are kept in double
+  precision, so the running energy no longer drifts from a full
+  recompute.** Every energy accumulator and total is double: the per-term
+  deltas and full sums, `EnergyChangeResult`/`TotalEnergyResult`, the
+  `Potential` interface, `System`'s sums and breakdown,
+  `State.current_energy`, the Metropolis input (`beta`, `beta*dE`) and the
+  contact-list and H-bond drift budgets. `Integrator(temperature=...)` is
+  double too, so `beta` is the replica-exchange driver's `1/T` exactly.
+  Per-pair values, caches and coordinates stay float32; KORP's full sum now
+  adds the same float pair terms its cache and delta use. In float32 the
+  running total random-walked with the number of accepted moves (actin
+  7.9e-4 after 50k steps, KORP actin about 0.1 after 3e6, about 1.7
+  projected at 1e9); it now stays within 1e-10 of a recompute with no
+  growth (actin 3.2e-11 after 1e7 steps, KORP actin exactly 0 after 3e6).
+  Accept bits and coordinates are unchanged on the
+  parity cases; reported energies change in the last float digits (actin
+  Mu full sum 1.6e-6 relative, the float32 summation error that is gone).
+  Python API unchanged. Instructions/step within 0.1%, cycles within noise.
 
 - **The neighbour grid keeps each cell once.** With the linked lists gone
   (see Removed), an insert or removal touches only the cell's packed block,

@@ -11,7 +11,7 @@ namespace mcpu {
 
 namespace {
 
-bool is_clash_energy(float energy) {
+bool is_clash_energy(double energy) {
     return energy >= PhysicsVerifier::kHardCorePenalty * 0.5f;
 }
 
@@ -65,13 +65,13 @@ PotentialDeltaCheck PhysicsVerifier::verify_potential_delta(
             .delta_energy;
 
     clear_workspaces(mutable_ctx);
-    const float e_old = target->calculateEnergy(ctx, old_copy);
+    const double e_old = target->calculateEnergy(ctx, old_copy);
 
     if (energy_group == 6) {
         proposed_copy.q_pair_cache.clear();
     }
 
-    const float e_new = target->calculateEnergy(ctx, proposed_copy);
+    const double e_new = target->calculateEnergy(ctx, proposed_copy);
     result.delta_direct = e_new - e_old;
 
     // Only a term that actually hard-rejects can emit a clash sentinel. Other

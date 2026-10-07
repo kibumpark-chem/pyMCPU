@@ -79,11 +79,11 @@ public:
 
     void permute_atom_indices(const AtomPermutation& perm) override;
 
-    float calculateEnergy(const Context& context, const State& state) const override;
+    double calculateEnergy(const Context& context, const State& state) const override;
 
     /// Full energy, and rebuilds state.korp_cache from the same pass, so a
     /// running total reset here starts from a cache with no accumulated drift.
-    float resyncEnergy(const Context& context, const State& state) const override;
+    double resyncEnergy(const Context& context, const State& state) const override;
 
     /// Folds the last calculateEnergyChange into the accepted state's cache:
     /// new frames for the changed residues, new energies for the pairs whose
@@ -111,8 +111,10 @@ private:
     bool pair_entry(const std::vector<ResidueFrame>& frames, int lo, int hi,
                     std::size_t& index, float& weight) const noexcept;
     /// Energy of the ordered pair (lo, hi), lo < hi, or 0 if it does not count:
-    /// pair_entry's weight * entry, in double.
-    [[nodiscard]] double pair_energy(
+    /// pair_entry's weight * entry, multiplied in double and rounded once to
+    /// float. The cache and the incremental delta hold exactly this value, so
+    /// a full sum and the running total add the same per-pair terms.
+    [[nodiscard]] float pair_energy(
         const std::vector<ResidueFrame>& frames, int lo, int hi) const noexcept;
 
     void build_frames(const State& state, std::vector<ResidueFrame>& out) const;

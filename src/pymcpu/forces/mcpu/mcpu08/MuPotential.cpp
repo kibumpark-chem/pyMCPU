@@ -642,7 +642,7 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
         // now so this move can use the grid. O(1) when the mask is unchanged.
         if (!context.neighbors().mask_current())
             const_cast<Context&>(context).sync_energy_mask();
-        float delta;
+        double delta;
         if (kContactList) {
             // A rigid move adds to the drift budget of the pairs it carries
             // unseen (see the contact-list notes in the header).
@@ -786,7 +786,7 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
     }
 
 
-    float MuPotential::delta_moved_vs_all(
+    double MuPotential::delta_moved_vs_all(
         const Context& context,
         const State& old_state,
         const State& new_state,
@@ -832,7 +832,7 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
                     energy_mask_mode_cached_ == EnergyMaskMode::IgnoreAll
                 ? unmasked
                 : moved_indices;
-        float delta_E = 0.0f;
+        double delta_E = 0.0;
         bool clash = false;
         auto& nstats = const_cast<NeighborStats&>(context.neighborStats());
         const float cut2 = contact_cutoff_sq_;
@@ -849,7 +849,9 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
                     for (const auto& c : old_state.mu_contacts.partners(i)) {
                         const int j = c.j;
                         if (i > j || !is_moved[static_cast<size_t>(j)]) continue;
-                        delta_E += listed_contact_energy(i, j, cnew_mm.dist2(i, j)) - c.payload;
+                        delta_E += static_cast<double>(listed_contact_energy(
+                                       i, j, cnew_mm.dist2(i, j))) -
+                                   static_cast<double>(c.payload);
                     }
                 }
             } else {
@@ -906,7 +908,7 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
         return delta_E;
     }
 
-    float MuPotential::carried_pairs_delta(const State& old_state,
+    double MuPotential::carried_pairs_delta(const State& old_state,
                                            const State& new_state,
                                            const std::vector<int>& moved) const {
         // The old coordinates of the moved atoms, packed, so that each row
@@ -934,15 +936,16 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
             for (size_t b = a + 1; b < n; ++b) {
                 if (r2_row[b] > cut2) continue;
                 const int i = moved[a], j = moved[b];
-                dE += static_cast<double>(
-                    eval_pair<ClashCutoff::None>(i, j, cnew.dist2(i, j), nullptr) -
-                    eval_pair<ClashCutoff::None>(i, j, r2_row[b], nullptr));
+                dE += static_cast<double>(eval_pair<ClashCutoff::None>(
+                          i, j, cnew.dist2(i, j), nullptr)) -
+                      static_cast<double>(eval_pair<ClashCutoff::None>(
+                          i, j, r2_row[b], nullptr));
             }
         }
-        return static_cast<float>(dE);
+        return dE;
     }
 
-    float MuPotential::calculateEnergyChange_fast(
+    double MuPotential::calculateEnergyChange_fast(
         const Context& context,
         const State& old_state,
         const State& new_state,
@@ -1025,13 +1028,13 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
                 return false;
         });
         state.mu_contacts.set_ready(true);
-        state.mu_list_drift = 0.f;
+        state.mu_list_drift = 0.0;
         state.mu_list_mask_epoch = sys.energy_mask_epoch();
         ++contact_list_rebuilds_;
     }
 
     
-    float MuPotential::calculateEnergyChange_clist(
+    double MuPotential::calculateEnergyChange_clist(
         const Context& context,
         const State& old_state,
         const State& new_state,
@@ -1196,18 +1199,18 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
             return kHardCorePenalty;
         }
         ws.pending_list_drift = carry_bound;
-        return static_cast<float>(dE);
+        return dE;
     }
 
-    float MuPotential::calculateEnergy(const Context& context, const State& state) const {
+    double MuPotential::calculateEnergy(const Context& context, const State& state) const {
         return full_energy(context, state, /*resync=*/false);
     }
 
-    float MuPotential::resyncEnergy(const Context& context, const State& state) const {
+    double MuPotential::resyncEnergy(const Context& context, const State& state) const {
         return full_energy(context, state, /*resync=*/true);
     }
 
-    float MuPotential::full_energy(
+    double MuPotential::full_energy(
         const Context& context, const State& state, bool resync
     ) const {
         // Full energy for an arbitrary State must use that state's coordinates.
@@ -1216,7 +1219,7 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
         // cell binning of this state's own coordinates (mu_for_each_near_pair).
         const System& sys = context.getSystem();
         setup_mask_cache(sys);
-        float total_energy = 0.0f;
+        double total_energy = 0.0;
         const int num_atoms = sys.getNumAtoms();
         require_topology_table(topo_flag_.size(), num_atoms);
 
@@ -1237,14 +1240,14 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
         if (resync && state.mu_contacts.ready()) {
             refill_contacts = true;
             state.mu_contacts.clear_rows(num_atoms);
-            state.mu_list_drift = 0.f;
+            state.mu_list_drift = 0.0;
             state.mu_list_mask_epoch = sys.energy_mask_epoch();
         } else if (resync && contact_list_enabled()) {
             refill_contacts = true;
             prebuild = true;
             state.mu_contacts.reset(num_atoms);
             state.mu_contact_list_prebuilt = false;
-            state.mu_list_drift = 0.f;
+            state.mu_list_drift = 0.0;
             state.mu_list_mask_epoch = sys.energy_mask_epoch();
         }
         const CoordView cv(state.coord_view());

@@ -102,14 +102,17 @@ class Simulation:
         self.reporters: list = []
         self._current_step = 0
         # Full O(N^2) energy recompute cadence, in step() calls. 1 = every call
-        # (the historical behaviour). Raise it to trade an exact `current_energy`
-        # for the incrementally-maintained one, which tests/physics/
-        # test_energy_consistency.py pins to within 1e-3 of a full recompute.
+        # (the historical behaviour). Raise it to use the incrementally
+        # maintained `current_energy` between recomputes. Energy sums are
+        # double, so it stays within ~1e-10 of a full recompute
+        # (tests/physics/test_energy_consistency.py).
         # At actin one recompute is ~36.8 ms; at a 10k-step exchange interval the
         # pair of them was ~5.9% of wall (~2 h per 1e9-step replica).
         self.full_energy_every = 1
         # Warn if the incremental energy has drifted from a full recompute by
-        # more than this (absolute). Only checked on recompute cycles.
+        # more than this (absolute). Only checked on recompute cycles. Rounding
+        # stays far below it at any run length, so a warning means a pair the
+        # incremental path missed or a stale cache, not precision.
         self.energy_drift_warn_atol = 1e-3
         self._steps_since_full_energy = 0
         self.steric_clash_events = 0

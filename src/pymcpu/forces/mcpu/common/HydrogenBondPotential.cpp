@@ -624,7 +624,7 @@ EnergyChangeResult HBondPotential::calculateEnergyChange(
 
     if (hb_ws.ledger_check) check_ledger_(context, old_state, proposed_state);
 
-    return EnergyChangeResult::finite(static_cast<float>(e_new_sum - e_old_sum) / 1000.0f);
+    return EnergyChangeResult::finite((e_new_sum - e_old_sum) / 1000.0);
 }
 
 void HBondPotential::build_cache_(const Context& context, const State& state) const {
@@ -728,8 +728,8 @@ void HBondPotential::commitAcceptedMove(
     cache.note_commit();
 }
 
-float HBondPotential::calculateEnergy(const Context& context, const State& state) const {
-    float total_E = 0.0f;
+double HBondPotential::calculateEnergy(const Context& context, const State& state) const {
+    double total_E = 0.0;
     const auto& sys = context.getSystem();
     const int num_residues = sys.getNumResidues();
     const auto& blocks = sys.getBlockIndices();
@@ -745,7 +745,7 @@ float HBondPotential::calculateEnergy(const Context& context, const State& state
             total_E += evaluate_directional(r_don, r_acc, state, sys);
         }
     }
-    return total_E / 1000.0f;
+    return total_E / 1000.0;
 }
 
 } // namespace mcpu::forces

@@ -74,7 +74,7 @@ public:
 
     void permute_atom_indices(const AtomPermutation& perm) override;
 
-    float calculateEnergy(const Context& context, const State& state) const override;
+    double calculateEnergy(const Context& context, const State& state) const override;
 
     EnergyChangeResult calculateEnergyChange(
         const Context& context,
@@ -91,7 +91,7 @@ public:
         const State& proposed_state,
         const ProposalPatch& patch) const override;
 
-    RejectReason rejectionForEnergy(float energy) const noexcept override {
+    RejectReason rejectionForEnergy(double energy) const noexcept override {
         return energy >= kClashPenalty * 0.5f
             ? RejectReason::StericClash
             : RejectReason::None;

@@ -36,7 +36,7 @@ public:
 
     void initializePairCache(const State& state, std::vector<uint8_t>& cache) const;
 
-    float calculateEnergy(const Context& context, const State& state) const override;
+    double calculateEnergy(const Context& context, const State& state) const override;
     EnergyChangeResult calculateEnergyChange(
         const Context& context,
         const State& old_state,

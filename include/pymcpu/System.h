@@ -333,24 +333,24 @@ public:
 
     /// Weighted total: Σ_g weight[g] * E_raw[g] (see EnergyWeights).
     /// When target_group >= 0, returns weight[g] * E_raw[g] for that group only.
-    float getTotalEnergy(
+    double getTotalEnergy(
         const Context& ctx,
         const State&   state,
         int            target_group = -1) const;
 
     /// Unweighted (raw) total / per-group energy from Potential::calculateEnergy.
-    float getTotalEnergyRaw(
+    double getTotalEnergyRaw(
         const Context& ctx,
         const State&   state,
         int            target_group = -1) const;
 
-    float getDeltaEnergy(
+    double getDeltaEnergy(
         const Context&      ctx,
         const State&        old_state,
         const State&        proposed_state,
         const ProposalPatch& patch) const;
 
-    float getDeltaEnergyRaw(
+    double getDeltaEnergyRaw(
         const Context&      ctx,
         const State&        old_state,
         const State&        proposed_state,

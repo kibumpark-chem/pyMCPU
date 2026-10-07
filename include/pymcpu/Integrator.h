@@ -89,7 +89,7 @@ struct StepStats {
 // Monte Carlo integrator using pivot + sidechain compound moves.
 class MCIntegrator {
 public:
-    // @param temperature   Simulation temperature in Kelvin
+    // @param temperature   Simulation temperature, in reduced units (beta = 1/T)
     // @param step_size_rad Gaussian std-dev for BACKBONE torsion perturbation
     //                      (radians) -- used by the pivot move AND by the KIC
     //                      driver angle, matching legacy, whose single
@@ -112,7 +112,7 @@ public:
     //                      Ignored by the rotamer-library sidechain mode, which
     //                      takes its per-chi widths from the library rows (see
     //                      apply_rotamer_at).
-    explicit MCIntegrator(float temperature,
+    explicit MCIntegrator(double temperature,
                           float step_size_rad = 0.02f,
                           float sidechain_step_size_rad = -1.0f);
 
@@ -333,7 +333,7 @@ public:
         } else if (temperature >= t_high) {
             p = p_max;
         } else {
-            const float frac = (temperature - t_low) / (t_high - t_low);
+            const float frac = static_cast<float>((temperature - t_low) / (t_high - t_low));
             p = p_min + frac * (p_max - p_min);
         }
         pivot_rama_probability_ = p;
@@ -429,7 +429,7 @@ public:
     /// After run(): the energy change of the last step that moved atoms if
     /// it was accepted, else 0. After a debug_force_* call: the forced
     /// proposal's energy change.
-    [[nodiscard]] float last_delta_energy() const noexcept { return last_delta_e_; }
+    [[nodiscard]] double last_delta_energy() const noexcept { return last_delta_e_; }
     /// The Metropolis-Hastings correction term of the most recent forced
     /// proposal from a debug_force_* call (0 for a move with a symmetric
     /// proposal, or if no such call has happened yet). NOT updated by
@@ -493,7 +493,7 @@ public:
     long long get_fixed_rejected() const noexcept { return fixed_rejected_; }
 
 private:
-    float temperature;
+    double temperature;
     float step_size_rad;
     /// Resolved continuous-sidechain chi amplitude (the "-1 = same as backbone"
     /// sentinel is never stored here; the constructor resolves it).
@@ -601,7 +601,7 @@ private:
     std::string last_move_kind_str_ = "unknown";
     bool last_is_rigid_ = false;
     std::vector<int> last_moved_indices_;
-    float last_delta_e_ = 0.f;
+    double last_delta_e_ = 0.0;
     /// Retained MH correction of the most recent forced-transition probe;
     /// see last_log_jacobian_weight(). run() consumes the patch's weight
     /// inline and never needs it kept.

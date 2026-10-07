@@ -397,8 +397,8 @@ const std::vector<std::shared_ptr<Potential>>& System::getPotentials() const {
     return potentials;
 }
 
-float System::getTotalEnergyRaw(const Context& ctx, const State& state, int target_group) const {
-    float total = 0.0f;
+double System::getTotalEnergyRaw(const Context& ctx, const State& state, int target_group) const {
+    double total = 0.0;
     for (const auto& potential : potentials) {
         if (!potential->isEnabled()) continue;
         if (target_group == -1 || potential->getEnergyGroup() == target_group) {
@@ -408,26 +408,26 @@ float System::getTotalEnergyRaw(const Context& ctx, const State& state, int targ
     return total;
 }
 
-float System::getTotalEnergy(const Context& ctx, const State& state, int target_group) const {
+double System::getTotalEnergy(const Context& ctx, const State& state, int target_group) const {
     const EnergyWeights& weights = ctx.energyWeights();
-    float total = 0.0f;
+    double total = 0.0;
     for (const auto& potential : potentials) {
         if (!potential->isEnabled()) continue;
         if (target_group == -1 || potential->getEnergyGroup() == target_group) {
-            const float raw = potential->calculateEnergy(ctx, state);
+            const double raw = potential->calculateEnergy(ctx, state);
             total += weights.weight_for_group(potential->getEnergyGroup()) * raw;
         }
     }
     return total;
 }
 
-float System::getDeltaEnergyRaw(
+double System::getDeltaEnergyRaw(
     const Context& ctx,
     const State& old_state,
     const State& proposed_state,
     const ProposalPatch& patch) const
 {
-    float delta = 0.0f;
+    double delta = 0.0;
     for (const auto& potential : potentials) {
         if (!potential->isEnabled()) continue;
         delta += potential->calculateEnergyChange(
@@ -437,14 +437,14 @@ float System::getDeltaEnergyRaw(
     return delta;
 }
 
-float System::getDeltaEnergy(
+double System::getDeltaEnergy(
     const Context& ctx,
     const State& old_state,
     const State& proposed_state,
     const ProposalPatch& patch) const
 {
     const EnergyWeights& weights = ctx.energyWeights();
-    float delta = 0.0f;
+    double delta = 0.0;
     for (const auto& potential : potentials) {
         if (!potential->isEnabled()) continue;
         const float w = weights.weight_for_group(potential->getEnergyGroup());
@@ -462,7 +462,7 @@ EnergyChangeResult System::evaluateDeltaEnergy(
     const ProposalPatch& patch) const
 {
     const EnergyWeights& weights = ctx.energyWeights();
-    EnergyChangeResult out = EnergyChangeResult::finite(0.f);
+    EnergyChangeResult out = EnergyChangeResult::finite(0.0);
     for (const auto& potential : potentials) {
         if (!potential->isEnabled()) continue;
         const int g = potential->getEnergyGroup();
@@ -501,7 +501,7 @@ TotalEnergyResult System::evaluateTotalEnergy(
         if (target_group != -1 && potential->getEnergyGroup() != target_group) {
             continue;
         }
-        const float raw = resync ? potential->resyncEnergy(ctx, state)
+        const double raw = resync ? potential->resyncEnergy(ctx, state)
                                  : potential->calculateEnergy(ctx, state);
         const float w = weights.weight_for_group(potential->getEnergyGroup());
         out.energy += w * raw;
@@ -521,7 +521,7 @@ EnergyBreakdown System::energyBreakdown(const Context& ctx, const State& state) 
     for (const auto& potential : potentials) {
         if (!potential->isEnabled()) continue;
         const int g = potential->getEnergyGroup();
-        const float raw = potential->calculateEnergy(ctx, state);
+        const double raw = potential->calculateEnergy(ctx, state);
         const float w = weights.weight_for_group(g);
         out.raw_by_group[g] += raw;
         out.weighted_by_group[g] += w * raw;

@@ -148,30 +148,30 @@ bool OrientationalPairPotential::pair_entry(
     return true;
 }
 
-double OrientationalPairPotential::pair_energy(
+float OrientationalPairPotential::pair_energy(
     const std::vector<ResidueFrame>& frames, int lo, int hi) const noexcept
 {
     std::size_t index = 0;
     float weight = 0.f;
-    if (!pair_entry(frames, lo, hi, index, weight)) return 0.0;
-    return static_cast<double>(weight) * static_cast<double>(map_->entry(index));
+    if (!pair_entry(frames, lo, hi, index, weight)) return 0.f;
+    return static_cast<float>(static_cast<double>(weight)
+                              * static_cast<double>(map_->entry(index)));
 }
 
-float OrientationalPairPotential::calculateEnergy(
+double OrientationalPairPotential::calculateEnergy(
     const Context& /*context*/, const State& state) const
 {
     build_frames(state, frames_old_);
     const int n = num_residues();
-    // Accumulated in double, matching upstream, because a few thousand
-    // table entries of order 1 summed in float loses digits that the
-    // reference-parity test would then have to tolerate.
+    // Float pair terms (the values the cache and the delta use) summed in
+    // double, like every energy total.
     double total = 0.0;
     for (int i = 0; i < n; ++i) {
         for (int j = i + 1; j < n; ++j) {
             total += pair_energy(frames_old_, i, j);
         }
     }
-    return static_cast<float>(total);
+    return total;
 }
 
 double OrientationalPairPotential::fill_cache(const State& state) const
@@ -185,19 +185,19 @@ double OrientationalPairPotential::fill_cache(const State& state) const
     double total = 0.0;
     for (int i = 0; i < n; ++i) {
         for (int j = i + 1; j < n; ++j) {
-            const double e = pair_energy(cache.frames, i, j);
+            const float e = pair_energy(cache.frames, i, j);
             total += e;
-            if (e != 0.0) cache.set(i, j, static_cast<float>(e));
+            if (e != 0.f) cache.set(i, j, e);
         }
     }
     return total;
 }
 
-float OrientationalPairPotential::resyncEnergy(
+double OrientationalPairPotential::resyncEnergy(
     const Context& /*context*/, const State& state) const
 {
     pending_.valid = false;
-    return static_cast<float>(fill_cache(state));
+    return fill_cache(state);
 }
 
 bool OrientationalPairPotential::classify(const ProposalPatch& patch) const
@@ -400,7 +400,7 @@ EnergyChangeResult OrientationalPairPotential::calculateEnergyChange(
             }
         }
     }
-    return EnergyChangeResult::finite(static_cast<float>(delta));
+    return EnergyChangeResult::finite(delta);
 }
 
 void OrientationalPairPotential::commitAcceptedMove(

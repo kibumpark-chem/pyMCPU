@@ -40,14 +40,14 @@ namespace mcpu::forces {
         return geom;
     }
 
-    float AromaticPotential::calculateEnergy(
+    double AromaticPotential::calculateEnergy(
         const Context& context,
         const State& state
     ) const {
         constexpr float RAD2DEG = 180.0f / mcpu::PI_F;
         constexpr float EPS = 1e-6f;
 
-        float total_energy = 0.0f;
+        double total_energy = 0.0;
         const std::size_t n = aromatic_atom_indices.size();
         const auto& sys = context.getSystem();
         const auto& a2r = sys.atom_to_residue;
@@ -166,7 +166,7 @@ namespace mcpu::forces {
             return true;
         };
 
-        float total_old = 0.0f, total_new = 0.0f;
+        double total_old = 0.0, total_new = 0.0;
         for (std::size_t i = 0; i < n; ++i) {
             if (!live[i]) continue;
             const bool row_old = !(old_g[i].norm < EPS);
