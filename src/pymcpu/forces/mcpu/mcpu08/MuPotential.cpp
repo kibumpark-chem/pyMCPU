@@ -642,6 +642,11 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
         require_topology_table(topo_flag_.size(),
                                context.getSystem().getNumAtoms());
         const bool kContactList = contact_list_enabled();
+        // A mask set or cleared since the grid was built (outside a run, which
+        // syncs at its start) changes which atoms the grid holds; apply it
+        // now so this move can use the grid. O(1) when the mask is unchanged.
+        if (!context.neighbors().mask_current())
+            const_cast<Context&>(context).sync_energy_mask();
         float delta;
         if (kContactList) {
             // A rigid move adds to the drift budget of the pairs it carries

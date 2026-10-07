@@ -115,6 +115,9 @@ public:
             h_atom_ids_.clear();
             for (int i = h_begin_; i < n_atoms_; ++i) h_atom_ids_.push_back(i);
         }
+        in_mu_base_ = in_mu_;
+        sys_ = &sys;
+        apply_energy_mask_();
 
         mu_grid_ = std::make_unique<CellListMC>(kMuCutoffFallbackA, n_atoms_);
         hb_o_grid_ = std::make_unique<CellListMC>(kHBondListA, n_atoms_);
@@ -195,7 +198,32 @@ public:
     const NeighborConfig& config() const noexcept { return cfg_; }
     NeighborStats& stats() const noexcept { return stats_; }
     const BoxBounds& bounds() const noexcept { return bounds_; }
-    bool denseActive() const noexcept { return dense_active_; }
+    /// The Mu grid can answer queries: it is built, and its membership
+    /// follows the System's current energy mask (see sync_energy_mask).
+    bool denseActive() const noexcept { return dense_active_ && mask_current(); }
+    /// True when the Mu grid membership was taken from the System's current
+    /// energy mask.
+    bool mask_current() const noexcept {
+        return sys_ != nullptr && sys_->energy_mask_epoch() == mask_epoch_;
+    }
+
+    /// Bring the Mu grid membership up to the System's energy mask after
+    /// set/clear_energy_ignored_residues. Atoms that leave are removed in
+    /// place, which keeps the order of every other atom in its cell; atoms
+    /// that join go in at ``coords`` (the accepted state). O(N) when the
+    /// mask changed, O(1) otherwise.
+    void sync_energy_mask(const CoordsSoA& coords) {
+        if (mask_current()) return;
+        const std::vector<uint8_t> before = in_mu_;
+        apply_energy_mask_();
+        if (!dense_active_ || !mu_grid_) return;
+        for (int i = 0; i < n_atoms_; ++i) {
+            const size_t k = static_cast<size_t>(i);
+            if (in_mu_[k] == before[k]) continue;
+            if (in_mu_[k]) mu_grid_->insert(i, coords);
+            else mu_grid_->remove(i);
+        }
+    }
     bool hbondUsesFallback() const noexcept { return hb_fallback_; }
     /// The O and H grids, for walks on the pair-search layer; null before
     /// setup. Their ids are O atoms, and H atoms or (virtual amide H) donor
@@ -366,6 +394,7 @@ public:
     /// Full rebuild from accepted coords. Only public mutator besides commit.
     bool rebuild_from_accepted_state(const CoordsSoA& coords) {
         ++stats_.num_aabb_rebuild_accept;
+        if (!mask_current()) apply_energy_mask_();
         // AABB margin gives AutoExpand headroom around the Mu cutoff.
         // Denselist cell + query stay at mu_cutoff (legacy 6 Å or exact contact).
         const float r_mu = mu_cutoff_A();
@@ -518,6 +547,7 @@ public:
     /// Incremental update after Metropolis accept. Call exactly once per accept.
     void commit_accepted_move(const ProposalPatch& patch,
                               const CoordsSoA& coords_new) {
+        sync_energy_mask(coords_new);
         bool left_bounds = false;
         if (bounds_.valid) {
             if (!patch.moved_indices.empty()) {
@@ -973,6 +1003,28 @@ private:
         g.grid->ensure_atom_capacity(n_atoms_);
         g.active = false;
     }
+    /// in_mu_ = in_mu_base_ less the atoms of residues an ignore_all energy
+    /// mask switches off. Every pair with such an atom scores 0 and cannot
+    /// clash (MuPotential::mask_ignores_pair), so leaving them out of the
+    /// grid drops only zero terms and keeps the order of the rest: deltas
+    /// are the same to the bit. It also keeps the hard-core bound on cell
+    /// occupancy, which masked atoms, free to overlap, do not obey.
+    void apply_energy_mask_() {
+        mask_epoch_ = sys_->energy_mask_epoch();
+        in_mu_ = in_mu_base_;
+        if (!sys_->has_energy_mask() ||
+            sys_->energy_mask_mode() != EnergyMaskMode::IgnoreAll)
+            return;
+        const std::vector<uint8_t>& mask = sys_->energy_ignored_mask();
+        const std::vector<int>& res = sys_->atom_to_residue;
+        for (int i = 0; i < n_atoms_ && static_cast<size_t>(i) < res.size(); ++i) {
+            const int r = res[static_cast<size_t>(i)];
+            if (r >= 0 && static_cast<size_t>(r) < mask.size() &&
+                mask[static_cast<size_t>(r)])
+                in_mu_[static_cast<size_t>(i)] = 0;
+        }
+    }
+
     std::vector<RegisteredGrid> grids_;
     std::vector<SubsetGrid> subset_grids_;
     std::vector<int> commit_order_;
@@ -995,6 +1047,9 @@ private:
     std::vector<uint8_t> amide_donor_;
     std::vector<int> h_dep_;
     std::vector<uint8_t> in_mu_;
+    std::vector<uint8_t> in_mu_base_;  ///< every non-amide-H atom
+    const System* sys_ = nullptr;
+    std::uint64_t mask_epoch_ = 0;
     std::vector<uint8_t> is_o_;
     std::vector<uint8_t> is_h_;
     std::vector<int> o_atom_ids_;

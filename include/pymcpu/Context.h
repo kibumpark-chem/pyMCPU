@@ -396,6 +396,12 @@ public:
 
     const BoxBounds& boxBounds() const noexcept { return neighbors_.bounds(); }
     bool denseGridsActive() const noexcept { return neighbors_.denseActive(); }
+    /// Bring the Mu grid membership up to the System's energy mask after a
+    /// mask change (NeighborSystem::sync_energy_mask). Until then the grid
+    /// reads as inactive and Mu takes the exact all-pairs path.
+    void sync_energy_mask() {
+        if (positions_set_) neighbors_.sync_energy_mask(state.coords_soa);
+    }
 
     bool trial_in_bounds(const State& proposal, const ProposalPatch& patch) const {
         return neighbors_.trial_in_bounds(proposal.coords_soa, patch);

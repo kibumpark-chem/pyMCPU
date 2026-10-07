@@ -549,6 +549,7 @@ PYBIND11_MODULE(mcpu_core, m) {
                      d["mu_grid_avg_occupancy"] =
                          n_occ > 0 ? static_cast<double>(sum) / n_occ : 0.0;
                      d["mu_grid_max_occupancy"] = mx;
+                     d["mu_grid_n_atoms"] = sum;
                      d["mu_grid_peak_occupancy"] = g.peak_cell_occupancy();
                      d["mu_grid_contiguous"] = g.use_contiguous();
                      d["mu_grid_cell_capacity"] = OpenCellGrid::CELL_CAPACITY;
@@ -557,6 +558,7 @@ PYBIND11_MODULE(mcpu_core, m) {
                      d["mu_grid_n_occupied"] = 0;
                      d["mu_grid_avg_occupancy"] = 0.0;
                      d["mu_grid_max_occupancy"] = 0;
+                     d["mu_grid_n_atoms"] = 0;
                      d["mu_grid_peak_occupancy"] = 0;
                      d["mu_grid_contiguous"] = false;
                      d["mu_grid_cell_capacity"] = OpenCellGrid::CELL_CAPACITY;

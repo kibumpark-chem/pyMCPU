@@ -477,6 +477,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The Mu neighbour grid leaves out the atoms of residues an `ignore_all`
+  energy mask switches off.** Every pair with such an atom scores 0 and
+  cannot clash, so only zero terms go and the order of the other atoms in
+  each cell is kept: masked runs are bit-identical (actin ignore_all at
+  residues 0-39 and 150-179, clash_only at 0-39, PGK1 ignore_all at 0-39,
+  same accept bits and final energy), and faster, about 7% fewer
+  instructions per step on actin ignore_all:0:40. It also restores the
+  hard-core bound on how many atoms share a cell: masked atoms overlap
+  freely, and actin with the whole chain masked filled a 48-atom cell. A
+  mask set or cleared between runs updates the membership in place: at
+  `MCIntegrator.run`, on the next accepted move, or lazily when
+  `MuPotential::calculateEnergyChange` sees the mask has changed, so Mu
+  never runs on a stale grid (until the sync, `neighbor_proxy_stats()`
+  shows the grid as inactive).
+  `neighbor_proxy_stats()` gains `mu_grid_n_atoms`.
+
 - **Rigid pivots carry an H-bond again until rounding could change its
   score, which gives back the 6-8% pivot cost of re-scoring them.** Each
   listed H-bond pair now records its slack: the smallest change in the
