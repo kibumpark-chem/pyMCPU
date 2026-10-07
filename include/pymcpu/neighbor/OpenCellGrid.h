@@ -161,33 +161,6 @@ public:
     /// owner must stop using it until a rebuild fits.
     bool overflowed() const noexcept { return overflowed_; }
 
-    /// Diagnostic: count empty vs nonempty stencil cells at (x,y,z). O(stencil).
-    /// Temporary for walk characterization; not used in production denselist.
-    struct StencilOccupancy {
-        std::size_t empty = 0;
-        std::size_t nonempty = 0;
-        std::size_t atoms = 0;   ///< sum of cell_count over nonempty in-stencil cells
-    };
-    StencilOccupancy probe_stencil_occupancy(float x, float y, float z) const {
-        StencilOccupancy s;
-        if (!configured_ || neighbor_offsets_.empty()) return s;
-        const int ix0 = wrap_(unwrapped_cell_(x, bounds_.lo.x()), nx_);
-        const int iy0 = wrap_(unwrapped_cell_(y, bounds_.lo.y()), ny_);
-        const int iz0 = wrap_(unwrapped_cell_(z, bounds_.lo.z()), nz_);
-        for (const CellOffset& o : neighbor_offsets_) {
-            const int c = cell_at_(wrap_(ix0 + o.dx, nx_), wrap_(iy0 + o.dy, ny_),
-                                   wrap_(iz0 + o.dz, nz_));
-            const int count = cell_count_[static_cast<size_t>(c)];
-            if (count == 0) {
-                ++s.empty;
-            } else {
-                ++s.nonempty;
-                s.atoms += static_cast<std::size_t>(count);
-            }
-        }
-        return s;
-    }
-
 
     /**
      * Visit only the cells that can hold an atom within `radius` and an atom

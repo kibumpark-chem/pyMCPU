@@ -1416,6 +1416,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- Developer switches and dumps nobody used: `MCPU_DEBUG_MOVES` (a
+  per-step move, energy and RNG trace on stderr), `MCPU_GRID_OCCUPANCY` and
+  the HB stencil probe (two one-shot `MCPU_VERBOSE` dumps at grid setup;
+  `neighbor_proxy_stats()` reports the same occupancy live), and the CMake
+  option `MCPU_EIGEN_HOT_FLAGS` (Release builds already define `NDEBUG`).
+  `MCPU_ENERGY_TIMING=0` no longer turns off the per-potential timers in
+  `step_stats`: they cost no measurable time (actin, 34.8k vs 34.9k
+  cycles/step) and always run.
+
 - The overlap check on the grid before Mu's all-pairs fallback delta
   (`fallback_grid_overlap`), which round 8 also ran under energy masks. It
   served moves that left the grid; with wrapped grids the fallback runs

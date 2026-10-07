@@ -363,48 +363,6 @@ public:
                 stats_.neighbor_offsets_count =
                     static_cast<std::uint64_t>(
                         mu_grid_->grid().neighbor_offsets_count());
-                // ADDED: one-shot occupancy dump (MCPU_GRID_OCCUPANCY=1)
-                // CHANGED: also requires MCPU_VERBOSE so INFO never prints by default.
-                {
-                    static bool printed = false;
-                    static const bool kVerbose = [] {
-                        const char* e = std::getenv("MCPU_VERBOSE");
-                        return e && e[0] && e[0] != '0';
-                    }();
-                    const char* e = std::getenv("MCPU_GRID_OCCUPANCY");
-                    if (kVerbose && e && e[0] == '1' && !printed) {
-                        printed = true;
-                        const auto& g = mu_grid_->grid();
-                        int n_occ = 0, sum = 0, mx = 0;
-                        const int nc = static_cast<int>(g.num_cells());
-                        for (int c = 0; c < nc; ++c) {
-                            const int n = g.cell_atom_count(c);
-                            if (n <= 0) continue;
-                            ++n_occ;
-                            sum += n;
-                            if (n > mx) mx = n;
-                        }
-                        const double avg =
-                            n_occ > 0 ? static_cast<double>(sum) / n_occ : 0.0;
-                        std::fprintf(stderr, // CHANGED: gated behind MCPU_VERBOSE
-                            "INFO: Mu grid occupancy cell=%.3f Å dims=%dx%dx%d "
-                            "n_cells=%llu occupied=%d avg_occ=%.2f max_occ=%d "
-                            "peak=%d CELL_CAPACITY=%d stencil_R=%d "
-                            "offsets=%zu query=%.3f\n",
-                            g.cell_size(), g.nx(), g.ny(), g.nz(),
-                            static_cast<unsigned long long>(g.num_cells()), n_occ,
-                            avg, mx, g.peak_cell_occupancy(),
-                            OpenCellGrid::CELL_CAPACITY,
-                            g.stencil_radius(), g.neighbor_offsets_count(),
-                            r_mu);
-                        if (mx > OpenCellGrid::CELL_CAPACITY * 4 / 5) {
-                            std::fprintf(stderr,
-                                "WARN: max occupancy %d within 20%% of "
-                                "CELL_CAPACITY=%d\n",
-                                mx, OpenCellGrid::CELL_CAPACITY);
-                        }
-                    }
-                }
             } else {
                 stats_.neighbor_offsets_count = 0;
             }
@@ -417,7 +375,6 @@ public:
         }
 
         // --- HBond O / H grids (same lo, smaller cell) ---
-        const float hb_cell = kHBondListA;
         if (hb_o_grid_->configure(b, max_grid_cells_) &&
             hb_h_grid_->configure(b, max_grid_cells_)) {
             hb_o_grid_->reset(n_atoms_);
@@ -429,37 +386,6 @@ public:
                 insert_virtual_amide_h_(coords);
             } else {
                 for (int h : h_atom_ids_) hb_h_grid_->insert(h, coords);
-            }
-            // One-shot HB stencil emptiness (O-grid probes at acceptor sites).
-            // CHANGED: gated behind MCPU_VERBOSE — suppress in production.
-            {
-                static bool printed = false;
-                static const bool kVerbose = [] {
-                    const char* e = std::getenv("MCPU_VERBOSE");
-                    return e && e[0] && e[0] != '0';
-                }();
-                if (kVerbose && !printed && !o_atom_ids_.empty()) {
-                    printed = true;
-                    std::size_t empty = 0, nonempty = 0;
-                    const int nprobe = std::min(64, static_cast<int>(o_atom_ids_.size()));
-                    for (int i = 0; i < nprobe; ++i) {
-                        const int o = o_atom_ids_[static_cast<size_t>(i)];
-                        auto s = hb_o_grid_->grid().probe_stencil_occupancy(
-                            coords.x[static_cast<size_t>(o)],
-                            coords.y[static_cast<size_t>(o)],
-                            coords.z[static_cast<size_t>(o)]);
-                        empty += s.empty;
-                        nonempty += s.nonempty;
-                    }
-                    const double tot = static_cast<double>(empty + nonempty);
-                    std::fprintf(stderr, // CHANGED: gated behind MCPU_VERBOSE
-                        "INFO: HB O-grid stencil empty_frac=%.3f "
-                        "(empty=%zu nonempty=%zu probes=%d) "
-                        "cell=%.3f cutoff=%.3f\n",
-                        tot > 0.0 ? empty / tot : 0.0, empty, nonempty, nprobe,
-                        hb_cell,
-                        kHBondCutoffA);
-                }
             }
             hb_fallback_ = hbond_overflowed_();
         } else {

@@ -454,8 +454,7 @@ EnergyChangeResult System::evaluateDeltaEnergy(
         std::uint64_t* slot = ctx.energy_delta_ns_slot(g);
         EnergyChangeResult r;
         if (slot) {
-            // TSC-based (see Profiler.h): two steady_clock::now() vDSO calls
-            // per potential per move cost ~0.7% of an actin step.
+            // TSC-based (see Profiler.h): two counter reads per potential.
             ScopedTimer timer(slot);
             r = potential->calculateEnergyChange(
                 ctx, old_state, proposed_state, patch);

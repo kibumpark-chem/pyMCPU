@@ -72,8 +72,6 @@ endif()
 # ---------------------------------------------------------------------------
 option(MCPU_USE_POOLED_PROPOSAL
     "Reused proposal State + sparse ProposalPatch" ON)
-option(MCPU_EIGEN_HOT_FLAGS
-    "Define EIGEN_NO_DEBUG + EIGEN_DONT_PARALLELIZE" OFF)
 
 
 # ---------------------------------------------------------------------------
@@ -367,10 +365,6 @@ endif()
 # ---------------------------------------------------------------------------
 target_compile_definitions(MCPU_lib  PRIVATE EIGEN_DONT_ALIGN_STATICALLY)
 target_compile_definitions(mcpu_core PRIVATE EIGEN_DONT_ALIGN_STATICALLY)
-if(MCPU_EIGEN_HOT_FLAGS)
-    target_compile_definitions(MCPU_lib  PRIVATE EIGEN_NO_DEBUG EIGEN_DONT_PARALLELIZE)
-    target_compile_definitions(mcpu_core PRIVATE EIGEN_NO_DEBUG EIGEN_DONT_PARALLELIZE)
-endif()
 
 # ---------------------------------------------------------------------------
 # Feature-flag compile definitions

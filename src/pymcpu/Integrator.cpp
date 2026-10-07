@@ -9,7 +9,6 @@
 #include "pymcpu/testing/PhysicsVerifier.h"
 #include "pymcpu/utils/geometry_utils.h"
 #include "pymcpu/utils/sidechain_torsion_utils.h"
-#include "pymcpu/reporters/XTCReporter.h"
 #include <Eigen/Geometry>
 #include <algorithm>
 #include <array>
@@ -1765,18 +1764,9 @@ void MCIntegrator::run(Context& context, int num_steps, int step_offset)
         reporter->begin_run(context, *this);
     }
     proposal_synced_ = false; // CHANGED: sparse — resync at start of every run()
-    // CHANGED: was unconditional. These are 2 steady_clock::now() calls per
-    // enabled potential per move (5 potentials -> ~195 ns/move at 19.55 ns/call on this
-    // machine's tsc clocksource) and they ran in EVERY production run, including
-    // every published timing. MCPU_ENERGY_TIMING=0 turns them off so pyMCPU can be
-    // measured against the uninstrumented legacy baseline on equal terms.
-    {
-        static const bool ft = [] {
-            const char* e = std::getenv("MCPU_ENERGY_TIMING");
-            return !(e && e[0] == '0');
-        }();
-        context.set_energy_delta_timing(ft);
-    }
+    // Time each potential's energy change during the run (step_stats
+    // energy_delta_ns). Two TSC reads per potential per move; within noise.
+    context.set_energy_delta_timing(true);
     context.reset_energy_delta_ns();
 
     context.neighborStats().reset();
@@ -1786,11 +1776,7 @@ void MCIntegrator::run(Context& context, int num_steps, int step_offset)
     // step counts (step_offset + local_index + 1).
     auto fire_reporters = [&](int global_step) {
         for (auto& reporter : reporters_) {
-            if (auto xtc = std::dynamic_pointer_cast<XtcReporter>(reporter)) {
-                xtc->report(global_step, context, *this);
-            } else {
-                reporter->report(global_step, context, *this);
-            }
+            reporter->report(global_step, context, *this);
         }
     };
     if (step_offset == 0 && num_steps >= 0 && !reporters_.empty()) {
@@ -1830,7 +1816,7 @@ void MCIntegrator::run(Context& context, int num_steps, int step_offset)
 
         // One draw per step, unconditionally, whatever the weights are --
         // that invariance is what keeps the default RNG stream byte-identical.
-        float move_roll = move_type_dist(rng);
+        const float move_roll = move_type_dist(rng);
         const int move_slot = select_move_slot(move_roll);
 
         {
@@ -1863,26 +1849,6 @@ void MCIntegrator::run(Context& context, int num_steps, int step_offset)
                     apply_sidechain_move(context, proposal, move_patch);
                 }
             }
-        }
-
-        // DEBUG: set MCPU_DEBUG_MOVES=1 to log per-step move validity (parity bisect).
-        static const bool kDebugMoves = [] {
-            const char* e = std::getenv("MCPU_DEBUG_MOVES");
-            return e && e[0] == '1';
-        }();
-        if (kDebugMoves) {
-            float dmax_dbg = 0.f;
-            if (!move_patch.moved_indices.empty()) {
-                dmax_dbg = Context::max_moved_displacement(
-                    context.state, proposal, move_patch);
-            }
-            const char* kind = tried_pivot ? "Pivot" : (tried_kic ? "KIC" : "SC");
-            std::fprintf(stderr,
-                "[move] step=%d kind=%s valid=%d n_moved=%zu dmax=%.4f "
-                "rigid=%d roll=%.6f\n",
-                step_offset + step, kind, move_patch.is_valid ? 1 : 0,
-                move_patch.moved_indices.size(), dmax_dbg,
-                move_patch.is_rigid ? 1 : 0, move_roll);
         }
 
         if (move_patch.is_valid) {
@@ -1943,21 +1909,11 @@ void MCIntegrator::run(Context& context, int num_steps, int step_offset)
             }
             const double delta_E = energy_change.delta_energy;
             bool accept = false;
-            if (kDebugMoves) {
-                std::fprintf(stderr,
-                    "[delta] step=%d kind=%s dE=%.12g reject=%d clash=%d\n",
-                    step_offset + step,
-                    tried_pivot ? "Pivot" : (tried_kic ? "KIC" : "SC"),
-                    delta_E,
-                    static_cast<int>(energy_change.reject_reason),
-                    energy_change.reject_reason == RejectReason::StericClash ? 1 : 0);
-            }
             if (energy_change.reject_reason == RejectReason::StericClash) {
                 ++steric_rejected_;
                 // Preserve the historical RNG stream: the finite-sentinel
                 // Metropolis path consumed one acceptance draw for clashes.
                 (void)coin_flip(rng);
-                if (kDebugMoves) std::fprintf(stderr, "[rng] step=%d clash_consume\n", step_offset + step);
             } else {
                 double total_beta_E = (delta_E * beta) - move_patch.log_jacobian_weight;
                 // Treat a tiny positive beta*dE as zero. A move whose true dE is 0
@@ -1970,12 +1926,6 @@ void MCIntegrator::run(Context& context, int num_steps, int step_offset)
                 constexpr double kMetropolisZeroEps = 1e-5;
                 const bool need_flip = total_beta_E > kMetropolisZeroEps;
                 accept = (!need_flip || coin_flip(rng) < std::exp(-total_beta_E));
-                if (kDebugMoves) {
-                    std::fprintf(stderr,
-                        "[rng] step=%d need_flip=%d total_beta_E=%.12g accept=%d\n",
-                        step_offset + step, need_flip ? 1 : 0, total_beta_E,
-                        accept ? 1 : 0);
-                }
             }
             if (accept) {
                 accepted_bit = 1;
@@ -2062,13 +2012,7 @@ void MCIntegrator::run(Context& context, int num_steps, int step_offset)
                 if (interval <= 0 || completed_step % interval != 0) {
                     continue;
                 }
-                // pybind11 can fail to dispatch XtcReporter::report through
-                // std::shared_ptr<Reporter>; call the concrete type directly.
-                if (auto xtc = std::dynamic_pointer_cast<XtcReporter>(reporter)) {
-                    xtc->report(completed_step, context, *this);
-                } else {
-                    reporter->report(completed_step, context, *this);
-                }
+                reporter->report(completed_step, context, *this);
             }
         }
 
