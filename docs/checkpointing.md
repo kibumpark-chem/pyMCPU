@@ -68,7 +68,9 @@ Under MPI, rank 0 writes and reads the checkpoint, which covers every replica.
 ### Checkpoints from other versions
 
 Every checkpoint records its format version, and a file newer than the
-installed pyMCPU understands is refused. A checkpoint whose atom count does
+installed pyMCPU understands is refused. It also records the force field, and
+a run resumed with a different `forcefield:` stops with an error; checkpoints
+from before this was recorded count as mcpu08. A checkpoint whose atom count does
 not match the system stops with an error that names both counts. Format
 version 2 stores each glycine CA once, so a version 1 checkpoint of a protein
 with glycine cannot be resumed; start that run again from its input

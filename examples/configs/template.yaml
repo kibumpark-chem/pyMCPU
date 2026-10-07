@@ -7,7 +7,9 @@
 # ── Structure ─────────────────────────────────────────────────
 pdb: examples/data/1uao.pdb          # REQUIRED | path to input PDB (heavy atoms)
 # reference_pdb: null                 # native reference for contacts (default: same as pdb)
-# param_set: mcpu08                  # force field parameter set name  # default: mcpu08
+# forcefield: mcpu08                 # mcpu08 (all-atom) or korp (backbone-only; needs move_weights [p, k, 0.0])
+# forcefield_options: {}              # korp: {map_path: ..., map_mmap: true}; default map from KORP_MAP_PATH
+# param_set: mcpu08                  # mcpu08 parameter set name  # default: mcpu08
 # param_dir: null                     # explicit parameter directory (overrides param_set resolution)
 
 # ── Simulation mode ───────────────────────────────────────────
