@@ -72,7 +72,7 @@ def test_long_hot_pivot_chain_keeps_the_running_total_exact():
     context = mcpu_core.Context(ff.create_system(traj.topology))
     context.set_positions(np.ascontiguousarray((ff.coords[0] * 10.0).T, dtype=np.float32))
     ff.apply_energy_weights(context)
-    context.calculate_total_energy(-1)                 # seed the running total
+    context.calculate_total_energy(-1)                 # start energy
     integrator = mcpu_core.Integrator(temperature=8.0, step_size_rad=0.05)
     integrator.set_seed(1)
     integrator.set_move_weights(1.0, 0.0, 0.0)         # every move a rigid pivot

@@ -151,6 +151,7 @@ class EngineSession:
             coords0 = (ff.coords[0] * 10.0).T.astype(np.float32)
             self._sim.context.set_positions(coords0)
             self._sim.context.calculate_total_energy(-1)
+            check_state_clash(self._sim.context, "start structure")
             self._fingerprint = compute_fingerprint(
                 self.spec.pdb, self.spec.param_set, system.get_num_atoms(),
                 compute_dssp=self.spec.compute_dssp, dssp_coil_state=self.spec.dssp_coil_state,

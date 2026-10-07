@@ -202,7 +202,7 @@ def _run_case_in_child(pdb: str, seed: int, steps: int) -> dict[str, Any]:
 
     # Disable the periodic full recompute: it would resync `current_energy` and
     # mask exactly the incremental-path divergence we are trying to detect.
-    sim.full_energy_every = 10**9
+    sim.full_energy_every_steps = 10**9
 
     ctx = sim.context
     ctx.reset_neighbor_proxy_stats()

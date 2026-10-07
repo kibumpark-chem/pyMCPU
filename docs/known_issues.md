@@ -19,24 +19,6 @@ the file.
 **What to do.** Prefer XTC, which is also smaller. If you must resume a DCD
 run, delete the DCD before resuming and accept the gap.
 
-## A raw `Context` does not seed its running energy
-
-**Symptom.** `context.get_state().current_energy` is `0.0` after
-`set_positions()`, and stays offset by the structure's starting energy for the
-rest of the run.
-
-**Cause.** `set_positions()` deliberately does not compute an energy — it is
-called on every accepted replica-exchange swap, and an O(N²) recompute there
-would be costly. The running total is only meaningful once something seeds it.
-
-**What to do.** Nothing, if you use `Simulation`: its first `step()` seeds the
-value. If you drive a `Context` directly, call
-`context.calculate_total_energy(-1)` once after `set_positions()` — this is
-what every script under `scripts/parity_*.py` does.
-
-Accept/reject decisions are never affected, because the Metropolis criterion
-consumes ΔE rather than the running total. Only reported energies are.
-
 ## Linux x86-64 only, with an x86-64-v3 baseline
 
 **Symptom.** No wheel for your platform, or `Illegal instruction` on a CPU

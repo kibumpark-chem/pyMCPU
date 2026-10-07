@@ -5,6 +5,7 @@
 #include <vector>
 #include <cstdint>
 #include <algorithm>
+#include <stdexcept>
 #include <string>
 #include "pymcpu/System.h"
 #include "pymcpu/State.h"
@@ -167,6 +168,12 @@ struct HBondWorkspace {
     }
 };
 
+/// A full recompute found a hard-core overlap in a state that has to be clean
+/// (Context::ensure_energy_current). Python sees pymcpu.simulation.StericClashError.
+struct StericClashError : std::runtime_error {
+    using std::runtime_error::runtime_error;
+};
+
 class Context {
 private:
     void sync_geometry();
@@ -206,6 +213,16 @@ private:
     bool positions_set_ = false;
     bool reorder_applied_ = false;
     RejectReason last_total_reject_reason_ = RejectReason::None;
+    /// Everything besides the coordinates that defines the total energy, as
+    /// of the last full recompute (energy_definition_()), and whether the
+    /// coordinates were replaced since. See ensure_energy_current().
+    std::vector<double> energy_definition_seen_;
+    bool energy_stale_ = true;
+    std::uint64_t energy_resyncs_ = 0;
+    /// The System's mask epoch, the legacy-weights switch and the effective
+    /// group weights, the native-contacts bias, and each potential's group
+    /// (-1 when disabled). Compared by value.
+    std::vector<double> energy_definition_() const;
     /// User coordinates = engine coordinates + frame_offset_ (see
     /// utils/FrameOffset.h). Chosen at the first placement, kept after that.
     Eigen::Vector3d frame_offset_ = Eigen::Vector3d::Zero();
@@ -340,6 +357,18 @@ public:
     void sync_energy_mask() {
         if (positions_set_) neighbors_.sync_energy_mask(state.coords_soa);
     }
+
+    /// Recompute the total energy (calculate_total_energy(-1)) if the
+    /// coordinates were replaced or the energy definition changed since the
+    /// last full recompute; otherwise do nothing, at O(#potentials). The
+    /// Integrator calls it on entry, so current_energy is exact whichever
+    /// setter ran in between. Throws StericClashError if the recompute finds a
+    /// hard-core overlap (e.g. a cleared ignore_all mask exposing the overlaps
+    /// its residues were allowed); current_energy then stays as it was, and the
+    /// next call tries again.
+    void ensure_energy_current();
+    /// How many recomputes ensure_energy_current() has done.
+    std::uint64_t energy_resyncs() const noexcept { return energy_resyncs_; }
 
     bool trial_in_bounds(const State& proposal, const ProposalPatch& patch) const {
         return neighbors_.trial_in_bounds(proposal.coords_soa, patch);

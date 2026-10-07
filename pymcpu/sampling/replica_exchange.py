@@ -99,6 +99,10 @@ class ReplicaExchange:
         Move settings for every replica, with the same meaning and defaults as
         in :class:`~pymcpu.sampling.FoldingRunner`. A schedule sets each
         replica's rama-pivot probability from its own temperature.
+    full_energy_every_steps : int
+        Every replica's :attr:`pymcpu.Simulation.full_energy_every_steps`:
+        how often, in MC steps, to recompute its energy in full and check it.
+        A checkpoint save also recomputes.
     """
 
     def __init__(
@@ -127,6 +131,7 @@ class ReplicaExchange:
       seed: int = 0,
       step_size_rad: float = 0.1,
       move_weights: tuple[float, float, float] | None = None,
+      full_energy_every_steps: int = 1_000_000,
       sidechain_move_mode: str = "rotamer_library",
       pivot_rama_probability: float = 0.0,
       pivot_rama_schedule: dict[str, float] | None = None,
@@ -165,6 +170,7 @@ class ReplicaExchange:
       validate_fixed_linker_disjoint(self.fixed_residues, self.linker_residues)
       self.seed = int(seed)
       self.step_size_rad = float(step_size_rad)
+      self.full_energy_every_steps = int(full_energy_every_steps)
       self.move_settings = normalize_move_settings(
         move_weights=move_weights,
         sidechain_move_mode=sidechain_move_mode,
@@ -379,6 +385,8 @@ class ReplicaExchange:
       out_dir = Path(checkpoint_dir) if checkpoint_dir is not None else self.checkpoint_dir
       if out_dir is None:
         raise ValueError("checkpoint_dir is required to save a checkpoint")
+      for rep in self.replicas:
+        rep.simulation.recompute_energy()
       state = self.build_checkpoint_state()
       name = filename if filename is not None else checkpoint_cycle_filename(self._cycle)
       path = save_checkpoint(
@@ -851,6 +859,7 @@ class ReplicaExchange:
             step_size_rad=self.step_size_rad,
             move_settings=self.move_settings,
           )
+          simulation.full_energy_every_steps = self.full_energy_every_steps
 
           replicas.append(
             Replica(

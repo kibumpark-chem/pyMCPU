@@ -49,6 +49,9 @@ class FoldingRunner:
     against ``reference_pdb`` (by default the starting structure). The run
     stops early once Q has stayed at or above ``q_threshold`` (default 0.75)
     for ``convergence_window`` (default 10) cycles in a row.
+    ``full_energy_every_steps`` sets the simulation's full energy recompute
+    cadence (:attr:`pymcpu.Simulation.full_energy_every_steps`); a checkpoint
+    save also recomputes.
     """
 
     def __init__(
@@ -68,6 +71,7 @@ class FoldingRunner:
         sidechain_move_mode: str = "rotamer_library",
         pivot_rama_probability: float = 0.0,
         move_weights: tuple[float, float, float] | None = None,
+        full_energy_every_steps: int = 1_000_000,
         pivot_rama_schedule: dict[str, float] | None = None,
         prefix: str = "folding",
         fixed_residues: list[int] | None = None,
@@ -135,6 +139,7 @@ class FoldingRunner:
         self.sidechain_move_mode = normalize_sidechain_move_mode(sidechain_move_mode)
         self.pivot_rama_probability = normalize_pivot_rama_probability(pivot_rama_probability)
         self.move_weights = normalize_move_weights(move_weights)
+        self.full_energy_every_steps = int(full_energy_every_steps)
         self.pivot_rama_schedule = normalize_pivot_rama_schedule(pivot_rama_schedule)
         validate_fixed_linker_disjoint(self.fixed_residues, self.linker_residues)
         self.verbose = bool(verbose)
@@ -224,9 +229,11 @@ class FoldingRunner:
         self.simulation = Simulation(
             self.filtered.topology, self.system, integrator
         )
+        self.simulation.full_energy_every_steps = self.full_energy_every_steps
         coords_angstroms = self.forcefield.coords[0] * 10.0
         self.simulation.context.set_positions(coords_angstroms.T.astype(np.float32))
         self.simulation.context.calculate_total_energy(-1)
+        check_state_clash(self.simulation.context, "start structure")
 
         # Single-"replica" list for RNG helpers shared with RE checkpointing.
         self.replicas = [self.simulation]
@@ -717,6 +724,7 @@ class FoldingRunner:
 
     def save_checkpoint(self, cycle: int) -> None:
         """Save complete folding simulation state atomically."""
+        self.simulation.recompute_energy()
         q_values = self._compute_Q_values()
         rmsd_values = self._compute_rmsd_values()
 

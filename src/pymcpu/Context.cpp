@@ -83,6 +83,7 @@ void Context::maybe_apply_init_only_reorder_() {
     system->apply_residue_contiguous_blocks(std::move(new_blocks), atom_perm_);
     // Pair indices change meaning under a permutation -- drop the contact list.
     state.invalidate_coordinate_caches();
+    energy_stale_ = true;
     // NeighborSystem caches donor bb_starts from System — re-init + rebuild.
     // Registered subset grids name atoms by their pre-reorder ids.
     neighbors_.remap_subset_members(atom_perm_.ext_to_int);
@@ -192,6 +193,7 @@ void Context::set_coords_from_python(const Eigen::Matrix3Xd& coords) {
         reinitialize_q_pair_cache();
     }
     positions_set_ = true;
+    energy_stale_ = true;
 }
 
 void Context::reinitialize_q_pair_cache() {
@@ -231,6 +233,7 @@ void Context::setPositions(const Eigen::Matrix3Xd& new_coords,
         gather_external_to_internal(engine, atom_perm_, state.coords_soa);
     }
     positions_set_ = true;
+    energy_stale_ = true;
     sync_geometry();
     computeTorsions();
     if (q_bias_k_ > 0.0f) {
@@ -416,6 +419,37 @@ void Context::commit_accepted_move(const State& proposed_state, const ProposalPa
 }
 
 
+std::vector<double> Context::energy_definition_() const {
+    std::vector<double> d;
+    d.reserve(EnergyWeights::kMaxTrackedGroup + 4 + system->getPotentials().size());
+    d.push_back(static_cast<double>(system->energy_mask_epoch()));
+    d.push_back(energy_weights_.use_legacy_weights ? 1.0 : 0.0);
+    for (int g = 0; g < EnergyWeights::kMaxTrackedGroup; ++g)
+        d.push_back(energy_weights_.weight_for_group(g));
+    d.push_back(q_bias_k_);
+    d.push_back(q_bias_target_);
+    for (const auto& p : system->getPotentials())
+        d.push_back(p->isEnabled() ? p->getEnergyGroup() : -1);
+    return d;
+}
+
+void Context::ensure_energy_current() {
+    if (!positions_set_) return;
+    if (!energy_stale_ && energy_definition_() == energy_definition_seen_) return;
+    calculate_total_energy(-1);
+    ++energy_resyncs_;
+    if (last_total_reject_reason_ != RejectReason::None) {
+        energy_stale_ = true;  // stay out of step: the next run checks again
+        throw StericClashError(
+            "steric clash before the first move: the coordinates were replaced "
+            "or the energy definition changed (energy mask, weights, bias or an "
+            "enabled potential) since the last full recompute, and the state has "
+            "a pair more than 0.001 A (STATE_CLASH_BUFFER_A) under its hard-core "
+            "cutoff. Clearing an ignore_all mask does this when the masked "
+            "residues overlap the rest. current_energy is left as it was.");
+    }
+}
+
 // --- PHYSICS EVALUATION ---
 double Context::calculate_total_energy(int target_group) {
     require_current_atom_order();
@@ -428,6 +462,10 @@ double Context::calculate_total_energy(int target_group) {
     const double e = result.energy;
 
     if (target_group == -1) {
+        // The caller saw this recompute (and its clash verdict): the running
+        // total is in step with this energy definition and these coordinates.
+        energy_definition_seen_ = energy_definition_();
+        energy_stale_ = false;
         last_total_reject_reason_ = result.reject_reason;
         // Do NOT cache a rejection sentinel as if it were a physical energy.
         // System::evaluateTotalEnergy folds Mu's kHardCorePenalty (99999) into

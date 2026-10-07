@@ -163,9 +163,18 @@ class IntegratorConfig:
     #: for a force field whose residues have no chi angles, or half the run is
     #: spent on sidechain proposals that cannot do anything.
     move_weights: tuple[float, float, float] = (0.25, 0.25, 0.50)
+    #: Full energy recompute and check every this many MC steps
+    #: (pymcpu.Simulation.full_energy_every_steps).
+    full_energy_every_steps: int = 1_000_000
 
     def __post_init__(self) -> None:
         self.move_weights = normalize_move_weights(self.move_weights)
+        steps = self.full_energy_every_steps
+        if isinstance(steps, bool) or not isinstance(steps, (int, float)) or steps != int(steps) or steps < 1:
+            raise ValueError(
+                f"full_energy_every_steps must be a positive whole number of MC steps, got {steps!r}"
+            )
+        self.full_energy_every_steps = int(steps)
 
 
 @dataclass
@@ -676,7 +685,7 @@ _YAML_KEYS = frozenset({
     # run length and moves
     "seed", "mc_replica_steps", "steps", "num_cycles", "log_interval",
     "step_size_rad", "sidechain_move_mode", "pivot_rama_probability",
-    "pivot_rama_schedule", "move_weights",
+    "pivot_rama_schedule", "move_weights", "full_energy_every_steps",
     # replica exchange
     "q_targets", "n_targets", "native_contact_targets", "k_bias",
     "k_native_contacts", "contact_cutoff", "min_seq_sep", "contact_atom_mode",
@@ -880,6 +889,7 @@ def yaml_dict_to_config(
         ),
         pivot_rama_schedule=normalize_pivot_rama_schedule(data.get("pivot_rama_schedule")),
         move_weights=normalize_move_weights(data.get("move_weights")),
+        full_energy_every_steps=data.get("full_energy_every_steps", 1_000_000),
     )
 
     rex: ReplicaExchangeConfig | None = None
