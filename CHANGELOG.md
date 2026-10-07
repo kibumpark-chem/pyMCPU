@@ -1474,6 +1474,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `step_stats`: they cost no measurable time (actin, 34.8k vs 34.9k
   cycles/step) and always run.
 
+- **The third way to launch a YAML run.** `examples/gromacs_style/` and
+  `pymcpu.utils.yaml_parser` (`load_yaml`, `config_from_yaml`,
+  `simulation_from_yaml`, `SimulationHandle`) wrapped the same config
+  loader as `mcpu run` and `scripts/run_mcpu_replica_exchange.py -c`. Use
+  `mcpu run config.yaml`, or `pymcpu.config.load_yaml_config` from Python.
+
 - Compatibility aliases nothing reads: the `epoch` key in replica-exchange
   checkpoints (a copy of `cycle`), the `epoch` and `exchange_rng_state`
   fields of `CheckpointState`, and `NativeContactsCV.compute()` (use

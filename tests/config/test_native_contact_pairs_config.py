@@ -36,9 +36,9 @@ from pymcpu.config import (
     ReplicaExchangeConfig,
     SimulationConfig,
     check_yaml_keys,
+    load_yaml_config,
     yaml_dict_to_config,
 )
-from pymcpu.utils.yaml_parser import load_yaml
 
 # Minimal valid base kwargs shared by every case below; each test overrides
 # only the field(s) it's actually exercising.
@@ -93,7 +93,7 @@ def test_native_contact_pairs_key_does_not_warn(tmp_path) -> None:
     )
     with warnings.catch_warnings():
         warnings.simplefilter("error")
-        load_yaml(f)
+        load_yaml_config(f)
 
 
 def test_native_contact_pairs_reaches_replica_exchange_constructor(monkeypatch) -> None:

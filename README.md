@@ -165,8 +165,8 @@ weight, but the effective multiplier applied to the raw H-bond energy is
 python examples/openmm_style/run_example.py
 python examples/openmm_style/run_folding.py --steps 1000 --output-dir ./out_folding
 
-# GROMACS-style YAML input
-python examples/gromacs_style/run.py --input examples/gromacs_style/example_input.yaml
+# YAML input
+mcpu run examples/configs/template.yaml
 ```
 
 Replica exchange, weighted ensemble and production MPI runs are covered in the
