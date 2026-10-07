@@ -13,7 +13,6 @@
 
 #include <algorithm>
 #include <cassert>
-#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -32,6 +31,24 @@ namespace mcpu::forces::mcpu08 {
 namespace {
 
 using mcpu::neighbor::kSpanMaskSlack;
+
+/// Every pair lookup reads the topology table that cache_necessary_data()
+/// fills, so a potential evaluated before that call (or built for a system of
+/// another size) would index an empty or wrong-sized table. Both the full
+/// energy and the delta check it once per call, before any pair work.
+[[noreturn, gnu::cold, gnu::noinline]] void throw_topology_not_built() {
+    throw std::logic_error(
+        "MuPotential: the topology table is not built for this system; call "
+        "cache_necessary_data() before evaluating the energy");
+}
+
+inline void require_topology_table(size_t table_size, int num_atoms) {
+    if (__builtin_expect(table_size != static_cast<size_t>(num_atoms) *
+                                           static_cast<size_t>(num_atoms),
+                         0)) {
+        throw_topology_not_built();
+    }
+}
 
 /// MCPU_CONTACT_LIST=0 turns the live contact list off; read once.
 bool contact_list_enabled() {
@@ -622,6 +639,8 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
         // DEFAULT ON (1.35-1.45x on chignolin/1igd/actin when introduced).
         // MCPU_CONTACT_LIST=0 sends every move to the all-pairs moved-vs-all
         // delta instead: an exact O(n_moved * N) reference, slow, for checks.
+        require_topology_table(topo_flag_.size(),
+                               context.getSystem().getNumAtoms());
         const bool kContactList = contact_list_enabled();
         float delta;
         if (kContactList) {
@@ -1307,7 +1326,7 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
         const bool clash_first =
             static_cast<int>(moved.size()) >=
             context.neighborConfig().clash_first_min_moved;
-        // By default the pass tests only the clash_hot atoms. They catch
+        // The pass tests only the clash_hot atoms. They catch
         // 98.6-99.4% of the pivots that overlap (actin, LDH-A, PGK1), while
         // testing every moved atom cost the pivots that do NOT overlap a
         // full extra pass, 6-9% of a pivot-only step. The contact walk below
@@ -1432,6 +1451,7 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
         setup_mask_cache(sys);
         float total_energy = 0.0f;
         const int num_atoms = sys.getNumAtoms();
+        require_topology_table(topo_flag_.size(), num_atoms);
 
         // A resync (Potential::resyncEnergy) also rewrites the state's live
         // contact list, near misses included, from this pass and resets its

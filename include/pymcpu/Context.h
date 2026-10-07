@@ -47,7 +47,6 @@ struct MuWorkspace {
     std::vector<int> moved_grid_atoms;
 
     bool use_trial_fallback = false;
-    MoveKind move_kind = MoveKind::Other;
 
     // The moved-cell counts and the clash_hot list live in Context's
     // neighbor::PairScratch, shared by every term's pair walks.

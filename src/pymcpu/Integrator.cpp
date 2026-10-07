@@ -1748,9 +1748,6 @@ void MCIntegrator::verify_physics_consistency(Context& context, int num_steps, f
 
         auto& mu_ws = context.getWorkspace();
         mu_ws.use_trial_fallback = !context.trial_in_bounds(proposal, move_patch);
-        if (move_slot == 0) mu_ws.move_kind = MoveKind::Pivot;
-        else if (move_slot == 1) mu_ws.move_kind = MoveKind::KIC;
-        else mu_ws.move_kind = MoveKind::Sidechain;
 
         const auto checks = PhysicsVerifier::verify_all_potential_deltas(
             context, context.getState(), proposal, move_patch, atol);
@@ -1941,7 +1938,6 @@ void MCIntegrator::run(Context& context, int num_steps, int step_offset)
 
         if (move_patch.is_valid) {
             auto& mu_ws = context.mu_workspace_;
-            mu_ws.move_kind = move_kind;
             mu_ws.use_trial_fallback = false;
 
             const bool in_box = context.trial_in_bounds(proposal, move_patch);
