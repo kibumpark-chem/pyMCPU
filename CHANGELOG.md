@@ -610,6 +610,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (T=32) takes 11-13% fewer cycles per step (actin 223k to 195k, PGK1 258k
   to 230k); native states at T=1 are within 1%. Peak memory drops by 45-75 MB.
 
+- **KORP honours residue energy masks.** `System.set_energy_ignored_residues`
+  (and a config's `linker_residues`, on the `EngineSpec`/`EngineSession`
+  path) used to reach only the mcpu08 terms; the
+  KORP pair energy and its CA excluded-volume guard ignored it, so a masked
+  linker still scored and clashed in full under `KORPForceField`. Now the pair
+  energy drops every pair with a masked residue in both modes, and the guard
+  stops testing masked residues under `ignore_all` and keeps testing them
+  under `clash_only`, in the delta and the full energy alike. The KORP pair
+  cache records the mask it was built under. Unmasked runs are bit-identical
+  (actin and PGK1, KORP, 3 seeds); a 40-residue `ignore_all` mask cuts KORP
+  actin's cost per step by about 25% (the masked run accepts about 1.7x
+  more moves, so the two trajectories differ).
+
 - **With fixed residues, no step is spent on a fixed residue.** A KIC step
   drew its window once and gave up when the window touched a fixed residue;
   it now draws again, as pivot and sidechain steps already did, so the

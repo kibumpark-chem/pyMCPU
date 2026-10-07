@@ -145,6 +145,17 @@ structures outright.
 One sphere per residue at CA prevents collapse, but it does not rigorously stop
 one strand threading through another, as an all-backbone-atom guard would.
 
+## Energy masks
+
+A residue energy mask (`System.set_energy_ignored_residues`, the `linker_residues`
+of a config) applies to both KORP terms, with the semantics Mu has. The pair
+energy is all energy, so a pair with a masked residue scores zero under
+`ignore_all` and `clash_only` alike. The CA guard is all clash, so `ignore_all`
+stops testing a masked residue against anything and `clash_only` keeps every
+test. The incremental delta, the cached pair energies and the full recompute all
+apply the same rule, and the cache records the mask it was built under, so a
+mask change rebuilds it.
+
 ## Differences from the reference implementation
 
 There are none in the energy: pyMCPU reproduces the reference `korpe` scorer to

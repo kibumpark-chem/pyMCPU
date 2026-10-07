@@ -277,6 +277,10 @@ and nothing else. See :doc:`/physics_notes/korp_6d`.
    separation from those rather than from array position, so renumbered
    input genuinely scores differently.
 
+   A residue masked with :py:meth:`System.set_energy_ignored_residues`
+   scores no pair, under ``'ignore_all'`` and ``'clash_only'`` alike: the
+   term has no clash half for ``'clash_only'`` to keep.
+
    The energy map is not distributed with pyMCPU. Build this through
    :py:class:`~pymcpu.KORPForceField` rather than by hand.
 
@@ -294,6 +298,10 @@ and nothing else. See :doc:`/physics_notes/korp_6d`.
    exempt, whatever their residue numbering. Moves are tested at the floor,
    and a whole state against one 0.001 Å lower, to allow for rounding
    (``mcpu_core.STATE_CLASH_BUFFER_A``).
+
+   Under an ``'ignore_all'`` energy mask
+   (:py:meth:`System.set_energy_ignored_residues`) the guard does not test
+   pairs with a masked residue; ``'clash_only'`` keeps every test.
 
 Steric clashes
 --------------

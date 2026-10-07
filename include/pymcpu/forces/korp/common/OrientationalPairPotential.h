@@ -9,6 +9,10 @@
 /// function of geometry. That is fine for Metropolis -- no derivative is ever
 /// taken -- and it makes the incremental delta exact by construction rather
 /// than an approximation that has to be bounded.
+///
+/// The residue energy mask (System::set_energy_ignored_residues) drops every
+/// pair with a masked residue, under ignore_all and clash_only alike: the
+/// term is all energy, with no clash half for clash_only to keep.
 
 #include <cstdint>
 #include <memory>
@@ -17,6 +21,8 @@
 #include "pymcpu/Potential.h"
 #include "pymcpu/forces/korp/common/OrientationalPairMap.h"
 #include "pymcpu/forces/korp/common/ResidueFrame.h"
+
+namespace mcpu { class System; }
 
 namespace mcpu::forces {
 
@@ -89,9 +95,9 @@ private:
 
     void build_frames(const State& state, std::vector<ResidueFrame>& out) const;
 
-    /// Build state.korp_cache from scratch and return the total energy, summed
-    /// in double exactly as calculateEnergy does.
-    double fill_cache(const State& state) const;
+    /// Build state.korp_cache from scratch under sys's energy mask and return
+    /// the total energy, summed in double exactly as calculateEnergy does.
+    double fill_cache(const System& sys, const State& state) const;
 
     /// atom index -> residue whose frame holds it, so classifying a move is
     /// linear in the moved-atom count instead of scanning every residue for

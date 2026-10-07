@@ -44,21 +44,24 @@ public:
     }
 
     /// Size for n residues, zero every pair, and mark the cache as built by
-    /// `owner`. The caller then fills frames and pair energies.
-    void reset(int n, const void* owner) {
+    /// `owner` under residue energy mask `mask_epoch`. The caller then fills
+    /// frames and pair energies.
+    void reset(int n, const void* owner, std::uint64_t mask_epoch) {
         n_ = n;
         owner_ = owner;
+        mask_epoch_ = mask_epoch;
         frames.resize(static_cast<std::size_t>(n));
         energy_.assign(static_cast<std::size_t>(n) * static_cast<std::size_t>(n), 0.f);
         ready_ = true;
         ++generation_;
     }
 
-    /// True when the cache was built by this potential for n residues. A
-    /// State moved between contexts with different KORP terms fails this and
-    /// is rebuilt.
-    [[nodiscard]] bool ready_for(const void* owner, int n) const noexcept {
-        return ready_ && owner_ == owner && n_ == n;
+    /// True when the cache was built by this potential for n residues under
+    /// this mask. A State moved between contexts with different KORP terms,
+    /// or scored under another mask, fails this and is rebuilt.
+    [[nodiscard]] bool ready_for(const void* owner, int n,
+                                 std::uint64_t mask_epoch) const noexcept {
+        return ready_ && owner_ == owner && n_ == n && mask_epoch_ == mask_epoch;
     }
 
     void invalidate() noexcept {
@@ -92,6 +95,7 @@ private:
         energy_ = std::move(other.energy_);
         n_ = other.n_;
         owner_ = other.owner_;
+        mask_epoch_ = other.mask_epoch_;
         ready_ = other.ready_;
         ++generation_;
         other.frames.clear();
@@ -102,6 +106,7 @@ private:
     std::vector<float> energy_;
     int n_ = 0;
     const void* owner_ = nullptr;
+    std::uint64_t mask_epoch_ = 0;
     bool ready_ = false;
     std::uint64_t generation_ = 0;
 };

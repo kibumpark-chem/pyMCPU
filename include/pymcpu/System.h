@@ -246,7 +246,7 @@ public:
         return secondary_structure_[static_cast<size_t>(res_id)];
     }
 
-    /// Mark residues whose Mu energy terms are suppressed (linker masking).
+    /// Mark residues whose energy terms are suppressed (linker masking).
     void set_energy_ignored_residues(const std::vector<int>& residues,
                                      EnergyMaskMode mode);
     void clear_energy_ignored_residues() noexcept;
@@ -260,6 +260,10 @@ public:
     }
     [[nodiscard]] const std::vector<uint8_t>& energy_ignored_mask() const noexcept {
         return energy_ignored_mask_;
+    }
+    /// The mask (1 = ignored, one byte per residue), or nullptr when none is set.
+    [[nodiscard]] const uint8_t* energy_ignored_mask_or_null() const noexcept {
+        return has_energy_mask_ ? energy_ignored_mask_.data() : nullptr;
     }
 
     /// Remap BlockIndices / atom_to_residue / DownstreamCache under an atom permutation.

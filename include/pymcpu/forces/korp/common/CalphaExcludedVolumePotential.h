@@ -19,6 +19,10 @@
 /// for a pair a rigid pivot carried a few 1e-6 A under min_distance by
 /// rounding.
 ///
+/// A residue masked with ignore_all (System::set_energy_ignored_residues) is
+/// never tested, in the delta and the full energy alike; clash_only keeps
+/// every test, since this term has no energy to drop.
+///
 /// The coarse-graining matches KORP's: one sphere per residue at CA. Note the
 /// limit that comes with that -- 2 A spheres spaced 3.8 A apart along the
 /// backbone leave gaps, so this reliably prevents collapse but does not

@@ -72,14 +72,25 @@ bool CalphaExcludedVolumePotential::pair_is_checked(int a, int b) const noexcept
     return std::abs(seq_number_[v] - seq_number_[u]) >= min_separation_;
 }
 
+namespace {
+// Residues whose CA is never tested: those masked with ignore_all. A
+// clash_only mask keeps the guard whole, since the guard is all clash.
+const std::uint8_t* clash_free_residues(const System& sys) noexcept {
+    return sys.energy_mask_mode() == EnergyMaskMode::IgnoreAll
+        ? sys.energy_ignored_mask_or_null() : nullptr;
+}
+}  // namespace
+
 double CalphaExcludedVolumePotential::calculateEnergy(
-    const Context& /*context*/, const State& state) const
+    const Context& context, const State& state) const
 {
     const int n = num_residues();
+    const std::uint8_t* skip = clash_free_residues(context.getSystem());
     for (int i = 0; i < n; ++i) {
+        if (skip && skip[i]) continue;
         const Eigen::Vector3f pi = state.atom_pos(ca_atom_[static_cast<std::size_t>(i)]);
         for (int j = i + 1; j < n; ++j) {
-            if (!pair_is_checked(i, j)) continue;
+            if (!pair_is_checked(i, j) || (skip && skip[j])) continue;
             const Eigen::Vector3f pj = state.atom_pos(ca_atom_[static_cast<std::size_t>(j)]);
             if (pair_r2(pj - pi) < min_distance_state_sq_) {
                 return kClashPenalty;  // one overlap is enough; stop looking
@@ -140,9 +151,12 @@ bool CalphaExcludedVolumePotential::clashesAtMoveCutoff(
     }
     const float filter_sq = min_distance_sq_ * (1.0f + 1e-4f);
     const int min_sep = min_separation_;
+    // The prefilter may still flag a masked partner; the exact loop drops it.
+    const std::uint8_t* skip = clash_free_residues(context.getSystem());
 
     for (std::size_t ia = 0; ia < moved_residues_.size(); ++ia) {
         const int a = moved_residues_[ia];
+        if (skip && skip[a]) continue;
         const std::size_t ua = static_cast<std::size_t>(a);
         const float ax = cx_[ua], ay = cy_[ua], az = cz_[ua];
         const int sa = seq_number_[ua];
@@ -164,7 +178,7 @@ bool CalphaExcludedVolumePotential::clashesAtMoveCutoff(
                 if (skip_carried) continue;
                 if (j < a) continue;  // unordered pair, visit once
             }
-            if (!pair_is_checked(a, j)) continue;
+            if (!pair_is_checked(a, j) || (skip && skip[j])) continue;
             if (clashes(a, j)) return true;
         }
     }

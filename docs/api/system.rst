@@ -238,6 +238,14 @@ files, and registers the five mcpu08 potentials
       test but drops the contact and directional terms. Any other value
       raises ``ValueError``.
 
+      Both force fields honour the mask, in the incremental energy and the
+      full recompute alike. With ``mcpu08``, Mu applies the mode pair by
+      pair and the H-bond, aromatic, triplet and sidechain-triplet terms
+      drop the masked residues in either mode. With ``korp``, the KORP pair
+      energy drops every pair with a masked residue in either mode, and the
+      CA excluded-volume guard skips masked residues under ``'ignore_all'``
+      and keeps testing them under ``'clash_only'``.
+
    .. py:method:: clear_energy_ignored_residues() -> None
 
       Remove the mask and reset the mode to ``'ignore_all'``.
