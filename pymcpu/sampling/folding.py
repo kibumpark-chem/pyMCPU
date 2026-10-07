@@ -268,43 +268,41 @@ class FoldingRunner:
         )
 
     def _ensure_q_cv(self) -> NativeContactsCV | None:
-        """Lazy-build NativeContactsCV on engine CA indices (Angstrom)."""
+        """Lazy-build NativeContactsCV on engine CA indices (Angstrom).
+
+        Returns ``None`` without a reference structure or a force field; any
+        error while building the CV propagates.
+        """
         if self._q_cv is not None:
             return self._q_cv
         if not self.reference_pdb:
             return None
         if not hasattr(self, "forcefield") or self.forcefield is None:
             return None
-        try:
-            ca_idx = build_contact_atom_index(
-                self.forcefield, mode=self.contact_atom_mode
-            )
-            ref_ca = reference_contact_from_pdb(
-                str(self.reference_pdb), mode=self.contact_atom_mode
-            )
-            n_res = int(ref_ca.shape[0])
-            energy_mask = None
-            if self.linker_residues:
-                energy_mask = np.zeros(n_res, dtype=bool)
-                for r in self.linker_residues:
-                    if 0 <= r < n_res:
-                        energy_mask[r] = True
-            self._q_cv = NativeContactsCV(
-                ca_internal_idx=ca_idx,
-                ref_ca_xyz=ref_ca,
-                contact_cutoff=self.contact_cutoff_ang,
-                min_seq_sep=self.min_seq_sep,
-                mode="hard",
-                q_cutoff=self.contact_cutoff_ang,
-                energy_ignored_residue_mask=energy_mask,
-                contact_atom_mode=self.contact_atom_mode,
-                native_contact_pairs=self.native_contact_pairs,
-            )
-            self._ca_internal_idx = ca_idx
-            return self._q_cv
-        except Exception as exc:
-            logger.warning("[Folding] Failed to build NativeContactsCV: %s", exc)
-            return None
+        ca_idx = build_contact_atom_index(self.forcefield, mode=self.contact_atom_mode)
+        ref_ca = reference_contact_from_pdb(
+            str(self.reference_pdb), mode=self.contact_atom_mode
+        )
+        n_res = int(ref_ca.shape[0])
+        energy_mask = None
+        if self.linker_residues:
+            energy_mask = np.zeros(n_res, dtype=bool)
+            for r in self.linker_residues:
+                if 0 <= r < n_res:
+                    energy_mask[r] = True
+        self._q_cv = NativeContactsCV(
+            ca_internal_idx=ca_idx,
+            ref_ca_xyz=ref_ca,
+            contact_cutoff=self.contact_cutoff_ang,
+            min_seq_sep=self.min_seq_sep,
+            mode="hard",
+            q_cutoff=self.contact_cutoff_ang,
+            energy_ignored_residue_mask=energy_mask,
+            contact_atom_mode=self.contact_atom_mode,
+            native_contact_pairs=self.native_contact_pairs,
+        )
+        self._ca_internal_idx = ca_idx
+        return self._q_cv
 
     def _get_engine_ca_indices(self) -> list[int]:
         """
@@ -370,12 +368,13 @@ class FoldingRunner:
 
     def _compute_native_contacts(self) -> list[tuple[int, int]]:
         """
-        Build native CA–CA contact pairs from the reference structure.
+        Native contact pairs (engine atom indices) from the reference structure.
 
-        Uses engine CA indices (via ``_get_engine_ca_indices``) and residue
-        lookup through ``self.mapping`` (inverse_mapping). Caches in
-        ``self._native_contacts``. Returns
-        ``[]`` (never ``None``) when unavailable.
+        The pairs come from :class:`NativeContactsCV`, so they use
+        ``contact_atom_mode`` (CA or CB) and honour ``native_contact_pairs``.
+        Cached in ``self._native_contacts``. Returns ``[]`` without a
+        reference structure or engine CA indices; raises when the CV cannot be
+        built.
         """
         if self._native_contacts is not None:
             return self._native_contacts
@@ -397,172 +396,36 @@ class FoldingRunner:
             self._native_contacts = []
             return self._native_contacts
 
-        # Prefer NativeContactsCV when forcefield is available (engine path).
         cv = self._ensure_q_cv()
-        if cv is not None:
-            atom_i, atom_j = cv.atom_pair_indices()
-            contacts = [
-                (int(i), int(j))
-                for i, j in zip(atom_i.tolist(), atom_j.tolist())
-            ]
-            if self.native_contact_pairs:
-                logger.info(
-                    "[Folding] Using %s explicitly specified native contacts "
-                    "in %s (engine CA path; native_contact_pairs explicit)",
-                    len(contacts),
-                    ref_pdb,
-                )
-            else:
-                logger.info(
-                    "[Folding] Found %s native contacts in %s "
-                    "(engine CA path; cutoff=%.1f Å, min_seq_sep=%s)",
-                    len(contacts),
-                    ref_pdb,
-                    self.contact_cutoff_ang,
-                    self.min_seq_sep,
-                )
-            self._native_contacts = contacts
-            self._check_ca_index_alignment(engine_ca)
-            return self._native_contacts
-
-        # Fallback (no forcefield / CV): build contacts from the reference PDB
-        # using topology.select + engine_ca / inverse_mapping. Hardcoded CA name
-        # scans belong only in CA-index helpers / RMSD reference loading.
-        #
-        # GOTCHA: this fallback always selects "name CA" regardless of
-        # self.contact_atom_mode. If _ensure_q_cv() fails for any reason on a
-        # cb-mode run, native contacts silently switch from CB to CA here with
-        # no warning to the caller.
-        try:
-            if self.native_contact_pairs:
-                # Explicit pairs override cutoff-based discovery entirely: map
-                # each (i, j) residue-index pair through engine_ca (same
-                # helper NativeContactsCV would use via ca_internal_idx),
-                # with the same range/self-pair validation as the CV class.
-                n_res = len(engine_ca)
-                contacts = []
-                for i, j in self.native_contact_pairs:
-                    i, j = int(i), int(j)
-                    if not (0 <= i < n_res) or not (0 <= j < n_res):
-                        raise ValueError(
-                            f"native_contact_pairs index out of range: "
-                            f"({i}, {j}) for n_res={n_res}"
-                        )
-                    if i == j:
-                        raise ValueError(
-                            f"native_contact_pairs contains a self-pair: "
-                            f"({i}, {j})"
-                        )
-                    contacts.append((int(engine_ca[i]), int(engine_ca[j])))
-            else:
-                ref = md.load(str(ref_pdb))
-                ca_top_idx = [int(i) for i in ref.topology.select("name CA")]
-                ca_atoms = [
-                    (idx, int(ref.topology.atom(idx).residue.index))
-                    for idx in ca_top_idx
-                ]
-                mapping = list(getattr(self, "mapping", []) or [])
-                # -1 marks an explicit amide H, which has no topology atom.
-                top_to_engine = {
-                    int(top_i): eng_i for eng_i, top_i in enumerate(mapping) if top_i >= 0
-                }
-
-                ref_xyz_nm = ref.xyz[0]
-                cutoff_nm = self.contact_cutoff_ang / 10.0
-                contacts: list[tuple[int, int]] = []
-
-                if top_to_engine:
-                    engine_pairs: list[tuple[int, int, int]] = []
-                    for top_idx, res_idx in ca_atoms:
-                        if top_idx in top_to_engine:
-                            engine_pairs.append(
-                                (top_to_engine[top_idx], top_idx, res_idx)
-                            )
-                    for ii, (eng_i, top_i, res_i) in enumerate(engine_pairs):
-                        for jj, (eng_j, top_j, res_j) in enumerate(engine_pairs):
-                            if jj <= ii:
-                                continue
-                            if abs(res_i - res_j) < self.min_seq_sep:
-                                continue
-                            dist_nm = float(
-                                np.linalg.norm(ref_xyz_nm[top_i] - ref_xyz_nm[top_j])
-                            )
-                            if dist_nm < cutoff_nm:
-                                contacts.append((eng_i, eng_j))
-                else:
-                    # No mapping: use topology / engine_ca indices (unit-test path).
-                    use_ca = ca_atoms
-                    if engine_ca and len(engine_ca) == len(ca_atoms):
-                        use_ca = [
-                            (int(engine_ca[k]), res_idx)
-                            for k, (_, res_idx) in enumerate(ca_atoms)
-                        ]
-                    for ii, (idx_i, res_i) in enumerate(use_ca):
-                        for jj, (idx_j, res_j) in enumerate(use_ca):
-                            if jj <= ii:
-                                continue
-                            if abs(res_i - res_j) < self.min_seq_sep:
-                                continue
-                            # Distances always from reference topology CA order.
-                            top_i = ca_atoms[ii][0]
-                            top_j = ca_atoms[jj][0]
-                            dist_nm = float(
-                                np.linalg.norm(ref_xyz_nm[top_i] - ref_xyz_nm[top_j])
-                            )
-                            if dist_nm < cutoff_nm:
-                                contacts.append((idx_i, idx_j))
-
-            if self.native_contact_pairs:
-                logger.info(
-                    "[Folding] Using %s explicitly specified native contacts "
-                    "in %s (fallback path; native_contact_pairs explicit)",
-                    len(contacts),
-                    ref_pdb,
-                )
-            else:
-                logger.info(
-                    "[Folding] Found %s native contacts in %s "
-                    "(fallback path; cutoff=%.1f Å, min_seq_sep=%s)",
-                    len(contacts),
-                    ref_pdb,
-                    self.contact_cutoff_ang,
-                    self.min_seq_sep,
-                )
-            self._native_contacts = contacts
-            self._check_ca_index_alignment(engine_ca)
-            return self._native_contacts
-        except Exception as exc:
-            logger.error("[Folding] Failed to compute native contacts: %s", exc)
-            self._native_contacts = []
-            return self._native_contacts
-
-    def _fraction_native_contacts(self, coords: np.ndarray) -> float:
-        """
-        Compute Q = (formed native contacts) / (total native contacts).
-
-        ``coords`` must be engine coordinates in **Angstrom**, shape ``(3, n)``.
-        Uses column slicing ``coords[:, i]``.
-        """
-        if not self._native_contacts:
-            return 0.0
-
-        arr = np.asarray(coords, dtype=np.float64)
-        if arr.shape[0] != 3:
-            # Accept (n, 3) by converting once; primary layout is (3, n).
-            if arr.ndim == 2 and arr.shape[1] == 3:
-                arr = arr.T
-            else:
-                raise ValueError(
-                    f"coords must be (3, n) Angstrom, got shape {arr.shape}"
-                )
-
-        cutoff = float(self.contact_cutoff_ang)
-        formed = 0
-        for i, j in self._native_contacts:
-            dist = float(np.linalg.norm(arr[:, i] - arr[:, j]))
-            if dist < cutoff:
-                formed += 1
-        return formed / len(self._native_contacts)
+        if cv is None:
+            raise RuntimeError(
+                "[Folding] Native contacts need a force field and a reference "
+                f"structure (reference_pdb={self.reference_pdb!r})."
+            )
+        atom_i, atom_j = cv.atom_pair_indices()
+        contacts = [
+            (int(i), int(j))
+            for i, j in zip(atom_i.tolist(), atom_j.tolist())
+        ]
+        if self.native_contact_pairs:
+            logger.info(
+                "[Folding] Using %s explicitly specified native contacts "
+                "in %s",
+                len(contacts),
+                ref_pdb,
+            )
+        else:
+            logger.info(
+                "[Folding] Found %s native contacts in %s "
+                "(cutoff=%.1f Å, min_seq_sep=%s)",
+                len(contacts),
+                ref_pdb,
+                self.contact_cutoff_ang,
+                self.min_seq_sep,
+            )
+        self._native_contacts = contacts
+        self._check_ca_index_alignment(engine_ca)
+        return self._native_contacts
 
     def _compute_Q_values(self) -> np.ndarray:
         """Native contact fraction Q for the current simulation. Shape (1,)."""
@@ -573,11 +436,7 @@ class FoldingRunner:
             return np.array([0.0])
 
         try:
-            cv = self._q_cv
-            if cv is not None:
-                q = float(cv.compute_Q(self._coords_3xn()))
-            else:
-                q = self._fraction_native_contacts(self._coords_3xn())
+            q = float(self._q_cv.compute_Q(self._coords_3xn()))
             return np.array([q])
         except Exception as exc:
             logger.warning("[Folding] _compute_Q_values failed: %s", exc)

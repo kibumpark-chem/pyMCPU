@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import inspect
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import numpy as np
@@ -42,6 +43,21 @@ from pymcpu.sampling.folding_bias import BasinTracker, FoldingBias  # noqa: E402
 #: can't silently drift from production defaults (the old version restated
 #: contact_cutoff_ang=8.0, min_seq_sep=4, etc. as separate literals here).
 _INIT_DEFAULTS = inspect.signature(FoldingRunner.__init__).parameters
+
+
+def _ca_blocks_forcefield(pdb: str | Path) -> SimpleNamespace:
+    """Stand-in force field whose engine CA indices are the PDB's CA indices.
+
+    ``build_contact_atom_index`` only reads ``blocks`` (CA = ``bb_start + 1``)
+    and ``total_sc_atoms``, so this is enough for ``NativeContactsCV``.
+    """
+    top = md.load(str(pdb)).topology
+    blocks = [
+        SimpleNamespace(bb_start=atom.index - 1, sc_start=-1)
+        for atom in top.atoms
+        if atom.name == "CA"
+    ]
+    return SimpleNamespace(blocks=blocks, total_sc_atoms=0, output_topology=top)
 
 
 def _make_minimal_folding_runner(
@@ -72,7 +88,10 @@ def _make_minimal_folding_runner(
     runner = FoldingRunner.__new__(FoldingRunner)
     runner.simulation = mock_sim
     runner.replicas = [mock_sim]
-    runner.forcefield = None
+    runner.forcefield = (
+        _ca_blocks_forcefield(reference_pdb) if reference_pdb is not None else None
+    )
+    runner.contact_atom_mode = "ca"
     runner.system = MagicMock()
     runner.system.get_num_atoms.return_value = n_atoms
     runner.pdb_path = Path(pdb_path) if pdb_path is not None else None
@@ -175,12 +194,11 @@ class TestNativeContacts:
         runner = _make_minimal_folding_runner(reference_pdb=None)
         assert runner._compute_native_contacts() == []
 
-    def test_fallback_honors_native_contact_pairs_and_ignores_cutoff(
+    def test_native_contact_pairs_replace_the_cutoff(
         self, chignolin_pdb_path: str
     ) -> None:
-        """On the mocked-runner fallback path (forcefield=None), explicit
-        ``native_contact_pairs`` must replace cutoff/min_seq_sep derivation
-        entirely, not just supplement it.
+        """Explicit ``native_contact_pairs`` must replace cutoff/min_seq_sep
+        derivation entirely, not just supplement it.
 
         Picks residue pair (0, 1): adjacent residues (sequence separation 1),
         which the cutoff-based derivation would always reject since it is
@@ -202,6 +220,19 @@ class TestNativeContacts:
         contacts = runner._compute_native_contacts()
 
         assert contacts == [(int(engine_ca[0]), int(engine_ca[1]))]
+
+    def test_raises_when_the_cv_cannot_be_built(self, chignolin_pdb_path: str) -> None:
+        """A CV that cannot be built is an error, not a silent switch to CA."""
+        runner = _make_minimal_folding_runner(chignolin_pdb_path)
+        runner.forcefield = None
+        with pytest.raises(RuntimeError, match="need a force field"):
+            runner._compute_native_contacts()
+
+    def test_cv_build_errors_propagate(self, chignolin_pdb_path: str) -> None:
+        runner = _make_minimal_folding_runner(chignolin_pdb_path)
+        runner.contact_atom_mode = "cb"  # the stand-in force field has no CB
+        with pytest.raises(ValueError, match="needs CB atoms"):
+            runner._compute_native_contacts()
 
 
 # ── Q (fraction of native contacts) ───────────────────────────────

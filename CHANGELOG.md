@@ -554,6 +554,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rebuilds (set_positions and overflow recovery), not bounding-box
   rebuilds after a move.
 
+- **`FoldingRunner` raises when it cannot build its native-contact CV.** It
+  used to log a warning and rebuild the contacts from CA atoms, so a run
+  set to `contact_atom_mode: cb` could silently track CA contacts instead.
+  The error from building the CV now reaches the caller. Runs whose CV
+  builds, which is every run with a force field and the default
+  `reference_pdb`, are unchanged.
+
 - **With fixed residues, no step is spent on a fixed residue.** A KIC step
   drew its window once and gave up when the window touched a fixed residue;
   it now draws again, as pivot and sidechain steps already did, so the
