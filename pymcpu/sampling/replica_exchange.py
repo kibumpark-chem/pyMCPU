@@ -342,7 +342,6 @@ class ReplicaExchange:
         "kind": "replica_exchange",
         "cycle": int(self._cycle),
         "global_step": int(self._cycle),  # RE progress unit is cycle
-        "epoch": int(self._cycle),  # alias for training-style tooling
         "seed": int(self.seed),
         "pdb_path": str(self.pdb_path),
         "reference_pdb": str(self.reference_pdb),

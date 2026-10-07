@@ -67,7 +67,6 @@ class CheckpointState:
 
     cycle: int = 0
     global_step: int = 0
-    epoch: int = 0
     seed: int = 0
     format_version: int = CHECKPOINT_FORMAT_VERSION
     kind: str = "replica_exchange"
@@ -87,7 +86,6 @@ class CheckpointState:
     replica_coords: list[Any] = field(default_factory=list)
     current_steps: list[int] = field(default_factory=list)
     exchange_rng: Any = None
-    exchange_rng_state: Any = None  # alias used by some tests / callers
     integrator_rng_states: list[Any] = field(default_factory=list)
     #: Per replica, the integrator's cumulative move counters
     #: (Integrator.get_move_counters). Empty in checkpoints written before
@@ -98,10 +96,7 @@ class CheckpointState:
     traj_frame_indices: dict[str, int] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        d = asdict(self)
-        if d.get("exchange_rng") is None and d.get("exchange_rng_state") is not None:
-            d["exchange_rng"] = d["exchange_rng_state"]
-        return d
+        return asdict(self)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "CheckpointState":
@@ -191,7 +186,6 @@ def save_checkpoint(
         state = dict(state)
         state["cycle"] = int(cycle)
         state.setdefault("global_step", int(cycle))
-        state.setdefault("epoch", int(cycle))
 
     checkpoint_dir = Path(checkpoint_dir)
     try:
@@ -280,7 +274,7 @@ def load_checkpoint(checkpoint_path: str | Path) -> dict[str, Any]:
 
     logger.info(
         "Resumed from cycle %s | global_step %s | keys=%s",
-        checkpoint.get("cycle", checkpoint.get("epoch", "?")),
+        checkpoint.get("cycle", "?"),
         checkpoint.get("global_step", "?"),
         sorted(checkpoint.keys()),
     )

@@ -298,10 +298,6 @@ class NativeContactsCV:
         """Normalized fraction Q = N / n_contacts."""
         return float(self.compute_N(coords_3xn) / self.n_contacts)
 
-    def compute(self, coords_3xn: np.ndarray) -> float:
-        """Alias for :meth:`compute_Q` (historical name). Prefer :meth:`compute_N`."""
-        return self.compute_Q(coords_3xn)
-
     def fraction_to_count(self, q: float) -> float:
         """Map a fraction target Q* to count target N0 = Q* * n_contacts."""
         return float(q) * float(self.n_contacts)

@@ -764,7 +764,6 @@ class FoldingRunner:
             walker_at_state=np.array([0], dtype=np.int32),
             current_steps=[int(self.simulation.current_step)],
             exchange_rng=None,
-            exchange_rng_state=None,
             integrator_rng_states=get_integrator_rng_states(self.replicas),
             integrator_move_counters=get_integrator_move_counters(self.replicas),
             n_replicas=1,

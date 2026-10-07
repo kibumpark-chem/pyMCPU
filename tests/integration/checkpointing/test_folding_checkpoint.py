@@ -88,7 +88,6 @@ class TestFoldingCheckpointState:
             walker_at_state=np.array([0]),
             current_steps=[0],
             temperatures=[300.0],
-            exchange_rng_state=None,
             integrator_rng_states=[""],
             seed=42,
         )
@@ -102,7 +101,6 @@ class TestFoldingCheckpointState:
             walker_at_state=np.array([0]),
             current_steps=[0],
             temperatures=[300.0],
-            exchange_rng_state=None,
             integrator_rng_states=[""],
             seed=42,
         )
@@ -122,7 +120,6 @@ class TestFoldingCheckpointState:
             walker_at_state=np.arange(4),
             current_steps=[25000] * 4,
             temperatures=[300.0, 350.0, 400.0, 450.0],
-            exchange_rng_state=None,
             integrator_rng_states=[""] * 4,
             seed=42,
             n_targets=4,
@@ -147,7 +144,6 @@ class TestFoldingCheckpointState:
             walker_at_state=np.arange(4),
             current_steps=[100000] * 4,
             temperatures=[300.0, 350.0, 400.0, 450.0],
-            exchange_rng_state=None,
             integrator_rng_states=[""] * 4,
             seed=99,
             native_contacts_fraction=q_values,
@@ -179,7 +175,6 @@ class TestFoldingCheckpointState:
             walker_at_state=np.array([0]),
             current_steps=[5000],
             temperatures=[300.0],
-            exchange_rng_state=None,
             integrator_rng_states=[""],
             seed=1,
         )

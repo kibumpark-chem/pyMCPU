@@ -120,7 +120,6 @@ class TestTrajFrameIndicesRoundTrip:
             walker_at_state=np.array([0]),
             current_steps=[10000],
             temperatures=[300.0],
-            exchange_rng_state=None,
             integrator_rng_states=[""],
             seed=42,
             traj_frame_indices={
@@ -158,7 +157,6 @@ class TestTrajFrameIndicesRoundTrip:
             walker_at_state=np.array([0]),
             current_steps=[10000],
             temperatures=[300.0],
-            exchange_rng_state=None,
             integrator_rng_states=[""],
             seed=42,
             traj_frame_indices={

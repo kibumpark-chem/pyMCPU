@@ -1474,6 +1474,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `step_stats`: they cost no measurable time (actin, 34.8k vs 34.9k
   cycles/step) and always run.
 
+- Compatibility aliases nothing reads: the `epoch` key in replica-exchange
+  checkpoints (a copy of `cycle`), the `epoch` and `exchange_rng_state`
+  fields of `CheckpointState`, and `NativeContactsCV.compute()` (use
+  `compute_Q()` or `compute_N()`). Old checkpoints still load: unknown keys
+  are dropped.
+
 - **The parameter download path and the `pooch` dependency.** The registry
   never had a URL, so the download could only raise. Gone with it:
   `MCPU_PARAMS_BUNDLE` (a local `.tar.gz` unpacked into the cache), the
