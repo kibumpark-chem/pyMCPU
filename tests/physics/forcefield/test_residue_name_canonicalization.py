@@ -119,7 +119,7 @@ def test_alias_emits_a_warning(caplog):
     """Silently rewriting the user's residue names would be worse than loud."""
     traj = _load_heavy()
     _rename_all(traj, "HIS", "HSD")
-    with caplog.at_level(logging.WARNING, logger="pymcpu.forcefields.mcpu"):
+    with caplog.at_level(logging.WARNING, logger="pymcpu.forcefields.base"):
         MCPUForceField(traj, param_set="mcpu08")
     assert any("HSD->HIS" in rec.getMessage() for rec in caplog.records), (
         "canonicalization must report what it renamed"
@@ -128,7 +128,7 @@ def test_alias_emits_a_warning(caplog):
 
 def test_unmodified_input_warns_about_nothing(caplog):
     traj = _load_heavy()
-    with caplog.at_level(logging.WARNING, logger="pymcpu.forcefields.mcpu"):
+    with caplog.at_level(logging.WARNING, logger="pymcpu.forcefields.base"):
         MCPUForceField(traj, param_set="mcpu08")
     assert not [r for r in caplog.records if "Renamed" in r.getMessage()], (
         "a topology with only standard residue names must be left alone"

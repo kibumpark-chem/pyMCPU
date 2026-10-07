@@ -209,55 +209,6 @@ class MCPUForceField(BaseForceField):
         codes = md.compute_dssp(trajectory[0], simplified=True)[0]
         return "".join(c if c in ("H", "E") else self.dssp_coil_state for c in codes)
 
-    #: Residue names that are the SAME MOLECULE in heavy atoms as a standard
-    #: residue, differing only in protonation. pyMCPU is heavy-atom only (H are
-    #: stripped or virtual), so for these the rename is exact -- same atom names,
-    #: same chi atoms, same types. mdtraj already folds the histidine set and CYX
-    #: for PDB input, but not these, and other readers fold nothing, so
-    #: canonicalise here rather than depend on the reader.
-    #:
-    #: Deliberately NOT included, because they are not renames:
-    #:   MSE  selenomethionine -- SD is replaced by SE, so the atom NAMES differ
-    #:        and Se is not S (different radius and contact type). Supporting it
-    #:        means renaming SE->SD and accepting sulfur parameters for selenium,
-    #:        which is a modelling decision, not a spelling one.
-    #:   SEP/TPO/PTR  phosphorylated residues -- extra P/O atoms with no MCPU type.
-    #:   UNK, ligands, nucleotides -- no sidechain-torsion or contact definition.
-    _RESIDUE_ALIASES = {
-        # histidine protonation states (CHARMM / AMBER)
-        "HSD": "HIS", "HSE": "HIS", "HSP": "HIS",
-        "HID": "HIS", "HIE": "HIS", "HIP": "HIS",
-        # cysteine: disulfide-bonded and deprotonated
-        "CYX": "CYS", "CYM": "CYS",
-        # AMBER neutral/protonated forms
-        "ASH": "ASP", "GLH": "GLU", "LYN": "LYS", "ARN": "ARG",
-        # occasional alternate spellings
-        "HISD": "HIS", "HISE": "HIS",
-    }
-
-    def _canonicalize_residue_names(self, topology: md.Topology) -> None:
-        """Rename protonation-state variants to their standard equivalents.
-
-        Done in place on the topology, before anything reads a residue name, so
-        the ~15 downstream consumers (atom typing, PRO/CYS contact rules,
-        chi-atom resolution, torsion counts) all see the canonical name without
-        each needing its own alias table.
-        """
-        renamed: dict[str, str] = {}
-        for res in topology.residues:
-            canon = self._RESIDUE_ALIASES.get(res.name)
-            if canon is not None and canon != res.name:
-                renamed[res.name] = canon
-                res.name = canon
-        if renamed:
-            logger.warning(
-                "Renamed protonation-state residue variants to their standard "
-                "equivalents: %s. These are identical in heavy atoms, so the "
-                "energy is unaffected; MCPU has no separate parameters for the "
-                "protonation states.",
-                ", ".join(f"{k}->{v}" for k, v in sorted(renamed.items())),
-            )
-
     def _validate_topology(self, topology: md.Topology) -> None:
         """Raise early if topology contains residues MCPU cannot score."""
         unknown = sorted({
