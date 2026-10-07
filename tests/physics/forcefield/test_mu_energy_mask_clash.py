@@ -241,22 +241,3 @@ def test_without_the_contact_list_the_carried_overlap_agrees(use_cell_pair: bool
     assert walked == str(not use_cell_pair)
     assert passed == "True"
     assert abs(float(delta)) < CLASH
-
-
-def test_the_pivot_breakdown_diagnostic_agrees() -> None:
-    """MCPU_PIVOT_MU_BREAKDOWN takes a path of its own. It is read once per
-    process, so this runs in a fresh one."""
-    code = textwrap.dedent("""
-        from tests.physics.forcefield import test_mu_energy_mask_clash as t
-        heavy = t._load_heavy()
-        sim, new_coords, moved = t._far_move(heavy, t._make_overlap(heavy), use_cell_pair=False)
-        check = t._check_rigid(sim.context, new_coords, moved)
-        print("CHECK", check.passed, check.delta_incremental)
-    """)
-    repo = Path(__file__).resolve().parents[3]
-    env = dict(os.environ, MCPU_PIVOT_MU_BREAKDOWN="1")
-    run = subprocess.run([sys.executable, "-c", code], cwd=repo, env=env,
-                         capture_output=True, text=True, check=True)
-    passed, delta = [line.split()[1:] for line in run.stdout.splitlines() if line.startswith("CHECK ")][-1]
-    assert passed == "True"
-    assert abs(float(delta)) < CLASH

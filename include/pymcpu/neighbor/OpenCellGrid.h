@@ -448,67 +448,15 @@ public:
     }
 
     /**
-     * Like for_each_neighbor_cell_span_while, but visits ONLY the neighbour
-     * cells whose NEAREST POINT lies within `radius` of (x,y,z).
-     *
-     * Why: a hard-core overlap needs r < ~2.8 A, but the cells are sized for the
-     * ~5.1 A Mu cutoff. Asking the overlap question over the full 27-cell
-     * stencil sweeps a box ~5.8x larger in volume than the question needs.
-     * Culling by point-to-box distance leaves ~1.3 cells per atom instead of 27
-     * (measured on actin) for three comparisons per axis.
-     *
-     * NOTE: the equivalent cull at the CONTACT radius was tried and reverted as
-     * slower -- there it removed only ~25% of cell visits, and a ~25%-taken
-     * branch in the inner loop mispredicted. At the clash radius it removes
-     * ~95%, so the branch resolves the same way almost every time.
-     */
-    template <typename CellFunc>
-    bool for_each_neighbor_cell_span_while_within(float x, float y, float z,
-                                                  float radius,
-                                                  CellFunc&& cell_fn) const {
-        if (!configured_ || neighbor_offsets_.empty() || !use_contiguous_)
-            return true;
-        const float r2max = radius * radius;
-        const int ix0 = static_cast<int>(std::floor((x - bounds_.lo.x()) * inv_cell_));
-        const int iy0 = static_cast<int>(std::floor((y - bounds_.lo.y()) * inv_cell_));
-        const int iz0 = static_cast<int>(std::floor((z - bounds_.lo.z()) * inv_cell_));
-        for (const CellOffset& o : neighbor_offsets_) {
-            const int ix = ix0 + o.dx;
-            const int iy = iy0 + o.dy;
-            const int iz = iz0 + o.dz;
-            if (ix < 0 || iy < 0 || iz < 0 || ix >= nx_ || iy >= ny_ || iz >= nz_)
-                continue;
-            float d2 = 0.f;
-            const float lx = bounds_.lo.x() + static_cast<float>(ix) * cell_size_;
-            if (x < lx) { const float t = lx - x; d2 += t * t; }
-            else if (x > lx + cell_size_) { const float t = x - lx - cell_size_; d2 += t * t; }
-            const float ly = bounds_.lo.y() + static_cast<float>(iy) * cell_size_;
-            if (y < ly) { const float t = ly - y; d2 += t * t; }
-            else if (y > ly + cell_size_) { const float t = y - ly - cell_size_; d2 += t * t; }
-            const float lz = bounds_.lo.z() + static_cast<float>(iz) * cell_size_;
-            if (z < lz) { const float t = lz - z; d2 += t * t; }
-            else if (z > lz + cell_size_) { const float t = z - lz - cell_size_; d2 += t * t; }
-            if (d2 > r2max) continue;
-            const int c = (ix * ny_ + iy) * nz_ + iz;
-            const int count = cell_count_[static_cast<size_t>(c)];
-            if (count == 0) continue;
-            const size_t base = static_cast<size_t>(c) * CELL_CAPACITY;
-            if (!cell_fn(cell_atoms_.data() + base, cell_x_.data() + base,
-                         cell_y_.data() + base, cell_z_.data() + base, count))
-                return false;
-        }
-        return true;
-    }
-
-    /**
      * Visit only the cells that can hold an atom within `radius`, WITHOUT
      * enumerating the 27-cell stencil first.
      *
-     * The previous attempt (for_each_neighbor_cell_span_while_within) walked all
-     * 27 stencil offsets and culled each by point-to-box distance. Measured: it
-     * LOST, because paying ~10 operations per offset to reject 25 of 27 offsets
-     * costs more than the distance arithmetic it saves. The cost of a cell walk
-     * is the walk, not the distances.
+     * Why: a hard-core overlap needs r < ~2.8 A, but the cells are sized for the
+     * ~5.1 A Mu cutoff, so the full 27-cell stencil sweeps a box ~5.8x larger
+     * in volume than the question needs. Walking the 27 offsets and culling
+     * each by point-to-box distance measured slower than this: ~10 operations
+     * per offset to reject 25 of 27 costs more than the distance arithmetic it
+     * saves. The cost of a cell walk is the walk, not the distances.
      *
      * Here the surviving offsets are derived directly from where inside its cell
      * the query point sits: along each axis the neighbour at -1 is needed only

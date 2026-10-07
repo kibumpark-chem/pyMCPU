@@ -864,56 +864,6 @@ PYBIND11_MODULE(mcpu_core, m) {
                  {
                      const auto& b = s.pivot_mu_breakdown;
                      py::dict pb;
-                     pb["cell_walk_ns"] = b.cell_walk_ns;
-                     pb["r2_filter_ns"] = b.r2_filter_ns;
-                     pb["eval_pair_ns"] = b.eval_pair_ns;
-                     pb["overhead_ns"] = b.overhead_ns;
-                     pb["candidates"] = b.candidates;
-                     pb["in_cutoff"] = b.in_cutoff;
-                     pb["n_pivot_steps"] = b.n_pivot_steps;
-                     if (b.n_pivot_steps > 0) {
-                         const double inv =
-                             1.0 / static_cast<double>(b.n_pivot_steps);
-                         pb["avg_cell_walk_ns"] =
-                             static_cast<double>(b.cell_walk_ns) * inv;
-                         pb["avg_r2_filter_ns"] =
-                             static_cast<double>(b.r2_filter_ns) * inv;
-                         pb["avg_eval_pair_ns"] =
-                             static_cast<double>(b.eval_pair_ns) * inv;
-                         pb["avg_overhead_ns"] =
-                             static_cast<double>(b.overhead_ns) * inv;
-                         pb["avg_candidates"] =
-                             static_cast<double>(b.candidates) * inv;
-                         pb["avg_in_cutoff"] =
-                             static_cast<double>(b.in_cutoff) * inv;
-                         if (b.candidates > 0) {
-                             pb["in_cutoff_frac"] =
-                                 static_cast<double>(b.in_cutoff) /
-                                 static_cast<double>(b.candidates);
-                         }
-                         pb["avg_walk_empty_cells"] =
-                             static_cast<double>(b.walk_empty_cells) * inv;
-                         pb["avg_walk_nonempty_cells"] =
-                             static_cast<double>(b.walk_nonempty_cells) * inv;
-                         pb["avg_walk_atom_visits"] =
-                             static_cast<double>(b.walk_atom_visits) * inv;
-                         pb["avg_walk_probe_ns"] =
-                             static_cast<double>(b.walk_probe_ns) * inv;
-                         pb["avg_walk_oob_cells"] =
-                             static_cast<double>(b.walk_oob_cells) * inv;
-                         const auto cell_vis =
-                             b.walk_empty_cells + b.walk_nonempty_cells;
-                         if (cell_vis > 0) {
-                             pb["walk_empty_frac"] =
-                                 static_cast<double>(b.walk_empty_cells) /
-                                 static_cast<double>(cell_vis);
-                         }
-                         if (b.walk_nonempty_cells > 0) {
-                             pb["avg_atoms_per_nonempty_cell"] =
-                                 static_cast<double>(b.walk_atom_visits) /
-                                 static_cast<double>(b.walk_nonempty_cells);
-                         }
-                     }
                      pb["cell_pairs"] = b.cell_pairs;
                      pb["cell_pairs_empty"] = b.cell_pairs_empty;
                      pb["n_groups"] = b.n_groups;

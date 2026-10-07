@@ -38,10 +38,6 @@ enum class Cells : unsigned char {
     /// Only cells that can hold a point within `radius` of the probe
     /// (reachable-cell enumeration); cells whose atoms all moved are skipped.
     WithinRadius,
-    /// The stencil, minus cells beyond `radius`; no moved-cell skip.
-    StencilWithinRadius,
-    /// Chosen per call from WalkArgs::cells (one of the three above).
-    FromArgs,
 };
 
 /// Order in which moved_vs_static takes the moved sites.
@@ -51,9 +47,8 @@ struct WalkArgs {
     const std::uint8_t* is_moved;      // per site, nonzero if the move carries it
     std::size_t n_sites;               // size of is_moved
     const std::uint8_t* moved_counts;  // MovedCellScope::counts() for this grid
-    float radius;                      // WithinRadius / StencilWithinRadius
+    float radius;                      // WithinRadius only
     float lim2;                        // prefilter r2 (cutoff^2 * kSpanMaskSlack)
-    Cells cells;                       // used when the driver's C is FromArgs
 };
 
 namespace detail {
@@ -66,18 +61,9 @@ template <Cells C, class Grid, class CellFn>
     if constexpr (C == Cells::Stencil) {
         return grid.for_each_neighbor_cell_span_while_unmoved(
             p.x, p.y, p.z, wa.moved_counts, memo, cell_fn);
-    } else if constexpr (C == Cells::WithinRadius) {
+    } else {
         return grid.for_each_cell_span_within_fast_unmoved(
             p.x, p.y, p.z, wa.radius, wa.moved_counts, cell_fn);
-    } else if constexpr (C == Cells::StencilWithinRadius) {
-        return grid.for_each_neighbor_cell_span_while_within(
-            p.x, p.y, p.z, wa.radius, cell_fn);
-    } else {
-        return wa.cells == Cells::StencilWithinRadius
-                   ? grid.for_each_neighbor_cell_span_while_within(
-                         p.x, p.y, p.z, wa.radius, cell_fn)
-                   : grid.for_each_cell_span_within_fast_unmoved(
-                         p.x, p.y, p.z, wa.radius, wa.moved_counts, cell_fn);
     }
 }
 

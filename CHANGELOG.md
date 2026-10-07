@@ -894,9 +894,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     one the delta finds too.
   * 98.6-99.4% of the pivots that overlap are caught on an atom that
     overlapped in a recent rejected move, so the clash-first pass now tests
-    only those (`MCPU_CLASH_FIRST=2` restores the full pass). The contact
-    walk still rejects any overlap the pass misses, and records the atom it
-    stopped on for the next pass.
+    only those. The contact walk still rejects any overlap the pass misses,
+    and records the atom it stopped on for the next pass.
 
   Cycles per step before and after, interleaved, n=3, 20,000 steps,
   pivot-only: -45.3% actin, -50.8% LDH-A, -9.3% T4 lysozyme, -5.5% PGK1,
@@ -1195,6 +1194,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `MCPUForceField.inverse_mapping` is now each atom's `original_index`.
 - `mcpu_core.EnergyComponents`. It held the fixed MCPU column set the energy
   reporter used to write; nothing exported or used it.
+- **Mu developer diagnostics: `MCPU_DEBUG_MM_DELTA` and
+  `MCPU_PIVOT_MU_BREAKDOWN`.** The first printed the moved-moved energy
+  change of every rigid move, which is zero by construction. The second ran
+  pivots through a third copy of the pair walk that timed its collect,
+  distance and pair-energy phases. With it go the keys of
+  `Integrator.step_stats()["pivot_mu_breakdown"]` it filled: `cell_walk_ns`,
+  `r2_filter_ns`, `eval_pair_ns`, `overhead_ns`, `candidates`, `in_cutoff`,
+  `n_pivot_steps`, their `avg_*` forms and `in_cutoff_frac`, plus the
+  `avg_walk_*`, `walk_empty_frac` and `avg_atoms_per_nonempty_cell` keys,
+  whose counters nothing ever filled. The dict keeps its cell-pair counters.
+  Neither ran unless set, so default runs are bit-identical.
+- The `MCPU_CLASH_FIRST` and `MCPU_CLASH_FIRST_MIN_MOVED` environment
+  variables. The clash-first pass now always runs as it did by default:
+  over the atoms that overlapped in recent rejected moves, on the cells its
+  radius can reach, for moves of at least
+  `Context.clash_first_min_moved()` atoms (set with
+  `set_clash_first_min_moved`). The other modes are gone: off (`0`), the
+  27-cell stencil with a point-to-box cull (`1`, measured slower) and every
+  moved atom (`2`), with the stencil walker only mode `1` used.
 
 ## [0.1.0] — 2026-09-16
 

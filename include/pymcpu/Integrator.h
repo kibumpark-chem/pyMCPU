@@ -50,21 +50,8 @@ struct MuKindStats {
     std::size_t moved_atoms_sum = 0;
 };
 
-/// Pivot denselist Mu phase split (diagnostic; MCPU_PIVOT_MU_BREAKDOWN=1).
+/// Cell-pair inversion counters (copied from NeighborStats).
 struct PivotMuBreakdown {
-    std::uint64_t cell_walk_ns = 0;
-    std::uint64_t r2_filter_ns = 0;
-    std::uint64_t eval_pair_ns = 0;
-    std::uint64_t overhead_ns = 0;
-    std::uint64_t candidates = 0;
-    std::uint64_t in_cutoff = 0;
-    std::size_t n_pivot_steps = 0;
-    std::uint64_t walk_empty_cells = 0;
-    std::uint64_t walk_nonempty_cells = 0;
-    std::uint64_t walk_atom_visits = 0;
-    std::uint64_t walk_probe_ns = 0;
-    std::uint64_t walk_oob_cells = 0;
-    /// Cell-pair inversion counters (copied from NeighborStats).
     std::uint64_t cell_pairs = 0;
     std::uint64_t cell_pairs_empty = 0;
     std::uint64_t n_groups = 0;
@@ -136,7 +123,7 @@ struct StepStats {
     std::uint64_t verlet_rebuilds = 0;           ///< full CSR rebuilds
     std::uint64_t verlet_partial_rebuilds = 0;   ///< Strategy B partial accepts
     std::uint64_t verlet_partial_affected_sum = 0;
-    /// Copied from NeighborStats when pivot Mu breakdown diagnostic is active.
+    /// Copied from NeighborStats.
     PivotMuBreakdown pivot_mu_breakdown;
     CellPairBreakdown cell_pair_breakdown;
 };
