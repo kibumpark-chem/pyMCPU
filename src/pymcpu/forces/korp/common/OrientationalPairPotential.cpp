@@ -148,32 +148,41 @@ float OrientationalPairPotential::pair_energy(
 }
 
 double OrientationalPairPotential::calculateEnergy(
-    const Context& /*context*/, const State& state) const
+    const Context& context, const State& state) const
 {
     build_frames(state, frames_old_);
     const int n = num_residues();
+    // A masked residue scores no pair, in either mask mode: KORP has no
+    // clash half to keep under clash_only.
+    const std::uint8_t* masked = context.getSystem().energy_ignored_mask_or_null();
     // Float pair terms (the values the cache and the delta use) summed in
     // double, like every energy total.
     double total = 0.0;
     for (int i = 0; i < n; ++i) {
+        if (masked && masked[i]) continue;
         for (int j = i + 1; j < n; ++j) {
+            if (masked && masked[j]) continue;
             total += pair_energy(frames_old_, i, j);
         }
     }
     return total;
 }
 
-double OrientationalPairPotential::fill_cache(const State& state) const
+double OrientationalPairPotential::fill_cache(
+    const System& sys, const State& state) const
 {
     const int n = num_residues();
     KorpStateCache& cache = state.korp_cache;
-    cache.reset(n, this);
+    cache.reset(n, this, sys.energy_mask_epoch());
     build_frames(state, cache.frames);
+    const std::uint8_t* masked = sys.energy_ignored_mask_or_null();
     // Same frames, pairs and order as calculateEnergy, so the total is
     // bit-identical to it.
     double total = 0.0;
     for (int i = 0; i < n; ++i) {
+        if (masked && masked[i]) continue;
         for (int j = i + 1; j < n; ++j) {
+            if (masked && masked[j]) continue;
             const float e = pair_energy(cache.frames, i, j);
             total += e;
             if (e != 0.f) cache.set(i, j, e);
@@ -183,10 +192,10 @@ double OrientationalPairPotential::fill_cache(const State& state) const
 }
 
 double OrientationalPairPotential::resyncEnergy(
-    const Context& /*context*/, const State& state) const
+    const Context& context, const State& state) const
 {
     pending_.valid = false;
-    return fill_cache(state);
+    return fill_cache(context.getSystem(), state);
 }
 
 bool OrientationalPairPotential::classify(const ProposalPatch& patch) const
@@ -215,7 +224,7 @@ bool OrientationalPairPotential::classify(const ProposalPatch& patch) const
 }
 
 EnergyChangeResult OrientationalPairPotential::calculateEnergyChange(
-    const Context& /*context*/,
+    const Context& context,
     const State& old_state,
     const State& proposed_state,
     const ProposalPatch& patch) const
@@ -234,8 +243,9 @@ EnergyChangeResult OrientationalPairPotential::calculateEnergyChange(
     if (!classify(patch)) return EnergyChangeResult::finite(0.f);
 
     const int n = num_residues();
-    if (!cache.ready_for(this, n)) {
-        fill_cache(old_state);
+    const System& sys = context.getSystem();
+    if (!cache.ready_for(this, n, sys.energy_mask_epoch())) {
+        fill_cache(sys, old_state);
         pending_.generation = cache.generation();
     }
 
@@ -281,8 +291,13 @@ EnergyChangeResult OrientationalPairPotential::calculateEnergyChange(
     entry_.resize(un);
     weight_.resize(un);
     constexpr std::size_t kNoEntry = ~std::size_t{0};
+    // The cache was filled under this mask, so every pair of a masked residue
+    // holds 0 there and stays 0: a masked row is skipped, and a masked
+    // partner gets no table entry.
+    const std::uint8_t* masked = sys.energy_ignored_mask_or_null();
     double delta = 0.0;
     for (int a : changed_) {
+        if (masked && masked[a]) continue;
         const std::size_t ua = static_cast<std::size_t>(a);
         const float* old_row = cache.row(a);
         const double ax = ox_[ua], ay = oy_[ua], az = oz_[ua];
@@ -351,7 +366,7 @@ EnergyChangeResult OrientationalPairPotential::calculateEnergyChange(
             const int j = cand_[i];
             std::size_t index = kNoEntry;
             float weight = 0.f;
-            if (j >= 0) {
+            if (j >= 0 && !(masked && masked[j])) {
                 const bool scored = a < j ? pair_entry(frames_new_, a, j, index, weight)
                                           : pair_entry(frames_new_, j, a, index, weight);
                 if (scored) __builtin_prefetch(table_base + index);
@@ -378,7 +393,7 @@ EnergyChangeResult OrientationalPairPotential::calculateEnergyChange(
 }
 
 void OrientationalPairPotential::commitAcceptedMove(
-    const Context& /*context*/,
+    const Context& context,
     const State& state,
     const State& proposed_state,
     const ProposalPatch& patch) const
@@ -390,7 +405,8 @@ void OrientationalPairPotential::commitAcceptedMove(
                       pending_.num_moved == patch.moved_indices.size() &&
                       pending_.generation == cache.generation();
     pending_.valid = false;
-    if (!cache.ready_for(this, num_residues())) return;
+    if (!cache.ready_for(this, num_residues(),
+                         context.getSystem().energy_mask_epoch())) return;
     if (!mine) {
         // The record is for some other move (or none): the cache no longer
         // matches the coordinates and is rebuilt when next needed.
