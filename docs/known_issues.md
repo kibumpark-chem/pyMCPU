@@ -86,7 +86,9 @@ the other does not, the move is hard-rejected in one build and accepted in the
 other, and the trajectories decorrelate from there.
 
 Measured: 495 accepts under GCC 8.5, 512 under GCC 12.2 (2000 steps, seed
-1337), first differing decision at step 1253.
+1337), first differing decision at step 1253. GCC 15.2, the default compiler,
+parts from GCC 8.5 at step 1188 on the same case (step 939 with seed 42);
+its energies of a given structure agree with GCC 8.5's to float rounding.
 
 It is worth being precise about what this is *not*, because the engine does
 contain bare threshold comparisons on squared distances and they are the
@@ -105,7 +107,7 @@ MCPU_FP_CONTRACT=off pip install --no-build-isolation -e .
 ```
 
 Under `off`, GCC 8.5 and GCC 12.2 produce bit-identical trajectories on all
-four verification cases. It costs roughly 3% throughput.
+four verification cases (not yet checked for GCC 15). It costs roughly 3% throughput.
 `mcpu_core.build_info()["fp"]["fp_contract"]` reports which setting a build
 used, so a result can always be attributed.
 
@@ -138,10 +140,13 @@ cannot override it.
 
 **What to do.** Let conda supply both the compiler and the runtime
 (`gxx_linux-64` plus `libstdcxx-ng`, as `environment.yml` does), so they cannot
-drift apart. On a module-based HPC system, load the same compiler at run time
-that you built with. A stock Miniforge/Mambaforge base environment ships a
-`libstdc++` capped at `CXXABI_1.3.14`, which GCC 14 exceeds and GCC 13 does
-not.
+drift apart. On RHEL 8 or Rocky 8, build with
+`source /opt/rh/gcc-toolset-15/enable`: the toolset compiles the runtime parts
+newer than the system's into the extension, which then needs only
+`CXXABI_1.3.11` and imports under any Python. A module-loaded GCC does not do
+this. A stock Miniforge/Mambaforge base environment ships a `libstdc++`
+capped at `CXXABI_1.3.14`, which a module GCC 14 or newer exceeds and GCC 13
+does not.
 
 ## Memory on large, compact proteins
 

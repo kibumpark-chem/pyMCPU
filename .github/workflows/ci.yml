@@ -86,6 +86,9 @@ jobs:
 
   # ---------------------------------------------------------------------
   # Build the extension and run the suite. This is what lint.yml never did.
+  # ubuntu-latest builds with GCC 13, so this job is also the check that a
+  # compiler older than the shipping one (GCC 15, see `gcc15` below) still
+  # builds and passes.
   # ---------------------------------------------------------------------
   test:
     name: build + test (py${{ matrix.python-version }})
@@ -143,6 +146,54 @@ jobs:
         env:
           MCPU_NO_DOWNLOAD: "1"
         run: python -m pytest -q
+
+  # ---------------------------------------------------------------------
+  # The shipping compiler. Wheels are built with gcc-toolset-15 inside
+  # manylinux_2_28 (AlmaLinux 8); this job builds and tests with that same
+  # toolchain and image. The image's Python loads the RHEL 8 system
+  # libstdc++ (GCC 8), so the import also checks that the toolset kept the
+  # extension within that runtime's symbol versions.
+  # ---------------------------------------------------------------------
+  gcc15:
+    name: build + test (gcc-toolset-15, manylinux_2_28)
+    runs-on: ubuntu-latest
+    container: quay.io/pypa/manylinux_2_28_x86_64
+    defaults:
+      run:
+        # `source` below needs bash; a container job defaults to sh.
+        shell: bash
+    env:
+      PY: /opt/python/cp311-cp311/bin/python
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install gcc-toolset-15
+        run: dnf install -y gcc-toolset-15-gcc-c++ gcc-toolset-15-binutils
+
+      - name: Install
+        run: |
+          source /opt/rh/gcc-toolset-15/enable
+          g++ --version | head -1
+          as --version | head -1
+          "$PY" -m pip install --upgrade pip
+          "$PY" -m pip install ".[test]"
+
+      - name: The build used GCC 15 and pads branches
+        run: |
+          "$PY" - <<'PY'
+          import json, pymcpu.mcpu_core as m
+          info = m.build_info()
+          print(json.dumps({k: info[k] for k in ("compiler", "build")}, indent=2, sort_keys=True))
+          assert info["compiler"]["id"] == "GNU", info["compiler"]
+          assert int(info["compiler"]["version"].split(".")[0]) == 15, info["compiler"]
+          assert info["build"]["lto"] is True
+          assert info["build"]["jcc_pad"] is True, info["build"]["jcc_pad_reason"]
+          PY
+
+      - name: Test
+        env:
+          MCPU_NO_DOWNLOAD: "1"
+        run: '"$PY" -m pytest -q'
 
   # ---------------------------------------------------------------------
   # The scalar fallbacks. Every other job builds the default v3 tier

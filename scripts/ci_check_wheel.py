@@ -111,6 +111,13 @@ def _build_info() -> None:
         f"mode={info['build']['jcc_pad_mode']!r}, "
         f"reason={info['build']['jcc_pad_reason']!r}"
     )
+    # Wheels ship GCC 15 (gcc-toolset-15, put first on PATH by
+    # CIBW_ENVIRONMENT); this catches the image's older default toolset
+    # being picked up instead.
+    compiler = info["compiler"]
+    assert compiler["id"] == "GNU" and int(compiler["version"].split(".")[0]) >= 15, (
+        f"wheel built with {compiler['id']} {compiler['version']}, expected GCC >= 15"
+    )
 
 
 @check("the CPU baseline is portable (no AVX-512 in a published wheel)")

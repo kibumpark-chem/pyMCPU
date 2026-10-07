@@ -129,9 +129,12 @@ If you publish results that use KORP, please cite López-Blanco & Chacón,
 Building from source
 --------------------
 
-You need a C++20 compiler (GCC 8.5 or newer), CMake 3.15 or newer, and
-pybind11 2.12 or newer. Eigen 3.4 is downloaded automatically if it is not
-found. ``environment.yml`` provides all of these.
+You need a C++20 compiler, CMake 3.15 or newer, and pybind11 2.12 or newer.
+GCC 15 is the default compiler and the one the published wheels are built
+with. GCC 8.5 is the oldest that builds and passes the tests, but its builds
+run about 3-15% slower (about 10% on pivot moves and 14% with KORP), and
+CMake warns when it finds a GCC older than 15. Eigen 3.4 is downloaded
+automatically if it is not found. ``environment.yml`` provides all of these.
 
 .. code-block:: bash
 
@@ -212,15 +215,41 @@ Building on a cluster
 With ``environment.yml`` you do not need compiler or CMake modules. Conda
 provides both, and they match the C++ runtime automatically.
 
-If you build with the cluster's own compiler instead, load it before
-building. Module names vary by site:
+To build with the cluster's own compiler instead, on RHEL 8 or Rocky 8
+(FASRC included) enable the GCC 15 toolset in the same shell, before
+``pip install`` or ``cmake``:
 
 .. code-block:: bash
 
-   module load gcc cmake
+   source /opt/rh/gcc-toolset-15/enable
+   g++ --version | head -1                  # should print 15.x
+   pip install --no-build-isolation -e .
 
-Then check that this compiler is not newer than the ``libstdc++`` your Python
-loads, as described above.
+The toolset compiles the parts of the C++ runtime that are newer than the
+system's into the extension itself, so the result imports under any Python,
+conda's included, and its assembler pads branches (see above). Two things
+override the toolset: a ``CXX`` environment variable (conda's compiler
+activation sets one; ``unset CXX``), and the compiler cached in an existing
+CMake build directory (configure a fresh one).
+
+If a node has no ``/opt/rh/gcc-toolset-15``, use the conda environment
+instead. A plain module GCC 14 or newer (``module load gcc``) builds an
+extension that fails at import under a stock Miniforge or Mambaforge Python
+(``CXXABI_1.3.15 not found``, see above). If you must use one, link the C++
+runtime statically. On FASRC, with ``gcc/15.2.0-fasrc01``:
+
+.. code-block:: bash
+
+   module load gcc/15.2.0-fasrc01
+   unset CXX
+   STATIC="-static-libstdc++ -static-libgcc"
+   pip install --no-build-isolation -e . \
+       -Ccmake.define.CMAKE_CXX_COMPILER=$(which g++) \
+       -Ccmake.define.CMAKE_SHARED_LINKER_FLAGS="$STATIC" \
+       -Ccmake.define.CMAKE_MODULE_LINKER_FLAGS="$STATIC"
+
+Such a build uses the system assembler (binutils 2.30 on RHEL 8), which
+cannot pad branches, so it may run somewhat slower than the toolset build.
 
 MCPU parameter lookup
 ---------------------

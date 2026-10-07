@@ -13,7 +13,9 @@ python -m pytest -q                    # the default suite
 ruff check .
 ```
 
-The build needs a C++20 compiler (GCC 9+ / Clang 10+) and CMake. Eigen is
+The build needs a C++20 compiler and CMake. GCC 15 is the default (on RHEL 8,
+`source /opt/rh/gcc-toolset-15/enable` first); GCC 8.5 is the oldest supported
+and builds about 3-15% slower code. Eigen is
 fetched automatically if it is not installed. `pip install -e .` rebuilds the
 extension when C++ sources change.
 
