@@ -386,13 +386,15 @@ def test_work_counter_difference_alone_still_passes(oracle, capsys):
         cases=[_case(
             proxy_stats={"neighbor_num_cell_visits": 5},
             mu_by_kind={"pivot": {"eval_pair_nonzero": 2}},
-            step_ints={"n_steps": 10, "verlet_rebuilds": 3},
+            step_ints={"n_steps": 10, "mu_eval_pair_calls": 3},
         )],
     )
     assert oracle._compare(ref, cur) == 0
     out = capsys.readouterr().out
     assert "IDENTICAL" in out
     assert "proxy_stats[neighbor_num_cell_visits]: ref 7 vs cur 5" in out
+    # A step counter only one side recorded is reported, not a failure.
+    assert "step_ints[mu_eval_pair_calls]: ref None vs cur 3" in out
     assert "informational" in out
     assert "PASS" in out
 
@@ -403,6 +405,18 @@ def test_step_totals_stay_strict(oracle, capsys):
                   cases=[_case(step_ints={"n_steps": 11})])
     assert oracle._compare(ref, cur) == 1
     assert "DIVERGED in step_ints" in capsys.readouterr().out
+
+
+def test_step_total_missing_on_one_side_is_a_divergence(oracle, capsys):
+    """A dropped step total must not pass as a retired work counter."""
+    ref = _record(sha="aaaa", fma=22, fp_contract="off",
+                  cases=[_case(step_ints={"n_steps": 10, "n_accepts": 5})])
+    cur = _record(sha="bbbb", fma=22, fp_contract="off",
+                  cases=[_case(step_ints={"n_steps": 10})])
+    assert oracle._compare(ref, cur) == 1
+    out = capsys.readouterr().out
+    assert "DIVERGED in step_ints" in out
+    assert "step_ints[n_accepts]: ref 5 vs cur None" in out
 
 
 def test_coordinate_hash_difference_is_detected(oracle, capsys):

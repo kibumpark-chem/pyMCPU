@@ -28,13 +28,12 @@ public:
     const OpenCellGrid& grid() const noexcept { return grid_; }
 
     /// Configure dense cells from AABB bounds.
-    /// Default: cell_size = query = cutoff + skin (HB / baseline Mu).
+    /// Default: cell_size = query = cutoff (HB / baseline Mu).
     /// Pass ``cell_size_override`` &gt; 0 for Mu denselist with
     /// ``effective_mu_cell_size_A`` (variable stencil via query radius).
     bool configure(const BoxBounds& bounds, const NeighborConfig& cfg,
-                   float skin = 0.f, float cell_size_override = -1.f) {
-        const float sk = skin > 0.f ? skin : 0.f;
-        const float query = cutoff_ + sk;
+                   float cell_size_override = -1.f) {
+        const float query = cutoff_;
         const float cell =
             (cell_size_override > 0.f) ? cell_size_override : query;
         return grid_.configure(bounds, cell, cfg, query);

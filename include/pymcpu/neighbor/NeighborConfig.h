@@ -6,11 +6,6 @@
 
 namespace mcpu {
 
-enum class NeighborMode : int {
-    CellOnly = 0,         // Pivot: never Verlet
-    VerletPreferred = 1   // KIC/SC: Verlet when valid
-};
-
 enum class MoveKind : int {
     Pivot = 0,
     KIC = 1,
@@ -19,15 +14,10 @@ enum class MoveKind : int {
 };
 
 struct NeighborConfig {
-    /// Mu Verlet skin (Å). Default 0 = denselist CellOnly (no Verlet CSR).
-    /// skin=1.0 + partial rebuild is parity-clean but wall-regresses on actin
-    /// (CSR pack + pivot-triggered full rebuilds). Keep 0; opt-in via set_mu_skin
-    /// or MCPU_MU_SKIN.
-    float skin = 0.f;
     float max_atom_displacement_hard = 12.f;
 
     bool rebuild_from_aabb = true;
-    float margin_angstrom = -1.f; // <0 => 2*(r_cut+skin)
+    float margin_angstrom = -1.f; // <0 => 2*r_cut
     int margin_cells = -1;
 
     std::uint64_t max_cells_total = 2'000'000ull;
@@ -35,13 +25,6 @@ struct NeighborConfig {
     int max_ny = 0;
     int max_nz = 0;
 
-    bool pivot_uses_verlet = false;
-    /// Legacy: force-dirty Mu Verlet on every pivot/rigid accept.
-    /// Default false: pivot tracks displacement like other moves (Option A).
-    bool invalidate_verlet_on_pivot_accept = false;
-
-    /// Runtime Verlet enable (skin value may stay >0 while gate disables use).
-    bool mu_verlet_enabled = true;
 
     /// If true (default), the pairs a rigid pivot (``patch.is_rigid``) carries
     /// -- both atoms moved -- are not re-measured: a rigid rotation keeps their
@@ -72,10 +55,6 @@ struct NeighborConfig {
     /// unmeasured.
     int clash_first_min_moved = 50;
 
-    /// If moved atom count exceeds this, force CellOnly even for KIC/SC. O(1) check.
-    int verlet_moved_threshold = 50;
-    /// Partial Verlet CSR rebuild on SC/KIC accept when n_moved ≤ this.
-    int verlet_partial_threshold = 50;
 
     /// Mu denselist cell size relative to the Mu cutoff. Default 1.0.
     float mu_cell_size_scale = 1.f;
@@ -88,40 +67,17 @@ struct NeighborConfig {
     /// MuPotential::mu_exact_cutoff(). &lt;0 → NeighborSystem falls back to 6.0.
     float mu_denselist_cutoff_A = -1.f;
 
-    /// DEPRECATED: auto-print from Integrator::run() was removed (vNext).
-    /// Kept for ABI/config layout only; set_proxy_print_every() is a no-op.
-    int proxy_print_every = -1;
-
-    // Verlet health warning thresholds (skin>0 only; one-time per run).
-    float verlet_warn_min_use_rate = 0.20f;
-    float verlet_warn_max_rebuild_rate = 0.05f;
 
     float effective_margin(float r_cut) const {
         if (margin_angstrom >= 0.f) return margin_angstrom;
-        const float list = r_cut + skin;
-        if (margin_cells >= 0) return static_cast<float>(margin_cells) * list;
-        return 2.f * list;
+        if (margin_cells >= 0) return static_cast<float>(margin_cells) * r_cut;
+        return 2.f * r_cut;
     }
 };
 
-/// Apply ``MCPU_MU_SKIN`` / ``MCPU_VERLET_PARTIAL_THRESHOLD`` /
-/// ``MCPU_MU_CELL_SCALE``. O(1).
+/// Apply ``MCPU_MU_CELL_SCALE`` (Mu denselist cell size relative to the
+/// cutoff). O(1).
 inline void apply_neighbor_env_overrides(NeighborConfig& cfg) noexcept {
-    if (const char* e = std::getenv("MCPU_MU_SKIN")) {
-        char* end = nullptr;
-        const float v = std::strtof(e, &end);
-        if (end != e) {
-            cfg.skin = v;
-            cfg.mu_verlet_enabled = (v > 0.f);
-        }
-    }
-    if (const char* e = std::getenv("MCPU_VERLET_PARTIAL_THRESHOLD")) {
-        char* end = nullptr;
-        const long v = std::strtol(e, &end, 10);
-        if (end != e && v >= 0)
-            cfg.verlet_partial_threshold = static_cast<int>(v);
-    }
-    // ADDED: Mu denselist cell size scale (1.0 = cell≈cutoff).
     if (const char* e = std::getenv("MCPU_MU_CELL_SCALE")) {
         char* end = nullptr;
         const float v = std::strtof(e, &end);
@@ -132,19 +88,17 @@ inline void apply_neighbor_env_overrides(NeighborConfig& cfg) noexcept {
     }
 }
 
-/// Effective Mu denselist cell size (Å): scale*(r_cut+skin) or absolute, never
+/// Effective Mu denselist cell size (Å): scale*r_cut or absolute, never
 /// below ``r_cut``. Cell may exceed ``r_cut`` (scale>1): stencil radius stays
 /// ``ceil(query/cell)`` = 1 and still finds all pairs within cutoff. Upper
 /// clamp to ``list`` was removed so ``mu_cell_size_scale>1`` and absolute sizes
 /// > cutoff are usable for occupancy / AVX tuning.
-inline float effective_mu_cell_size_A(float r_cut, float skin,
+inline float effective_mu_cell_size_A(float r_cut,
                                      const NeighborConfig& cfg) noexcept {
-    const float sk = skin > 0.f ? skin : 0.f;
-    const float list = r_cut + sk;
     float cell = (cfg.mu_cell_size_angstrom > 0.f)
                      ? cfg.mu_cell_size_angstrom
-                     : list * (cfg.mu_cell_size_scale > 0.f ? cfg.mu_cell_size_scale
-                                                           : 1.f);
+                     : r_cut * (cfg.mu_cell_size_scale > 0.f ? cfg.mu_cell_size_scale
+                                                            : 1.f);
     // FIXED: never below the cutoff. The Mu grid code walks a one-cell stencil
     // (27 cells, NeighborCellList::kCap); a smaller cell needs a wider stencil,
     // which overflowed those buffers: set_positions crashed, and the cell-pair
@@ -152,26 +106,18 @@ inline float effective_mu_cell_size_A(float r_cut, float skin,
     float mn = cfg.mu_cell_size_min_angstrom > 0.f ? cfg.mu_cell_size_min_angstrom : 0.f;
     if (mn < r_cut) mn = r_cut;
     if (cell < mn) cell = mn;
-    // CHANGED: allow cell > list (scale>1 / absolute > cutoff). Correctness:
+    // A cell above the cutoff (scale>1 / absolute) is allowed. Correctness:
     // OpenCellGrid uses R=ceil(query_radius/cell_size); query stays at r_cut.
     return cell;
 }
 
-/// Derived Verlet / neighbor health metrics from raw NeighborStats counters.
+/// Per-step neighbour work proxies derived from raw NeighborStats counters.
 ///
-/// Interpretation (skin>0):
-/// - verlet_use_rate: fraction of KIC/SC Verlet-eligible trials that actually used
-///   the Verlet list (vs cell fallback). High is good (~>0.5 for small SC moves).
-/// - rebuild_rate_per_step: Verlet full rebuilds per MC step. High means skin too
-///   small or moves too large (thrash). Aim << 0.05 for healthy skin.
-/// - avg_mu_pair_checks_per_step: r2 computations / step (primary work proxy for skin).
+/// - avg_mu_pair_checks_per_step: r2 computations / step (primary work proxy).
 /// - avg_mu_pairs_within_rcut_per_step: pairs with r2 <= r_mu^2 / step.
-/// - avg_mu_candidates_per_step: neighbor-list / cell-list visits before filters.
+/// - avg_mu_candidates_per_step: cell-list visits before filters.
 struct NeighborProxyReport {
     std::uint64_t total_steps = 0;
-    float mu_skin = 0.f;
-    double verlet_use_rate = 0.0;
-    double rebuild_rate_per_step = 0.0;
     double avg_mu_pair_checks_per_step = 0.0;
     double avg_mu_pairs_within_rcut_per_step = 0.0;
     /// Deprecated alias of avg_mu_pair_checks_per_step (historical name).
@@ -179,36 +125,12 @@ struct NeighborProxyReport {
     double avg_mu_candidates_per_step = 0.0;
     double avg_cell_visits_per_step = 0.0;
     double avg_hbond_geom_checks_per_step = 0.0;
-    bool low_use_rate = false;
-    bool high_rebuild_rate = false;
 };
 
 struct NeighborStats {
     // --- lifecycle / policy ---
     std::uint64_t num_trial_fallback = 0;
     std::uint64_t num_dense_cap_fallback = 0;
-    std::uint64_t num_verlet_rebuilds = 0;
-    std::uint64_t num_verlet_partial_rebuilds = 0;
-    std::uint64_t num_verlet_partial_affected_sum = 0;
-    std::uint64_t num_verlet_invalidate_pivot_accept = 0;
-    /// Pivot-accept Verlet policy (Option A displacement tracking).
-    std::uint64_t num_pivot_accepts = 0;
-    std::uint64_t num_pivot_accepts_keep_verlet_valid = 0;
-    std::uint64_t num_pivot_accepts_dirty_verlet = 0;
-    /// Rebuild attribution (incremented inside maybe_rebuild_mu_verlet).
-    std::uint64_t num_verlet_rebuild_due_to_pivot_accept = 0;
-    std::uint64_t num_verlet_rebuild_due_to_disp_acc_exceeded = 0;
-    std::uint64_t num_verlet_rebuild_due_to_dirty_flag = 0;
-    std::uint64_t num_verlet_rebuild_due_to_autoexpand_accept = 0;
-    /// Last rebuilt undirected CSR size (unique edges = directed/2).
-    std::uint64_t verlet_edges_total = 0;
-    double verlet_avg_degree = 0.0;
-    /// CSR buffer growth (should be ~0 after first rebuild).
-    std::uint64_t num_verlet_neigh_reallocs = 0;
-    std::uint64_t num_verlet_offsets_reallocs = 0;
-    std::uint64_t num_delta_cell_pivot = 0;
-    std::uint64_t num_delta_verlet_kic_sc = 0;       // alias: num_verlet_used
-    std::uint64_t num_delta_cell_kic_sc_fallback = 0; // alias: num_verlet_fallback_cell
     std::uint64_t num_reject_hard_disp = 0;
     std::uint64_t num_aabb_rebuild_accept = 0;
 
@@ -241,7 +163,7 @@ struct NeighborStats {
     std::uint64_t mu_eval_pair_calls = 0;
     /// Subset of eval_pair calls that returned a non-zero energy contribution.
     std::uint64_t mu_eval_pair_nonzero = 0;
-    /// Moved–moved denselist/Verlet candidates skipped for rigid pivots.
+    /// Moved–moved denselist candidates skipped for rigid pivots.
     std::uint64_t elided_rigid_mm = 0;
 
     /// Cell-pair inversion diagnostics (production denselist when use_cell_pair).
@@ -274,30 +196,13 @@ struct NeighborStats {
     /// MC steps counted in the current Integrator::run (or manual increments).
     std::uint64_t num_steps_executed = 0;
 
-    /// One-time health warning guard for the current run (cleared by reset()).
-    bool verlet_health_warning_emitted = false;
-
-    std::uint64_t& num_verlet_used() noexcept { return num_delta_verlet_kic_sc; }
-    std::uint64_t num_verlet_used() const noexcept { return num_delta_verlet_kic_sc; }
-    std::uint64_t& num_verlet_fallback_cell() noexcept { return num_delta_cell_kic_sc_fallback; }
-    std::uint64_t num_verlet_fallback_cell() const noexcept { return num_delta_cell_kic_sc_fallback; }
 
     void reset() { *this = NeighborStats{}; }
 
-    NeighborProxyReport derive(std::uint64_t steps, float skin,
-                               float warn_min_use = 0.20f,
-                               float warn_max_rebuild = 0.05f) const {
+    NeighborProxyReport derive(std::uint64_t steps) const {
         NeighborProxyReport r;
         const std::uint64_t den_steps = steps > 0 ? steps : 1ull;
         r.total_steps = steps;
-        r.mu_skin = skin;
-        const std::uint64_t used = num_verlet_used();
-        const std::uint64_t fb = num_verlet_fallback_cell();
-        const std::uint64_t verlet_trials = used + fb;
-        r.verlet_use_rate = static_cast<double>(used) /
-                            static_cast<double>(verlet_trials > 0 ? verlet_trials : 1ull);
-        r.rebuild_rate_per_step = static_cast<double>(num_verlet_rebuilds) /
-                                  static_cast<double>(den_steps);
         r.avg_mu_pair_checks_per_step =
             static_cast<double>(mu_num_pair_distance_checks) /
             static_cast<double>(den_steps);
@@ -311,95 +216,41 @@ struct NeighborStats {
                                      static_cast<double>(den_steps);
         r.avg_hbond_geom_checks_per_step = static_cast<double>(hbond_num_geom_checks) /
                                            static_cast<double>(den_steps);
-        if (skin > 0.f) {
-            // Only flag low use when there were Verlet-eligible trials to judge.
-            r.low_use_rate = (verlet_trials > 0) && (r.verlet_use_rate < warn_min_use);
-            r.high_rebuild_rate = r.rebuild_rate_per_step > warn_max_rebuild;
-        }
         return r;
     }
 
-    /// Print raw counters + derived metrics. Emits one-time health warnings when skin>0.
-    void print(const char* tag, float skin, const NeighborConfig* cfg = nullptr) {
+    /// Print raw counters + derived per-step metrics to stderr.
+    void print(const char* tag = "neighbor-proxy") const {
+        const char* t = tag ? tag : "neighbor-proxy";
         const std::uint64_t steps = num_steps_executed;
-        const float warn_use = cfg ? cfg->verlet_warn_min_use_rate : 0.20f;
-        const float warn_rb = cfg ? cfg->verlet_warn_max_rebuild_rate : 0.05f;
-        const NeighborProxyReport r = derive(steps, skin, warn_use, warn_rb);
+        const NeighborProxyReport r = derive(steps);
 
         std::fprintf(stderr,
-            "[%s] steps=%llu skin=%.3f | mu_cand=%llu mu_r2=%llu mu_rcut=%llu "
-            "hb_cand=%llu hb_geom=%llu cell_visits=%llu | verlet_used=%llu "
-            "verlet_fb_cell=%llu verlet_rebuilds=%llu verlet_inv_pivot=%llu "
+            "[%s] steps=%llu | mu_cand=%llu mu_r2=%llu mu_rcut=%llu "
+            "hb_cand=%llu hb_geom=%llu cell_visits=%llu | "
             "aabb_rebuild=%llu trial_fb=%llu\n",
-            tag ? tag : "neighbor-proxy",
+            t,
             static_cast<unsigned long long>(steps),
-            static_cast<double>(skin),
             static_cast<unsigned long long>(mu_num_candidates_iterated),
             static_cast<unsigned long long>(mu_num_pair_distance_checks),
             static_cast<unsigned long long>(mu_num_pairs_within_rcut),
             static_cast<unsigned long long>(hbond_num_candidates_iterated),
             static_cast<unsigned long long>(hbond_num_geom_checks),
             static_cast<unsigned long long>(neighbor_num_cell_visits),
-            static_cast<unsigned long long>(num_verlet_used()),
-            static_cast<unsigned long long>(num_verlet_fallback_cell()),
-            static_cast<unsigned long long>(num_verlet_rebuilds),
-            static_cast<unsigned long long>(num_verlet_invalidate_pivot_accept),
             static_cast<unsigned long long>(num_aabb_rebuild_accept),
             static_cast<unsigned long long>(num_trial_fallback));
 
         std::fprintf(stderr,
-            "[%s] derived: verlet_use_rate=%.3f rebuild_rate/step=%.4f "
-            "avg_mu_r2/step=%.1f avg_mu_rcut/step=%.1f avg_mu_cand/step=%.1f "
-            "avg_cell_visits/step=%.1f avg_hb_geom/step=%.1f\n",
-            tag ? tag : "neighbor-proxy",
-            r.verlet_use_rate,
-            r.rebuild_rate_per_step,
+            "[%s] derived: avg_mu_r2/step=%.1f avg_mu_rcut/step=%.1f "
+            "avg_mu_cand/step=%.1f avg_cell_visits/step=%.1f "
+            "avg_hb_geom/step=%.1f\n",
+            t,
             r.avg_mu_pair_checks_per_step,
             r.avg_mu_pairs_within_rcut_per_step,
             r.avg_mu_candidates_per_step,
             r.avg_cell_visits_per_step,
             r.avg_hbond_geom_checks_per_step);
-
-        maybe_emit_verlet_health_warning(skin, r, warn_use, warn_rb);
-    }
-
-    /// Backward-compatible print without skin (derived skin treated as 0 → no warnings).
-    void print(const char* tag = "neighbor-proxy") {
-        print(tag, 0.f, nullptr);
-    }
-
-    void maybe_emit_verlet_health_warning(float skin, const NeighborProxyReport& r,
-                                          float warn_min_use, float warn_max_rebuild) {
-        if (skin <= 0.f || verlet_health_warning_emitted) return;
-        if (!r.low_use_rate && !r.high_rebuild_rate) return;
-        verlet_health_warning_emitted = true;
-        std::fprintf(stderr,
-            "[neighbor-proxy-WARN] Mu Verlet may not be helping (skin=%.3f): "
-            "verlet_use_rate=%.3f (warn<%.2f) rebuild_rate/step=%.4f (warn>%.2f). "
-            "Suggestions: reduce move amplitude / step_size_rad; "
-            "increase skin slightly if rebuild thrash; "
-            "or set skin=0 if use rate stays low.\n",
-            static_cast<double>(skin),
-            r.verlet_use_rate, static_cast<double>(warn_min_use),
-            r.rebuild_rate_per_step, static_cast<double>(warn_max_rebuild));
     }
 };
-
-inline NeighborMode resolve_neighbor_mode(MoveKind kind, bool is_rigid,
-                                          const NeighborConfig& cfg,
-                                          int n_moved = -1) {
-    // Pivot / rigid: CellOnly unless explicitly overridden.
-    if ((kind == MoveKind::Pivot || is_rigid) && !cfg.pivot_uses_verlet)
-        return NeighborMode::CellOnly;
-    // Gate / skin=0: treat as cell-only algorithmically (skin value may stay >0).
-    if (cfg.skin <= 0.f || !cfg.mu_verlet_enabled)
-        return NeighborMode::CellOnly;
-    // Large moved sets: Verlet list reuse does not pay for itself.
-    if (n_moved >= 0 && n_moved > cfg.verlet_moved_threshold)
-        return NeighborMode::CellOnly;
-    if (kind == MoveKind::KIC || kind == MoveKind::Sidechain)
-        return NeighborMode::VerletPreferred;
-    return NeighborMode::CellOnly;
-}
 
 } // namespace mcpu

@@ -88,11 +88,9 @@ def test_virtual_vs_explicit_delta_parity() -> None:
         integ.verify_physics_consistency(ctx, num_steps=20, atol=ATOL)
 
 
-@pytest.mark.parametrize("skin", [0.0, 1.0])
-def test_actin_verify_virtual_default_at_mu_skin(skin: float) -> None:
+def test_actin_verify_virtual_default() -> None:
     ctx, _ = _build(virtual=True)
     ctx.set_use_legacy_weights(True)
     ctx.calculate_total_energy(-1)
-    ctx.set_mu_skin(skin)
     integ = mcpu_core.Integrator(temperature=300.0, step_size_rad=0.05)
     integ.verify_physics_consistency(ctx, num_steps=25, atol=ATOL)

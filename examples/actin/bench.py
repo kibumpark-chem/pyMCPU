@@ -50,8 +50,6 @@ def build_context():
     ctx = mcpu_core.Context(system)
     ctx.set_positions((ff.coords[0] * 10.0).T.astype(np.float32))
     ctx.calculate_total_energy(-1)
-    if hasattr(ctx, "set_proxy_print_every"):
-        ctx.set_proxy_print_every(-1)
     return ctx
 
 

@@ -153,7 +153,6 @@ weight, but the effective multiplier applied to the raw H-bond energy is
 | Legacy outer energy weights | on |
 | Virtual amide H (H-bond-only hydrogens) | on |
 | Periodic boundary conditions | none (open boundary) |
-| Mu neighbour skin | 0 (cell-grid dense list; Verlet engages only for skin > 0) |
 | Floating-point math | IEEE-ish release FP, no fast-math |
 
 ## Examples

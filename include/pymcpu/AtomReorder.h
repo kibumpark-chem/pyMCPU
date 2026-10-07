@@ -20,17 +20,10 @@ class Context;
 /// - All atoms of each residue occupy a contiguous internal range [res_begin, res_end)
 ///
 /// If out_blocks != nullptr, fills BlockIndices in the new internal layout.
-/// ``mu_cell_size_A`` &lt;= 0 uses (6Å + skin) for backward compatibility.
+/// ``mu_cell_size_A`` &lt;= 0 uses the 6 Å fallback Mu cell.
 AtomPermutation compute_init_only_atom_permutation(
     const System& sys,
     const CoordsSoA& coords,
-    float mu_skin,
-    std::vector<BlockIndices>* out_blocks = nullptr);
-
-AtomPermutation compute_init_only_atom_permutation(
-    const System& sys,
-    const CoordsSoA& coords,
-    float mu_skin,
     float mu_cell_size_A,
     std::vector<BlockIndices>* out_blocks = nullptr);
 

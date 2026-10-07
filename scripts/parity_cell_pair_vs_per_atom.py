@@ -26,7 +26,6 @@ def build_ctx(pdb: Path, *, use_cell_pair: bool):
     ctx = mcpu_core.Context(system)
     ctx.set_positions((ff.coords[0] * 10.0).T.astype(np.float32))
     ctx.calculate_total_energy(-1)
-    ctx.set_mu_skin(0.0)
     # Explicit API (default is false; env MCPU_USE_CELL_PAIR=1 also enables).
     ctx.set_use_cell_pair(bool(use_cell_pair))
     return ctx

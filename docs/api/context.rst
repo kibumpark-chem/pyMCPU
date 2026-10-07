@@ -338,12 +338,6 @@ Deprecated
       Print neighbor-list proxy statistics (developer tuning only).
       Will be removed in a future version.
 
-.. py:method:: Context.set_proxy_print_every(n) -> None
-
-   .. deprecated:: 0.1.0
-      Was used to set auto-print interval for neighbor-list stats. Now
-      a no-op. Will be removed in a future version.
-
 State
 -----
 

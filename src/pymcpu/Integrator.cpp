@@ -1752,20 +1752,6 @@ void MCIntegrator::verify_physics_consistency(Context& context, int num_steps, f
         else if (move_slot == 1) mu_ws.move_kind = MoveKind::KIC;
         else mu_ws.move_kind = MoveKind::Sidechain;
 
-        mu_ws.neighbor_mode = resolve_neighbor_mode(
-            mu_ws.move_kind, move_patch.is_rigid, context.neighborConfig(),
-            static_cast<int>(move_patch.moved_indices.size()));
-        if (mu_ws.neighbor_mode == NeighborMode::VerletPreferred &&
-            context.neighborConfig().skin > 0.f) {
-            if (context.verletContact().dirty && context.denseGridsActive()) {
-                context.maybe_rebuild_verlet();
-            }
-            if (!context.verletContact().trial_usable(
-                    move_patch.moved_indices, context.getState().coords_soa, proposal.coords_soa)) {
-                mu_ws.neighbor_mode = NeighborMode::CellOnly;
-            }
-        }
-
         const auto checks = PhysicsVerifier::verify_all_potential_deltas(
             context, context.getState(), proposal, move_patch, atol);
 
@@ -1834,9 +1820,6 @@ void MCIntegrator::run(Context& context, int num_steps, int step_offset)
     context.reset_energy_delta_ns();
 
     context.neighborStats().reset();
-    if (context.neighborConfig().skin > 0.f && context.denseGridsActive()) {
-        context.maybe_rebuild_verlet();
-    }
 
     // OpenMM-style: emit the initial frame at global step 0 before any moves
     // (attempt/accept counters still zero). Subsequent frames use completed
@@ -1935,11 +1918,10 @@ void MCIntegrator::run(Context& context, int num_steps, int step_offset)
             }
             const char* kind = tried_pivot ? "Pivot" : (tried_kic ? "KIC" : "SC");
             std::fprintf(stderr,
-                "[move] step=%d kind=%s valid=%d n_moved=%zu dmax=%.4f skin=%.2f "
+                "[move] step=%d kind=%s valid=%d n_moved=%zu dmax=%.4f "
                 "rigid=%d roll=%.6f\n",
                 step_offset + step, kind, move_patch.is_valid ? 1 : 0,
                 move_patch.moved_indices.size(), dmax_dbg,
-                context.neighborConfig().skin,
                 move_patch.is_rigid ? 1 : 0, move_roll);
         }
 
@@ -1960,40 +1942,12 @@ void MCIntegrator::run(Context& context, int num_steps, int step_offset)
         if (move_patch.is_valid) {
             auto& mu_ws = context.mu_workspace_;
             mu_ws.move_kind = move_kind;
-            mu_ws.neighbor_mode = resolve_neighbor_mode(
-                move_kind, move_patch.is_rigid, context.neighborConfig(),
-                static_cast<int>(move_patch.moved_indices.size()));
             mu_ws.use_trial_fallback = false;
 
             const bool in_box = context.trial_in_bounds(proposal, move_patch);
             if (!in_box) {
                 mu_ws.use_trial_fallback = true;
                 ++context.neighborStats().num_trial_fallback;
-            }
-
-            if (move_patch.is_valid &&
-                mu_ws.neighbor_mode == NeighborMode::CellOnly &&
-                move_kind == MoveKind::Pivot) {
-                ++context.neighborStats().num_delta_cell_pivot;
-            }
-        }
-
-        if (move_patch.is_valid &&
-            context.mu_workspace_.neighbor_mode != NeighborMode::CellOnly &&
-            context.neighborConfig().skin > 0.f &&
-            context.neighborConfig().mu_verlet_enabled &&
-            context.verletContact().dirty && context.denseGridsActive()) {
-            context.maybe_rebuild_verlet();
-        }
-
-        if (move_patch.is_valid &&
-            context.mu_workspace_.neighbor_mode != NeighborMode::CellOnly &&
-            context.neighborConfig().skin > 0.f &&
-            context.neighborConfig().mu_verlet_enabled) {
-            if (!context.verletContact().trial_usable(
-                    move_patch.moved_indices, context.state.coords_soa, proposal.coords_soa)) {
-                context.mu_workspace_.neighbor_mode = NeighborMode::CellOnly;
-                ++context.neighborStats().num_verlet_fallback_cell();
             }
         }
 
@@ -2043,13 +1997,11 @@ void MCIntegrator::run(Context& context, int num_steps, int step_offset)
             bool accept = false;
             if (kDebugMoves) {
                 std::fprintf(stderr,
-                    "[delta] step=%d kind=%s dE=%.12g reject=%d verlet_mode=%d "
-                    "clash=%d\n",
+                    "[delta] step=%d kind=%s dE=%.12g reject=%d clash=%d\n",
                     step_offset + step,
                     tried_pivot ? "Pivot" : (tried_kic ? "KIC" : "SC"),
                     delta_E,
                     static_cast<int>(energy_change.reject_reason),
-                    static_cast<int>(context.mu_workspace_.neighbor_mode),
                     energy_change.reject_reason == RejectReason::StericClash ? 1 : 0);
             }
             if (energy_change.reject_reason == RejectReason::StericClash) {
@@ -2060,11 +2012,12 @@ void MCIntegrator::run(Context& context, int num_steps, int step_offset)
                 if (kDebugMoves) std::fprintf(stderr, "[rng] step=%d clash_consume\n", step_offset + step);
             } else {
                 float total_beta_E = (delta_E * beta) - move_patch.log_jacobian_weight;
-                // FIXED: float32 Mu pair sums leave |ΔE|~1e-8 with opposite signs
-                // across CellOnly vs Verlet. Strict `> 0` then spuriously consumes a
-                // Metropolis coin_flip on one path only → RNG desync → cascading
-                // accept-bit divergence (parity_verlet_vs_cellonly). Treat tiny
-                // positive beta*ΔE as zero; threshold ≪ any physical contact.
+                // float32 Mu pair sums can leave |ΔE|~1e-8 of either sign for a
+                // move whose true ΔE is 0, depending on summation order. Strict
+                // `> 0` would then consume a Metropolis coin_flip on one pair
+                // path only -> RNG desync -> cascading accept-bit divergence
+                // between equivalent evaluation paths. Treat tiny positive
+                // beta*ΔE as zero; threshold ≪ any physical contact.
                 constexpr float kMetropolisZeroEps = 1e-5f;
                 const bool need_flip = total_beta_E > kMetropolisZeroEps;
                 accept = (!need_flip || coin_flip(rng) < std::exp(-total_beta_E));
@@ -2081,7 +2034,7 @@ void MCIntegrator::run(Context& context, int num_steps, int step_offset)
                 proposal.current_energy = context.state.getEnergy() + delta_E;
                 {
                     ScopedTimer commit_timer(&step_stats_.commit_ns);
-                    context.commit_accepted_move(proposal, move_patch, move_kind);
+                    context.commit_accepted_move(proposal, move_patch);
                 }
                 if (tried_pivot) {
                     bb_accepted_++;
@@ -2180,13 +2133,6 @@ void MCIntegrator::run(Context& context, int num_steps, int step_offset)
 
     context.copy_energy_delta_ns_into(step_stats_.energy_delta_ns);
     step_stats_.mu_eval_pair_calls = context.neighborStats().mu_eval_pair_calls;
-    step_stats_.verlet_used = context.neighborStats().num_verlet_used();
-    step_stats_.verlet_fallback_cell = context.neighborStats().num_verlet_fallback_cell();
-    step_stats_.verlet_rebuilds = context.neighborStats().num_verlet_rebuilds;
-    step_stats_.verlet_partial_rebuilds =
-        context.neighborStats().num_verlet_partial_rebuilds;
-    step_stats_.verlet_partial_affected_sum =
-        context.neighborStats().num_verlet_partial_affected_sum;
     {
         const auto& ns = context.neighborStats();
         auto& b = step_stats_.pivot_mu_breakdown;

@@ -20,10 +20,14 @@ What fails the comparison
 -------------------------
 Energies (hex floats), the accept-bit stream, the coordinate hash, the
 per-move accept counts and the step totals must match exactly. Internal work
-counters (``proxy_stats``, ``mu_by_kind`` and the Verlet/pair-call entries of
+counters (``proxy_stats``, ``mu_by_kind`` and the pair-call entry of
 ``step_ints``) are printed when they differ but do not fail the run: a change
 that skips provably irrelevant work reaches the same trajectory with smaller
-counters, and that is a pass.
+counters, and that is a pass. The step totals (``n_steps``,
+``n_valid_moves``, ``n_accepts``, ``moved_atoms_sum``) are strict: each must be
+present on both sides and equal. Any other ``step_ints`` key is a work counter,
+including one only one side recorded (a counter added or retired since the
+reference was recorded).
 
 Why the numbers are stored as hex floats
 ----------------------------------------
@@ -105,9 +109,6 @@ _PROXY_KEYS = (
     "hbond_num_geom_checks",
     "neighbor_num_cell_visits",
     "elided_rigid_mm",
-    "num_verlet_used",
-    "num_verlet_fallback_cell",
-    "num_verlet_rebuilds",
 )
 
 #: (label, pdb-relative-path, seed, steps). Actin carries the most weight: a
@@ -264,9 +265,7 @@ def _run_case_in_child(pdb: str, seed: int, steps: int) -> dict[str, Any]:
         k: int(stats[k])
         for k in (
             "n_steps", "n_valid_moves", "n_accepts", "moved_atoms_sum",
-            "mu_eval_pair_calls", "verlet_used", "verlet_fallback_cell",
-            "verlet_rebuilds", "verlet_partial_rebuilds",
-            "verlet_partial_affected_sum",
+            "mu_eval_pair_calls",
         )
         if isinstance(stats.get(k), int) and not isinstance(stats.get(k), bool)
     }
@@ -512,23 +511,21 @@ _PHYSICS_FIELDS = (
 #: they differ but do not fail the comparison, so a change that reaches the
 #: same energies, accept bits and coordinates with less work still passes.
 #: ``proxy_stats`` and ``mu_by_kind`` are informational as a whole;
-#: ``step_ints`` stays strict except for the keys in ``_STEP_WORK_KEYS``.
+#: in ``step_ints`` only ``_STEP_STRICT_KEYS`` fail the comparison.
 _WORK_COUNTER_FIELDS = ("proxy_stats", "mu_by_kind")
-_STEP_WORK_KEYS = frozenset({
-    "mu_eval_pair_calls",
-    "verlet_used",
-    "verlet_fallback_cell",
-    "verlet_rebuilds",
-    "verlet_partial_rebuilds",
-    "verlet_partial_affected_sum",
-})
+_STEP_STRICT_KEYS = ("n_steps", "n_valid_moves", "n_accepts", "moved_atoms_sum")
 
 
 def _split_step_ints(case: dict[str, Any]) -> tuple[dict, dict]:
-    """``step_ints`` split into (strict, work-counter) parts."""
+    """``case``'s ``step_ints`` split into (strict, work-counter) parts.
+
+    The strict part always holds every ``_STEP_STRICT_KEYS`` entry, ``None``
+    when the case did not record it, so a step total missing on one side is a
+    divergence. Every other key is a work counter.
+    """
     step = case.get("step_ints") or {}
-    strict = {k: v for k, v in step.items() if k not in _STEP_WORK_KEYS}
-    work = {k: v for k, v in step.items() if k in _STEP_WORK_KEYS}
+    strict = {k: step.get(k) for k in _STEP_STRICT_KEYS}
+    work = {k: v for k, v in step.items() if k not in strict}
     return strict, work
 
 
@@ -536,7 +533,8 @@ def _work_counter_diffs(ref_case: dict[str, Any], cur_case: dict[str, Any]) -> l
     """One line per work counter that differs between the two cases."""
     lines = []
     pairs = [(f, ref_case.get(f) or {}, cur_case.get(f) or {}) for f in _WORK_COUNTER_FIELDS]
-    pairs.append(("step_ints", _split_step_ints(ref_case)[1], _split_step_ints(cur_case)[1]))
+    pairs.append(("step_ints", _split_step_ints(ref_case)[1],
+                  _split_step_ints(cur_case)[1]))
     for field, ra, rb in pairs:
         for key in sorted(set(ra) | set(rb)):
             if ra.get(key) != rb.get(key):
@@ -698,7 +696,8 @@ def _compare(ref: dict[str, Any], cur: dict[str, Any]) -> int:
         for field in ("move_stats", "step_ints"):
             ra, rb = ref_case.get(field, {}), cur_case.get(field, {})
             if field == "step_ints":
-                ra, rb = _split_step_ints(ref_case)[0], _split_step_ints(cur_case)[0]
+                ra = _split_step_ints(ref_case)[0]
+                rb = _split_step_ints(cur_case)[0]
             for key in sorted(set(ra) | set(rb)):
                 if ra.get(key) != rb.get(key):
                     print(f"      {field}[{key}]: ref {ra.get(key)} vs cur {rb.get(key)}")

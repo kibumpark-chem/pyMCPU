@@ -30,7 +30,6 @@ def build_ctx(pdb: Path, *, skip_rigid_mm: bool):
     ctx = mcpu_core.Context(system)
     ctx.set_positions((ff.coords[0] * 10.0).T.astype(np.float32))
     ctx.calculate_total_energy(-1)
-    ctx.set_mu_skin(0.0)
     ctx.set_skip_rigid_mm(bool(skip_rigid_mm))
     return ctx
 

@@ -118,7 +118,6 @@ def build_raw_context(*, virtual_amide_h: bool = False, reorder: str = "off"):
     context.set_atom_reorder_mode(reorder)
     coords_angstroms = (forcefield.coords[0] * 10.0).T.astype(np.float32)
     context.set_positions(coords_angstroms)
-    context.set_mu_skin(0.0)
     context.calculate_total_energy(-1)
     return context, heavy.topology
 

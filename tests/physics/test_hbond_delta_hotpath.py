@@ -44,14 +44,10 @@ def test_hbond_delta_accept_bits_deterministic() -> None:
     assert a.proxy_stat("hbond_num_geom_checks") == b.proxy_stat("hbond_num_geom_checks")
 
 
-def test_hbond_actin_verify_skin0_and_skin1() -> None:
+def test_hbond_actin_verify_after_hbond_hotpath() -> None:
     """``verify_physics_consistency`` (delta-vs-recompute self-check, see
-    ``tests/physics/test_energy_consistency.py``) must hold at both
-    Verlet-skin extremes -- skin=0 (cell-list only, rebuilt every step) and
-    skin=1.0 (Verlet list reused across steps) -- since the hbond hotpath
-    takes a different neighbor-source code path in each regime."""
-    for skin in (0.0, 1.0):
-        ctx, _ = build_test_context(with_qbias=False)
-        ctx.set_mu_skin(skin)
-        integ = mcpu_core.Integrator(temperature=300.0, step_size_rad=0.05)
-        integ.verify_physics_consistency(ctx, num_steps=30, atol=ATOL)
+    ``tests/physics/test_energy_consistency.py``) must hold for the hbond
+    hotpath."""
+    ctx, _ = build_test_context(with_qbias=False)
+    integ = mcpu_core.Integrator(temperature=300.0, step_size_rad=0.05)
+    integ.verify_physics_consistency(ctx, num_steps=30, atol=ATOL)

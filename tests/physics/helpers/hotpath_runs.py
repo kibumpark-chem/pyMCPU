@@ -8,7 +8,7 @@ hotpath cares about. Before this module existed, each file reimplemented this
 loop by hand with slightly different local variable names and dict-key
 strings -- a real source of copy-paste drift flagged by the test survey.
 ``run_hotpath`` factors the common part; callers still choose their own
-seed/steps/skin and read whichever proxy-stat keys are relevant to them via
+seed/steps and read whichever proxy-stat keys are relevant to them via
 ``HotpathRun.proxy_stat`` (a strict lookup -- see its docstring for why that
 matters over a bare ``dict.get``).
 """
@@ -48,7 +48,6 @@ def run_hotpath(
     *,
     seed: int,
     steps: int,
-    skin: float = 0.0,
     warmup: int = 0,
     reseed_offset: int = 1_000_003,
     temperature: float = 0.6,
@@ -65,7 +64,6 @@ def run_hotpath(
     history for why a mid-run reseed needs to be genuinely clean.
     """
     ctx, _ = build_test_context(with_qbias=False)
-    ctx.set_mu_skin(skin)
     integ = mcpu_core.Integrator(temperature=temperature, step_size_rad=step_size_rad)
     integ.set_seed(seed)
     if pooled_proposal and hasattr(integ, "set_use_pooled_proposal"):
