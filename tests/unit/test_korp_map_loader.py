@@ -13,6 +13,7 @@ from __future__ import annotations
 import math
 import os
 import struct
+import sys
 
 import numpy as np
 import pytest
@@ -186,7 +187,75 @@ def test_mmap_and_read_paths_agree(tmp_path):
     _write_map(p)
     a = load_korp_map(p, mmap=True)
     b = load_korp_map(p, mmap=False)
-    assert np.array_equal(np.asarray(a.table), np.asarray(b.table))
+    assert isinstance(a.table, np.memmap)
+    assert not isinstance(b.table, np.memmap)
+    assert np.asarray(a.table).tobytes() == np.asarray(b.table).tobytes()
+
+
+def test_in_memory_table_is_read_only_and_owns_its_buffer(tmp_path):
+    p = tmp_path / "synthetic.bin"
+    meta = _write_map(p)
+    table = load_korp_map(p).table   # default: in-memory
+    assert not table.flags.writeable
+    assert table.flags.c_contiguous and table.dtype == np.dtype("<f4")
+    assert table.shape == (meta["n_floats"],)
+    with pytest.raises(ValueError):
+        table[0] = 1.0
+    # Only the array is left; its buffer must stay valid after the map goes.
+    import gc
+    gc.collect()
+    payload = p.read_bytes()[-4 * meta["n_floats"]:]
+    assert table.tobytes() == payload
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux"),
+                    reason="the huge-page path is Linux-only")
+def test_in_memory_table_starts_on_a_huge_page_boundary(tmp_path):
+    # Only the MADV_HUGEPAGE path aligns the table; the np.empty fallback
+    # would not, so this fails if the advice ever goes missing again.
+    p = tmp_path / "synthetic.bin"
+    _write_map(p)
+    table = load_korp_map(p).table
+    assert table.ctypes.data % (2 << 20) == 0
+    assert table.base is not None
+
+
+def test_a_reload_reuses_a_table_that_outlived_its_map(tmp_path):
+    # A C++ map keeps only the table alive; loading the file again while it
+    # exists must not read a second private copy.
+    import gc
+    p = tmp_path / "synthetic.bin"
+    _write_map(p)
+    table = load_korp_map(p).table
+    gc.collect()
+    assert load_korp_map(p).table is table
+
+
+def test_loads_share_one_map_per_file_and_mode(tmp_path):
+    p = tmp_path / "synthetic.bin"
+    _write_map(p)
+    a = load_korp_map(p)
+    assert load_korp_map(str(p)) is a
+    assert load_korp_map(tmp_path / "." / "synthetic.bin") is a
+    m = load_korp_map(p, mmap=True)
+    assert m is not a and load_korp_map(p, mmap=True) is m
+    # A changed file is a new map.
+    st = p.stat()
+    os.utime(p, ns=(st.st_atime_ns, st.st_mtime_ns + 1_000_000_000))
+    assert load_korp_map(p) is not a
+
+
+@pytest.mark.parametrize("mmap", [False, True])
+def test_sha256_is_the_file_digest_in_both_modes(tmp_path, mmap):
+    import hashlib
+    p = tmp_path / "synthetic.bin"
+    _write_map(p)
+    want = hashlib.sha256(p.read_bytes()).hexdigest()
+    m = load_korp_map(p, mmap=mmap)
+    assert m.sha256 is None
+    # Asking later for the digest fills it in on the shared map.
+    assert load_korp_map(p, mmap=mmap, sha256=True) is m
+    assert m.sha256 == want
 
 
 def test_korp_residue_order_is_one_letter_alphabetical():

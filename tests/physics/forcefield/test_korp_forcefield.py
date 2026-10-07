@@ -256,3 +256,23 @@ def test_the_inter_chain_energy_matches_korpe(rel, inter_chain):
 
     chains = [traj.atom_slice(traj.topology.select(f"chainid {i}")) for i in range(2)]
     assert energy(traj) - energy(chains[0]) - energy(chains[1]) == pytest.approx(inter_chain, abs=1e-2)
+
+
+def test_map_modes_share_a_copy_and_give_identical_energies(chain_traj):
+    a = KORPForceField(chain_traj)
+    b = KORPForceField(chain_traj)
+    assert b.korp_map is a.korp_map          # one in-memory table per process
+    assert not isinstance(a.korp_map.table, np.memmap)
+    m = KORPForceField(chain_traj, map_mmap=True)
+    assert isinstance(m.korp_map.table, np.memmap)
+    assert np.asarray(m.korp_map.table).tobytes() == a.korp_map.table.tobytes()
+
+    def run(ff):
+        sim = _simulate(ff, chain_traj)
+        sim.integrator.set_seed(7)
+        sim.integrator.set_move_weights(0.5, 0.5, 0.0)
+        sim.step(300)
+        return (sim.integrator.move_stats(),
+                sim.context.energy_breakdown(weighted=False)["by_group"])
+
+    assert run(a) == run(m)

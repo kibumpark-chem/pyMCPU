@@ -9,10 +9,11 @@
 /// second implementation of a format with no version field and no magic number
 /// would be a second thing to keep right.
 ///
-/// The table is normally a numpy memmap, so the pages are shared by the OS
-/// across every rank on a node instead of each holding its own ~316 MiB. Its
-/// lifetime belongs to the caller: the binding layer keeps the Python object
-/// alive for as long as this map is.
+/// The table is the numpy array load_korp_map returned: by default a private
+/// copy on 2 MiB pages (the lookups are TLB bound on 4 KiB pages), or with
+/// mmap=True a memmap whose pages the OS shares across every rank on a node.
+/// Its lifetime belongs to the caller: the binding layer keeps the Python
+/// object alive for as long as this map is.
 ///
 /// Binning transcribed from `contact2bins` (chaconlab/Korp, korpe.cpp).
 

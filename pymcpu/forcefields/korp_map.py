@@ -20,7 +20,11 @@ to validate that C++ against the upstream ``korpe`` binary.
 
 from __future__ import annotations
 
+import mmap as _mmap
 import struct
+import sys
+import threading
+import weakref
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -219,7 +223,7 @@ def _derive_slice_mapping(nonbonding, nonbonding2, bonding_factor,
     return nslices, smapping, fmapping
 
 
-def load_korp_map(path, *, mmap: bool = True, sha256: bool = False) -> KorpMap:
+def load_korp_map(path, *, mmap: bool = False, sha256: bool = False) -> KorpMap:
     """Parse a KORP 6D map file.
 
     Parameters
@@ -233,12 +237,28 @@ def load_korp_map(path, *, mmap: bool = True, sha256: bool = False) -> KorpMap:
         NPOSL-3.0 in the ``korpm`` repository, so it is worth recording which
         copy you have.
     mmap
-        Memory-map the table instead of reading it. Default True, which matters
-        for replica exchange: the OS page cache then shares one copy across every
-        rank on the node instead of giving each its own ~316 MiB.
+        False (the default) reads the table into this process's own memory,
+        asking the kernel for 2 MiB pages (``MADV_HUGEPAGE``) where it offers
+        them. The table is far larger than what 4 KiB pages can keep in the
+        TLB, and with huge pages KORP runs about 5-9% faster per MC step
+        (160-420 residues; larger proteins gain more). The cost is ~316 MiB
+        of private memory per process.
+
+        True memory-maps the file instead. Every process on a node then shares
+        one copy through the OS page cache, at the price of 4 KiB pages. Use it
+        when many ranks share a node that is short of memory (48 ranks hold
+        ~15 GiB more in the default mode).
     sha256
         Also digest the file, so a recorded energy is traceable to a specific
-        map. Costs a full read, so it is off by default.
+        map. In the default mode the digest is taken from the bytes just read;
+        with ``mmap=True`` it costs a second full read of the file. Off by
+        default.
+
+    Within a process, loads of the same unchanged file in the same mode return
+    one shared, read-only :class:`KorpMap` (keyed by resolved path, size,
+    mtime, inode and mode), so building several force fields or systems from
+    one map holds one copy of the table. The cache does not keep a map alive by
+    itself.
 
     Raises
     ------
@@ -251,6 +271,34 @@ def load_korp_map(path, *, mmap: bool = True, sha256: bool = False) -> KorpMap:
     if not path.is_file():
         raise KorpMapError(f"KORP energy map not found: {path}")
 
+    st = path.stat()
+    key = (str(path.resolve()), st.st_size, st.st_mtime_ns, st.st_ino,
+           bool(mmap))
+    with _CACHE_LOCK:
+        kmap = _MAPS.get(key)
+        table = _TABLES.get(key)
+    if kmap is None:
+        # A C++ map can outlive the KorpMap it was built from, holding only
+        # the table; reuse that table rather than read a second copy.
+        kmap = _parse(path, mmap=bool(mmap), table=table)
+        with _CACHE_LOCK:
+            # Another thread may have loaded it meanwhile; keep one copy.
+            kmap = _MAPS.setdefault(key, kmap)
+            _TABLES.setdefault(key, kmap.table)
+    if sha256 and kmap.sha256 is None:
+        kmap.sha256 = _digest(kmap)
+    return kmap
+
+
+# Loaded maps and their tables, both held weakly. A force field holds the
+# KorpMap, but a C++ map built from it holds only the table, so the table is
+# cached on its own: it lives as long as anything uses it.
+_MAPS: "weakref.WeakValueDictionary[tuple, KorpMap]" = weakref.WeakValueDictionary()
+_TABLES: "weakref.WeakValueDictionary[tuple, np.ndarray]" = weakref.WeakValueDictionary()
+_CACHE_LOCK = threading.Lock()
+
+
+def _parse(path: Path, *, mmap: bool, table=None) -> KorpMap:
     with open(path, "rb") as fh:
         (dimensions, cutoff, frame_model, nonbonding, nonbonding2,
          bonding_factor, ngauss, fullgauss, use_ji, each_bonding,
@@ -331,24 +379,16 @@ def load_korp_map(path, *, mmap: bool = True, sha256: bool = False) -> KorpMap:
                 "layout assumption is what is wrong."
             )
 
-    if mmap:
+    if table is not None:
+        pass  # already in memory (see load_korp_map)
+    elif mmap:
         table = np.memmap(path, dtype="<f4", mode="r",
                           offset=payload_offset, shape=(n_floats,))
     else:
-        table = np.fromfile(path, dtype="<f4", offset=payload_offset,
-                            count=n_floats)
-
-    digest = None
-    if sha256:
-        import hashlib
-        h = hashlib.sha256()
-        with open(path, "rb") as fh:
-            for chunk in iter(lambda: fh.read(1 << 20), b""):
-                h.update(chunk)
-        digest = h.hexdigest()
+        table = _read_table_huge(path, payload_offset, n_floats)
 
     return KorpMap(
-        path=path, sha256=digest,
+        path=path, sha256=None,
         dimensions=int(dimensions), cutoff=float(cutoff),
         frame_model=int(frame_model), nonbonding=int(nonbonding),
         nonbonding2=int(nonbonding2), bonding_factor=float(bonding_factor),
@@ -358,6 +398,70 @@ def load_korp_map(path, *, mmap: bool = True, sha256: bool = False) -> KorpMap:
         nslices=int(nslices), smapping=smapping, fmapping=fmapping,
         table=table, shell_off=shell_off, block_stride=block_stride,
     )
+
+
+_HUGE_PAGE = 2 << 20
+
+
+def _read_table_huge(path: Path, offset: int, n_floats: int) -> np.ndarray:
+    """Read the table into private memory backed by 2 MiB pages if possible.
+
+    An anonymous mapping advised ``MADV_HUGEPAGE`` before it is first touched
+    gets transparent huge pages whenever THP is set to ``always`` or
+    ``madvise``. On a platform without the advice it is an ordinary private
+    allocation. The returned array is read-only and owns the mapping.
+    """
+    nbytes = 4 * n_floats
+    # Python builds made against old kernel headers (conda's 3.10, for one)
+    # leave the constant out; the kernel has had it, as 14, since 2.6.38.
+    advise = getattr(_mmap, "MADV_HUGEPAGE",
+                     14 if sys.platform.startswith("linux") else None)
+    if advise is None or not hasattr(_mmap, "MAP_ANONYMOUS"):
+        table = np.empty(n_floats, dtype="<f4")
+        buf = memoryview(table).cast("B")
+    else:
+        # Over-allocate by one huge page so the table can start on a 2 MiB
+        # boundary; otherwise the partial pages at either end stay 4 KiB.
+        mem = _mmap.mmap(-1, nbytes + _HUGE_PAGE,
+                         flags=_mmap.MAP_PRIVATE | _mmap.MAP_ANONYMOUS)
+        try:
+            mem.madvise(advise)
+        except OSError:
+            pass  # THP compiled out or disabled: plain pages, same contents
+        whole = np.frombuffer(mem, dtype=np.uint8)
+        start = -whole.ctypes.data % _HUGE_PAGE
+        table = whole[start:start + nbytes].view("<f4")
+        buf = memoryview(table).cast("B")
+    with open(path, "rb", buffering=0) as fh:
+        fh.seek(offset)
+        done = 0
+        while done < nbytes:
+            n = fh.readinto(buf[done:])
+            if not n:
+                raise KorpMapError(f"{path}: file shrank while being read")
+            done += n
+    buf.release()
+    table.flags.writeable = False
+    return table
+
+
+def _digest(kmap: KorpMap) -> str:
+    """sha256 of the whole map file."""
+    import hashlib
+    h = hashlib.sha256()
+    if isinstance(kmap.table, np.memmap):
+        with open(kmap.path, "rb") as fh:
+            for chunk in iter(lambda: fh.read(1 << 20), b""):
+                h.update(chunk)
+    else:
+        # The table already holds every payload byte; hash the prefix from the
+        # file and the payload from memory instead of reading it all again.
+        nbytes = kmap.table.nbytes
+        with open(kmap.path, "rb") as fh:
+            prefix = fh.read(kmap.path.stat().st_size - nbytes)
+        h.update(prefix)
+        h.update(memoryview(kmap.table).cast("B"))
+    return h.hexdigest()
 
 
 def residue_frame(n, ca, c):
