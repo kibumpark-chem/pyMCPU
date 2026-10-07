@@ -18,7 +18,6 @@ from tests.fixtures.context_builders import resolve_test_pdb
 
 
 def test_get_coords_is_in_build_order_after_a_reorder() -> None:
-    """Actin, because init_only cannot place 1UAO's terminal OXT."""
     traj = md.load(str(resolve_test_pdb()))
     heavy = traj.atom_slice(traj.topology.select("not element H"))
     ff = MCPUForceField(heavy)
