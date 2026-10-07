@@ -1,13 +1,13 @@
 """``run_from_config`` MPI dispatch: it must be additive-only.
 
-Every existing caller (``mcpu run``, ``SimulationHandle.run()``, and every
-test that predates this file) calls ``run_from_config(cfg, verbose=...)``
-with no ``comm`` -- these tests pin that the no-``comm`` path is unchanged,
-and that passing an explicit ``comm`` (never reading ``cfg.mpi``, which is
-intentionally-ignored per docs/running_remd.md) is what selects the MPI
-replica-exchange runner. Monkeypatches the ``run_*`` functions directly
-rather than exercising a full simulation, since this file is about dispatch
-wiring, not replica-exchange physics (that's covered elsewhere).
+Every existing caller (``mcpu run`` and every test that predates this file)
+calls ``run_from_config(cfg, verbose=...)`` with no ``comm`` -- these tests pin
+that the no-``comm`` path is unchanged, and that passing an explicit ``comm``
+(never reading ``cfg.mpi``, which is intentionally-ignored per
+docs/running_remd.md) is what selects the MPI replica-exchange runner.
+Monkeypatches the ``run_*`` functions directly rather than exercising a full
+simulation, since this file is about dispatch wiring, not replica-exchange
+physics (that's covered elsewhere).
 """
 
 from __future__ import annotations

@@ -5,7 +5,7 @@ Run against the INSTALLED package from a directory that is not the source
 tree, with no network. cibuildwheel invokes it as CIBW_TEST_COMMAND; it is
 also runnable by hand:
 
-    cd /tmp && MCPU_NO_DOWNLOAD=1 python /path/to/scripts/ci_check_wheel.py
+    cd /tmp && python /path/to/scripts/ci_check_wheel.py
 
 Why a dedicated script rather than `pytest` against the wheel: the things
 that distinguish a *shipped* artifact from a working developer checkout are

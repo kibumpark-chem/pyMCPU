@@ -92,7 +92,7 @@ Corroborating, on the `v3` build:
 * four of five `parity_*.py` oracles clean, the fifth failing only its
   pre-existing coverage assertion (`elided_rigid_mm == 0`, unchanged) with
   byte-identical output to the AVX-512 run, including `E=-596.214966`;
-* `validate_energy.py` per-group values unchanged, actin
+* per-group energies unchanged, actin
   `mu = -127.932579` matching the earlier GCC 8.5 / AVX-512 run. (That is
   the two-slot glycine layout of the time. With one slot it reads
   `-127.932594`: the same pair terms, summed in a different order.)

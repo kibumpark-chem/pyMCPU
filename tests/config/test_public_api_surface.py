@@ -90,9 +90,3 @@ def test_simulation_has_fixed_residue_methods() -> None:
 def test_integrator_has_set_seed() -> None:
     assert callable(getattr(pymcpu.Integrator, "set_seed", None))
 
-
-def test_utils_yaml_parser_importable() -> None:
-    from pymcpu.utils.yaml_parser import load_yaml, simulation_from_yaml
-
-    assert callable(load_yaml)
-    assert callable(simulation_from_yaml)

@@ -44,7 +44,6 @@ def test_compute_n_and_q_at_reference_structure() -> None:
     q = cv.compute_Q(coords)
     assert n == pytest.approx(2.0)
     assert q == pytest.approx(1.0)  # at the reference structure itself, Q == 1
-    assert cv.compute(coords) == pytest.approx(q)
 
 
 def test_compute_n_breaks_contacts_when_stretched() -> None:

@@ -299,24 +299,6 @@ perf_reports/
 !/inputs/template.yaml
 !/inputs/README*
 
-# -- Legacy MCPU reference inputs (NOT distributed) ----------------------
-# Inputs to a C binary that is not in this repository and is not rebuildable
-# here. Ignored rather than absent-by-accident: copy the tree in to run
-# tests/legacy_parity/test_hbond_ablation_ladder.py locally and it will not
-# end up committed. See docs/hbond_legacy_parity.md.
-# NOTE the `/**`, not a bare trailing slash. Excluding the DIRECTORY stops
-# git descending into it at all, and a later `!` on a file inside then has
-# no effect -- the negation silently does nothing. Excluding the contents
-# instead leaves the directory traversable so the negation below works.
-examples/actin/legacy/**
-# ...except this one. 2 KB, and it is the legacy reference that
-# tests/physics/forcefield/test_chi_topology.py and
-# test_chi_moved_atoms_topology.py validate pyMCPU's own chi-atom topology
-# JSON against. Those are live tests of pyMCPU behaviour, not legacy
-# re-derivation, so the file earns its place.
-!examples/actin/legacy/config_files/
-!examples/actin/legacy/config_files/amino_torsion.data
-
 # -------------------------------------------------------------------------
 # KORP energy maps -- NOT distributed
 # -------------------------------------------------------------------------

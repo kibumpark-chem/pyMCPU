@@ -37,7 +37,6 @@ def test_checkpoint_round_trips_state_dict_and_rng(tmp_path: Path) -> None:
     opt = {"m": np.ones(4), "v": np.zeros(4)}
     state = {
         "format_version": 1,
-        "epoch": 7,
         "global_step": 42,
         "cycle": 7,
         "model_state_dict": model,
@@ -56,7 +55,6 @@ def test_checkpoint_round_trips_state_dict_and_rng(tmp_path: Path) -> None:
     opt["m"] *= 0.0
 
     loaded = load_checkpoint(path)
-    assert loaded["epoch"] == 7
     assert loaded["global_step"] == 42
     assert loaded["best_metric"] == pytest.approx(0.91)
     np.testing.assert_array_equal(loaded["model_state_dict"]["w"], np.arange(12).reshape(3, 4))
@@ -142,7 +140,6 @@ def test_checkpoint_resume_continues_from_saved_step(tmp_path: Path) -> None:
                     "format_version": 1,
                     "global_step": global_step,
                     "cycle": global_step,
-                    "epoch": global_step,
                     "model_state_dict": {"w": weights.copy()},
                     "optimizer_state_dict": {"step": global_step},
                 },

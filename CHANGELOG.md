@@ -554,6 +554,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rebuilds (set_positions and overflow recovery), not bounding-box
   rebuilds after a move.
 
+- **`scripts/run_mcpu_replica_exchange.py` takes a config file only.** The
+  old flag interface (`--pdb`, `--temp-min`/`--temp-step`/`--n-temps`,
+  `--temperatures`, `--n-targets`, `--k-bias`, `--num-cycles`,
+  `--mc-replica-steps`, `--output-prefix`, `--fixed-residue-indices` and
+  the rest) is gone, with its second config-to-kwargs adapter. `-c` is now
+  required; `--mpi`, `--hdf5` and the checkpoint options (`--resume`,
+  `--checkpoint-dir`, ...) stay. Write the old flags as keys of a YAML
+  config (see `examples/configs/template.yaml`).
+
+- **`FoldingRunner` raises when it cannot build its native-contact CV.** It
+  used to log a warning and rebuild the contacts from CA atoms, so a run
+  set to `contact_atom_mode: cb` could silently track CA contacts instead.
+  The error from building the CV now reaches the caller. Runs whose CV
+  builds, which is every run with a force field and the default
+  `reference_pdb`, are unchanged.
+
 - **With fixed residues, no step is spent on a fixed residue.** A KIC step
   drew its window once and gave up when the window touched a fixed residue;
   it now draws again, as pivot and sidechain steps already did, so the
@@ -1473,6 +1489,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `MCPU_ENERGY_TIMING=0` no longer turns off the per-potential timers in
   `step_stats`: they cost no measurable time (actin, 34.8k vs 34.9k
   cycles/step) and always run.
+
+- `tests/legacy_parity/test_hbond_ablation_ladder.py` and
+  `scripts/validate_energy.py`, which needed the undistributed legacy MCPU
+  sources and inputs and so always skipped or could not run, with the
+  `.gitignore` block that kept a copied-in legacy tree out of commits. The
+  ladder's numbers stay in `docs/hbond_legacy_parity.md`, and
+  `test_hbond_engine_parity.py` still pins its final rung.
+
+- **The third way to launch a YAML run.** `examples/gromacs_style/` and
+  `pymcpu.utils.yaml_parser` (`load_yaml`, `config_from_yaml`,
+  `simulation_from_yaml`, `SimulationHandle`) wrapped the same config
+  loader as `mcpu run` and `scripts/run_mcpu_replica_exchange.py -c`. Use
+  `mcpu run config.yaml`, or `pymcpu.config.load_yaml_config` from Python.
+
+- Compatibility aliases nothing reads: the `epoch` key in replica-exchange
+  checkpoints (a copy of `cycle`), the `epoch` and `exchange_rng_state`
+  fields of `CheckpointState`, and `NativeContactsCV.compute()` (use
+  `compute_Q()` or `compute_N()`). Old checkpoints still load: unknown keys
+  are dropped.
+
+- **The parameter download path and the `pooch` dependency.** The registry
+  never had a URL, so the download could only raise. Gone with it:
+  `MCPU_PARAMS_BUNDLE` (a local `.tar.gz` unpacked into the cache), the
+  lookup step that reused a cache those two filled, `MCPU_NO_DOWNLOAD`,
+  the registry's `archive`/`url`/`sha256`/`unpack_root` keys,
+  `scripts/pack_params.py`, `pymcpu.params.download_params`, the
+  deprecated `include_sc` argument of `ensure_params` and `params_path`,
+  and the `mcpu download-params` command, which only printed the path
+  `mcpu materialize-params` prints or copied the set elsewhere. Parameters
+  now come from `MCPU_PARAMS_DIR`, the source tree, or the copy shipped in
+  the package, in that order. The cache root is `MCPU_CACHE_DIR` or
+  `~/.cache/pymcpu` on every platform (pooch used `~/Library/Caches` on
+  macOS and honoured `XDG_CACHE_HOME`), shared with the KORP map lookup. Setting `MCPU_NO_DOWNLOAD` is
+  now harmless and does nothing.
 
 - The overlap check on the grid before Mu's all-pairs fallback delta
   (`fallback_grid_overlap`), which round 8 also ran under energy masks. It

@@ -1,8 +1,7 @@
 # ============================================================
-# pyMCPU Input Template (GROMACS-style YAML)
+# pyMCPU Input Template (YAML)
 # The common fields, with their defaults. Copy and modify for your simulation.
-# Run: python examples/gromacs_style/run.py --input this_file.yaml
-# Or:  mcpu run this_file.yaml
+# Run: mcpu run this_file.yaml
 # ============================================================
 
 # ── Structure ─────────────────────────────────────────────────

@@ -10,8 +10,6 @@ shell caller (or CI) would rely on (rc=0/1, a human-readable stdout line).
 
 from __future__ import annotations
 
-import runpy
-import sys
 from pathlib import Path
 
 import pytest
@@ -157,21 +155,3 @@ def test_checkpoint_flags_override_only_what_they_set(
 
     assert main([command, str(_config_with_checkpointing(tmp_path)), *flags]) == 0
     assert _checkpoint_settings(loaded[0].checkpoint) == expected
-
-
-@pytest.mark.parametrize("flags, expected", _CHECKPOINT_FLAG_CASES)
-def test_gromacs_example_checkpoint_flags_override_only_what_they_set(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, flags: list, expected: tuple
-) -> None:
-    from pymcpu.utils.yaml_parser import SimulationHandle
-
-    monkeypatch.chdir(REPO_ROOT)
-    described = []
-    monkeypatch.setattr(SimulationHandle, "describe", lambda self: described.append(self.config))
-    config = _config_with_checkpointing(tmp_path)
-    monkeypatch.setattr(sys, "argv", ["run.py", "-i", str(config), "--dry-run", *flags])
-
-    with pytest.raises(SystemExit) as exit_info:
-        runpy.run_path(str(REPO_ROOT / "examples" / "gromacs_style" / "run.py"), run_name="__main__")
-    assert exit_info.value.code == 0
-    assert _checkpoint_settings(described[0].checkpoint) == expected

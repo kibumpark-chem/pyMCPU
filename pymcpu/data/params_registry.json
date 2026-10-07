@@ -34,10 +34,6 @@
           "constants/rama_mixture.json"
         ]
       },
-      "archive": "mcpu08-1.0.0.tar.gz",
-      "url": null,
-      "sha256": null,
-      "unpack_root": "mcpu08",
       "local_source": "../src/pymcpu/parameters/pretrained/mcpu08"
     }
   }

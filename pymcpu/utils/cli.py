@@ -22,7 +22,7 @@ def add_checkpoint_args(
 
     Identical across every pyMCPU CLI entry point (scripts/run_mcpu_folding.py,
     scripts/run_mcpu_replica_exchange.py, examples/openmm_style/*.py,
-    examples/gromacs_style/run.py); factored out so the flags/help text can't
+    ``mcpu run``); factored out so the flags/help text can't
     silently drift between scripts.
 
     Pass ``None`` for a default to mean "not set on the CLI, defer to whatever

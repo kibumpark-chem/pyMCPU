@@ -32,8 +32,7 @@ reference was recorded).
 Why the numbers are stored as hex floats
 ----------------------------------------
 Nothing else in this repo prints a bit-faithful float -- every parity script
-uses ``.4f``/``.6f``/``:g``, and ``scripts/validate_energy.py`` uses
-``:>16.6f``.
+uses ``.4f``/``.6f``/``:g``.
 
 The reason that matters is the opposite of the intuitive one. ``%.6f``
 round-trips a float32 *fine* at actin's magnitudes: at |x| ~ 323 the ULP is
@@ -389,7 +388,6 @@ def _child_env(import_root: str | None) -> dict[str, str]:
         env["MCPU_PARAMS_DIR"] = str(ensure_params("mcpu08"))
     except Exception:  # noqa: BLE001 -- fall back to the child's own resolution
         pass
-    env["MCPU_NO_DOWNLOAD"] = "1"
 
     for var in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS",
                 "NUMEXPR_NUM_THREADS", "VECLIB_MAXIMUM_THREADS"):

@@ -37,6 +37,7 @@ from pymcpu import mcpu_core
 from pymcpu.forcefields.base import BaseForceField
 from pymcpu.forcefields.builders.korp_builder import KorpPotentialBuilder
 from pymcpu.forcefields.korp_map import KORP_RESIDUE_ORDER, KorpMapError, load_korp_map
+from pymcpu.params import cache_root
 
 logger = logging.getLogger(__name__)
 
@@ -56,18 +57,6 @@ _BACKBONE_SELECTION = (
 )
 
 _FRAME_ATOMS = ("N", "CA", "C")
-
-#: Protonation-state spellings that are the same molecule in heavy atoms.
-#: Only the ones that matter for a backbone-only model -- nothing here changes
-#: N, CA, C or O, so the rename is exact.
-_RESIDUE_ALIASES = {
-    "HSD": "HIS", "HSE": "HIS", "HSP": "HIS",
-    "HID": "HIS", "HIE": "HIS", "HIP": "HIS",
-    "CYX": "CYS", "CYM": "CYS",
-    "ASH": "ASP", "GLH": "GLU", "LYN": "LYS", "ARN": "ARG",
-    "HISD": "HIS", "HISE": "HIS",
-}
-
 
 def _keep_source_identity(source: md.Topology, kept, target: md.Topology) -> None:
     """Put back the chain IDs and residue numbers ``Topology.subset`` loses.
@@ -168,9 +157,7 @@ class KORPForceField(BaseForceField):
         params_dir = os.environ.get("MCPU_PARAMS_DIR")
         if params_dir:
             candidates.append(Path(params_dir) / "korp6Dv1.bin")
-        cache = os.environ.get("MCPU_CACHE_DIR")
-        cache_root = Path(cache) if cache else Path.home() / ".cache" / "pymcpu"
-        candidates.append(cache_root / "korp" / "Korp6Dv1" / "korp6Dv1.bin")
+        candidates.append(cache_root() / "korp" / "Korp6Dv1" / "korp6Dv1.bin")
 
         for path in candidates:
             if path.is_file():
@@ -191,22 +178,6 @@ class KORPForceField(BaseForceField):
             "Please cite Lopez-Blanco JR & Chacon P, Bioinformatics 2019, "
             "35(17):3013-3019."
         )
-
-    @staticmethod
-    def _canonicalize_residue_names(topology: md.Topology) -> None:
-        renamed: dict[str, str] = {}
-        for residue in topology.residues:
-            canon = _RESIDUE_ALIASES.get(residue.name)
-            if canon is not None and canon != residue.name:
-                renamed[residue.name] = canon
-                residue.name = canon
-        if renamed:
-            logger.warning(
-                "Renamed protonation-state variants to their standard "
-                "equivalents: %s. These differ only in hydrogens, which this "
-                "backbone-only force field does not represent.",
-                ", ".join(f"{k}->{v}" for k, v in sorted(renamed.items())),
-            )
 
     @staticmethod
     def _slice_backbone(trajectory: md.Trajectory) -> md.Trajectory:

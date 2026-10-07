@@ -55,13 +55,12 @@ requirements:
     # wrong.
   run:
     - python >=3.9
-    # All six hard runtime dependencies from pyproject.toml. pandas and
+    # All five hard runtime dependencies from pyproject.toml. pandas and
     # mdtraj are both imported at `import pymcpu` time, so omitting either
     # yields a package that installs and then cannot be imported.
     - numpy >=1.21
     - mdtraj >=1.9
     - pandas >=1.3
-    - pooch >=1.7
     - pyyaml >=6.0
     - h5py >=3.6
 

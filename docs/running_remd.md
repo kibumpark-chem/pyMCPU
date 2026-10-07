@@ -80,8 +80,9 @@ mpirun -n 12 python my_remd_run.py
 ```
 
 In a source checkout, `scripts/run_mcpu_replica_exchange.py --mpi -c
-config.yaml` does the same, and also takes the checkpoint options of
-`mcpu run`.
+config.yaml` does the same. The script takes its settings only from the
+config file; besides `-c` and `--mpi` it accepts `--hdf5` and the checkpoint
+options of `mcpu run` (`--resume` among them).
 
 Each process runs a block of replicas. Fewer processes than replicas is
 fine: a process with several replicas runs them one after another, which
