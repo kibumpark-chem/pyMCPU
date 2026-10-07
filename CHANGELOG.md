@@ -500,6 +500,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The Mu grid no longer keeps a list of occupied neighbour cells.** Every
+  cell carried the occupied cells of its 27-cell stencil, updated whenever a
+  cell turned empty or occupied, but no energy term read it: the Mu walks
+  step through the stencil and skip empty cells themselves. The list, its
+  per-cell valid-stencil table and the debug check that compared the two are
+  gone, with the unused neighbour-cell helpers that read them. Hot replicas
+  gain most, since their atoms keep moving between cells. Bit-identical
+  (parity vs d38a246; same energies and accept counts). User-space cycles
+  per step, n=3, 50k steps, production `sce` checkpoint: -1.2% at T=0.4
+  (slot 0), -9.7% at T=1.0 (slot 57); melted `sce` -20.6% and melted actin
+  -24.5% at T=1.0. Actin and PGK1 near the native state, default and
+  pivot-only, are no slower.
+
 - **GCC 15 is the default compiler, and the wheels are built with it.** Its
   extension runs about 3-15% faster than GCC 8.5's in user-space cycles per
   step: about 10% on pivot moves (actin, same trajectory), 14% with KORP,
@@ -1286,10 +1299,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and the per-atom Mu grid walk they fed are gone (a Mu move the contact
   list cannot follow takes the exact all-pairs delta, as under
   `MCPU_CONTACT_LIST=0`). Also gone: the scratch grid of moved atoms that
-  walk used; the occupied-stencil modes and `MCPU_OCCUPIED_STENCIL` (the Mu
-  grid always walks its occupied stencil, the H-bond grids the full one, as
-  by default before) with their timers and the end-of-run `occ_stencil`
-  line under `MCPU_VERBOSE`; and the Mu cell-size knobs `MCPU_MU_CELL_SCALE`,
+  walk used; the occupied-stencil modes and `MCPU_OCCUPIED_STENCIL` with
+  their timers and the end-of-run `occ_stencil` line under `MCPU_VERBOSE`; and the Mu cell-size knobs `MCPU_MU_CELL_SCALE`,
   `Context.set_mu_cell_size_scale` / `set_mu_cell_size_angstrom` /
   `set_mu_cell_size_min_angstrom`, their getters and
   `effective_mu_cell_size_A`, with the matching `neighbor_proxy_stats()`
