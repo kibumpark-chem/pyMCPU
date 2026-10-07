@@ -45,7 +45,6 @@ public:
     NeighborSystem() = default;
 
     void init(const System& sys, NeighborConfig cfg = {}) {
-        apply_neighbor_env_overrides(cfg);
         cfg_ = cfg;
         n_atoms_ = sys.getNumAtoms();
         n_bb_ = sys.getTotalBBAtoms();
@@ -268,7 +267,7 @@ public:
             hb_fallback_ ? 1 : 0);
     }
 
-    /// Read-only Mu index (BB+O+SC). For moved_new_grid bounds.
+    /// Read-only Mu index (BB+O+SC).
     const CellListMC& muGrid() const { return *mu_grid_; }
 
     bool trial_in_bounds(const CoordsSoA& trial_coords,
@@ -400,8 +399,10 @@ public:
         retry_rebuild_ = false;
         // AABB margin gives AutoExpand headroom around the Mu cutoff.
         // Denselist cell + query stay at mu_cutoff (legacy 6 Å or exact contact).
+        // Cell == cutoff: a one-cell stencil (27 cells) finds every pair,
+        // and the hard core bounds what a cell of that size can hold.
         const float r_mu = mu_cutoff_A();
-        const float mu_cell = effective_mu_cell_size_A(r_mu, cfg_);
+        const float mu_cell = r_mu;
         const float margin = cfg_.effective_margin(r_mu);
         BoxBounds b = aabb_of_coords(coords, margin);
         bounds_ = b;
@@ -419,10 +420,9 @@ public:
                 for (int i = 0; i < n_atoms_; ++i) {
                     if (in_mu_[static_cast<size_t>(i)]) mu_grid_->insert(i, coords);
                 }
-                // Bulk insert then enable Mu-only occupied stencil (default Full).
-                // HB/scratch grids stay Off (never call enable_occupied_stencil).
-                mu_grid_->grid().enable_occupied_stencil(
-                    OpenCellGrid::occupied_mode_from_env());
+                // Bulk insert, then the occupied stencil (Mu grid only: the
+                // H-bond grids walk the full stencil, measured wall-neutral).
+                mu_grid_->grid().enable_occupied_stencil();
                 dense_active_ = !note_overflow_(*mu_grid_, "Mu",
                                                 stats_.mu_grid_overflows);
                 stats_.neighbor_offsets_count =
@@ -454,12 +454,12 @@ public:
                         std::fprintf(stderr, // CHANGED: gated behind MCPU_VERBOSE
                             "INFO: Mu grid occupancy cell=%.3f Å dims=%dx%dx%d "
                             "n_cells=%llu occupied=%d avg_occ=%.2f max_occ=%d "
-                            "peak=%d contiguous=%d CELL_CAPACITY=%d stencil_R=%d "
+                            "peak=%d CELL_CAPACITY=%d stencil_R=%d "
                             "offsets=%zu query=%.3f\n",
                             g.cell_size(), g.nx(), g.ny(), g.nz(),
                             static_cast<unsigned long long>(g.num_cells()), n_occ,
                             avg, mx, g.peak_cell_occupancy(),
-                            g.use_contiguous() ? 1 : 0, OpenCellGrid::CELL_CAPACITY,
+                            OpenCellGrid::CELL_CAPACITY,
                             g.stencil_radius(), g.neighbor_offsets_count(),
                             r_mu);
                         if (mx > OpenCellGrid::CELL_CAPACITY * 4 / 5) {
@@ -522,9 +522,9 @@ public:
                     std::fprintf(stderr, // CHANGED: gated behind MCPU_VERBOSE
                         "INFO: HB O-grid stencil empty_frac=%.3f "
                         "(empty=%zu nonempty=%zu probes=%d) "
-                        "contig=%d cell=%.3f cutoff=%.3f\n",
+                        "cell=%.3f cutoff=%.3f\n",
                         tot > 0.0 ? empty / tot : 0.0, empty, nonempty, nprobe,
-                        hb_o_grid_->grid().use_contiguous() ? 1 : 0, hb_cell,
+                        hb_cell,
                         kHBondCutoffA);
                 }
             }
@@ -647,46 +647,6 @@ public:
     }
 
     // ---- Candidate enumeration (read-only; indices = accepted state) ----
-
-    template <typename Func>
-    void for_each_mu_candidate(const Eigen::Vector3f& pos, Func&& func) const {
-        for_each_mu_candidate(pos.x(), pos.y(), pos.z(), std::forward<Func>(func));
-    }
-
-    template <typename Func>
-    void for_each_mu_candidate(float x, float y, float z, Func&& func) const {
-        if (!dense_active_) return;
-        const float r_cut = mu_cutoff_A();
-        const float r2 = r_cut * r_cut;
-        mu_grid_->for_each_neighbor(
-            x, y, z,
-            [&](int j) {
-                ++stats_.mu_num_candidates_iterated;
-                func(j);
-            },
-            &stats_.neighbor_num_cell_visits, r2);
-    }
-
-    template <typename Func>
-    bool for_each_mu_candidate_while(const Eigen::Vector3f& pos, Func&& func) const {
-        return for_each_mu_candidate_while(pos.x(), pos.y(), pos.z(),
-                                           std::forward<Func>(func));
-    }
-
-    template <typename Func>
-    bool for_each_mu_candidate_while(float x, float y, float z, Func&& func) const {
-        if (!dense_active_) return true;
-        const float r_cut = mu_cutoff_A();
-        const float r2 = r_cut * r_cut;
-        return mu_grid_->for_each_neighbor_while(
-            x, y, z,
-            [&](int j) {
-                ++stats_.mu_num_candidates_iterated;
-                return func(j);
-            },
-            &stats_.neighbor_num_cell_visits, r2);
-    }
-
 
     template <typename Func>
     void for_each_hbond_acceptor_candidate(const Eigen::Vector3f& pos, Func&& func) const {

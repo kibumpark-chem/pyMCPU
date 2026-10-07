@@ -43,11 +43,6 @@ struct MuWorkspace {
     /// dropped if the move is accepted.
     bool pending_list_invalidate = false;
 
-    std::unique_ptr<CellListMC> moved_new_grid;
-    std::vector<int> moved_grid_atoms;
-
-    bool use_trial_fallback = false;
-
     // The moved-cell counts and the clash_hot list live in Context's
     // neighbor::PairScratch, shared by every term's pair walks.
 
@@ -57,23 +52,6 @@ struct MuWorkspace {
         pending_list_invalidate = false;
     }
 
-
-    void ensure_moved_grid(float cutoff, int num_atoms) {
-        if (!moved_new_grid) {
-            moved_new_grid = std::make_unique<CellListMC>(cutoff, num_atoms);
-        } else {
-            clear_moved_grid();
-        }
-        moved_new_grid->ensure_atom_capacity(num_atoms);
-    }
-
-    void clear_moved_grid() {
-        if (!moved_new_grid) return;
-        for (int a : moved_grid_atoms) {
-            moved_new_grid->remove(a);
-        }
-        moved_grid_atoms.clear();
-    }
 };
 
 struct QBiasWorkspace {
@@ -352,48 +330,6 @@ public:
     [[nodiscard]] forces::mcpu08::MuPotential* mu_potential();
     [[nodiscard]] const forces::mcpu08::MuPotential* mu_potential() const;
 
-    /// Mu denselist cell size = scale * Mu cutoff, never below the cutoff (so
-    /// scale < 1 acts as 1). Default 1.0.
-    /// Rebuilds the Mu denselist when positions are already set (scale must be
-    /// set before ``setPositions`` / init_only reorder for matching locality).
-    void set_mu_cell_size_scale(float scale) noexcept {
-        neighbors_.config().mu_cell_size_scale = scale;
-        neighbors_.config().mu_cell_size_angstrom = -1.f;
-        if (positions_set_) {
-            neighbors_.rebuild_from_accepted_state(state.coords_soa);
-        }
-    }
-    float mu_cell_size_scale() const noexcept {
-        return neighbors_.config().mu_cell_size_scale;
-    }
-    /// Absolute Mu denselist cell size (Å), raised to the Mu cutoff if smaller.
-    /// &lt;=0 clears absolute override.
-    void set_mu_cell_size_angstrom(float angstrom) noexcept {
-        neighbors_.config().mu_cell_size_angstrom = angstrom;
-        if (positions_set_) {
-            neighbors_.rebuild_from_accepted_state(state.coords_soa);
-        }
-    }
-    float mu_cell_size_angstrom() const noexcept {
-        return neighbors_.config().mu_cell_size_angstrom;
-    }
-    /// Extra lower bound on the cell (Å); only a value above the Mu cutoff
-    /// has an effect. &lt;=0 clears it.
-    void set_mu_cell_size_min_angstrom(float angstrom) noexcept {
-        neighbors_.config().mu_cell_size_min_angstrom =
-            angstrom > 0.f ? angstrom : 0.f;
-        if (positions_set_) {
-            neighbors_.rebuild_from_accepted_state(state.coords_soa);
-        }
-    }
-    float mu_cell_size_min_angstrom() const noexcept {
-        return neighbors_.config().mu_cell_size_min_angstrom;
-    }
-    float effective_mu_cell_size_A() const noexcept {
-        return ::mcpu::effective_mu_cell_size_A(neighbors_.mu_cutoff_A(),
-                                                neighbors_.config());
-    }
-
     const BoxBounds& boxBounds() const noexcept { return neighbors_.bounds(); }
     bool denseGridsActive() const noexcept { return neighbors_.denseActive(); }
     /// Bring the Mu grid membership up to the System's energy mask after a
@@ -458,7 +394,7 @@ public:
     [[nodiscard]] const System&     getSystem() const { return *system; }
     [[nodiscard]] System&           getSystem() { return *system; }
 
-    /// Mu index only (BB+O+SC). Prefer neighbors().for_each_mu_candidate.
+    /// Mu index only (BB+O+SC).
     [[nodiscard]] const CellListMC& getGridContact() const { return neighbors_.muGrid(); }
 
 };

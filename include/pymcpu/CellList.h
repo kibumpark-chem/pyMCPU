@@ -29,8 +29,8 @@ public:
 
     /// Configure dense cells from AABB bounds.
     /// Default: cell_size = query = cutoff (HB / baseline Mu).
-    /// Pass ``cell_size_override`` &gt; 0 for Mu denselist with
-    /// ``effective_mu_cell_size_A`` (variable stencil via query radius).
+    /// ``cell_size_override`` &gt; 0 sets the cell edge apart from the query
+    /// radius (the stencil then spans ceil(query / cell) cells).
     bool configure(const BoxBounds& bounds, const NeighborConfig& cfg,
                    float cell_size_override = -1.f) {
         const float query = cutoff_;
@@ -95,20 +95,5 @@ public:
                                          std::forward<Func>(func), cell_visits);
     }
 
-    template <typename Func>
-    inline bool for_each_neighbor_while(const Eigen::Vector3f& pos, Func&& func,
-                                        std::uint64_t* cell_visits = nullptr,
-                                        float r_cut2 = -1.f) const {
-        return grid_.for_each_neighbor_while(pos, std::forward<Func>(func),
-                                             cell_visits, r_cut2);
-    }
-
-    template <typename Func>
-    inline bool for_each_neighbor_while(float x, float y, float z, Func&& func,
-                                        std::uint64_t* cell_visits = nullptr,
-                                        float r_cut2 = -1.f) const {
-        return grid_.for_each_neighbor_while(x, y, z, std::forward<Func>(func),
-                                             cell_visits, r_cut2);
-    }
 };
 } // namespace mcpu

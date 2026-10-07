@@ -98,7 +98,6 @@ FORMAT_VERSION = 2
 #: 1-ULP change in a squared distance actually produces
 #: (``MuPotential.h:419`` -> ``pending_contact_add`` -> ``state.mu_contact_list``).
 _PROXY_KEYS = (
-    "mu_num_candidates_iterated",
     "mu_num_pair_distance_checks",
     "mu_num_pairs_within_rcut",
     "mu_num_pairs_evaluated",

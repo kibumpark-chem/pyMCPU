@@ -47,7 +47,6 @@ Context.clash_first_min_moved
 Context.coord_sync_stats
 Context.coords
 Context.coords_for_python
-Context.effective_mu_cell_size_A
 Context.energy_breakdown
 Context.frame_offset
 Context.get_atom_reorder_mode
@@ -62,9 +61,6 @@ Context.hbond_ledger_check_counts
 Context.hbond_uses_fallback
 Context.mu_backend_name
 Context.mu_cell_size_A
-Context.mu_cell_size_angstrom
-Context.mu_cell_size_min_angstrom
-Context.mu_cell_size_scale
 Context.mu_potential
 Context.native_contacts_bias_k
 Context.native_contacts_bias_n_target
@@ -81,9 +77,6 @@ Context.set_clash_first_min_moved
 Context.set_coords_from_python
 Context.set_energy_weight
 Context.set_hbond_ledger_check
-Context.set_mu_cell_size_angstrom
-Context.set_mu_cell_size_min_angstrom
-Context.set_mu_cell_size_scale
 Context.set_native_contacts_bias
 Context.set_output_internal_order
 Context.set_positions

@@ -48,13 +48,6 @@ struct NeighborConfig {
     int clash_first_min_moved = 50;
 
 
-    /// Mu denselist cell size relative to the Mu cutoff. Default 1.0.
-    float mu_cell_size_scale = 1.f;
-    /// Absolute Mu cell size (Å). If &gt; 0, overrides scale.
-    float mu_cell_size_angstrom = -1.f;
-    /// Extra lower bound (Å) on the cell; the cell is never below the Mu
-    /// cutoff anyway, so only a value above it does anything. 0 = none.
-    float mu_cell_size_min_angstrom = 0.f;
     /// Denselist query/cell cutoff (Å). Filled by Context::sync_geometry from
     /// MuPotential::mu_exact_cutoff(). &lt;0 → NeighborSystem falls back to 6.0.
     float mu_denselist_cutoff_A = -1.f;
@@ -67,59 +60,23 @@ struct NeighborConfig {
     }
 };
 
-/// Apply ``MCPU_MU_CELL_SCALE`` (Mu denselist cell size relative to the
-/// cutoff). O(1).
-inline void apply_neighbor_env_overrides(NeighborConfig& cfg) noexcept {
-    if (const char* e = std::getenv("MCPU_MU_CELL_SCALE")) {
-        char* end = nullptr;
-        const float v = std::strtof(e, &end);
-        if (end != e && v > 0.f) {
-            cfg.mu_cell_size_scale = v;
-            cfg.mu_cell_size_angstrom = -1.f;
-        }
-    }
-}
-
-/// Effective Mu denselist cell size (Å): scale*r_cut or absolute, never
-/// below ``r_cut``. Cell may exceed ``r_cut`` (scale>1): stencil radius stays
-/// ``ceil(query/cell)`` = 1 and still finds all pairs within cutoff. Upper
-/// clamp to ``list`` was removed so ``mu_cell_size_scale>1`` and absolute sizes
-/// > cutoff are usable for occupancy / AVX tuning.
-inline float effective_mu_cell_size_A(float r_cut,
-                                     const NeighborConfig& cfg) noexcept {
-    float cell = (cfg.mu_cell_size_angstrom > 0.f)
-                     ? cfg.mu_cell_size_angstrom
-                     : r_cut * (cfg.mu_cell_size_scale > 0.f ? cfg.mu_cell_size_scale
-                                                            : 1.f);
-    // Never below the cutoff. The Mu grid code walks a one-cell stencil
-    // (27 cells, NeighborCellList::kCap); a smaller cell would need a wider
-    // stencil and overflow those buffers.
-    float mn = cfg.mu_cell_size_min_angstrom > 0.f ? cfg.mu_cell_size_min_angstrom : 0.f;
-    if (mn < r_cut) mn = r_cut;
-    if (cell < mn) cell = mn;
-    // A cell above the cutoff (scale>1 / absolute) is allowed. Correctness:
-    // OpenCellGrid uses R=ceil(query_radius/cell_size); query stays at r_cut.
-    return cell;
-}
-
 /// Per-step neighbour work proxies derived from raw NeighborStats counters.
 ///
 /// - avg_mu_pair_checks_per_step: r2 computations / step (primary work proxy).
 /// - avg_mu_pairs_within_rcut_per_step: pairs with r2 <= r_mu^2 / step.
-/// - avg_mu_candidates_per_step: cell-list visits before filters.
 struct NeighborProxyReport {
     std::uint64_t total_steps = 0;
     double avg_mu_pair_checks_per_step = 0.0;
     double avg_mu_pairs_within_rcut_per_step = 0.0;
     /// Deprecated alias of avg_mu_pair_checks_per_step (historical name).
     double avg_mu_pairs_per_step = 0.0;
-    double avg_mu_candidates_per_step = 0.0;
     double avg_cell_visits_per_step = 0.0;
     double avg_hbond_geom_checks_per_step = 0.0;
 };
 
 struct NeighborStats {
     // --- lifecycle / policy ---
+    /// Trial moves whose coordinates left the grid bounds (counted only).
     std::uint64_t num_trial_fallback = 0;
     std::uint64_t num_dense_cap_fallback = 0;
     /// Times a cell of the Mu grid / an H-bond grid was asked to hold more
@@ -131,9 +88,6 @@ struct NeighborStats {
     std::uint64_t num_aabb_rebuild_accept = 0;
 
     // --- performance proxy counters ---
-    /// Neighbor-list / cell-list visits (before moved/dedup filters). Distinct from
-    /// pair distance checks.
-    std::uint64_t mu_num_candidates_iterated = 0;
     /// Every time Mu delta computes r2 for a candidate pair (i,j).
     std::uint64_t mu_num_pair_distance_checks = 0;
     /// Subset of distance checks with r2 <= r_mu^2 (6 Å cell cutoff).
@@ -173,8 +127,6 @@ struct NeighborStats {
             static_cast<double>(mu_num_pairs_within_rcut) /
             static_cast<double>(den_steps);
         r.avg_mu_pairs_per_step = r.avg_mu_pair_checks_per_step; // deprecated alias
-        r.avg_mu_candidates_per_step = static_cast<double>(mu_num_candidates_iterated) /
-                                       static_cast<double>(den_steps);
         r.avg_cell_visits_per_step = static_cast<double>(neighbor_num_cell_visits) /
                                      static_cast<double>(den_steps);
         r.avg_hbond_geom_checks_per_step = static_cast<double>(hbond_num_geom_checks) /
@@ -189,12 +141,11 @@ struct NeighborStats {
         const NeighborProxyReport r = derive(steps);
 
         std::fprintf(stderr,
-            "[%s] steps=%llu | mu_cand=%llu mu_r2=%llu mu_rcut=%llu "
+            "[%s] steps=%llu | mu_r2=%llu mu_rcut=%llu "
             "hb_cand=%llu hb_geom=%llu cell_visits=%llu | "
             "aabb_rebuild=%llu trial_fb=%llu\n",
             t,
             static_cast<unsigned long long>(steps),
-            static_cast<unsigned long long>(mu_num_candidates_iterated),
             static_cast<unsigned long long>(mu_num_pair_distance_checks),
             static_cast<unsigned long long>(mu_num_pairs_within_rcut),
             static_cast<unsigned long long>(hbond_num_candidates_iterated),
@@ -205,12 +156,11 @@ struct NeighborStats {
 
         std::fprintf(stderr,
             "[%s] derived: avg_mu_r2/step=%.1f avg_mu_rcut/step=%.1f "
-            "avg_mu_cand/step=%.1f avg_cell_visits/step=%.1f "
+            "avg_cell_visits/step=%.1f "
             "avg_hb_geom/step=%.1f\n",
             t,
             r.avg_mu_pair_checks_per_step,
             r.avg_mu_pairs_within_rcut_per_step,
-            r.avg_mu_candidates_per_step,
             r.avg_cell_visits_per_step,
             r.avg_hbond_geom_checks_per_step);
     }

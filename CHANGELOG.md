@@ -477,6 +477,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The neighbour grid keeps each cell once.** With the linked lists gone
+  (see Removed), an insert or removal touches only the cell's packed block,
+  and the occupied stencil is no longer timed with two clock reads per
+  update. Bit-identical (parity vs ec954cf; actin, PGK1 and T4L default,
+  actin pivot-only and KIC-only, PGK1 pivot-only, and the masked runs all
+  give the same accept bits and final energy as before). Cycles per step,
+  n=3, 50k steps: actin -1.3% default, -2.4% pivot-only, PGK1 -1.6% and
+  -2.6%, T4L -0.8%, with instructions within 0.3%; masked runs (with the
+  grid change above) actin ignore_all:0:40 -8.7%, ignore_all:150:30 -5.1%,
+  clash_only:0:40 -1.1%, PGK1 ignore_all:0:40 -5.9%. About 650 lines of C++
+  go.
+
 - **A neighbour-grid cell that fills up switches its grid off instead of
   falling back to linked lists.** Cells hold 48 atoms. A cell asked to hold
   more used to switch the whole grid to per-cell linked lists for the rest
@@ -1202,6 +1214,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the only hard-rejecting term.
 
 ### Removed
+
+- **The neighbour grid's linked lists and the knobs around them.** Each
+  grid kept every cell twice, as a fixed 48-slot block and as a linked list
+  that served queries only after a cell overflowed; a full cell now
+  switches the grid off instead, so the lists, `MCPU_USE_CONTIGUOUS_CELLS`
+  and the per-atom Mu grid walk they fed are gone (a Mu move the contact
+  list cannot follow takes the exact all-pairs delta, as under
+  `MCPU_CONTACT_LIST=0`). Also gone: the scratch grid of moved atoms that
+  walk used; the occupied-stencil modes and `MCPU_OCCUPIED_STENCIL` (the Mu
+  grid always walks its occupied stencil, the H-bond grids the full one, as
+  by default before) with their timers and the end-of-run `occ_stencil`
+  line under `MCPU_VERBOSE`; and the Mu cell-size knobs `MCPU_MU_CELL_SCALE`,
+  `Context.set_mu_cell_size_scale` / `set_mu_cell_size_angstrom` /
+  `set_mu_cell_size_min_angstrom`, their getters and
+  `effective_mu_cell_size_A`, with the matching `neighbor_proxy_stats()`
+  keys. The cell is the Mu cutoff: larger cells were slower in wall time
+  and are what the occupancy bound does not cover (10 A cells overflowed).
+  `Context.mu_cell_size_A()` still reports it. `neighbor_proxy_stats()`
+  drops `mu_grid_contiguous`, and `mu_num_candidates_iterated` and
+  `avg_mu_candidates_per_step`, which only the per-atom walk fed.
 
 - **Checkpoint upload: `cloud_sync`, `cloud_bucket` and `cloud_sync_cmd`.**
   After each save it started `<cloud_sync_cmd> last.chk

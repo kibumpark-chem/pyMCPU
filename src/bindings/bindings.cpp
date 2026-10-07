@@ -467,17 +467,9 @@ PYBIND11_MODULE(mcpu_core, m) {
             [](Context& c) -> m08::MuPotential* { return c.mu_potential(); },
             py::return_value_policy::reference_internal,
             "First MuPotential, or None.")
-        .def("set_mu_cell_size_scale", &Context::set_mu_cell_size_scale, py::arg("scale"))
-        .def("mu_cell_size_scale", &Context::mu_cell_size_scale)
-        .def("set_mu_cell_size_angstrom", &Context::set_mu_cell_size_angstrom,
-             py::arg("angstrom"))
-        .def("mu_cell_size_angstrom", &Context::mu_cell_size_angstrom)
-        .def("set_mu_cell_size_min_angstrom", &Context::set_mu_cell_size_min_angstrom,
-             py::arg("angstrom"))
-        .def("mu_cell_size_min_angstrom", &Context::mu_cell_size_min_angstrom)
-        .def("effective_mu_cell_size_A", &Context::effective_mu_cell_size_A)
         .def("mu_cell_size_A",
-             [](const Context& c) { return c.neighbors().mu_cell_size_A(); })
+             [](const Context& c) { return c.neighbors().mu_cell_size_A(); },
+             "Mu grid cell edge (A): the Mu cutoff, or 0 while the grid is off.")
         .def("reset_neighbor_proxy_stats", &Context::reset_neighbor_proxy_stats)
         .def("print_neighbor_proxy_stats",
              [](const Context& c, const std::string& tag) {
@@ -504,7 +496,6 @@ PYBIND11_MODULE(mcpu_core, m) {
                  const auto& cfg = c.neighborConfig();
                  const auto r = s.derive(s.num_steps_executed);
                  py::dict d;
-                 d["mu_num_candidates_iterated"] = s.mu_num_candidates_iterated;
                  d["mu_num_pair_distance_checks"] = s.mu_num_pair_distance_checks;
 
                  d["mu_num_pairs_within_rcut"] = s.mu_num_pairs_within_rcut;
@@ -515,10 +506,6 @@ PYBIND11_MODULE(mcpu_core, m) {
                  d["mu_eval_pair_calls"] = s.mu_eval_pair_calls;
                  d["elided_rigid_mm"] = s.elided_rigid_mm;
                  d["skip_rigid_mm"] = cfg.skip_rigid_mm;
-                 d["mu_cell_size_scale"] = cfg.mu_cell_size_scale;
-                 d["mu_cell_size_angstrom"] = cfg.mu_cell_size_angstrom;
-                 d["mu_cell_size_min_angstrom"] = cfg.mu_cell_size_min_angstrom;
-                 d["effective_mu_cell_size_A"] = c.effective_mu_cell_size_A();
                  d["mu_cell_size_A"] = c.neighbors().mu_cell_size_A();
                  d["neighbor_offsets_count"] =
                      c.neighbors().denseActive()
@@ -554,7 +541,6 @@ PYBIND11_MODULE(mcpu_core, m) {
                      d["mu_grid_max_occupancy"] = mx;
                      d["mu_grid_n_atoms"] = sum;
                      d["mu_grid_peak_occupancy"] = g.peak_cell_occupancy();
-                     d["mu_grid_contiguous"] = g.use_contiguous();
                      d["mu_grid_cell_capacity"] = OpenCellGrid::CELL_CAPACITY;
                  } else {
                      d["mu_grid_n_cells"] = 0;
@@ -563,7 +549,6 @@ PYBIND11_MODULE(mcpu_core, m) {
                      d["mu_grid_max_occupancy"] = 0;
                      d["mu_grid_n_atoms"] = 0;
                      d["mu_grid_peak_occupancy"] = 0;
-                     d["mu_grid_contiguous"] = false;
                      d["mu_grid_cell_capacity"] = OpenCellGrid::CELL_CAPACITY;
                  }
                  d["num_aabb_rebuild_accept"] = s.num_aabb_rebuild_accept;
@@ -574,7 +559,6 @@ PYBIND11_MODULE(mcpu_core, m) {
                  d["avg_mu_pair_checks_per_step"] = r.avg_mu_pair_checks_per_step;
                  d["avg_mu_pairs_within_rcut_per_step"] = r.avg_mu_pairs_within_rcut_per_step;
                  d["avg_mu_pairs_per_step"] = r.avg_mu_pairs_per_step;
-                 d["avg_mu_candidates_per_step"] = r.avg_mu_candidates_per_step;
                  d["avg_cell_visits_per_step"] = r.avg_cell_visits_per_step;
                  d["avg_hbond_geom_checks_per_step"] = r.avg_hbond_geom_checks_per_step;
                  py::dict derived;
@@ -582,7 +566,6 @@ PYBIND11_MODULE(mcpu_core, m) {
                  derived["avg_mu_pair_checks_per_step"] = r.avg_mu_pair_checks_per_step;
                  derived["avg_mu_pairs_within_rcut_per_step"] = r.avg_mu_pairs_within_rcut_per_step;
                  derived["avg_mu_pairs_per_step"] = r.avg_mu_pairs_per_step;
-                 derived["avg_mu_candidates_per_step"] = r.avg_mu_candidates_per_step;
                  derived["avg_cell_visits_per_step"] = r.avg_cell_visits_per_step;
                  derived["avg_hbond_geom_checks_per_step"] = r.avg_hbond_geom_checks_per_step;
                  d["derived"] = derived;
