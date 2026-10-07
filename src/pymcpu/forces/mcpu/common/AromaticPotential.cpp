@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <vector>
 #include "pymcpu/utils/numbers_compat.h"
+#include "pymcpu/utils/pair_r2.h"
 
 namespace mcpu::forces {
     AromaticPotential::AromaticPotential(
@@ -65,7 +66,7 @@ namespace mcpu::forces {
 
                 RingGeometry ring_j = computeRingGeometry(state, aromatic_atom_indices[j]);
 
-                float distance_sq = (ring_i.center - ring_j.center).squaredNorm();
+                float distance_sq = pair_r2(ring_i.center - ring_j.center);
                 if (distance_sq >= DISTANCE_CUTOFF_SQ) continue;
 
                 float norm_j = ring_j.normal.norm();
@@ -150,7 +151,7 @@ namespace mcpu::forces {
 
         // calculateEnergy's pair term: false when the pair scores nothing.
         auto pair_term = [&](const Ring& ri, const Ring& rj, float& e) {
-            const float distance_sq = (ri.center - rj.center).squaredNorm();
+            const float distance_sq = pair_r2(ri.center - rj.center);
             if (distance_sq >= DISTANCE_CUTOFF_SQ) return false;
             if (rj.norm < EPS) return false;
             float cos_angle = ri.normal.dot(rj.normal) / (ri.norm * rj.norm);

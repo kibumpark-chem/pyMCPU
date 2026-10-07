@@ -1,6 +1,7 @@
 #pragma once
 /// H-bond bookkeeping for one accepted state: every (donor, acceptor) residue
-/// pair with a nonzero energy, as HBondPotential last scored it.
+/// pair whose H and O are within NeighborSystem::kHBondListA, with its energy
+/// (often 0) as HBondPotential last scored it.
 ///
 /// Lives on State (State::hbond_cache) because it describes that state's
 /// coordinates. HBondPotential builds it the first time a move needs it and
@@ -10,7 +11,10 @@
 ///
 /// A pair is directional, so it is listed twice: in the donor's row with the
 /// acceptor as partner, and in the acceptor's row with the donor as partner.
-/// Only nonzero energies are listed; a residue rarely has more than two.
+/// A residue rarely has more than three. Listing the pairs just outside the
+/// 2.5 A H-bond cutoff lets a rigid move re-decide each pair it carries;
+/// `drift` bounds how far the unlisted ones can have moved since they were
+/// last measured (see HBondPotential::calculateEnergyChange).
 ///
 /// Like KorpStateCache, a copy starts EMPTY (a copied State has its
 /// coordinates changed without telling the cache), and a move carries the
@@ -52,6 +56,7 @@ public:
         for (auto& r : don_) r.clear();
         for (auto& r : acc_) r.clear();
         ready_ = true;
+        drift = 0.f;
         ++generation_;
     }
     /// True when built by this potential, for n residues, under this mask.
@@ -115,6 +120,7 @@ private:
         owner_ = other.owner_;
         mask_epoch_ = other.mask_epoch_;
         ready_ = other.ready_;
+        drift = other.drift;
         ++generation_;
         other.invalidate();
     }
@@ -125,6 +131,12 @@ private:
     std::uint64_t mask_epoch_ = 0;
     bool ready_ = false;
     std::uint64_t generation_ = 0;
+
+public:
+    /// Sum of the carry bounds (Context::rigid_carry_bound_A, times
+    /// HBondPotential's factor for the virtual H) of the rigid moves folded in
+    /// since the ledger was built from the coordinates.
+    float drift = 0.f;
 };
 
 }  // namespace mcpu::forces

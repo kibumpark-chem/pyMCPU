@@ -12,6 +12,7 @@
 
 #if defined(__AVX2__)
 #include <immintrin.h>
+#include "pymcpu/utils/pair_r2.h"
 #endif
 
 namespace mcpu::forces {
@@ -367,7 +368,7 @@ EnergyChangeResult OrientationalPairPotential::calculateEnergyChange(
             const double dx = ox_[uj] - ax;
             const double dy = oy_[uj] - ay;
             const double dz = oz_[uj] - az;
-            const bool near = dx * dx + dy * dy + dz * dz < cut2;
+            const bool near = pair_r2(dx, dy, dz) < cut2;
             cand_[k] = near ? j : ~j;
             k += static_cast<std::size_t>(visit & (near | (old_row[j] != 0.f)));
         }

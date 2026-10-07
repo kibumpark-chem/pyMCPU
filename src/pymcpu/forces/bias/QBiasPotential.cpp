@@ -7,6 +7,7 @@
 #include "pymcpu/Context.h"
 #include "pymcpu/ProposalPatch.h"
 #include "pymcpu/State.h"
+#include "pymcpu/utils/pair_r2.h"
 
 namespace mcpu::forces {
 
@@ -71,7 +72,7 @@ void QBiasPotential::permute_atom_indices(const AtomPermutation& perm) {
 bool QBiasPotential::pairFormed(const State& state, int pair_idx) const noexcept {
     const Eigen::Vector3f diff =
         state.atom_pos(pairs_i_[pair_idx]) - state.atom_pos(pairs_j_[pair_idx]);
-    return diff.squaredNorm() < q_cutoff_sq_;
+    return pair_r2(diff) < q_cutoff_sq_;
 }
 
 float QBiasPotential::biasEnergy(float n, float k_bias, float n_target) noexcept {

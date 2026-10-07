@@ -7,6 +7,7 @@
 
 #include "pymcpu/Context.h"
 #include "pymcpu/System.h"
+#include "pymcpu/utils/pair_r2.h"
 
 namespace mcpu::forces {
 
@@ -80,7 +81,7 @@ float CalphaExcludedVolumePotential::calculateEnergy(
         for (int j = i + 1; j < n; ++j) {
             if (!pair_is_checked(i, j)) continue;
             const Eigen::Vector3f pj = state.atom_pos(ca_atom_[static_cast<std::size_t>(j)]);
-            if ((pj - pi).squaredNorm() < min_distance_state_sq_) {
+            if (pair_r2(pj - pi) < min_distance_state_sq_) {
                 return kClashPenalty;  // one overlap is enough; stop looking
             }
         }
@@ -122,7 +123,7 @@ bool CalphaExcludedVolumePotential::clashesAtMoveCutoff(
             proposed_state.atom_pos(ca_atom_[static_cast<std::size_t>(a)]);
         const Eigen::Vector3f pb =
             proposed_state.atom_pos(ca_atom_[static_cast<std::size_t>(b)]);
-        return (pb - pa).squaredNorm() < min_distance_sq_;
+        return pair_r2(pb - pa) < min_distance_sq_;
     };
 
     // Prefilter: for each moved residue, one branch-free pass over every
@@ -153,7 +154,7 @@ bool CalphaExcludedVolumePotential::clashesAtMoveCutoff(
             const float dz = cz_[j] - az;
             const int sep = seq_number_[j] - sa;
             const int checked = (chain_int_[j] != ka) | (sep >= min_sep) | (-sep >= min_sep);
-            hit |= (dx * dx + dy * dy + dz * dz < filter_sq) & checked;
+            hit |= (pair_r2(dx, dy, dz) < filter_sq) & checked;
         }
         if (!hit) continue;
 

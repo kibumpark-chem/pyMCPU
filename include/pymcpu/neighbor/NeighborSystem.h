@@ -33,6 +33,9 @@ class NeighborSystem {
 public:
     static constexpr float kMuCutoffFallbackA = 6.0f;
     static constexpr float kHBondCutoffA = 2.5f;
+    /// The H-bond ledger lists every donor-acceptor pair whose H and O are
+    /// closer than this (HBondStateCache), so the H-bond cells are this big.
+    static constexpr float kHBondListA = 2.55f;
 
     /// Active Mu denselist cutoff (Å): from MuPotential (exact) or fallback 6.0.
     [[nodiscard]] float mu_cutoff_A() const noexcept {
@@ -115,12 +118,12 @@ public:
         }
 
         mu_grid_ = std::make_unique<CellListMC>(kMuCutoffFallbackA, n_atoms_);
-        hb_o_grid_ = std::make_unique<CellListMC>(kHBondCutoffA, n_atoms_);
+        hb_o_grid_ = std::make_unique<CellListMC>(kHBondListA, n_atoms_);
         // Virtual-H grid uses residue ids as keys (capacity ≥ n_res); explicit H uses atom ids.
         const int hb_h_cap = virtual_amide_h_
             ? std::max(n_atoms_, sys.getNumResidues())
             : n_atoms_;
-        hb_h_grid_ = std::make_unique<CellListMC>(kHBondCutoffA, hb_h_cap);
+        hb_h_grid_ = std::make_unique<CellListMC>(kHBondListA, hb_h_cap);
         mu_grid_->ensure_atom_capacity(n_atoms_);
         hb_o_grid_->ensure_atom_capacity(n_atoms_);
         hb_h_grid_->ensure_atom_capacity(hb_h_cap);
@@ -210,7 +213,7 @@ public:
     }
     float hbond_cutoff_A() const noexcept { return kHBondCutoffA; }
     float hbond_cell_size_A() const noexcept {
-        return hb_fallback_ ? 0.f : kHBondCutoffA; // skin_hb = 0
+        return hb_fallback_ ? 0.f : kHBondListA; // skin_hb = 0
     }
     const char* mu_backend_name() const noexcept {
         return dense_active_ ? "opencell_mu_BBO_SC" : "mu_dense_cap_fallback";
@@ -320,7 +323,7 @@ public:
             const float dx = trial.x[k] - accepted.x[k];
             const float dy = trial.y[k] - accepted.y[k];
             const float dz = trial.z[k] - accepted.z[k];
-            const float d2 = dx * dx + dy * dy + dz * dz;
+            const float d2 = pair_r2(dx, dy, dz);
             if (d2 > d2max) d2max = d2;
         };
         if (patch.moved_as_ranges()) {
@@ -344,7 +347,7 @@ public:
                     const __m256 dz = _mm256_sub_ps(_mm256_loadu_ps(trial.z.data() + k),
                                                     _mm256_loadu_ps(accepted.z.data() + k));
                     const __m256 d2 = _mm256_fmadd_ps(dz, dz,
-                                                      _mm256_fmadd_ps(dy, dy, _mm256_mul_ps(dx, dx)));
+                                                      _mm256_fmadd_ps(dx, dx, _mm256_mul_ps(dy, dy)));
                     vmax = _mm256_max_ps(d2, vmax);
                 }
                 alignas(32) float lanes[8];
@@ -454,7 +457,7 @@ public:
         // --- HBond O / H grids (same lo/hi, smaller cell) ---
         NeighborConfig cfg_hb = cfg_;
         cfg_hb.skin = 0.f;
-        const float hb_cell = kHBondCutoffA;
+        const float hb_cell = kHBondListA;
         bool hb_ok = compute_grid_shape(b, hb_cell, cfg_hb, nx, ny, nz);
         if (hb_ok &&
             hb_o_grid_->configure(b, cfg_hb, 0.f) &&
@@ -855,7 +858,7 @@ public:
             const float dx = coords.x[k] - px;
             const float dy = coords.y[k] - py;
             const float dz = coords.z[k] - pz;
-            if (dx * dx + dy * dy + dz * dz <= cutoff_sq) func(i);
+            if (pair_r2(dx, dy, dz) <= cutoff_sq) func(i);
         }
     }
 
@@ -869,7 +872,7 @@ public:
             const float dx = coords.x[k] - px;
             const float dy = coords.y[k] - py;
             const float dz = coords.z[k] - pz;
-            if (dx * dx + dy * dy + dz * dz <= cutoff_sq) func(i);
+            if (pair_r2(dx, dy, dz) <= cutoff_sq) func(i);
         }
     }
 
@@ -899,7 +902,7 @@ public:
                 coords.z[static_cast<size_t>(prev_c)],
                 hx, hy, hz);
             const float dx = hx - px, dy = hy - py, dz = hz - pz;
-            if (dx * dx + dy * dy + dz * dz <= cutoff_sq) {
+            if (pair_r2(dx, dy, dz) <= cutoff_sq) {
                 func(static_cast<int>(r));
             }
         }
@@ -948,7 +951,7 @@ public:
                     const float dx = coords.x[jk] - hx;
                     const float dy = coords.y[jk] - hy;
                     const float dz = coords.z[jk] - hz;
-                    if (dx * dx + dy * dy + dz * dz <= cut2) grid_ids.push_back(j);
+                    if (pair_r2(dx, dy, dz) <= cut2) grid_ids.push_back(j);
                 });
                 for_each_hbond_acceptor_bruteforce(coords, hx, hy, hz, cut2, [&](int j) {
                     brute_ids.push_back(j);
@@ -966,14 +969,14 @@ public:
                     float hx, hy, hz;
                     if (!virtual_amide_h_xyz_(coords, static_cast<size_t>(j), hx, hy, hz)) return;
                     const float dx = hx - ox, dy = hy - oy, dz = hz - oz;
-                    if (dx * dx + dy * dy + dz * dz <= cut2) grid_ids.push_back(j);
+                    if (pair_r2(dx, dy, dz) <= cut2) grid_ids.push_back(j);
                 });
                 // Brute: residue ids within cutoff of virtual H
                 for (size_t r = 0; r < amide_donor_.size(); ++r) {
                     float hx, hy, hz;
                     if (!virtual_amide_h_xyz_(coords, r, hx, hy, hz)) continue;
                     const float dx = hx - ox, dy = hy - oy, dz = hz - oz;
-                    if (dx * dx + dy * dy + dz * dz <= cut2) {
+                    if (pair_r2(dx, dy, dz) <= cut2) {
                         brute_ids.push_back(static_cast<int>(r));
                     }
                 }
@@ -993,7 +996,7 @@ public:
                 const float dx = coords.x[jk] - hx;
                 const float dy = coords.y[jk] - hy;
                 const float dz = coords.z[jk] - hz;
-                if (dx * dx + dy * dy + dz * dz <= cut2) grid_ids.push_back(j);
+                if (pair_r2(dx, dy, dz) <= cut2) grid_ids.push_back(j);
             });
             for_each_hbond_acceptor_bruteforce(coords, hx, hy, hz, cut2, [&](int j) {
                 brute_ids.push_back(j);
@@ -1011,7 +1014,7 @@ public:
                 const float dx = coords.x[jk] - ox;
                 const float dy = coords.y[jk] - oy;
                 const float dz = coords.z[jk] - oz;
-                if (dx * dx + dy * dy + dz * dz <= cut2) grid_ids.push_back(j);
+                if (pair_r2(dx, dy, dz) <= cut2) grid_ids.push_back(j);
             });
             for_each_hbond_h_bruteforce(coords, ox, oy, oz, cut2, [&](int j) {
                 brute_ids.push_back(j);

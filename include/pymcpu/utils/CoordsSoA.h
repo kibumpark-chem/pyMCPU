@@ -9,6 +9,7 @@
 #include <vector>
 #if defined(__AVX2__) && defined(__FMA__)
 #include <immintrin.h>
+#include "pymcpu/utils/pair_r2.h"
 #endif
 
 namespace mcpu {
@@ -102,7 +103,7 @@ struct CoordsSoA {
     /// pivot-only chignolin steps CA-C bonds shrank by 3e-3 A. Rounded once,
     /// what remains is unbiased float noise (+6e-6 A on average there), and
     /// a distance the rotation keeps moves by at most sqrt(3) float steps of
-    /// the larger coordinate, which MuPotential::carry_bound_A relies on.
+    /// the larger coordinate, which Context::rigid_carry_bound_A relies on.
     ///
     /// With FMA (MCPU_ARCH=v3) four atoms go through each AVX pass. Each
     /// output is spelt out as the exact chain of fused multiply-adds GCC
@@ -163,7 +164,7 @@ struct CoordsSoA {
             const float dx = x[static_cast<size_t>(i)] - other.x[static_cast<size_t>(i)];
             const float dy = y[static_cast<size_t>(i)] - other.y[static_cast<size_t>(i)];
             const float dz = z[static_cast<size_t>(i)] - other.z[static_cast<size_t>(i)];
-            const float d2 = dx * dx + dy * dy + dz * dz;
+            const float d2 = pair_r2(dx, dy, dz);
             if (d2 > d2max) d2max = d2;
         }
         return d2max;

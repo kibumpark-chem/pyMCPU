@@ -2,6 +2,8 @@
 /// Fast coordinate access for Mu / neighbor hot loops (SoA scalar loads, no Eigen temporaries).
 
 #include "pymcpu/utils/CoordsSoA.h"
+#include "pymcpu/utils/pair_r2.h"
+#include <cmath>
 #include <cstddef>
 
 namespace mcpu {
@@ -43,27 +45,27 @@ struct CoordView {
         const float dx = a[0] - b[0];
         const float dy = a[1] - b[1];
         const float dz = a[2] - b[2];
-        return dx * dx + dy * dy + dz * dz;
+        return pair_r2(dx, dy, dz);
     }
 
     [[nodiscard]] inline float dist2(int i, int j) const noexcept {
         const float dx = x_[static_cast<size_t>(i)] - x_[static_cast<size_t>(j)];
         const float dy = y_[static_cast<size_t>(i)] - y_[static_cast<size_t>(j)];
         const float dz = z_[static_cast<size_t>(i)] - z_[static_cast<size_t>(j)];
-        return dx * dx + dy * dy + dz * dz;
+        return pair_r2(dx, dy, dz);
     }
 
     [[nodiscard]] inline float dist2(int i, const CoordView& other, int j) const noexcept {
         const float dx = x_[static_cast<size_t>(i)] - other.x_[static_cast<size_t>(j)];
         const float dy = y_[static_cast<size_t>(i)] - other.y_[static_cast<size_t>(j)];
         const float dz = z_[static_cast<size_t>(i)] - other.z_[static_cast<size_t>(j)];
-        return dx * dx + dy * dy + dz * dz;
+        return pair_r2(dx, dy, dz);
     }
     [[nodiscard]] static inline float dist2(const float* a, float bx, float by, float bz) noexcept {
         const float dx = a[0] - bx;
         const float dy = a[1] - by;
         const float dz = a[2] - bz;
-        return dx * dx + dy * dy + dz * dz;
+        return pair_r2(dx, dy, dz);
     }
 };
 

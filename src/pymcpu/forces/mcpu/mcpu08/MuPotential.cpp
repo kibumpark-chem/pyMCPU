@@ -1078,7 +1078,7 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
                 neighbor::MoveFootprint::of(patch, context.neighborConfig().skip_rigid_mm)
                 .moved_rigid();
             const float carry_bound =
-                carries ? carry_bound_A(context, new_state, patch) : 0.f;
+                carries ? context.rigid_carry_bound_A(new_state, patch) : 0.f;
             const float budget = kContactBandA - kContactBandSlackA;
             // The live list is only valid where the dense contiguous grid sees
             // every candidate pair and the carry fits the drift budget. Under
@@ -1199,7 +1199,7 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
                 const float dx = p.x - s.x[m];
                 const float dy = p.y - s.y[m];
                 const float dz = p.z - s.z[m];
-                const float r2 = dx * dx + dy * dy + dz * dz;
+                const float r2 = pair_r2(dx, dy, dz);
                 return overlaps_at_move_cutoff(p.i, j, r2)
                            ? neighbor::Visit::Stop
                            : neighbor::Visit::Continue;
@@ -1219,23 +1219,6 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
                                   moved_cells.counts(), /*hot_only=*/false);
     }
 
-    float MuPotential::carry_bound_A(const Context& context, const State& new_state,
-                                     const ProposalPatch& patch) {
-        float m = 0.f;
-        const BoxBounds& b = context.neighbors().muGrid().grid().bounds();
-        if (b.valid) {
-            for (int d = 0; d < 3; ++d) {
-                m = std::max({m, std::fabs(b.lo[d]), std::fabs(b.hi[d])});
-            }
-        } else {
-            const CoordView c(new_state.coord_view());
-            for (int i : patch.moved_indices) {
-                m = std::max({m, std::fabs(c.x(i)), std::fabs(c.y(i)), std::fabs(c.z(i))});
-            }
-        }
-        const float ulp = std::nextafter(m, std::numeric_limits<float>::infinity()) - m;
-        return 1.01f * 1.7320508f * ulp;
-    }
 
     float MuPotential::delta_moved_vs_all(
         const Context& context,
@@ -1377,7 +1360,7 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
             const float xa = x[a], ya = y[a], za = z[a];
             for (size_t b = a + 1; b < n; ++b) {
                 const float dx = x[b] - xa, dy = y[b] - ya, dz = z[b] - za;
-                r2_row[b] = dx * dx + dy * dy + dz * dz;
+                r2_row[b] = pair_r2(dx, dy, dz);
             }
             // Beyond the Mu cutoff a pair is out of contact on both sides:
             // the cutoff includes the contact list's 0.05 A band, and a
@@ -2092,7 +2075,7 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
                                             const float dy = yi - cy[m];
                                             const float dz = zi - cz[m];
                                             r2_buf[m] =
-                                                dx * dx + dy * dy + dz * dz;
+                                                pair_r2(dx, dy, dz);
                                         }
                                     }
 #if defined(MCPU_CP_BREAKDOWN)
@@ -2130,7 +2113,7 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
                                                 const float dx = xi - cx[m];
                                                 const float dy = yi - cy[m];
                                                 const float dz = zi - cz[m];
-                                                r2 = dx * dx + dy * dy + dz * dz;
+                                                r2 = pair_r2(dx, dy, dz);
                                                 r2_buf[m] = r2;
                                             } else {
                                                 r2 = r2_buf[m];
@@ -2288,7 +2271,7 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
                                 const float dx = ox - cx[m];
                                 const float dy = oy - cy[m];
                                 const float dz = oz - cz[m];
-                                r2_buf[m] = dx * dx + dy * dy + dz * dz;
+                                r2_buf[m] = pair_r2(dx, dy, dz);
                             }
                             for (int m = 0; m < count; ++m) {
                                 if (skip_mask & (1ull << m)) continue;
@@ -2321,7 +2304,7 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
                                     const float dx = nx - cx[m];
                                     const float dy = ny - cy[m];
                                     const float dz = nz - cz[m];
-                                    r2_buf[m] = dx * dx + dy * dy + dz * dz;
+                                    r2_buf[m] = pair_r2(dx, dy, dz);
                                 }
                                 for (int m = 0; m < count; ++m) {
                                     if (skip_mask & (1ull << m)) continue;

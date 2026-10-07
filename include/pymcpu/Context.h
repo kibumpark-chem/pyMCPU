@@ -175,8 +175,8 @@ struct HBondWorkspace {
     // HBondPotential::commitAcceptedMove.
     struct PendingPair { int d, a; float e; };
     std::vector<PendingPair> pending;
-    // Rigid-site pairs of an accepted move, carried into the ledger as is.
-    std::vector<PendingPair> carried;
+    // The ledger drift the proposed state would have if accepted.
+    float pending_drift = 0.f;
     bool pending_valid = false;
     const void* pending_old_state = nullptr;
     const void* pending_proposed_state = nullptr;
@@ -365,6 +365,12 @@ public:
 
     NeighborConfig& neighborConfig() noexcept { return neighbors_.config(); }
     const NeighborConfig& neighborConfig() const noexcept { return neighbors_.config(); }
+    /// Most a rigid move can change a carried atom-atom distance, in A:
+    /// sqrt(3) float steps of the largest coordinate the dense grid holds,
+    /// +1% for the double-precision rotation itself. Every coordinate is
+    /// the double image of a float rounded once (CoordsSoA::rotate_atoms).
+    /// The Mu contact list and the H-bond ledger budget their carries by it.
+    float rigid_carry_bound_A(const State& new_state, const ProposalPatch& patch) const;
     NeighborStats& neighborStats() const noexcept { return neighbors_.stats(); }
     void reset_neighbor_proxy_stats() {
         neighbors_.stats().reset();
