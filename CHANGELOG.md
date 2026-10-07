@@ -1380,6 +1380,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- The overlap check on the grid before Mu's all-pairs fallback delta
+  (`fallback_grid_overlap`), which round 8 also ran under energy masks. It
+  served moves that left the grid; with wrapped grids the fallback runs
+  only while a grid is off after an overflow (where the check cannot run)
+  or for a rigid move whose rounding bound passes the contact list's drift
+  budget, which takes coordinates beyond about 2.6e5 A.
+
 - `Context.trial_in_bounds`, `Context.boxBounds`, the `num_trial_fallback`
   and `num_dense_cap_fallback` counters (with `num_trial_fallback` in
   `neighbor_proxy_stats()` and `Context.neighbor_dense_cap_fallbacks()`)

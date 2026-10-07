@@ -691,33 +691,8 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
                 const bool list_exact =
                     old_state.mu_contacts.ready() &&
                     old_state.mu_list_drift + carry_bound <= budget;
-                // Nearly every move that lands here overlaps something (99%
-                // of them on actin pivots, 94% on LDH-A), and the all-pairs
-                // delta below spends ~2 x n_moved x N distance tests, ~8 ms
-                // on actin, to say so. The grid still holds every atom that
-                // delta's new half tests against (all unmoved atoms but the
-                // fixed amide H, which it skips too), so ask the clash-first
-                // question there first: an overlap it finds is one the delta
-                // would find, and the move is rejected the same way. A move
-                // it clears goes through the delta as before. An energy mask
-                // changes neither answer: the overlap test drops the pairs
-                // ignore_all switches off and keeps the clashes clash_only
-                // keeps, as eval_pair does, and reads the mask afresh.
-                int overlap = -1;
-                if (context.denseGridsActive() &&
-                    !patch.moved_indices.empty()) {
-                    overlap = fallback_grid_overlap(context, new_state, patch);
-                }
-                if (overlap >= 0) {
-                    auto& ws = const_cast<mcpu::MuWorkspace&>(
-                        context.getMuWorkspace());
-                    context.pairScratch().clash_hot.note(overlap);
-                    ws.clear();
-                    delta = kHardCorePenalty;
-                } else {
-                    delta = calculateEnergyChange_fast(
-                        context, old_state, new_state, patch, list_exact);
-                }
+                delta = calculateEnergyChange_fast(
+                    context, old_state, new_state, patch, list_exact);
                 const_cast<mcpu::MuWorkspace&>(context.getMuWorkspace())
                     .pending_list_invalidate = true;
                 ++clist_fallbacks_;
@@ -771,20 +746,6 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
             });
     }
 
-    int MuPotential::fallback_grid_overlap(const Context& context,
-                                           const State& new_state,
-                                           const ProposalPatch& patch) const {
-        setup_mask_cache(context.getSystem());
-        const OpenCellGrid& grid = context.neighbors().muGrid().grid();
-        const std::vector<int>& moved = patch.moved_indices;
-        const neighbor::MovedCellScope<OpenCellGrid> moved_cells(
-            context.pairScratch().moved[neighbor::kMuGrid], grid, moved.data(),
-            static_cast<int>(moved.size()));
-        return first_grid_overlap(context, new_state, patch,
-                                  moved_cells.counts(), /*hot_only=*/false);
-    }
-
-
     double MuPotential::delta_moved_vs_all(
         const Context& context,
         const State& old_state,
@@ -811,9 +772,9 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
         // zeros to the old half (eval_pair scores its pairs 0 in either
         // mode), and under ignore_all to the new half too (its pairs cannot
         // clash). Leave such atoms out of the O(N) scans below: only zero
-        // terms go, so the delta is the same to the bit. A masked tail that
-        // leaves the grid on its own then costs O(n_moved), not
-        // O(n_moved x N). (calculateEnergyChange_fast set the mask cache.)
+        // terms go, so the delta is the same to the bit, and a move of
+        // masked atoms only costs O(n_moved), not O(n_moved x N).
+        // (calculateEnergyChange_fast set the mask cache.)
         std::vector<int> unmasked;
         if (energy_mask_ptr_) {
             unmasked.reserve(moved_indices.size());

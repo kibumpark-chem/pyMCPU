@@ -444,12 +444,6 @@ namespace mcpu::forces::mcpu08 {
                                       const std::uint8_t* moved_per_cell,
                                       bool hot_only) const;
 
-        /// first_grid_overlap for a move that takes the all-pairs fallback
-        /// delta because it leaves the grid (or carries too far for the
-        /// contact list). Fills and clears moved_per_cell itself.
-        int fallback_grid_overlap(const Context& context, const State& new_state,
-                                  const ProposalPatch& patch) const;
-
     public:
         explicit MuPotential(
             Eigen::MatrixXf  contact_energies,

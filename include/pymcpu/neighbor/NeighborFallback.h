@@ -1,5 +1,7 @@
 #pragma once
-/// Fallback neighbor enumeration when dense grid cannot cover a trial (no PBC).
+/// Moved-vs-all neighbour enumeration, for the moves the Mu contact list
+/// cannot follow (its grid is off after an overflow, a carry past the drift
+/// budget, MCPU_CONTACT_LIST=0). No PBC.
 #include <cstdint>
 #include <vector>
 
