@@ -160,6 +160,24 @@ Fixed residues
    Mark residues as fixed (0-based engine indices). Fixed residues will
    not be moved by any MC proposal.
 
+   No step is lost to a fixed residue: a move redraws its residue (for
+   KIC, its window and driver) while the choice would move a fixed residue,
+   so the choice is uniform over the allowed ones and the same in every
+   state, which keeps the proposal symmetric. A step that ends with no move
+   after 64 draws counts in ``get_fixed_rejected()``; that happens only when
+   almost every choice for that move touches a fixed residue. A
+   Ramachandran pivot with the last residue fixed has no allowed choice, so
+   it ends with no move at once and is counted. What each move refuses:
+
+   * pivot: ``r`` is fixed, or both ends of the chain (the residues
+     before ``r`` and those after it) hold a fixed residue. Otherwise it
+     rotates the end without one (the shorter end when both are free).
+   * Ramachandran pivot: ``r`` or any residue after it is fixed (it
+     rotates the C-terminal end only).
+   * sidechain (both modes): ``r`` is fixed.
+   * KIC: the window ``r..r+2`` or its driver's anchor (``r+3`` for a φ
+     driver, ``r-1`` for a ψ driver) holds a fixed residue.
+
    ``n_residues`` sizes the mask and must be the system's residue
    count. ``Simulation.set_fixed_residues(residues)`` fills it in from
    ``System.get_num_residues()``, and both ``ReplicaExchange`` and
@@ -230,7 +248,9 @@ totals in a resumed energy CSV continue rather than restarting at 0.
    * - ``get_steric_rejected()``
      - Proposals rejected for hard-core overlap
    * - ``get_fixed_rejected()``
-     - Proposals rejected for touching a fixed residue
+     - Steps that ended with no move because every draw touched a fixed
+       residue, plus refused ``debug_force_*`` calls; redraws are not
+       counted
    * - ``get_kic_geometry_invalid()``
      - KIC closures the solver dropped because an N-CA-C angle missed
        its target by more than 1e-6 rad (counts closures, not moves)

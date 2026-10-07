@@ -12,6 +12,7 @@ verified independently of that pipeline.
 
 from __future__ import annotations
 
+import numpy as np
 import pytest
 
 from pymcpu import mcpu_core
@@ -174,7 +175,7 @@ def test_rama_pivot_only_moves_targeted_residue_and_downstream() -> None:
 
 
 def test_fixed_residue_in_downstream_segment_blocks_rama_pivot() -> None:
-    """v1 scope limit: the move only rotates the C-term (downstream) side,
+    """The move only rotates the C-term (downstream) side,
     so a fixed residue anywhere in [r+1, N) must block it, with no N-term
     fallback."""
     ctx, top = build_raw_context(virtual_amide_h=True)
@@ -191,6 +192,26 @@ def test_fixed_residue_in_downstream_segment_blocks_rama_pivot() -> None:
     proposed = integ.debug_force_rama_pivot(ctx, residue)
     assert proposed is False
     assert integ.get_fixed_rejected() == before + 1
+
+
+def test_fixed_last_residue_ends_every_rama_pivot_step(chignolin_context) -> None:
+    """With the last residue fixed no rama pivot is allowed, so each step
+    ends with no move, is counted once, and moves nothing."""
+    system = chignolin_context.get_system()
+    _inject_synthetic_rama_mixture(system)
+    n = system.get_num_residues()
+
+    integ = mcpu_core.Integrator(temperature=300.0, step_size_rad=0.1)
+    integ.set_seed(5)
+    integ.set_move_weights(1.0, 0.0, 0.0)
+    integ.set_pivot_rama_probability(1.0)
+    integ.set_fixed_residues([n - 1], n)
+
+    before = np.array(chignolin_context.get_state().coords, dtype=np.float32).copy()
+    integ.run(chignolin_context, 50)
+    after = np.array(chignolin_context.get_state().coords, dtype=np.float32)
+    assert integ.get_fixed_rejected() == 50
+    np.testing.assert_array_equal(before, after)
 
 
 def test_rama_pivot_physics_consistency(chignolin_context) -> None:

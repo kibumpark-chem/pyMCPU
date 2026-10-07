@@ -1,4 +1,5 @@
 #pragma once
+#include <algorithm>
 #include <random>
 #include <vector>
 #include <memory>
@@ -490,6 +491,8 @@ public:
         return fixed_residue_[static_cast<size_t>(r)] != 0;
     }
 
+    /// Steps that ended with no move because every draw touched a fixed
+    /// residue (and forced moves refused for one); redraws are not counted.
     long long get_fixed_rejected() const noexcept { return fixed_rejected_; }
 
 private:
@@ -607,7 +610,36 @@ private:
     /// inline and never needs it kept.
     float last_log_jacobian_weight_ = 0.f;
 
-    // ── Fixed-residue storage ───────────────────────────────────────
+    // ── Fixed-residue rules ─────────────────────────────────────────
+    // A step never proposes a move that would move a fixed residue's atoms.
+    // A move redraws its site while the site would move a fixed residue (up
+    // to 64 draws), so the site is uniform over the allowed ones and does
+    // not depend on the state: the proposal stays symmetric. The rule for
+    // each move is one helper below. The move's draw loop and its apply_*_at
+    // function both use it: the loop to redraw, apply_*_at to refuse (and
+    // count) a site that is still not allowed, which also covers the
+    // debug_force_* calls. Without fixed residues no draw is ever repeated.
+    //
+    // Pivot at r: refused if r is fixed or both ends of the chain hold a
+    // fixed residue. apply_pivot_at rotates [0, r) or [r+1, n_res): the end
+    // without one, or the shorter end when both are free.
+    bool pivotTouchesFixed_(int r, int n_res) const noexcept {
+        return isResidueFixed(r) ||
+               (segmentContainsFixed(0, r) && segmentContainsFixed(r + 1, n_res));
+    }
+    // Ramachandran pivot at r: it rotates the C-terminal end only, so r and
+    // everything after it must be free.
+    bool ramaPivotTouchesFixed_(int r, int n_res) const noexcept {
+        return segmentContainsFixed(r, n_res);
+    }
+    // Sidechain (continuous and rotamer) at r: r must be free.
+    bool sidechainTouchesFixed_(int r) const noexcept { return isResidueFixed(r); }
+    // KIC window r..r+2 with its driver's anchor (r+3 for phi, r-1 for psi).
+    bool kicWindowTouchesFixed_(int r, bool is_phi, int n_res) const noexcept {
+        const int lo = is_phi ? r : r - 1;
+        const int hi = std::min(is_phi ? r + 4 : r + 3, n_res);
+        return segmentContainsFixed(lo, hi);
+    }
     std::vector<uint8_t> fixed_residue_;   // size n_res; 1 = fixed
     std::vector<int>     fixed_prefix_;    // size n_res+1; prefix sum for O(1) segment queries
     long long fixed_rejected_ = 0;

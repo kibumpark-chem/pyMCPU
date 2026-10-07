@@ -515,29 +515,10 @@ void MCIntegrator::apply_pivot_move(Context& context, State& proposal, ProposalP
             ++num_pivot_resample_pro_phi_;
             continue;
         }
-        if (hasFixedResidues()) {
-            if (isResidueFixed(r)) {
-                ++fixed_rejected_;
-                continue;
-            }
-            // Determine which segment moves and check for fixed residues.
-            // For pivot at r: C-term rotates [r+1, n_res), N-term rotates [1, r).
-            // Choose the shorter segment; if it contains fixed, try the other.
-            const bool c_segment_ok = !segmentContainsFixed(r + 1, num_residues);
-            const bool n_segment_ok = !segmentContainsFixed(1, r);
-            if (!c_segment_ok && !n_segment_ok) {
-                ++fixed_rejected_;
-                continue;
-            }
-            // Force direction to the segment without fixed residues.
-            // If both are ok, randomly pick (already fine — apply_pivot_at handles it).
-        }
+        if (pivotTouchesFixed_(r, num_residues)) continue;  // see "Fixed-residue rules" in Integrator.h
         break;
     }
     if (is_phi && system.is_proline(r)) {
-        return;
-    }
-    if (hasFixedResidues() && isResidueFixed(r)) {
         return;
     }
     apply_pivot_at(context, proposal, patch, r, is_phi);
@@ -552,22 +533,17 @@ void MCIntegrator::apply_pivot_at(Context& context, State& proposal, ProposalPat
     const bool residue_contig = system.residueContiguousLayout();
     const bool scattered = !context.atom_permutation_is_identity();
 
-    // ── Direction selection: N-term vs C-term pivot ─────────────────
-    // C-term pivot rotates residues [r+1, num_residues).
-    // N-term pivot rotates residues [1, r) (residue 0 N-terminus is anchored).
-    // Default: choose the shorter segment; if fixed residues constrain, pick the safe side.
-    bool rotate_n_term = (r < num_residues / 2);
-    if (hasFixedResidues()) {
-        const bool c_ok = !segmentContainsFixed(r + 1, num_residues);
-        const bool n_ok = !segmentContainsFixed(1, r);
-        if (!c_ok && !n_ok) {
-            ++fixed_rejected_;
-            return;
-        }
-        if (!c_ok) rotate_n_term = true;
-        else if (!n_ok) rotate_n_term = false;
-        // else both ok — keep heuristic choice
+    if (pivotTouchesFixed_(r, num_residues)) {
+        ++fixed_rejected_;
+        return;
     }
+    // ── Direction selection: N-term vs C-term pivot ─────────────────
+    // C-term pivot rotates residues [r+1, num_residues); N-term pivot
+    // rotates residues [0, r). Rotate the shorter end, unless the other end
+    // is the one without fixed residues.
+    bool rotate_n_term = (r < num_residues / 2);
+    if (segmentContainsFixed(r + 1, num_residues)) rotate_n_term = true;
+    else if (segmentContainsFixed(0, r)) rotate_n_term = false;
 
     int idx_N  = blocks[static_cast<size_t>(r)].bb_start;
     int idx_CA = blocks[static_cast<size_t>(r)].ca_atom();
@@ -843,6 +819,11 @@ void MCIntegrator::apply_rama_pivot_move(Context& context, State& proposal, Prop
     patch.is_valid = false;
     const int num_residues = system.getNumResidues();
 
+    // A fixed last residue leaves no site: every rama pivot rotates it.
+    if (isResidueFixed(num_residues - 1)) {
+        ++fixed_rejected_;
+        return;
+    }
     constexpr int kMaxPivotResample = 64;
     int r = 1;
     for (int attempt = 0; attempt < kMaxPivotResample; ++attempt) {
@@ -851,22 +832,10 @@ void MCIntegrator::apply_rama_pivot_move(Context& context, State& proposal, Prop
             ++num_pivot_resample_pro_phi_;
             continue;
         }
-        // C-term direction only (see apply_rama_pivot_at's docs on why the
-        // rama-mixture move never uses the N-term direction): reject if any
-        // residue in the rotated downstream segment [r+1, num_residues) --
-        // or r itself -- is fixed. No N-term fallback in v1.
-        if (hasFixedResidues() &&
-            (isResidueFixed(r) || segmentContainsFixed(r + 1, num_residues))) {
-            ++fixed_rejected_;
-            continue;
-        }
+        if (ramaPivotTouchesFixed_(r, num_residues)) continue;  // see "Fixed-residue rules" in Integrator.h
         break;
     }
     if (system.is_proline(r)) return;
-    if (hasFixedResidues() &&
-        (isResidueFixed(r) || segmentContainsFixed(r + 1, num_residues))) {
-        return;
-    }
     apply_rama_pivot_at(context, proposal, patch, r);
 }
 
@@ -969,16 +938,7 @@ void MCIntegrator::apply_rama_pivot_at(Context& context, State& proposal, Propos
     patch.is_valid = false;
     const int num_residues = system.getNumResidues();
 
-    // Fixed-residue check lives HERE (not just in apply_rama_pivot_move's
-    // outer resample loop), mirroring apply_pivot_at's own internal check
-    // -- this is the single authoritative check exercised by BOTH
-    // apply_rama_pivot_move's production dispatch and
-    // debug_force_rama_pivot's direct call, so they can't drift apart the
-    // way a duplicated check in each caller could. C-term direction only
-    // (v1 scope limit): reject if r itself or anything in the rotated
-    // downstream segment [r+1, num_residues) is fixed.
-    if (hasFixedResidues() &&
-        (isResidueFixed(r) || segmentContainsFixed(r + 1, num_residues))) {
+    if (ramaPivotTouchesFixed_(r, num_residues)) {
         ++fixed_rejected_;
         return;
     }
@@ -1051,14 +1011,10 @@ void MCIntegrator::apply_sidechain_move(Context& context, State& proposal, Propo
             ++num_sc_resample_pro_;
             continue;
         }
-        if (hasFixedResidues() && isResidueFixed(r)) {
-            ++fixed_rejected_;
-            continue;
-        }
+        if (sidechainTouchesFixed_(r)) continue;  // see "Fixed-residue rules" in Integrator.h
         break;
     }
     if (system.is_proline(r)) return;
-    if (hasFixedResidues() && isResidueFixed(r)) return;
     apply_sidechain_at(context, proposal, patch, r);
 }
 
@@ -1074,6 +1030,10 @@ void MCIntegrator::apply_sidechain_move(Context& context, State& proposal, Propo
 void MCIntegrator::apply_sidechain_at(Context& context, State& proposal, ProposalPatch& patch, int r) {
     const System& system = context.getSystem();
     patch.is_valid = false;
+    if (sidechainTouchesFixed_(r)) {
+        ++fixed_rejected_;
+        return;
+    }
 
     const int ntorsions = system.getTorsionsPerResidue()[static_cast<size_t>(r)];
     if (ntorsions <= 0) return;  // Gly/Ala: no chi angles, nothing to propose
@@ -1145,20 +1105,20 @@ void MCIntegrator::apply_rotamer_move(Context& context, State& proposal, Proposa
             ++num_sc_resample_pro_;
             continue;
         }
-        if (hasFixedResidues() && isResidueFixed(r)) {
-            ++fixed_rejected_;
-            continue;
-        }
+        if (sidechainTouchesFixed_(r)) continue;  // see "Fixed-residue rules" in Integrator.h
         break;
     }
     if (system.is_proline(r)) return;
-    if (hasFixedResidues() && isResidueFixed(r)) return;
     apply_rotamer_at(context, proposal, patch, r);
 }
 
 void MCIntegrator::apply_rotamer_at(Context& context, State& proposal, ProposalPatch& patch, int r) {
     const System& system = context.getSystem();
     patch.is_valid = false;
+    if (sidechainTouchesFixed_(r)) {
+        ++fixed_rejected_;
+        return;
+    }
 
     const int ntorsions = system.getTorsionsPerResidue()[static_cast<size_t>(r)];
     if (ntorsions <= 0) return;  // Gly/Ala: no chi angles, nothing to propose
@@ -1296,8 +1256,20 @@ void MCIntegrator::apply_concerted_rotation_move(Context& context, State& propos
     int num_residues = system.getNumResidues();
     const auto& blocks = system.getBlockIndices();
 
-    int r = pivot_residue_dist(rng);
-    bool is_phi = (coin_flip(rng) < 0.5f);
+    // Redraw a window that would move a fixed residue (see "Fixed-residue
+    // rules" in Integrator.h). Without fixed residues the first draw stands.
+    constexpr int kMaxKicResample = 64;
+    int r = 1;
+    bool is_phi = false;
+    for (int attempt = 0; attempt < kMaxKicResample; ++attempt) {
+        r = pivot_residue_dist(rng);
+        is_phi = (coin_flip(rng) < 0.5f);
+        if (!kicWindowTouchesFixed_(r, is_phi, num_residues)) break;
+    }
+    if (kicWindowTouchesFixed_(r, is_phi, num_residues)) {
+        ++fixed_rejected_;
+        return;
+    }
 
     // Driver rotation needs an anchor residue beyond the tripeptide:
     //   phi driver: anchor at r+3 (need r+3 < num_residues)
@@ -1319,16 +1291,6 @@ void MCIntegrator::apply_concerted_rotation_move(Context& context, State& propos
                 ++kic_proline_skipped_;
                 return;
             }
-        }
-    }
-
-    // KIC affects residues r, r+1, r+2.  Driver anchor extends one more.
-    if (hasFixedResidues()) {
-        int lo = is_phi ? r : (r - 1);
-        int hi = is_phi ? (r + 4) : (r + 3);
-        if (segmentContainsFixed(lo, hi)) {
-            ++fixed_rejected_;
-            return;
         }
     }
 
@@ -2131,10 +2093,6 @@ bool MCIntegrator::debug_force_pivot(Context& context, int residue, bool is_phi)
         ++num_pivot_resample_pro_phi_;
         return false;
     }
-    if (hasFixedResidues() && isResidueFixed(residue)) {
-        ++fixed_rejected_;
-        return false;
-    }
     ensure_proposal_buffers(context);
     State& proposal = *proposal_;
     ProposalPatch& move_patch = patch_;
@@ -2174,10 +2132,6 @@ bool MCIntegrator::debug_force_sc(Context& context, int residue) {
         ++num_sc_resample_pro_;
         return false;
     }
-    if (hasFixedResidues() && isResidueFixed(residue)) {
-        ++fixed_rejected_;
-        return false;
-    }
     ensure_proposal_buffers(context);
     State& proposal = *proposal_;
     ProposalPatch& move_patch = patch_;
@@ -2192,10 +2146,6 @@ bool MCIntegrator::debug_force_rotamer(Context& context, int residue) {
     if (residue < 0 || residue >= system.getNumResidues()) return false;
     if (system.is_proline(residue)) {
         ++num_sc_resample_pro_;
-        return false;
-    }
-    if (hasFixedResidues() && isResidueFixed(residue)) {
-        ++fixed_rejected_;
         return false;
     }
     ensure_proposal_buffers(context);
@@ -2230,8 +2180,7 @@ bool MCIntegrator::debug_force_rama_pivot(Context& context, int residue) {
 bool MCIntegrator::debug_force_rama_pivot_to(Context& context, int residue, float phi, float psi) {
     const System& system = context.getSystem();
     if (residue < 1 || residue > system.getNumResidues() - 2) return false;
-    if (hasFixedResidues() &&
-        (isResidueFixed(residue) || segmentContainsFixed(residue + 1, system.getNumResidues()))) {
+    if (ramaPivotTouchesFixed_(residue, system.getNumResidues())) {
         ++fixed_rejected_;
         return false;
     }

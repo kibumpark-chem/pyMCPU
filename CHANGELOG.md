@@ -76,6 +76,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A fixed first residue stays in place.** A pivot that rotates the
+  N-terminal end moves residues 0 to r-1, but the fixed-residue check
+  looked at residues 1 to r-1 only, so a fixed residue 0 moved whenever
+  residue 1 was free (up to 1.3 A in 2,000 pivot steps on T4 lysozyme).
+  Such a pivot now rotates the C-terminal end, and is redrawn if that end
+  holds a fixed residue too. Runs that do not fix residue 0 are unchanged.
+
 - **The running energy is exact after a run, whatever changed before it.**
   `current_energy` is updated from each accepted move's delta, so it kept a
   constant offset until the next full recompute whenever something other than
@@ -528,6 +535,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   its eight cases fail.
 
 ### Changed
+
+- **With fixed residues, no step is spent on a fixed residue.** A KIC step
+  drew its window once and gave up when the window touched a fixed residue;
+  it now draws again, as pivot and sidechain steps already did, so the
+  window is uniform over the windows that move no fixed residue and the
+  proposal stays symmetric. This changes what a step is when residues are
+  fixed: in the production sce setup (272 residues, 88-192 fixed) 8.1% of
+  steps were KIC draws thrown away on the fixed block. Now every KIC step
+  draws a window off the block, KIC windows per KIC step rise from 0.50 to
+  0.83, and valid moves per step from 0.733 to 0.771 (native) and 0.687 to
+  0.693 (hot; most hot KIC closures fail). Pivot and sidechain steps are
+  unchanged. A native replica (T=0.4) costs 15% more per step (24.9k to
+  28.8k cycles) from the extra KIC work. On a hot replica (T=1.0), which
+  paces the exchange, the change is not resolvable: +0.9% +/- 4.1% over 8
+  seeds (45.9k to 46.3k cycles), because the cost per step there depends
+  more on the conformation than on the move mix. A Ramachandran pivot with
+  the last residue fixed has no allowed residue; it now ends at once
+  instead of drawing 64 times. `get_fixed_rejected()` now counts only steps
+  that end with no move because of fixed residues; it used to count every
+  redraw, which read as 55% of sce steps. Without fixed residues nothing is
+  redrawn and trajectories are bit-identical. With them, trajectories
+  change; fixed atoms stayed exactly in place in every run (24 sce runs of
+  1M steps, 24 T4 lysozyme runs of 200k, 32 chignolin runs of 10M). At
+  equilibrium (chignolin, residues 4-5 fixed) energy, native contacts and
+  Rg agree with the old code within statistical error (|z| < 2).
+  Relaxation runs compared per mobile proposal agree for T4 lysozyme (40-79
+  fixed) and native sce (|z| <= 1.1); hot sce loses native contacts a
+  little more slowly (z = 2.5), since the added proposals are KIC, which
+  rarely succeeds in hot states.
 
 - **The neighbour grids wrap: an atom outside the grid's box is filed in
   the cell its coordinates give mod the cell count, instead of leaving the
