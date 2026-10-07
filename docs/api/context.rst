@@ -295,7 +295,9 @@ Backend introspection
 
 These report which neighbour-search backend was selected. They are
 useful in bug reports and for confirming that no fallback path is in
-play; nothing about the physics depends on them.
+play; nothing about the physics depends on them. When no potential reads
+the neighbour grids (KORP), they are not built and both names are
+``off_no_reader``.
 
 .. py:method:: Context.mu_backend_name() -> str
 
