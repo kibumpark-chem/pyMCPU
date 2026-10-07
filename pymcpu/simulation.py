@@ -19,6 +19,12 @@ def _clash_is_fatal() -> bool:
     return os.environ.get("MCPU_CLASH_FATAL", "1") != "0"
 
 
+_FULL_ENERGY_EVERY_RENAMED = (
+    "Simulation.full_energy_every was renamed to full_energy_every_steps, "
+    "which counts MC steps rather than step() calls (default 1_000_000)"
+)
+
+
 class StericClashError(RuntimeError):
     """An accepted state contains a hard-core overlap.
 
@@ -33,6 +39,11 @@ class StericClashError(RuntimeError):
     other than the one the force field was built from), coordinates the engine
     could not bring near the origin (see ``Context.frame_offset``; the first
     such placement in a process prints a note), or a pair a delta path missed.
+
+    The integrator raises it too, before the first move of a run, when the
+    recompute it does after the coordinates or the energy definition changed
+    finds an overlap, e.g. a cleared ``ignore_all`` mask whose residues
+    overlap the rest of the chain. ``MCPU_CLASH_FATAL`` does not apply there.
 
     Fatal by default, because the previous silent behaviour let
     ``weight * 99999`` flow into the REMD Metropolis criterion as if it were an
@@ -101,25 +112,29 @@ class Simulation:
         self.integrator = integrator
         self.reporters: list = []
         self._current_step = 0
-        # Full O(N^2) energy recompute cadence, in step() calls. 1 = every call
-        # (the historical behaviour). Raise it to use the incrementally
-        # maintained `current_energy` between recomputes. Energy sums are
-        # double, so it stays within ~1e-10 of a full recompute
-        # (tests/physics/test_energy_consistency.py).
-        # At actin one recompute is ~36.8 ms; at a 10k-step exchange interval the
-        # pair of them was ~5.9% of wall (~2 h per 1e9-step replica).
-        self.full_energy_every = 1
+        # Full O(N^2) energy recompute cadence, in MC steps (checked after each
+        # step() call). The running total is kept from double sums of the
+        # accepted moves' deltas and stays within ~1e-10 of a full recompute
+        # over 1e7 steps, so the recompute is a check (a clash or a pair a delta
+        # path missed), not a correction. One costs 2-6 ms at 270-415 residues.
+        # The Integrator also recomputes on entry whenever the coordinates or
+        # the energy definition changed (Context.energy_resyncs).
+        self.full_energy_every_steps = 1_000_000
         # Warn if the incremental energy has drifted from a full recompute by
-        # more than this (absolute). Only checked on recompute cycles. Rounding
+        # more than this (absolute). Only checked on recomputes. Rounding
         # stays far below it at any run length, so a warning means a pair the
         # incremental path missed or a stale cache, not precision.
         self.energy_drift_warn_atol = 1e-3
         self._steps_since_full_energy = 0
         self.steric_clash_events = 0
-        # Whether `current_energy` has been seeded for this Simulation. See the
-        # note in step(): the three paths that normally keep it exact on entry
-        # all require a PREVIOUS cycle, so none of them covers the first call.
-        self._energy_seeded = False
+
+    @property
+    def full_energy_every(self):
+        raise AttributeError(_FULL_ENERGY_EVERY_RENAMED)
+
+    @full_energy_every.setter
+    def full_energy_every(self, value):
+        raise AttributeError(_FULL_ENERGY_EVERY_RENAMED)
 
     def describe(self) -> str:
         """Return a human-readable summary of the simulation configuration."""
@@ -222,92 +237,74 @@ class Simulation:
         global step.
         """
         self._sync_reporters()
-        # A pre-run full O(N^2) recompute used to sit here unconditionally. It
-        # was dropped as redundant, because `current_energy` is already exact on
-        # entry via three independent paths: the post-run recompute below
-        # (previous cycle), swap_context_coordinates() after an accepted REMD
-        # exchange, and the checkpoint-restore path. That halved the per-cycle
-        # full-energy cost.
-        #
-        # But all three require a PREVIOUS cycle, so none covers the FIRST call
-        # on a fresh Simulation. `Context::set_positions` does not seed the
-        # running total, so `current_energy` was still 0.0 there and the
-        # incremental accumulator stayed off by exactly the starting energy for
-        # the rest of the run -- measured at 14.706589 on the 1UAO quickstart,
-        # constant in step count (10k steps drift only 2.9e-5 once seeded).
-        # Accept bits are unaffected (Metropolis uses dE, not the total), so
-        # this only ever corrupted REPORTED energies -- but that included the
-        # energy-drift warning the documented quickstart printed, and the value
-        # attempt_exchange() reads for REMD acceptance on a first cycle.
-        # Every scripts/parity_*.py already called calculate_total_energy(-1)
-        # by hand after set_positions for this reason.
-        #
-        # Seeding ONCE per Simulation restores correctness without giving back
-        # the per-cycle win.
-        if not self._energy_seeded:
-            self.context.calculate_total_energy(-1)
-            self._energy_seeded = True
         offset = int(self._current_step)
         self.integrator.run(self.context, int(n_steps), int(offset))
-
-        # The post-run recompute IS load-bearing: attempt_exchange() reads
-        # current_energy for the REMD acceptance criterion. Keeping it every
-        # cycle preserves the historical exact value; raising
-        # `full_energy_every` falls back to the incremental value between
-        # recomputes and turns this into the periodic drift check that a
-        # running-E_total scheme is supposed to have.
-        self._steps_since_full_energy += 1
-        if self._steps_since_full_energy >= max(1, int(self.full_energy_every)):
-            self._steps_since_full_energy = 0
-            incremental = float(self.context.get_state().current_energy)
-            raw = self.context.calculate_total_energy(-1)
-            # A steric clash in the ACCEPTED state is never tolerated (see
-            # StericClashError): no move can make one, so it means coordinates
-            # from outside the moves or a pair a delta path missed. Fail loudly:
-            # the previous behaviour silently fed weight*99999 into the REMD
-            # Metropolis criterion, which on p19.14.3 corrupted 41% of the top
-            # rung's cycles while looking like nothing more than a large energy.
-            if self.context.has_steric_clash():
-                # Since Context::calculate_total_energy does not cache the clash
-                # sentinel, continuing costs one exchange attempt using a slightly
-                # stale energy. MCPU_CLASH_FATAL=0 counts and warns instead; the
-                # default stays fatal so reproduction runs and CI stop at the first
-                # occurrence.
-                self.steric_clash_events += 1
-                _detail = (
-                    "steric clash in the ACCEPTED state after "
-                    f"{offset + int(n_steps)} steps: the full recompute finds a pair "
-                    "more than 0.001 A (STATE_CLASH_BUFFER_A) under its hard-core "
-                    "cutoff.\n"
-                    f"  incremental energy : {incremental:.6f}\n"
-                    f"  full recompute     : {raw:.6f}  (~weight * 99999 sentinel)\n"
-                    f"  steric_rejected so far: {self.integrator.get_steric_rejected()}\n"
-                    "No move can do that: moves are tested against the cutoff itself, "
-                    "and rounding moves a pair a rigid pivot carries by a few 1e-6 A at "
-                    "most near the origin, where the engine keeps its coordinates. "
-                    "Either the coordinates came in that way (set_positions, a restore, "
-                    "a start structure other than the force field's), the engine "
-                    "could not bring them near the origin (check Context.frame_offset "
-                    "and get_state().coords; the first such placement in a process "
-                    "prints a NOTE), or a delta path missed the pair."
-                )
-                if _clash_is_fatal():
-                    raise StericClashError(_detail)
-                logger.warning(
-                    "%s\n  (MCPU_CLASH_FATAL=0: continuing; event #%d this run)",
-                    _detail, self.steric_clash_events,
-                )
-            exact = float(self.context.get_state().current_energy)
-            drift = abs(exact - incremental)
-            if drift > float(self.energy_drift_warn_atol):
-                logger.warning(
-                    "energy drift: incremental %.6f vs recomputed %.6f "
-                    "(|d|=%.3e > %.3e) after %d steps -- the incremental "
-                    "delta-E path and the full recompute disagree",
-                    incremental, exact, drift,
-                    float(self.energy_drift_warn_atol), offset + int(n_steps),
-                )
         self._current_step = offset + int(n_steps)
+        self._steps_since_full_energy += int(n_steps)
+        if self._steps_since_full_energy >= int(self.full_energy_every_steps):
+            self.recompute_energy()
+
+    def recompute_energy(self) -> float:
+        """Recompute the total energy in full and check the state.
+
+        Replaces ``current_energy`` with the full recompute and returns it.
+        :meth:`step` calls this every :attr:`full_energy_every_steps` steps, and
+        the folding and replica-exchange drivers before every checkpoint save.
+        A hard-core overlap raises :class:`StericClashError` (with
+        ``MCPU_CLASH_FATAL=0`` it is counted and warned about instead), and a
+        running total more than :attr:`energy_drift_warn_atol` away from the
+        recompute logs a warning.
+        """
+        self._steps_since_full_energy = 0
+        incremental = float(self.context.get_state().current_energy)
+        raw = self.context.calculate_total_energy(-1)
+        # A steric clash in the ACCEPTED state is never tolerated (see
+        # StericClashError): no move can make one, so it means coordinates
+        # from outside the moves or a pair a delta path missed. Fail loudly:
+        # the previous behaviour silently fed weight*99999 into the REMD
+        # Metropolis criterion, which on p19.14.3 corrupted 41% of the top
+        # rung's cycles while looking like nothing more than a large energy.
+        if self.context.has_steric_clash():
+            # Context::calculate_total_energy does not cache the clash
+            # sentinel, so continuing costs one exchange attempt using a
+            # slightly stale energy. MCPU_CLASH_FATAL=0 counts and warns
+            # instead; the default stays fatal so reproduction runs and CI stop
+            # at the first occurrence.
+            self.steric_clash_events += 1
+            _detail = (
+                "steric clash in the ACCEPTED state after "
+                f"{self._current_step} steps: the full recompute finds a pair "
+                "more than 0.001 A (STATE_CLASH_BUFFER_A) under its hard-core "
+                "cutoff.\n"
+                f"  incremental energy : {incremental:.6f}\n"
+                f"  full recompute     : {raw:.6f}  (~weight * 99999 sentinel)\n"
+                f"  steric_rejected so far: {self.integrator.get_steric_rejected()}\n"
+                "No move can do that: moves are tested against the cutoff itself, "
+                "and rounding moves a pair a rigid pivot carries by a few 1e-6 A at "
+                "most near the origin, where the engine keeps its coordinates. "
+                "Either the coordinates came in that way (set_positions, a restore, "
+                "a start structure other than the force field's), the engine "
+                "could not bring them near the origin (check Context.frame_offset "
+                "and get_state().coords; the first such placement in a process "
+                "prints a NOTE), or a delta path missed the pair."
+            )
+            if _clash_is_fatal():
+                raise StericClashError(_detail)
+            logger.warning(
+                "%s\n  (MCPU_CLASH_FATAL=0: continuing; event #%d this run)",
+                _detail, self.steric_clash_events,
+            )
+        exact = float(self.context.get_state().current_energy)
+        drift = abs(exact - incremental)
+        if drift > float(self.energy_drift_warn_atol):
+            logger.warning(
+                "energy drift: incremental %.6f vs recomputed %.6f "
+                "(|d|=%.3e > %.3e) after %d steps -- the incremental "
+                "delta-E path and the full recompute disagree",
+                incremental, exact, drift,
+                float(self.energy_drift_warn_atol), self._current_step,
+            )
+        return exact
 
     # ------------------------------------------------------------------
     # Last-move accessors (crash / failure snapshot helpers)

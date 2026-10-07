@@ -140,6 +140,9 @@ class MPIReplicaExchange:
     step_size_rad, move_weights, sidechain_move_mode, pivot_rama_probability, pivot_rama_schedule
         Move settings for every replica, as in
         :class:`~pymcpu.sampling.ReplicaExchange`.
+    full_energy_every_steps : int
+        Full energy recompute cadence for every replica, in MC steps, as in
+        :class:`~pymcpu.sampling.ReplicaExchange`.
     """
 
     def __init__(
@@ -169,6 +172,7 @@ class MPIReplicaExchange:
         seed: int = 0,
         step_size_rad: float = 0.1,
         move_weights: tuple[float, float, float] | None = None,
+        full_energy_every_steps: int = 1_000_000,
         sidechain_move_mode: str = "rotamer_library",
         pivot_rama_probability: float = 0.0,
         pivot_rama_schedule: dict[str, float] | None = None,
@@ -212,6 +216,7 @@ class MPIReplicaExchange:
         validate_fixed_linker_disjoint(self.fixed_residues, self.linker_residues)
         self.seed = int(seed)
         self.step_size_rad = float(step_size_rad)
+        self.full_energy_every_steps = int(full_energy_every_steps)
         self.move_settings = normalize_move_settings(
             move_weights=move_weights,
             sidechain_move_mode=sidechain_move_mode,
@@ -360,6 +365,7 @@ class MPIReplicaExchange:
                 step_size_rad=self.step_size_rad,
                 move_settings=self.move_settings,
             )
+            simulation.full_energy_every_steps = self.full_energy_every_steps
 
             # Reporters attached in run() so resume can truncate then append.
             self.replicas[local_replica_index] = Replica(
@@ -534,6 +540,7 @@ class MPIReplicaExchange:
         move_counters: list[dict[str, int]] = []
         for rid in replica_ids:
             slot = self.replicas[rid]
+            slot.simulation.recompute_energy()
             coords.append(np.asarray(get_coords(slot.simulation.context), dtype=np.float64))
             current_steps.append(int(slot.simulation.current_step))
             integ = slot.simulation.integrator

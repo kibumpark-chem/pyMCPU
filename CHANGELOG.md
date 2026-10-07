@@ -76,6 +76,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The running energy is exact after a run, whatever changed before it.**
+  `current_energy` is updated from each accepted move's delta, so it kept a
+  constant offset until the next full recompute whenever something other than
+  a move changed the energy: setting or clearing an energy mask (-123.1 on T4L
+  for `ignore_all`, -57.6 for `clash_only`), `Context.set_energy_weight`
+  (-83.4), disabling a potential (-74.2), `set_use_legacy_weights`, the
+  native-contacts bias, and `set_positions` (which is why `Simulation` seeded
+  the total on its first `step()`). The deltas were right, so accept
+  decisions never changed, but reported energies and the value replica
+  exchange reads were off. The context now keeps a fingerprint of what
+  defines the energy (mask epoch, legacy-weights switch, group weights, bias,
+  each potential's group or disabled state) and whether the coordinates were
+  replaced, and `Integrator.run` recomputes in full on entry only when one of
+  them changed: O(#potentials) otherwise, 2-6 ms per actual change at
+  270-415 residues. `Context.energy_resyncs` counts those recomputes. A clash
+  that recompute finds raises `StericClashError` before the first move:
+  clearing an `ignore_all` mask whose residues overlap the rest of the chain
+  now does that, where it used to carry the clash into the next recompute.
+  `Simulation`'s one-time seeding and the "set_positions does not seed"
+  caveat are gone; calling `calculate_total_energy(-1)` after
+  `set_positions` is optional. That call counts as the run's recompute, so
+  it does not raise on an overlap: the caller checks `has_steric_clash()`.
+  The folding, replica-exchange and `EngineSession` drivers now do that for
+  their start structure (`check_state_clash`, which honours
+  `MCPU_CLASH_FATAL=0`). Before, a clashing start raised after the first
+  `step()`, and with this change alone it would have run on an unseeded
+  energy until the periodic check. Trajectories and accept bits are
+  bit-identical (`arch_parity_dump.py`).
+
 - **The x86-64-v2 build compiles again.** `CoordsSoA.h` included
   `pair_r2.h` only inside its AVX2+FMA block, so a `MCPU_ARCH=v2` build failed
   with "'pair_r2' was not declared" (the CI job for that tier had failed
@@ -499,6 +528,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   its eight cases fail.
 
 ### Changed
+
+- **`Simulation.full_energy_every` is now `full_energy_every_steps`, counted
+  in MC steps, default 1,000,000.** The old setting counted `step()` calls
+  and defaulted to 1, so every 10k-step exchange paid a full O(N^2)
+  recompute (2.4-5.8 ms at 270-415 residues; 0.7-1% of a hot replica's wall,
+  3.7-6.2% on cold rungs) to correct a running total that, with double sums,
+  stays within 1e-10 of a full recompute over 1e7 steps (1e-7 at 1e8). Accept
+  bits are the same either way. Replica exchanges and the energy columns of
+  folding and replica-exchange logs now read that running total instead of a
+  fresh recompute, so their last digits can differ from before, and in
+  principle so can an exchange decided at the margin. The recompute is now a periodic check for a
+  clash or a missed pair, also done before every folding and
+  replica-exchange checkpoint save, and available as
+  `Simulation.recompute_energy()`. The YAML config sets it with
+  `full_energy_every_steps`, and `FoldingRunner`, `ReplicaExchange` and
+  `MPIReplicaExchange` take it as an argument; it must be a positive whole
+  number (`ValueError` otherwise, where a YAML `null` used to give a bare
+  `TypeError` and 0 recomputed at every call). Assigning
+  `full_energy_every` raises `AttributeError` naming the new attribute, so a
+  script that set it to a large value to skip the recompute fails instead of
+  silently recomputing.
 
 - **The native-contacts bias checks only the atoms that end a native
   pair.** Its energy change scanned every atom up to the highest pair atom,

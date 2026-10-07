@@ -242,6 +242,12 @@ files, and registers the five mcpu08 potentials
 
       Remove the mask and reset the mode to ``'ignore_all'``.
 
+   A mask change takes effect at the next ``Integrator.run``, which
+   recomputes the total energy under the new mask. Residues masked with
+   ``'ignore_all'`` are never tested for clashes, so after a masked run
+   they usually overlap the rest of the chain; clearing the mask then makes
+   that run raise :class:`pymcpu.simulation.StericClashError`.
+
    .. py:method:: is_residue_energy_ignored(res) -> bool
 
       Whether residue ``res`` is currently masked.

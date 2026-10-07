@@ -118,13 +118,12 @@ A step costs time roughly in proportion to chain length: about 480 µs at 200
 residues, 1.1 ms at 400 and 2.2 ms at 686, with pivot moves and KORP alone.
 
 :::{note}
-The elision is exact in real arithmetic and *almost* exact in float32. Because
-the lookup is a step function, a pair sitting within a rounding error of a bin
-boundary can fall in a neighbouring bin on a full recompute while the delta
-assumed no change. Measured over 500 steps this appeared on one seed in five and
-moved the running total by ~0.3 out of ~3700; it never changed which moves were
-accepted. `Simulation.full_energy_every` resynchronises by default, so in normal
-use the running energy does not accumulate it.
+The elision is exact in real arithmetic. In float32 a pair within a rounding
+error of a bin boundary could in principle fall in a neighbouring bin on a full
+recompute while the delta assumed no change. Measured on actin over 1e7 steps,
+the running total and a full recompute agreed exactly (a difference of 0.0), and
+the periodic recompute (`Simulation.full_energy_every_steps`) would report such
+a flip as drift.
 :::
 
 ## Excluded volume

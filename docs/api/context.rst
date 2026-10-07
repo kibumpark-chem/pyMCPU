@@ -26,7 +26,7 @@ does.
 
       context = pymcpu.Context(system)
       context.set_positions(coords_3xn)      # shape (3, n), Angstrom
-      context.calculate_total_energy(-1)     # seeds the running total
+      context.calculate_total_energy(-1)     # optional: the energy now
 
 Core state
 ----------
@@ -58,12 +58,14 @@ Core state
    needed: to continue a run in a fresh ``Context`` bit for bit, place its
    start structure first, as every pyMCPU driver does.
 
-   .. important::
-      ``set_positions()`` does not seed the running total energy.
-      ``Simulation.step()`` seeds it once per object, but code driving
-      a raw ``Context`` must call ``calculate_total_energy(-1)``
-      itself afterwards, or the first reported total (and the
-      ``total`` column of an energy report) will read 0.
+   .. note::
+      ``set_positions()`` does not compute an energy. The integrator
+      recomputes it when the next run starts, so call
+      ``calculate_total_energy(-1)`` only to read the energy of the new
+      coordinates before running. That call then is the recompute, and the
+      run does not repeat it, so it is the caller's job to check
+      :py:meth:`Context.has_steric_clash` afterwards
+      (:func:`pymcpu.simulation.check_state_clash` does).
 
 .. py:attribute:: Context.coords
 
@@ -147,8 +149,10 @@ Energy
 
    Weighted total energy: ``sum_g weight[g] * E_raw[g]``. With
    ``target_group >= 0``, returns ``weight[g] * E_raw[g]`` for that
-   group alone. ``target_group=-1`` means all groups, and also seeds
-   the running total carried in the state.
+   group alone. ``target_group=-1`` means all groups, and also resets
+   the running total carried in the state, so the next run does not
+   recompute. On a hard-core overlap it keeps the previous total and
+   :py:meth:`Context.has_steric_clash` turns True; it does not raise.
 
    The value is a **unitless** sum of knowledge-based table entries.
 
@@ -363,8 +367,9 @@ State
    .. py:attribute:: current_energy
 
       The running total energy. This is the value an energy report
-      writes as ``total``, and it is 0 until something seeds it -- see
-      the warning under :py:meth:`pymcpu.Context.set_positions`.
+      writes as ``total``. Exact after every run; after
+      :py:meth:`pymcpu.Context.set_positions` it is 0 (or the old total)
+      until a run or ``calculate_total_energy(-1)`` recomputes it.
 
    .. py:attribute:: backbone_torsions
 

@@ -460,4 +460,5 @@ def build_replica_simulation(
     simulation.context.set_positions(coords_angstroms.T.astype(np.float32))
     simulation.context.set_native_contacts_bias(k_bias, float(n_target))
     simulation.context.calculate_total_energy(-1)
+    check_state_clash(simulation.context, f"start structure of replica {replica_idx}")
     return simulation

@@ -1715,6 +1715,7 @@ void MCIntegrator::verify_physics_consistency(Context& context, int num_steps, f
     check_move_weights_are_usable(context);
     context.require_current_atom_order();
     context.sync_energy_mask();
+    context.ensure_energy_current();
     pivot_residue_dist = std::uniform_int_distribution<int>(1, N - 2);
     sc_residue_dist    = std::uniform_int_distribution<int>(0, N - 1);
     ensure_proposal_buffers(context);
@@ -1782,6 +1783,7 @@ void MCIntegrator::run(Context& context, int num_steps, int step_offset)
     check_move_weights_are_usable(context);
     context.require_current_atom_order();
     context.sync_energy_mask();
+    context.ensure_energy_current();
     pivot_residue_dist = std::uniform_int_distribution<int>(1, N - 2);
     sc_residue_dist    = std::uniform_int_distribution<int>(0, N - 1);
     ensure_proposal_buffers(context);

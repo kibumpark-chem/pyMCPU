@@ -50,6 +50,23 @@ PYBIND11_MODULE(mcpu_core, m) {
     m.doc() = "PyMCPU: A fast Monte Carlo protein folding engine. "
               "C++ physics core with Python interface.";
 
+    // The clash exception is defined in Python (pymcpu.simulation), next to the
+    // checks that raise it from Python; look it up when one is thrown.
+    py::register_exception_translator([](std::exception_ptr p) {
+        try {
+            if (p) std::rethrow_exception(p);
+        } catch (const StericClashError& e) {
+            PyObject* type = PyExc_RuntimeError;
+            py::object clash_error;
+            try {
+                clash_error = py::module_::import("pymcpu.simulation").attr("StericClashError");
+                type = clash_error.ptr();
+            } catch (const py::error_already_set&) {
+            }
+            PyErr_SetString(type, e.what());
+        }
+    });
+
     // How far under a hard-core cutoff a whole state may hold a pair (A); a
     // move is tested against the cutoff itself. See Potential.h.
     m.attr("STATE_CLASH_BUFFER_A") = mcpu::kStateClashBufferA;
@@ -288,10 +305,10 @@ PYBIND11_MODULE(mcpu_core, m) {
     py::class_<Context>(m, "Context",
         "Owns the mutable state of a simulation: coordinates, the running\n"
         "energy, neighbour lists and the per-group energy weights.\n\n"
-        "Constructed from a finished System. Note that set_positions() does\n"
-        "NOT seed the running total energy -- call calculate_total_energy(-1)\n"
-        "once afterwards if you drive a Context directly. Simulation does\n"
-        "this for you on its first step().\n\n"
+        "Constructed from a finished System. The Integrator recomputes the\n"
+        "total energy on entry whenever the coordinates or anything that\n"
+        "defines the energy (mask, weights, bias, enabled potentials) changed\n"
+        "since the last full recompute, so current_energy is exact after a run.\n\n"
         "Members beyond positions, energy and state are performance and\n"
         "diagnostic knobs, and are not part of the stable API.")
         .def(py::init<std::shared_ptr<System>>(), py::arg("system"),
@@ -407,6 +424,9 @@ PYBIND11_MODULE(mcpu_core, m) {
                  d["hbond_rdthree"] = c.energyWeights().hbond_rdthree;
                  return d;
              })
+        .def_property_readonly("energy_resyncs", &Context::energy_resyncs,
+             "How many full recomputes the Integrator has done on entry because "
+             "the coordinates or the energy definition changed.")
         .def("set_q_bias", &Context::setQBias, py::arg("k_bias"), py::arg("n_target"),
              "Harmonic umbrella on hard native-contact count N: "
              "U = 0.5 * k_bias * (N - n_target)^2. "

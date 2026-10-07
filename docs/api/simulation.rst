@@ -85,20 +85,41 @@ Energy bookkeeping
 ------------------
 
 The engine keeps a running total energy, updated from each accepted move's
-change, and checks it against a full O(N^2) recompute. Three attributes
-control that:
+change. The integrator recomputes it in full when a run starts after
+anything that defines it changed -- the coordinates (``set_positions``, a
+restore, a replica swap), the energy mask, the group weights, the
+native-contacts bias, or which potentials are enabled -- so
+``context.get_state().current_energy`` is exact after every run without a
+manual ``calculate_total_energy(-1)``. ``Context.energy_resyncs`` counts
+those recomputes. If one finds a hard-core overlap, the run raises
+:class:`~pymcpu.simulation.StericClashError` before the first move,
+whatever ``MCPU_CLASH_FATAL`` says; clearing an ``ignore_all`` mask whose
+residues overlap the rest of the chain does that. A caller's own
+``calculate_total_energy(-1)`` takes the place of that recompute and does not
+raise, so whoever makes it checks the verdict: the drivers call
+:func:`~pymcpu.simulation.check_state_clash` on their start structure.
 
-.. py:attribute:: pymcpu.Simulation.full_energy_every
+Between those, a periodic recompute checks the running total. Three
+attributes control it:
+
+.. py:attribute:: pymcpu.Simulation.full_energy_every_steps
    :type: int
-   :value: 1
+   :value: 1000000
 
-   How often, measured in :meth:`~pymcpu.Simulation.step` calls, to do
-   the full recompute. ``1`` (the default) recomputes after every call,
-   which keeps ``context.get_state().current_energy`` exact -- the value
-   replica exchange reads for its acceptance test. Energy sums are
-   double, so between recomputes the running total stays within about
-   1e-10 of a full one; raising it saves the recompute and turns it into
-   a periodic drift check.
+   How often, in MC steps, :meth:`~pymcpu.Simulation.step` recomputes the
+   energy in full (checked after each call, so a call that crosses the
+   mark recomputes once). Energy sums are double, so the running total
+   stays within about 1e-10 of a full recompute over 1e7 steps: the
+   recompute is a check for a clash or a pair a delta path missed, not a
+   correction. It costs 2-6 ms at 270-415 residues. The folding and
+   replica-exchange drivers also recompute before every checkpoint save,
+   and the YAML config sets it with ``full_energy_every_steps``.
+   Assigning the old name ``full_energy_every`` raises ``AttributeError``.
+
+.. py:method:: pymcpu.Simulation.recompute_energy() -> float
+
+   Do that recompute now: replace ``current_energy`` with a full
+   recompute, check it for a clash and for drift, and return it.
 
 .. py:attribute:: pymcpu.Simulation.energy_drift_warn_atol
    :type: float
@@ -107,34 +128,14 @@ control that:
    Absolute tolerance for the incremental-versus-recomputed comparison.
    A larger disagreement logs a warning. Rounding stays far below it, so
    a warning points to a pair the incremental path missed or a stale
-   cache. Only checked on recompute cycles, so raising
-   :attr:`full_energy_every` also makes this check less frequent.
+   cache. Only checked on recomputes, so raising
+   :attr:`full_energy_every_steps` also makes this check less frequent.
 
 .. py:attribute:: pymcpu.Simulation.steric_clash_events
    :type: int
    :value: 0
 
    Count of hard-core overlaps found in an accepted state (see below).
-
-Seeding the running total
-~~~~~~~~~~~~~~~~~~~~~~~~~
-
-``Context.set_positions`` does **not** seed the running total energy: it
-leaves ``current_energy`` at ``0.0``, and an incremental accumulator
-started from zero stays off by exactly the starting energy for the rest
-of the run. Accept/reject decisions are unaffected (the Metropolis test
-uses the move delta, not the total), but every reported energy is wrong,
-including replica-exchange acceptance on a first cycle.
-
-:meth:`~pymcpu.Simulation.step` therefore seeds the total once per
-``Simulation`` object, on its first call. Code that drives a raw
-``Context`` instead must do it by hand::
-
-   context.set_positions(positions)
-   context.calculate_total_energy(-1)   # seed the running total
-
-The one-time seeding is why the recipe above does not call
-``calculate_total_energy`` itself; calling it anyway is harmless.
 
 Steric clashes in accepted states
 ---------------------------------

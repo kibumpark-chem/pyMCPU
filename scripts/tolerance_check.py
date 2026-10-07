@@ -203,7 +203,7 @@ def _child(task: dict[str, Any]) -> dict[str, Any]:
     if kind in ("static", "korp"):
         out.update(_breakdown(ctx))
     elif kind == "running":
-        sim.full_energy_every = 10**9          # never recompute inside the run
+        sim.full_energy_every_steps = 10**9    # never recompute inside the run
         chunk = 10_000                         # one production exchange interval
         done = 0
         t1 = time.perf_counter()
@@ -222,7 +222,7 @@ def _child(task: dict[str, Any]) -> dict[str, Any]:
         cv = NativeContactsCV(ca, coords0[:, ca].T.copy())
         every = int(task["sample_every"])
         # production recomputes the full energy every 1-10 exchanges of 10k steps
-        sim.full_energy_every = max(1, int(task.get("recompute_every", 50_000)) // every)
+        sim.full_energy_every_steps = int(task.get("recompute_every", 50_000))
         n_samples = int(task["steps"]) // every
         n_burn = int(n_samples * float(task.get("burn_frac", 0.2)))
         energies, qs, stats = [], [], []
