@@ -29,3 +29,18 @@ def test_hbond_ledger_matches_rescoring(weights) -> None:
     assert checks > 0
     assert mismatches == 0
     assert ctx.hbond_index_ok()
+
+
+def test_hbond_ledger_long_pivot_run() -> None:
+    """A long pivot-only run, where rigid sites carry listed pairs across many
+    accepted moves within their slack (HydrogenBondPotential.cpp, Slack): every
+    carried energy must still match a fresh score."""
+    ctx, _ = build_test_context(with_qbias=False)
+    ctx.set_hbond_ledger_check(True)
+    integ = mcpu_core.Integrator(temperature=300.0, step_size_rad=0.05)
+    integ.set_move_weights(1.0, 0.0, 0.0)
+    integ.set_seed(7)
+    integ.run(ctx, 2000)
+    checks, mismatches = ctx.hbond_ledger_check_counts()
+    assert checks > 0
+    assert mismatches == 0

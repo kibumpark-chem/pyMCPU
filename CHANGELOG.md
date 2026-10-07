@@ -477,6 +477,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Rigid pivots carry an H-bond again until rounding could change its
+  score, which gives back the 6-8% pivot cost of re-scoring them.** Each
+  listed H-bond pair now records its slack: the smallest change in the
+  ledger's drift bound that could flip any test its score went through
+  (the 2.5 A cutoff, the CA-CA and Ramachandran gates, the orientation
+  sign and the six angle-bin edges). A pivot carries a pair of two rigid
+  sites at its ledger energy while the drift since it was scored stays
+  within that slack, and re-scores it otherwise, so the running energy
+  stays exact. Pivot-only cycles/step against main ec954cf (n=3, 20k
+  steps, GCC 8.5): actin -0.4%, PGK1 +0.5%, LDH-A -0.7%, where re-scoring
+  every carried pair cost -7.2%, -7.8% and -7.8%. Default moves +1.4%,
+  +1.5% and +0.2%. The H-bond ledger check finds 0 mismatches in 1e6
+  pivot-only steps on actin and PGK1 and in the far-from-origin runs, and
+  every arch_parity_dump case stays bit-identical.
+
 - **Runs under a residue energy mask no longer pay for moves that leave the
   neighbour grid: masked actin uses 27-46% fewer cycles per step.** Such a
   move cannot use the contact list. Unmasked, a check on the grid rejects
