@@ -275,12 +275,6 @@ and nothing else. See :doc:`/physics_notes/korp_6d`.
    The energy map is not distributed with pyMCPU. Build this through
    :py:class:`~pymcpu.KORPForceField` rather than by hand.
 
-   .. py:method:: set_rigid_skip_enabled(on)
-
-      Testing hook: disable the moved-moved elision in the incremental
-      path, so it enumerates every changed pair instead. Both paths must
-      agree on which moves are accepted.
-
 .. py:class:: CalphaExcludedVolumePotential(ca_atom, seq_number, chain_id, min_separation=3, min_distance=3.2)
 
    CA-CA excluded-volume filter (energy group 8).

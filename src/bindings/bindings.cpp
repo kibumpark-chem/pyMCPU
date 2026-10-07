@@ -1392,16 +1392,7 @@ PYBIND11_MODULE(mcpu_core, m) {
         .def_property_readonly("num_residues",
                                &forces::OrientationalPairPotential::num_residues)
         .def_property_readonly("cutoff_angstrom",
-                               &forces::OrientationalPairPotential::cutoff_angstrom)
-        .def("set_rigid_skip_enabled",
-             &forces::OrientationalPairPotential::set_rigid_skip_enabled,
-             py::arg("on"),
-             "Testing hook: disable the moved-moved elision so the delta path\n"
-             "enumerates every changed pair. Both paths must give the same\n"
-             "answer; comparing them is what catches a residue wrongly\n"
-             "classified as rigidly moved.")
-        .def_property_readonly("rigid_skip_enabled",
-                               &forces::OrientationalPairPotential::rigid_skip_enabled);
+                               &forces::OrientationalPairPotential::cutoff_angstrom);
 
     py::class_<forces::CalphaExcludedVolumePotential, Potential,
                std::shared_ptr<forces::CalphaExcludedVolumePotential>>(

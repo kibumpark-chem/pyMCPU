@@ -106,25 +106,20 @@ set** — not by whether it was displaced, because a C-terminal φ pivot moves
 `C(r)` while leaving `N(r)` and `CA(r)` behind, and an N-terminal pivot carries
 frame atoms that sit on the rotation axis and do not move at all.
 
-Pairs with **both** partners carried by the same rigid motion are skipped: all
-six coordinates are invariant then, not just the distance, because both frames
-transform together and a proper rotation commutes with the cross products the
-frame is built from. Cost is `O(n_changed × N)`; a sidechain-only move costs
-nothing, since no frame atom moves.
+Pairs with **both** partners carried by the same rigid motion are re-scored
+too. In real arithmetic their six coordinates are invariant, but the pivot is
+applied in float32 and the table is nearest-bin, so a pair within rounding of a
+bin edge can change bin with nothing entering the delta. Skipping them was
+measured on CLN025 at T = 8: the running total drifted 17.4 from a full
+recompute within 1e5 steps, with Metropolis favouring the moves whose hidden
+cost is positive, against at most a 6 % saving on NuG2. Cost is
+`O(n_changed × N)`; a sidechain-only move costs nothing, since no frame atom
+moves.
 
 ### Speed
 
 A step costs time roughly in proportion to chain length: about 480 µs at 200
 residues, 1.1 ms at 400 and 2.2 ms at 686, with pivot moves and KORP alone.
-
-:::{note}
-The elision is exact in real arithmetic. In float32 a pair within a rounding
-error of a bin boundary could in principle fall in a neighbouring bin on a full
-recompute while the delta assumed no change. Measured on actin over 1e7 steps,
-the running total and a full recompute agreed exactly (a difference of 0.0), and
-the periodic recompute (`Simulation.full_energy_every_steps`) would report such
-a flip as drift.
-:::
 
 ## Excluded volume
 

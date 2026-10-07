@@ -1,12 +1,12 @@
 """Two KORP engine defects that short tests could not see.
 
-1. The rigid-pivot moved-moved elision in OrientationalPairPotential is not
+1. Skipping the pairs of two residues carried by one rigid pivot is not
    exact for a nearest-bin table under float32 rotation: a co-moving pair near a
-   bin edge can change bin with nothing entering delta_E. It is now OFF by
-   default. The failure is rare (~1e-4 per accepted move) but individually large,
-   so the guard is a LONG, HOT, pivot-only chain whose incrementally maintained
-   total must keep matching a full recompute -- a few hundred steps of
-   MCPU_VERIFY_PHYSICS never sees an event.
+   bin edge can change bin with nothing entering delta_E, so the delta re-scores
+   every pair of a moved residue. The failure would be rare (~1e-4 per accepted
+   move) but individually large, so the guard is a LONG, HOT, pivot-only chain
+   whose incrementally maintained total must keep matching a full recompute --
+   a few hundred steps of verify_physics_consistency never see an event.
 
 2. OrientationalPairMap references its table by raw pointer. The table used to
    be kept alive only through the map's Python wrapper (py::keep_alive), while
@@ -55,17 +55,11 @@ def _forcefield(n_res: int = 60):
     return KORPForceField(traj, map_path=_map_path()), traj
 
 
-def test_rigid_skip_is_off_by_default():
-    ff, traj = _forcefield()
-    ff.create_system(traj.topology)
-    assert ff.pair_potential.rigid_skip_enabled is False   # bound as a property
-
-
 def test_long_hot_pivot_chain_keeps_the_running_total_exact():
     """Incremental total vs full recompute over 40k hot, pivot-only steps.
 
-    With the elision on, runs like this drift by units to tens of units from
-    a single hidden bin flip. With exact dE the delta adds the same float
+    Skipping co-moving pairs, runs like this drifted by units to tens of
+    units from a single hidden bin flip. With exact dE the delta adds the same float
     pair terms as the full sum, in double, so the residual is double rounding.
     """
     ff, traj = _forcefield()

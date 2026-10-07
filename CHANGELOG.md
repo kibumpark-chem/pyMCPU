@@ -1426,6 +1426,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- `OrientationalPairPotential.set_rigid_skip_enabled` and
+  `rigid_skip_enabled` (KORP). The skip of pairs carried by one rigid pivot
+  was off by default because it is not exact for a nearest-bin table in
+  float32; KORP now always re-scores them, as it did by default. Delete
+  `set_rigid_skip_enabled(False)` calls.
+
 - Python bindings nothing used: `Context.set_coords_from_python` (assign
   `Context.coords`), `has_hard_constraint_violation` (same as
   `has_steric_clash`), `print_neighbor_audit`, `print_neighbor_proxy_stats`
