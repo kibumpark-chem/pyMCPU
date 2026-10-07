@@ -46,12 +46,14 @@ when:
 
 - the window does not fit, or would change the φ of a proline (residues r to
   r+3 for a φ driver, r to r+2 for a ψ driver);
-- it would move a fixed residue;
 - the current window has no closure, or is not one of its own closures to
   within 0.001 Å, so the move could not be reversed (float32 rounding causes
   this in a small fraction of attempts);
 - the new end has no closure;
 - a Jacobian is not finite and positive (|det M| < 1e-10).
+
+A window that would move a fixed residue is not refused but never drawn: the
+move draws its window and driver again (see `Integrator.set_fixed_residues`).
 
 A closure whose three N–CA–C angles miss their targets by more than 1e-6 rad
 is discarded, in both solves. {doc}`/api/integrator` lists counters for most

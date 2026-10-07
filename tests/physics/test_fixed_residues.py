@@ -10,6 +10,7 @@ Covers:
 * that fixed-residue atoms are literally frozen across hundreds of MC
   steps while non-fixed atoms are free to move
 * that fixing every residue halts all movement without crashing
+* that no step is spent on a fixed residue: each move redraws its choice
 * that ``NativeContactsCV`` excludes fixed-fixed residue pairs (but keeps
   fixed-nonfixed pairs)
 
@@ -131,6 +132,56 @@ class TestFixedResiduesEnforcement:
         integrator.run(context, 50)
         coords_after = np.array(context.get_state().coords, dtype=np.float32)
         np.testing.assert_array_equal(coords_before, coords_after)
+        # Every step ran out of draws (a sidechain step whose last draw was a
+        # proline counts as a proline skip instead).
+        assert 0 < integrator.get_fixed_rejected() <= 50
+
+    @pytest.mark.parametrize(
+        "weights", [(1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0)],
+        ids=["pivot", "kic", "sidechain"],
+    )
+    def test_no_step_is_spent_on_a_fixed_residue(self, weights) -> None:
+        """Each move redraws until its choice leaves the fixed block alone.
+
+        A middle block is fixed, so pivots must rotate the free end, KIC
+        windows must avoid the block and sidechain moves must skip it. No
+        step may end without a proposal because of the block.
+        """
+        context, integrator, _ = _build_context_with_fixed([4, 5])
+        integrator.set_move_weights(*weights)
+        atom_to_res = list(context.get_system().atom_to_residue)
+        fixed_atoms = [i for i, r in enumerate(atom_to_res) if r in (4, 5)]
+
+        coords_before = np.array(context.get_state().coords, dtype=np.float32).copy()
+        integrator.run(context, 400)
+        coords_after = np.array(context.get_state().coords, dtype=np.float32)
+
+        assert integrator.get_fixed_rejected() == 0
+        np.testing.assert_array_equal(
+            coords_before[:, fixed_atoms], coords_after[:, fixed_atoms]
+        )
+        assert not np.array_equal(coords_before, coords_after)
+
+    @pytest.mark.parametrize("end", ["last"])
+    def test_pivot_leaves_a_fixed_chain_end_in_place(self, end) -> None:
+        """A fixed last residue sends every pivot to the N-terminal end."""
+        context, integrator, _ = _build_context_with_fixed([])
+        n_res = context.get_system().get_num_residues()
+        fixed = 0 if end == "first" else n_res - 1
+        integrator.set_fixed_residues([fixed], n_res)
+        integrator.set_move_weights(1.0, 0.0, 0.0)
+        atom_to_res = list(context.get_system().atom_to_residue)
+        fixed_atoms = [i for i, r in enumerate(atom_to_res) if r == fixed]
+
+        coords_before = np.array(context.get_state().coords, dtype=np.float32).copy()
+        integrator.run(context, 400)
+        coords_after = np.array(context.get_state().coords, dtype=np.float32)
+
+        assert integrator.get_fixed_rejected() == 0
+        np.testing.assert_array_equal(
+            coords_before[:, fixed_atoms], coords_after[:, fixed_atoms]
+        )
+        assert not np.array_equal(coords_before, coords_after)
 
 
 class TestNativeContactsFixedExclusion:

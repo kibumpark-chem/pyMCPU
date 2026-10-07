@@ -68,6 +68,9 @@ criterion; see :doc:`mc_acceptance`. There are three kinds of move. By default
 a step is a pivot a quarter of the time, a KIC move a quarter of the time and
 a sidechain move half of the time; ``Integrator.set_move_weights`` changes
 this.
+With fixed residues, each move draws only among the residues (for KIC, the
+windows) it can change without moving a fixed residue, so no step is spent
+on a fixed residue (``Integrator.set_fixed_residues``).
 
 **Pivot.** Picks a residue and one of its backbone torsions, φ or ψ (never
 the φ of a proline), and rotates the shorter end of the chain about that bond
