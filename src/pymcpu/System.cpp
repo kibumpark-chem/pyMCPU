@@ -12,9 +12,9 @@
 
 using namespace mcpu;
 
-// KIC FIX (fixed targets): see KicReference in System.h. Double-precision versions of
+// KIC closure targets: see KicReference in System.h. Double-precision versions of
 // GeometryUtils::calculate_bond_angle / calculate_dihedral (same formulas, same sign
-// convention), which the move used to apply in float to the current coordinates.
+// convention).
 namespace {
 double kic_ref_angle(const Eigen::Vector3d& a, const Eigen::Vector3d& b, const Eigen::Vector3d& c) {
     const Eigen::Vector3d u = (a - b).normalized();
@@ -421,22 +421,6 @@ double System::getTotalEnergy(const Context& ctx, const State& state, int target
     return total;
 }
 
-double System::getDeltaEnergyRaw(
-    const Context& ctx,
-    const State& old_state,
-    const State& proposed_state,
-    const ProposalPatch& patch) const
-{
-    double delta = 0.0;
-    for (const auto& potential : potentials) {
-        if (!potential->isEnabled()) continue;
-        delta += potential->calculateEnergyChange(
-                    ctx, old_state, proposed_state, patch)
-                     .delta_energy;
-    }
-    return delta;
-}
-
 double System::getDeltaEnergy(
     const Context& ctx,
     const State& old_state,
@@ -470,8 +454,7 @@ EnergyChangeResult System::evaluateDeltaEnergy(
         std::uint64_t* slot = ctx.energy_delta_ns_slot(g);
         EnergyChangeResult r;
         if (slot) {
-            // TSC-based (see Profiler.h): two steady_clock::now() vDSO calls
-            // per potential per move cost ~0.7% of an actin step.
+            // TSC-based (see Profiler.h): two counter reads per potential.
             ScopedTimer timer(slot);
             r = potential->calculateEnergyChange(
                 ctx, old_state, proposed_state, patch);

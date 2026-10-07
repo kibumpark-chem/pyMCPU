@@ -85,9 +85,10 @@ python -m pytest -q                                              # fast
 python -m pytest -o addopts="" -m "not network and not mpi and not mpi_integration" -q
 ```
 
-`MCPU_VERIFY_PHYSICS=1` makes the integrator check, on *every* proposal, that
-each potential's incremental ΔE equals a from-scratch `E(new) − E(old)`, and
-throws on mismatch. Use it when touching any energy term.
+`Integrator.verify_physics_consistency(context, num_steps, atol)` runs MC
+steps that check, on *every* proposal, that each potential's incremental ΔE
+equals a from-scratch `E(new) − E(old)`, and throws on mismatch. Use it when
+touching any energy term.
 
 ## Adding or changing an energy term
 
@@ -134,7 +135,6 @@ CMake needs no edit — the source glob uses `CONFIGURE_DEPENDS`.
 | `MCPU_ARCH` | CPU baseline: `v2`, `v3` (default), `v4`, `native`, `none`, or a raw `-march` value |
 | `MCPU_FP_CONTRACT` | `off` makes results reproducible across compiler versions, at ~3% throughput |
 | `MCPU_PARAMS_DIR` | use a parameter directory directly |
-| `MCPU_VERIFY_PHYSICS` | per-proposal delta-vs-full checking |
 
 `mcpu_core.build_info()` reports what a build **actually did** — resolved
 `-march`, compiler, LTO state, FP flags — read from the branch the build took

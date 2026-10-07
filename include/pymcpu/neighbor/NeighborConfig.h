@@ -1,6 +1,5 @@
 #pragma once
 #include <cstdint>
-#include <cstdio>
 #include <cstdlib>
 #include <limits>
 
@@ -15,12 +14,8 @@ enum class MoveKind : int {
 
 struct NeighborConfig {
     float max_atom_displacement_hard = 12.f;
-
-    bool rebuild_from_aabb = true;
     float margin_angstrom = -1.f; // <0 => 2*r_cut
     int margin_cells = -1;
-
-
 
     /// If true (default), the pairs a rigid pivot (``patch.is_rigid``) carries
     /// -- both atoms moved -- are not re-measured: a rigid rotation keeps their
@@ -78,16 +73,15 @@ struct NeighborStats {
     std::uint64_t mu_grid_overflows = 0;
     std::uint64_t hbond_grid_overflows = 0;
     std::uint64_t num_reject_hard_disp = 0;
-    std::uint64_t num_aabb_rebuild_accept = 0;
+    /// Full grid rebuilds (rebuild_from_accepted_state): set_positions and
+    /// the rebuild after a cell overflow.
+    std::uint64_t num_grid_rebuilds = 0;
 
     // --- performance proxy counters ---
     /// Every time Mu delta computes r2 for a candidate pair (i,j).
     std::uint64_t mu_num_pair_distance_checks = 0;
     /// Subset of distance checks with r2 <= r_mu^2 (6 Å cell cutoff).
     std::uint64_t mu_num_pairs_within_rcut = 0;
-    /// Deprecated synonym for mu_num_pair_distance_checks (kept for older scripts).
-    std::uint64_t& mu_num_pairs_evaluated() noexcept { return mu_num_pair_distance_checks; }
-    std::uint64_t mu_num_pairs_evaluated() const noexcept { return mu_num_pair_distance_checks; }
     std::uint64_t hbond_num_candidates_iterated = 0;
     std::uint64_t hbond_num_geom_checks = 0;
     std::uint64_t neighbor_num_cell_visits = 0;
@@ -125,36 +119,6 @@ struct NeighborStats {
         r.avg_hbond_geom_checks_per_step = static_cast<double>(hbond_num_geom_checks) /
                                            static_cast<double>(den_steps);
         return r;
-    }
-
-    /// Print raw counters + derived per-step metrics to stderr.
-    void print(const char* tag = "neighbor-proxy") const {
-        const char* t = tag ? tag : "neighbor-proxy";
-        const std::uint64_t steps = num_steps_executed;
-        const NeighborProxyReport r = derive(steps);
-
-        std::fprintf(stderr,
-            "[%s] steps=%llu | mu_r2=%llu mu_rcut=%llu "
-            "hb_cand=%llu hb_geom=%llu cell_visits=%llu | "
-            "grid_rebuilds=%llu\n",
-            t,
-            static_cast<unsigned long long>(steps),
-            static_cast<unsigned long long>(mu_num_pair_distance_checks),
-            static_cast<unsigned long long>(mu_num_pairs_within_rcut),
-            static_cast<unsigned long long>(hbond_num_candidates_iterated),
-            static_cast<unsigned long long>(hbond_num_geom_checks),
-            static_cast<unsigned long long>(neighbor_num_cell_visits),
-            static_cast<unsigned long long>(num_aabb_rebuild_accept));
-
-        std::fprintf(stderr,
-            "[%s] derived: avg_mu_r2/step=%.1f avg_mu_rcut/step=%.1f "
-            "avg_cell_visits/step=%.1f "
-            "avg_hb_geom/step=%.1f\n",
-            t,
-            r.avg_mu_pair_checks_per_step,
-            r.avg_mu_pairs_within_rcut_per_step,
-            r.avg_cell_visits_per_step,
-            r.avg_hbond_geom_checks_per_step);
     }
 };
 

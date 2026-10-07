@@ -13,8 +13,6 @@ namespace mcpu {
 }
 
 namespace mcpu::forces {
-    static constexpr float kPi = mcpu::PI_F;
-
     class TripletPotential : public Potential {
     private:
         std::vector<float> params;
@@ -31,10 +29,10 @@ namespace mcpu::forces {
         float get(int r, int a, int b, int c, int d) const {
             size_t index = (static_cast<size_t>(r) * STRIDE4) + 
                            (a * STRIDE3) + (b * STRIDE2) + (c * STRIDE1) + d;
-            // FIXED: this was assert-only, and CMakeLists defines NDEBUG for both
-            // Release and RelWithDebInfo, so the only bounds guard on a raw
-            // vector index was compiled out of every shipped build. A real check
-            // is affordable here -- get() is per-residue, not the Mu pair loop.
+            // A real check, not an assert: CMakeLists defines NDEBUG for both
+            // Release and RelWithDebInfo, so an assert would guard no shipped
+            // build. It is affordable because get() is per-residue, not in the
+            // Mu pair loop.
             if (index >= params.size()) {
                 throw std::out_of_range(
                     "TripletPotential::get(): index " + std::to_string(index) +
@@ -60,15 +58,11 @@ namespace mcpu::forces {
         /// angle/(pi/6) attains exactly 6.0 at pi (antiparallel planes or
         /// bisectors, which is geometrically reachable).
         ///
-        /// FIXED: this used `% 12` against a table whose corresponding
-        /// dimension is BB_DIM == 6. 6 % 12 == 6, so an angle of exactly pi
-        /// produced an in-range-looking bin that overflowed the per-residue
-        /// 6^4 == 1296 block by up to 1511 elements -- a silent out-of-bounds
-        /// read, since get()'s only guard was an assert removed by NDEBUG.
-        /// Clamping (not wrapping) is the right treatment for a non-periodic
-        /// angle: pi is the top edge of the last bin, not the bottom of the
-        /// first. This also makes a NaN angle safe -- static_cast<int>(NaN) is
-        /// UB and typically yields INT_MIN, which the `< 0` branch maps to 0.
+        /// Clamped, not wrapped: pi is the top edge of the last bin, not the
+        /// bottom of the first, and wrapping (`% 12` against BB_DIM == 6)
+        /// would index past the per-residue 6^4 block. Clamping also keeps a
+        /// NaN angle in range: static_cast<int>(NaN) typically yields
+        /// INT_MIN, which the `< 0` branch maps to 0.
         int get_bin_30(float angle) const {
             int bin = static_cast<int>(angle / BB_BIN_SIZE_30);
             if (bin < 0) return 0;

@@ -78,12 +78,11 @@ PotentialDeltaCheck PhysicsVerifier::verify_potential_delta(
     // groups (QBias group 6, say) can carry large but finite harmonic energies
     // that must not be mistaken for hard-core penalties.
     //
-    // This asks the potential rather than testing `energy_group == 1`, which is
-    // what it used to do. That was correct only while MuPotential was the sole
-    // hard-rejecting term, and it silently failed any other one: a clash-guard
-    // term in a second force field returns its sentinel from the incremental
-    // path, the direct path returns the same sentinel, and the group test sent
-    // both down the plain numeric-comparison branch that a sentinel cannot pass.
+    // This asks the potential rather than testing `energy_group == 1`: a group
+    // test holds only while MuPotential is the sole hard-rejecting term. A
+    // clash-guard term in a second force field returns its sentinel from both
+    // the incremental and the direct path, and a group test would send both
+    // down the plain numeric-comparison branch that a sentinel cannot pass.
     if (target->canHardReject()) {
         const bool incremental_clash = is_clash_energy(result.delta_incremental);
         const bool proposed_clash = is_clash_energy(e_new);

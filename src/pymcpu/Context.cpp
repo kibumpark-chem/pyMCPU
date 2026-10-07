@@ -242,10 +242,6 @@ void Context::setPositions(const Eigen::Matrix3Xd& new_coords,
     maybe_apply_init_only_reorder_();
 }
 
-void Context::print_neighbor_proxy_stats(const char* tag) const {
-    neighbors_.stats().print(tag);
-}
-
 void Context::computeTorsions() {
     const auto& blocks = system->getBlockIndices();
     for (size_t r = 1; r < state.backbone_torsions.size() - 1; ++r) {
@@ -295,7 +291,7 @@ void Context::computeTorsions() {
 }
 
 void Context::sync_geometry() {
-    // CHANGED: always propagate exact denselist cutoff from MuPotential.
+    // The Mu grid's query cutoff is Mu's exact contact cutoff.
     if (forces::mcpu08::MuPotential* mu = mu_potential()) {
         neighbors_.config().mu_denselist_cutoff_A = mu->mu_exact_cutoff();
     }

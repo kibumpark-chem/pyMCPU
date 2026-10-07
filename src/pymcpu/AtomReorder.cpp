@@ -253,10 +253,6 @@ AtomPermutation compute_init_only_atom_permutation(
     return perm;
 }
 
-void remap_system_topology(System& sys, const AtomPermutation& perm) {
-    sys.apply_atom_permutation(perm);
-}
-
 void permute_coords_soa(CoordsSoA& coords, const AtomPermutation& perm) {
     const int n = perm.n_atoms();
     if (coords.n != n) {

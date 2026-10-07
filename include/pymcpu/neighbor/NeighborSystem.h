@@ -193,15 +193,6 @@ public:
             }
         }
     }
-    /// Number of registered grids, built-ins included. O(1).
-    int num_grids() const noexcept { return static_cast<int>(grids_.size()); }
-    /// A registered subset grid, or nullptr if `id` is a built-in or unknown
-    /// or the grid could not be built for the current bounds. O(1).
-    const CellListMC* subset_grid(neighbor::GridId id) const noexcept {
-        if (id >= grids_.size() || grids_[id].subset < 0) return nullptr;
-        const SubsetGrid& g = subset_grids_[static_cast<size_t>(grids_[id].subset)];
-        return g.active ? g.grid.get() : nullptr;
-    }
 
     NeighborConfig& config() noexcept { return cfg_; }
     const NeighborConfig& config() const noexcept { return cfg_; }
@@ -237,20 +228,14 @@ public:
     bool hbondUsesFallback() const noexcept { return hb_fallback_; }
     /// The O and H grids, for walks on the pair-search layer; null before
     /// setup. Their ids are O atoms, and H atoms or (virtual amide H) donor
-    /// residues; see hbondHIdIsResidue().
+    /// residues.
     const CellListMC* hbond_o_cells() const noexcept { return hb_o_grid_.get(); }
     const CellListMC* hbond_h_cells() const noexcept { return hb_h_grid_.get(); }
-    int hBegin() const noexcept { return h_begin_; }
     bool virtualAmideH() const noexcept { return virtual_amide_h_; }
-    bool hbondHIdIsResidue() const noexcept { return hb_h_ids_are_residues_; }
 
     /// One-shot audit label for HBond candidate source (current NeighborSystem).
     const char* hbond_backend_name() const noexcept {
         return hb_fallback_ ? "bruteforce_OH_after_overflow" : "opencell_typed_OH_grids";
-    }
-    float hbond_cutoff_A() const noexcept { return kHBondCutoffA; }
-    float hbond_cell_size_A() const noexcept {
-        return hb_fallback_ ? 0.f : kHBondListA;
     }
     const char* mu_backend_name() const noexcept {
         return dense_active_ ? "opencell_mu_BBO_SC" : "mu_grid_off_after_overflow";
@@ -258,22 +243,6 @@ public:
     float mu_cell_size_A() const noexcept {
         if (!dense_active_ || !mu_grid_) return 0.f;
         return mu_grid_->grid().cell_size();
-    }
-
-    /// Print backend signature once per process (stderr). Safe to call often.
-    void maybe_print_neighbor_audit(const char* where) const {
-        static bool printed = false;
-        if (printed) return;
-        printed = true;
-        std::fprintf(stderr,
-            "[neighbor-audit] where=%s "
-            "Mu candidates=%s cell=%.3f cutoff=%.3f | "
-            "HBond candidates=%s cell=%.3f cutoff=%.3f fallback=%d "
-            "lifecycle=NeighborSystem_single\n",
-            where ? where : "?",
-            mu_backend_name(), mu_cell_size_A(), mu_cutoff_A(),
-            hbond_backend_name(), hbond_cell_size_A(), kHBondCutoffA,
-            hb_fallback_ ? 1 : 0);
     }
 
     /// Read-only Mu index (BB+O+SC).
@@ -350,7 +319,7 @@ public:
     /// OpenCellGrid), so this runs only from set_positions and after an
     /// overflow.
     bool rebuild_from_accepted_state(const CoordsSoA& coords) {
-        ++stats_.num_aabb_rebuild_accept;
+        ++stats_.num_grid_rebuilds;
         if (!mask_current()) apply_energy_mask_();
         retry_rebuild_ = false;
         // Cell == cutoff: a one-cell stencil (27 cells) finds every pair,
@@ -374,48 +343,6 @@ public:
                 stats_.neighbor_offsets_count =
                     static_cast<std::uint64_t>(
                         mu_grid_->grid().neighbor_offsets_count());
-                // ADDED: one-shot occupancy dump (MCPU_GRID_OCCUPANCY=1)
-                // CHANGED: also requires MCPU_VERBOSE so INFO never prints by default.
-                {
-                    static bool printed = false;
-                    static const bool kVerbose = [] {
-                        const char* e = std::getenv("MCPU_VERBOSE");
-                        return e && e[0] && e[0] != '0';
-                    }();
-                    const char* e = std::getenv("MCPU_GRID_OCCUPANCY");
-                    if (kVerbose && e && e[0] == '1' && !printed) {
-                        printed = true;
-                        const auto& g = mu_grid_->grid();
-                        int n_occ = 0, sum = 0, mx = 0;
-                        const int nc = static_cast<int>(g.num_cells());
-                        for (int c = 0; c < nc; ++c) {
-                            const int n = g.cell_atom_count(c);
-                            if (n <= 0) continue;
-                            ++n_occ;
-                            sum += n;
-                            if (n > mx) mx = n;
-                        }
-                        const double avg =
-                            n_occ > 0 ? static_cast<double>(sum) / n_occ : 0.0;
-                        std::fprintf(stderr, // CHANGED: gated behind MCPU_VERBOSE
-                            "INFO: Mu grid occupancy cell=%.3f Å dims=%dx%dx%d "
-                            "n_cells=%llu occupied=%d avg_occ=%.2f max_occ=%d "
-                            "peak=%d CELL_CAPACITY=%d stencil_R=%d "
-                            "offsets=%zu query=%.3f\n",
-                            g.cell_size(), g.nx(), g.ny(), g.nz(),
-                            static_cast<unsigned long long>(g.num_cells()), n_occ,
-                            avg, mx, g.peak_cell_occupancy(),
-                            OpenCellGrid::CELL_CAPACITY,
-                            g.stencil_radius(), g.neighbor_offsets_count(),
-                            r_mu);
-                        if (mx > OpenCellGrid::CELL_CAPACITY * 4 / 5) {
-                            std::fprintf(stderr,
-                                "WARN: max occupancy %d within 20%% of "
-                                "CELL_CAPACITY=%d\n",
-                                mx, OpenCellGrid::CELL_CAPACITY);
-                        }
-                    }
-                }
             } else {
                 stats_.neighbor_offsets_count = 0;
             }
@@ -428,7 +355,6 @@ public:
         }
 
         // --- HBond O / H grids (same lo, smaller cell) ---
-        const float hb_cell = kHBondListA;
         if (hb_o_grid_->configure(b, max_grid_cells_) &&
             hb_h_grid_->configure(b, max_grid_cells_)) {
             hb_o_grid_->reset(n_atoms_);
@@ -440,37 +366,6 @@ public:
                 insert_virtual_amide_h_(coords);
             } else {
                 for (int h : h_atom_ids_) hb_h_grid_->insert(h, coords);
-            }
-            // One-shot HB stencil emptiness (O-grid probes at acceptor sites).
-            // CHANGED: gated behind MCPU_VERBOSE — suppress in production.
-            {
-                static bool printed = false;
-                static const bool kVerbose = [] {
-                    const char* e = std::getenv("MCPU_VERBOSE");
-                    return e && e[0] && e[0] != '0';
-                }();
-                if (kVerbose && !printed && !o_atom_ids_.empty()) {
-                    printed = true;
-                    std::size_t empty = 0, nonempty = 0;
-                    const int nprobe = std::min(64, static_cast<int>(o_atom_ids_.size()));
-                    for (int i = 0; i < nprobe; ++i) {
-                        const int o = o_atom_ids_[static_cast<size_t>(i)];
-                        auto s = hb_o_grid_->grid().probe_stencil_occupancy(
-                            coords.x[static_cast<size_t>(o)],
-                            coords.y[static_cast<size_t>(o)],
-                            coords.z[static_cast<size_t>(o)]);
-                        empty += s.empty;
-                        nonempty += s.nonempty;
-                    }
-                    const double tot = static_cast<double>(empty + nonempty);
-                    std::fprintf(stderr, // CHANGED: gated behind MCPU_VERBOSE
-                        "INFO: HB O-grid stencil empty_frac=%.3f "
-                        "(empty=%zu nonempty=%zu probes=%d) "
-                        "cell=%.3f cutoff=%.3f\n",
-                        tot > 0.0 ? empty / tot : 0.0, empty, nonempty, nprobe,
-                        hb_cell,
-                        kHBondCutoffA);
-                }
             }
             hb_fallback_ = hbond_overflowed_();
         } else {
@@ -819,8 +714,6 @@ private:
         }
     }
 
-    /// Iterates a moved list in ascending order without sorting it when it
-    /// is already ascending or descending (the usual cases).
     /// max(|x|, |y|, |z|) over the moved atoms of ``patch`` in ``coords``;
     /// 0 for none. A NaN coordinate is skipped. O(n_moved).
     static float max_abs_moved_(const CoordsSoA& coords, const ProposalPatch& patch) {
@@ -856,6 +749,8 @@ private:
         return m;
     }
 
+    /// Iterates a moved list in ascending order without sorting it when it
+    /// is already ascending or descending (the usual cases).
     struct MovedOrder {
         const int* p;
         size_t n;

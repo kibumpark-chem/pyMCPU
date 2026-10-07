@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `MuPotential.clist_fallbacks`: moves the contact list could not follow
+  (a grid overflow, or a rigid move past the drift budget). Each accepted
+  one costs an O(N^2) list rebuild, which is what slows hot replicas.
+
 - `scripts/tolerance_check.py`: accepts or rejects a build that is correct
   but not bit-identical to a reference, for speedups that change float
   rounding. It compares per-group static energies (1e-5 relative), checks
@@ -75,6 +79,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   unchanged.
 
 ### Fixed
+
+- The neighbour grid's shape for a huge, infinite or NaN box: the cell
+  count per axis went through an undefined float-to-int conversion (an
+  atom at 1e12 A gave a 3x3x3 Mu grid on x86), and boxes near 1e9 A on
+  all three axes could overflow the cell-count product. An axis now has
+  at most 2^20 cells before the usual trimming, and a NaN extent gets the
+  stencil minimum. Pairs were always exact (the grid wraps); only absurd
+  coordinates are affected.
 
 - **A fixed first residue stays in place.** A pivot that rotates the
   N-terminal end moves residues 0 to r-1, but the fixed-residue check
@@ -536,6 +548,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `Context.neighbor_aabb_rebuilds()` is now `neighbor_grid_rebuilds()`,
+  and the `neighbor_proxy_stats()` key `num_aabb_rebuild_accept` is now
+  `num_grid_rebuilds`: since grids wrap, the counter counts full grid
+  rebuilds (set_positions and overflow recovery), not bounding-box
+  rebuilds after a move.
+
 - **With fixed residues, no step is spent on a fixed residue.** A KIC step
   drew its window once and gave up when the window touched a fixed residue;
   it now draws again, as pivot and sidechain steps already did, so the
@@ -679,9 +697,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Python API unchanged. Instructions/step within 0.1%, cycles within noise.
 
 - **The neighbour grid keeps each cell once.** With the linked lists gone
-  (see Removed), an insert or removal touches only the cell's packed block,
-  and the occupied stencil is no longer timed with two clock reads per
-  update. Bit-identical (parity vs ec954cf; actin, PGK1 and T4L default,
+  (see Removed), an insert or removal touches only the cell's packed block.
+  Bit-identical (parity vs ec954cf; actin, PGK1 and T4L default,
   actin pivot-only and KIC-only, PGK1 pivot-only, and the masked runs all
   give the same accept bits and final energy as before). Cycles per step,
   n=3, 50k steps: actin -1.3% default, -2.4% pivot-only, PGK1 -1.6% and
@@ -1416,6 +1433,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- The proposal toggles `Integrator.set_use_pooled_proposal`,
+  `use_pooled_proposal`, `use_sparse_proposal`/`set_use_sparse_proposal`,
+  `reject_restore_enabled` and `proposal_lifecycle_info`, the CMake option
+  `MCPU_USE_POOLED_PROPOSAL`, the `features` section of `build_info()` and
+  the scripts `parity_sparse_proposal.py`, `parity_rigid_mm_elision.py` and
+  `_parity_common.py`. The reused proposal buffer with O(n_moved) restore,
+  the default, is now the only path; the off paths only reproduced an old
+  cost model for benchmarks.
+
+- `OrientationalPairPotential.set_rigid_skip_enabled` and
+  `rigid_skip_enabled` (KORP). The skip of pairs carried by one rigid pivot
+  was off by default because it is not exact for a nearest-bin table in
+  float32; KORP now always re-scores them, as it did by default. Delete
+  `set_rigid_skip_enabled(False)` calls.
+
+- Python bindings nothing used: `Context.set_coords_from_python` (assign
+  `Context.coords`), `has_hard_constraint_violation` (same as
+  `has_steric_clash`), `print_neighbor_audit`, `print_neighbor_proxy_stats`
+  (deprecated), `mu_cell_size_A` (still in `neighbor_proxy_stats()`),
+  `coord_sync_stats`/`reset_coord_sync_stats` (on `Context` and the module;
+  the counters behind them go too), `MuPotential.mu_cutoff_sq`,
+  `topo_flag_size_mb` and `type_params_size_kb`,
+  `NativeContactsBiasPotential.initialize_pair_cache` (it filled a
+  temporary copy of its argument), `EnergyWeights.set_legacy_defaults`,
+  `set_unweighted` and `outer_weight` (use `set_use_legacy_weights` and
+  `weight_for_group`), `BlockIndices.has_sidechain`/`has_hydrogen`/
+  `has_oxygen`, six debug fields of `ProposalPatch`
+  (`first_affected_residue`, `last_affected_residue` and the
+  `*_atom_moved` masks) and `TripeptideSolver.get_xi`/`get_eta`/
+  `get_delta`. The `neighbor_proxy_stats()` key `mu_num_pairs_evaluated`,
+  an alias of `mu_num_pair_distance_checks`, goes too.
+
+- Developer switches and dumps nobody used: `MCPU_DEBUG_MOVES` (a
+  per-step move, energy and RNG trace on stderr), `MCPU_GRID_OCCUPANCY` and
+  the HB stencil probe (two one-shot `MCPU_VERBOSE` dumps at grid setup;
+  `neighbor_proxy_stats()` reports the same occupancy live), and the CMake
+  option `MCPU_EIGEN_HOT_FLAGS` (Release builds already define `NDEBUG`).
+  `MCPU_ENERGY_TIMING=0` no longer turns off the per-potential timers in
+  `step_stats`: they cost no measurable time (actin, 34.8k vs 34.9k
+  cycles/step) and always run.
+
 - The overlap check on the grid before Mu's all-pairs fallback delta
   (`fallback_grid_overlap`), which round 8 also ran under energy masks. It
   served moves that left the grid; with wrapped grids the fallback runs
@@ -1437,7 +1495,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   list cannot follow takes the exact all-pairs delta, as under
   `MCPU_CONTACT_LIST=0`). Also gone: the scratch grid of moved atoms that
   walk used; the occupied-stencil modes and `MCPU_OCCUPIED_STENCIL` with
-  their timers and the end-of-run `occ_stencil` line under `MCPU_VERBOSE`; and the Mu cell-size knobs `MCPU_MU_CELL_SCALE`,
+  their timers and the end-of-run `occ_stencil` line under `MCPU_VERBOSE`;
+  and the Mu cell-size knobs `MCPU_MU_CELL_SCALE`,
   `Context.set_mu_cell_size_scale` / `set_mu_cell_size_angstrom` /
   `set_mu_cell_size_min_angstrom`, their getters and
   `effective_mu_cell_size_A`, with the matching `neighbor_proxy_stats()`

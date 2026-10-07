@@ -33,7 +33,6 @@
 
 #include "pymcpu/ProposalPatch.h"
 #include "pymcpu/testing/PhysicsVerifier.h"
-#include "pymcpu/utils/CoordSyncStats.h"
 #include "pymcpu/reporters/Reporter.h"
 #include "pymcpu/reporters/EnergyReporter.h"
 #include "pymcpu/reporters/SimulationReporter.h"
@@ -133,12 +132,9 @@ PYBIND11_MODULE(mcpu_core, m) {
         .def("solve", &TripeptideSolver::solve,
              "Solve for 3D coordinates given 4 anchor points",
              py::arg("r_n1"), py::arg("r_a1"), py::arg("r_a3"), py::arg("r_c3"))
-        .def("get_xi", &TripeptideSolver::get_xi)
-        .def("get_eta", &TripeptideSolver::get_eta)
-        .def("get_delta", &TripeptideSolver::get_delta)
         .def("get_polynomial_coefficients", &TripeptideSolver::get_polynomial_coefficients)
         .def("calculate_jacobian", &TripeptideSolver::calculate_jacobian, py::arg("solution"))
-        // KIC FIX (F2): closures dropped by the 1e-6 rad N-CA-C check in the last solve().
+        // Closures dropped by the 1e-6 rad N-CA-C check in the last solve().
         .def("last_rejected", &TripeptideSolver::last_rejected);
 
     py::class_<mcpu::RotamerComponent>(m, "RotamerComponent")
@@ -228,12 +224,6 @@ PYBIND11_MODULE(mcpu_core, m) {
         .def(py::init<int>(), py::arg("num_atoms"))
         .def_readwrite("is_valid", &ProposalPatch::is_valid)
         .def_readwrite("is_rigid", &ProposalPatch::is_rigid)
-        .def_readwrite("first_affected_residue", &ProposalPatch::first_affected_residue)
-        .def_readwrite("last_affected_residue", &ProposalPatch::last_affected_residue)
-        .def_readwrite("bb_atom_moved", &ProposalPatch::bb_atom_moved)
-        .def_readwrite("sc_atom_moved", &ProposalPatch::sc_atom_moved)
-        .def_readwrite("o_atom_moved", &ProposalPatch::o_atom_moved)
-        .def_readwrite("h_atom_moved", &ProposalPatch::h_atom_moved)
         .def_readwrite("moving_atoms", &ProposalPatch::moving_atoms)
         // moved_indices and mark_moved are the two ways Python can hand the
         // engine a moved-atom list, so both are checked here, off the engine's
@@ -284,13 +274,10 @@ PYBIND11_MODULE(mcpu_core, m) {
         .def(py::init<>())
         .def_readwrite("use_legacy_weights", &EnergyWeights::use_legacy_weights)
         .def_readwrite("hbond_rdthree", &EnergyWeights::hbond_rdthree)
-        .def("set_legacy_defaults", &EnergyWeights::set_legacy_defaults)
-        .def("set_unweighted", &EnergyWeights::set_unweighted)
         .def("set_use_legacy_weights", &EnergyWeights::set_use_legacy_weights, py::arg("on"))
         .def("set_energy_weight", &EnergyWeights::set_energy_weight,
              py::arg("group_id"), py::arg("w"))
         .def("weight_for_group", &EnergyWeights::weight_for_group, py::arg("group_id"))
-        .def("outer_weight", &EnergyWeights::outer_weight, py::arg("group_id"))
         .def_property_readonly_static("LEGACY_MU",
             [](py::object) { return EnergyWeights::kLegacyMu; })
         .def_property_readonly_static("LEGACY_BB_TOR",
@@ -354,7 +341,6 @@ PYBIND11_MODULE(mcpu_core, m) {
             "(build) order by default; set_output_internal_order(True) for "
             "storage order. Setting them is set_positions in the same order.")
         .def("coords_for_python", &Context::coords_for_python)
-        .def("set_coords_from_python", &Context::set_coords_from_python)
         .def("set_atom_reorder_mode",
              py::overload_cast<const std::string&>(&Context::set_atom_reorder_mode),
              py::arg("mode"),
@@ -381,8 +367,6 @@ PYBIND11_MODULE(mcpu_core, m) {
              py::arg("target_group") = -1)
         .def("calculate_delta_energy", &Context::calculate_delta_energy,
              py::arg("proposed_state"), py::arg("patch"))
-        .def("has_hard_constraint_violation",
-             &Context::has_hard_constraint_violation)
         .def("has_steric_clash", &Context::has_steric_clash)
         .def("energy_breakdown",
              [](const Context& c, bool weighted) {
@@ -439,10 +423,11 @@ PYBIND11_MODULE(mcpu_core, m) {
              "U = 0.5 * k_bias * (N - n_target)^2.")
         .def("native_contacts_bias_k", &Context::getQBiasK)
         .def("native_contacts_bias_n_target", &Context::getQBiasTarget)
-        .def("neighbor_aabb_rebuilds",
-             [](const Context& c) {
-                 return c.neighborStats().num_aabb_rebuild_accept;
-             })
+        .def("neighbor_grid_rebuilds",
+             [](const Context& c) { return c.neighborStats().num_grid_rebuilds; },
+             "Full rebuilds of the neighbour grids since the last "
+             "reset_neighbor_proxy_stats(): one per set_positions and one "
+             "after each cell overflow.")
         .def("hbond_index_ok",
              [](const Context& c) {
                  return c.neighbors().count_hbond_candidate_mismatches(c.getState().coords_soa) == 0;
@@ -458,10 +443,6 @@ PYBIND11_MODULE(mcpu_core, m) {
              })
         .def("hbond_uses_fallback",
              [](const Context& c) { return c.neighbors().hbondUsesFallback(); })
-        .def("print_neighbor_audit",
-             [](const Context& c) {
-                 c.neighbors().maybe_print_neighbor_audit("Context::print_neighbor_audit");
-             })
         .def("hbond_backend_name",
              [](const Context& c) { return c.neighbors().hbond_backend_name(); })
         .def("mu_backend_name",
@@ -485,29 +466,7 @@ PYBIND11_MODULE(mcpu_core, m) {
             [](Context& c) -> m08::MuPotential* { return c.mu_potential(); },
             py::return_value_policy::reference_internal,
             "First MuPotential, or None.")
-        .def("mu_cell_size_A",
-             [](const Context& c) { return c.neighbors().mu_cell_size_A(); },
-             "Mu grid cell edge (A): the Mu cutoff, or 0 while the grid is off.")
         .def("reset_neighbor_proxy_stats", &Context::reset_neighbor_proxy_stats)
-        .def("print_neighbor_proxy_stats",
-             [](const Context& c, const std::string& tag) {
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
-                 c.print_neighbor_proxy_stats(tag.c_str());
-#pragma GCC diagnostic pop
-             },
-             py::arg("tag") = "neighbor-proxy",
-             "Print neighbor-list proxy statistics (developer tuning only). "
-             "DEPRECATED: will be removed in a future version.")
-        .def("reset_coord_sync_stats", &Context::reset_coord_sync_stats)
-        .def("coord_sync_stats",
-             [](const Context& c) {
-                 const auto& s = c.coordSyncStats();
-                 py::dict d;
-                 d["num_coords_eigen_materializations"] = s.num_coords_eigen_materializations;
-                 d["num_coords_eigen_writes_back"] = s.num_coords_eigen_writes_back;
-                 return d;
-             })
         .def("neighbor_proxy_stats",
              [](const Context& c) {
                  const auto& s = c.neighborStats();
@@ -517,7 +476,6 @@ PYBIND11_MODULE(mcpu_core, m) {
                  d["mu_num_pair_distance_checks"] = s.mu_num_pair_distance_checks;
 
                  d["mu_num_pairs_within_rcut"] = s.mu_num_pairs_within_rcut;
-                 d["mu_num_pairs_evaluated"] = s.mu_num_pairs_evaluated();
                  d["hbond_num_candidates_iterated"] = s.hbond_num_candidates_iterated;
                  d["hbond_num_geom_checks"] = s.hbond_num_geom_checks;
                  d["neighbor_num_cell_visits"] = s.neighbor_num_cell_visits;
@@ -537,7 +495,7 @@ PYBIND11_MODULE(mcpu_core, m) {
                  d["mu_grid_active"] = c.neighbors().denseActive();
                  d["mu_grid_overflows"] = s.mu_grid_overflows;
                  d["hbond_grid_overflows"] = s.hbond_grid_overflows;
-                 // ADDED: live Mu grid occupancy for cell-size tuning
+                 // Live Mu grid occupancy, for cell-size tuning.
                  if (c.neighbors().denseActive()) {
                      const auto& g = c.neighbors().muGrid().grid();
                      int n_occ = 0, sum = 0, mx = 0;
@@ -569,7 +527,7 @@ PYBIND11_MODULE(mcpu_core, m) {
                      d["mu_grid_peak_occupancy"] = 0;
                      d["mu_grid_cell_capacity"] = OpenCellGrid::CELL_CAPACITY;
                  }
-                 d["num_aabb_rebuild_accept"] = s.num_aabb_rebuild_accept;
+                 d["num_grid_rebuilds"] = s.num_grid_rebuilds;
                  d["num_reject_hard_disp"] = s.num_reject_hard_disp;
                  d["num_steps_executed"] = s.num_steps_executed;
                  d["total_steps"] = r.total_steps;
@@ -653,19 +611,6 @@ PYBIND11_MODULE(mcpu_core, m) {
              "Sets pivot_rama_probability() from a piecewise-linear schedule "
              "evaluated once against this Integrator's own (fixed) "
              "temperature, in pyMCPU's reduced-temperature units.")
-        .def("set_use_pooled_proposal", &mcpu::MCIntegrator::set_use_pooled_proposal,
-             py::arg("on"),
-             "If True (default when compiled with MCPU_USE_POOLED_PROPOSAL=1): "
-             "pooled proposal buffer + sparse patch reset. "
-             "If False: emulate vanilla whole-State copy + per-step patch alloc + reject restore.")
-        .def("use_pooled_proposal", &mcpu::MCIntegrator::use_pooled_proposal)
-        .def_property(
-            "use_sparse_proposal",
-            &mcpu::MCIntegrator::use_sparse_proposal,
-            &mcpu::MCIntegrator::set_use_sparse_proposal,
-            "If True (default): skip per-step copy_dynamic_from; O(n_moved) restore on reject.")
-        .def("set_use_sparse_proposal", &mcpu::MCIntegrator::set_use_sparse_proposal,
-             py::arg("on"))
         .def("last_move_kind", &mcpu::MCIntegrator::last_move_kind,
              "Kind of the last proposed move (Pivot/KIC/Sidechain/Other), from "
              "run() or the last debug_force_* call that proposed a move.")
@@ -681,16 +626,6 @@ PYBIND11_MODULE(mcpu_core, m) {
         .def("last_log_jacobian_weight", &mcpu::MCIntegrator::last_log_jacobian_weight,
              "Metropolis-Hastings correction term of the last forced proposal "
              "from a debug_force_* call (0 for a symmetric move).")
-        .def("reject_restore_enabled", &mcpu::MCIntegrator::reject_restore_enabled)
-        .def("proposal_lifecycle_info",
-             [](const mcpu::MCIntegrator& integ) {
-                 const auto info = integ.proposal_lifecycle_info();
-                 py::dict d;
-                 d["pooled_proposal_compiled_in"] = info.pooled_proposal_compiled_in;
-                 d["use_pooled_proposal"] = info.use_pooled_proposal;
-                 d["reject_restore_enabled"] = info.reject_restore_enabled;
-                 return d;
-             })
         .def("set_step_stats_verbose", &mcpu::MCIntegrator::set_step_stats_verbose,
              py::arg("on"))
         .def("step_stats_verbose", &mcpu::MCIntegrator::step_stats_verbose)
@@ -800,7 +735,7 @@ PYBIND11_MODULE(mcpu_core, m) {
         .def("get_kic_presolve_zero", &mcpu::MCIntegrator::get_kic_presolve_zero)
         .def("get_kic_jacobian_invalid", &mcpu::MCIntegrator::get_kic_jacobian_invalid)
         .def("get_kic_geometry_invalid", &mcpu::MCIntegrator::get_kic_geometry_invalid)
-        // KIC FIX (F5, F8): reverse-check refusals and proline-phi skips.
+        // KIC reverse-check refusals and proline-phi skips.
         .def("get_kic_reverse_missing", &mcpu::MCIntegrator::get_kic_reverse_missing)
         .def("get_kic_proline_skipped", &mcpu::MCIntegrator::get_kic_proline_skipped)
         .def("get_steric_rejected", &mcpu::MCIntegrator::get_steric_rejected)
@@ -896,9 +831,6 @@ PYBIND11_MODULE(mcpu_core, m) {
     // missing define is a #error, not a plausible-looking default.
 #if !defined(MCPU_BUILD_ARCH_TIER) || !defined(MCPU_BUILD_LTO) || !defined(MCPU_BUILD_JCC_PAD)
 #error "BuildConfig.h was not generated; configure through CMake."
-#endif
-#if !defined(MCPU_USE_POOLED_PROPOSAL)
-#error "Feature-flag defines missing; configure through CMake."
 #endif
     m.def(
         "build_info",
@@ -1026,14 +958,6 @@ PYBIND11_MODULE(mcpu_core, m) {
             fp["reciprocal_math"] = false;
 #endif
 
-            py::dict features;
-            features["MCPU_USE_POOLED_PROPOSAL"] = (MCPU_USE_POOLED_PROPOSAL != 0);
-#if defined(EIGEN_NO_DEBUG)
-            features["EIGEN_NO_DEBUG"] = true;
-#else
-            features["EIGEN_NO_DEBUG"] = false;
-#endif
-
             py::dict deps;
             deps["eigen"] = std::to_string(EIGEN_WORLD_VERSION) + "." +
                             std::to_string(EIGEN_MAJOR_VERSION) + "." +
@@ -1047,7 +971,6 @@ PYBIND11_MODULE(mcpu_core, m) {
             d["compiler"] = compiler;
             d["build"] = build;
             d["fp"] = fp;
-            d["features"] = features;
             d["deps"] = deps;
             return d;
         },
@@ -1108,14 +1031,6 @@ PYBIND11_MODULE(mcpu_core, m) {
         py::arg("xyz"), py::arg("cell"), py::arg("query_radius"), py::arg("lo"),
         py::arg("hi"), py::arg("max_cells"), py::arg("probes"), py::arg("walk"),
         py::arg("radius") = 0.f);
-    m.def("reset_coord_sync_stats", []() { mcpu::coord_sync_stats().reset(); });
-    m.def("coord_sync_stats", []() {
-        const auto& s = mcpu::coord_sync_stats();
-        py::dict d;
-        d["num_coords_eigen_materializations"] = s.num_coords_eigen_materializations;
-        d["num_coords_eigen_writes_back"] = s.num_coords_eigen_writes_back;
-        return d;
-    });
 
 
     py::class_<PotentialDeltaCheck>(m, "PotentialDeltaCheck")
@@ -1147,9 +1062,6 @@ PYBIND11_MODULE(mcpu_core, m) {
         .def_readwrite("sc_count",     &BlockIndices::sc_count)
         .def_readwrite("res_begin",    &BlockIndices::res_begin)
         .def_readwrite("res_end",      &BlockIndices::res_end)
-        .def("has_sidechain",          &BlockIndices::has_sidechain)
-        .def("has_hydrogen",           &BlockIndices::has_hydrogen)
-        .def("has_oxygen",             &BlockIndices::has_oxygen)
         .def("has_explicit_h",         &BlockIndices::has_explicit_h)
         .def("ca_atom",                &BlockIndices::ca_atom)
         .def("c_atom",                 &BlockIndices::c_atom)
@@ -1202,7 +1114,7 @@ PYBIND11_MODULE(mcpu_core, m) {
         .def("set_rama_mixture_library", &System::setRamaMixtureLibrary)
         .def("get_rama_mixture_library", &System::getRamaMixtureLibrary, py::return_value_policy::reference_internal)
         .def("set_downstream_cache",  &System::setDownstreamCache)
-        // KIC FIX (F3): closure targets from the START coordinates (3 x n_atoms, Angstrom,
+        // KIC closure targets from the START coordinates (3 x n_atoms, Angstrom,
         // build order). MCPUForceField.create_system calls it; KIC refuses to run without it.
         .def("set_kic_reference", &System::setKicReference, py::arg("start_coords"))
         .def("has_kic_reference", &System::hasKicReference)
@@ -1278,9 +1190,6 @@ PYBIND11_MODULE(mcpu_core, m) {
         .def("cache_necessary_data", &m08::MuPotential::cache_necessary_data,
              py::arg("topo_contact_mask"), py::arg("topo_clash_mask"), py::arg("coords"))
         .def_property_readonly(
-            "topo_flag_size_mb", &m08::MuPotential::topo_flag_size_mb)
-        .def_property_readonly("type_params_size_kb", &m08::MuPotential::type_params_size_kb)
-        .def_property_readonly(
             "mu_exact_cutoff", &m08::MuPotential::mu_exact_cutoff,
             "Neighbour query cutoff (Å): the largest contact cutoff widened by "
             "the contact list's 0.05 Å near-miss band, or the largest hard-core "
@@ -1290,8 +1199,11 @@ PYBIND11_MODULE(mcpu_core, m) {
             "Times a state's contact list was rebuilt from its coordinates "
             "(diagnostic; shared by the replicas that share this potential).")
         .def_property_readonly(
-            "mu_cutoff_sq", &m08::MuPotential::mu_cutoff_sq,
-            "mu_exact_cutoff² used in denselist r² prefilter.")
+            "clist_fallbacks", &m08::MuPotential::clist_fallbacks,
+            "Moves the contact list could not follow (a grid cell overflowed, "
+            "or a rigid move carried past the list's drift budget); each "
+            "accepted one costs an O(N^2) list rebuild (diagnostic; shared "
+            "like contact_list_rebuilds).")
         .def("calculate_energy_change",
              [](const m08::MuPotential& mu, const Context& context,
                 const State& old_state, const State& new_state,
@@ -1332,9 +1244,7 @@ PYBIND11_MODULE(mcpu_core, m) {
             "QBiasPotential, Q being the native-contact fraction.")
         .def(py::init<std::vector<int>, std::vector<int>, float>(),
              py::arg("ca_atom_i"), py::arg("ca_atom_j"), py::arg("q_cutoff"))
-        .def("num_pairs", &forces::QBiasPotential::numPairs)
-        .def("initialize_pair_cache", &forces::QBiasPotential::initializePairCache,
-             py::arg("state"), py::arg("cache"));
+        .def("num_pairs", &forces::QBiasPotential::numPairs);
 
     // ---- KORP lineage -----------------------------------------------------
     py::class_<forces::OrientationalPairMap,
@@ -1447,16 +1357,7 @@ PYBIND11_MODULE(mcpu_core, m) {
         .def_property_readonly("num_residues",
                                &forces::OrientationalPairPotential::num_residues)
         .def_property_readonly("cutoff_angstrom",
-                               &forces::OrientationalPairPotential::cutoff_angstrom)
-        .def("set_rigid_skip_enabled",
-             &forces::OrientationalPairPotential::set_rigid_skip_enabled,
-             py::arg("on"),
-             "Testing hook: disable the moved-moved elision so the delta path\n"
-             "enumerates every changed pair. Both paths must give the same\n"
-             "answer; comparing them is what catches a residue wrongly\n"
-             "classified as rigidly moved.")
-        .def_property_readonly("rigid_skip_enabled",
-                               &forces::OrientationalPairPotential::rigid_skip_enabled);
+                               &forces::OrientationalPairPotential::cutoff_angstrom);
 
     py::class_<forces::CalphaExcludedVolumePotential, Potential,
                std::shared_ptr<forces::CalphaExcludedVolumePotential>>(

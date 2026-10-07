@@ -46,7 +46,6 @@ private:
     double len_na[3], len_ac[3], len_aa[3];
 
     // Stack-allocated matrix state for high performance
-    Eigen::Matrix<double, 17, 5> Q;
     Eigen::Matrix<double, 17, 3> R;
     Eigen::Matrix3d C0;
     Eigen::Matrix3d C1;
@@ -74,25 +73,12 @@ public:
     // Closures dropped by the N-CA-C check in the last solve.
     int last_rejected() const { return n_rejected_; }
 
-    // For DEBUGGING: Expose internal state for testing
-    std::vector<double> get_xi() const {
-        return {xi[0], xi[1], xi[2]};
-    }
-    
-    std::vector<double> get_eta() const {
-        return {eta[0], eta[1], eta[2]};
-    }
-
-    std::vector<double> get_delta() const {
-        return {delta[0], delta[1], delta[2], delta[3]};
-    }
-
     std::vector<double> get_polynomial_coefficients() {
         // 1. Create a blank Eigen matrix just like your solve function does
         Eigen::Matrix<double, 17, 1> p_coeff = Eigen::Matrix<double, 17, 1>::Zero();
         
         // 2. Call your existing internal function to fill it
-        // (This works because solve() already populated the Q and R matrices!)
+        // (solve() already set up the geometry it reads.)
         this->get_poly_coeff(p_coeff);
         
         // 3. Convert to a standard C++ vector for Python
@@ -117,9 +103,6 @@ private:
                                const Vec3& r_n1, const Vec3& r_a1, 
                                const Vec3& r_a3, const Vec3& r_c3,
                                std::vector<Solution>& solutions);
-
-    double calc_t2(double t0) const;                 // no longer called; kept for reference
-    double calc_t1(double t0, double t2) const;      // no longer called; kept for reference
 
     void build_trig_coeff();
     void back_substitute(double c3, double s3, double& c1, double& s1, double& c2, double& s2) const;

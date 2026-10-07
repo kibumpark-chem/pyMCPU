@@ -364,10 +364,6 @@ Performance and diagnostics
 These are tuning and instrumentation knobs. They do not change the
 sampled distribution, they are **not part of the stable API**, and
 correct results must not depend on them:
-``set_use_pooled_proposal(on)`` / ``use_pooled_proposal()``,
-``set_use_sparse_proposal(on)`` / ``use_sparse_proposal`` (a read/write
-property), ``reject_restore_enabled()``,
-``proposal_lifecycle_info()``,
 ``step_stats()``, ``set_step_stats_verbose(on)`` and
 ``step_stats_verbose()``.
 

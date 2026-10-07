@@ -138,7 +138,7 @@ def test_energy_is_invariant_under_rigid_motion(engine_map):
     assert _korp_energy(moved_context) == pytest.approx(before, rel=1e-5)
 
 
-def _run_verifier(engine_map, n_res=45, steps=200, seed=11, rigid_skip=True):
+def _run_verifier(engine_map, n_res=45, steps=200, seed=11):
     coords, names, res_seq, chain_ids = parse_backbone(
         _structure("CASP12DCsel20/T0860D1.pdb"))
     coords = coords[:n_res]
@@ -147,7 +147,6 @@ def _run_verifier(engine_map, n_res=45, steps=200, seed=11, rigid_skip=True):
 
     _, context, potential, _ = _assemble(
         engine_map, coords, names, res_seq, chain_ids, with_guard=True)
-    potential.set_rigid_skip_enabled(rigid_skip)
 
     integrator = mcpu_core.Integrator(temperature=0.6, step_size_rad=0.05)
     integrator.set_seed(seed)
@@ -157,51 +156,4 @@ def _run_verifier(engine_map, n_res=45, steps=200, seed=11, rigid_skip=True):
 
 def test_incremental_delta_matches_a_full_recompute(engine_map):
     """Over real pivot and KIC moves produced by the integrator itself."""
-    _run_verifier(engine_map, rigid_skip=True)
-
-
-def test_delta_is_consistent_with_the_rigid_skip_disabled(engine_map):
-    """Same check with the elision off, so the skip is not grading its own work."""
-    _run_verifier(engine_map, rigid_skip=False)
-
-
-def test_rigid_skip_does_not_change_the_trajectory(engine_map):
-    """The elision must not alter sampling -- checked over several seeds.
-
-    The moved-moved skip is exact in real arithmetic. In float32 it is exact
-    *almost* always: the table lookup is a step function, so a pair sitting
-    within a rounding error of a bin boundary can land in a neighbouring bin
-    on a full recompute while the delta assumed no change. That is rare -- it
-    showed up on one seed in five over 500 steps -- and when it happens it
-    moves the bookkeeping total by ~0.3 out of ~3700.
-
-    Over THIS short, cold run it does not change which moves are accepted, and
-    that is all this test establishes. It does not hold in general: at T = 8
-    over 1e5 steps a hidden bin flip mis-scores accepted moves by several
-    units and the trajectories diverge, which is why the elision is now off
-    by default -- see test_korp_exact_delta.py for the long, hot guard.
-    """
-    coords, names, res_seq, chain_ids = parse_backbone(
-        _structure("CASP12DCsel20/T0860D1.pdb"))
-    coords, names = coords[:60], names[:60]
-    res_seq, chain_ids = res_seq[:60], chain_ids[:60]
-
-    def run(rigid_skip, seed):
-        _, context, potential, _ = _assemble(
-            engine_map, coords, names, res_seq, chain_ids, with_guard=True)
-        potential.set_rigid_skip_enabled(rigid_skip)
-        integrator = mcpu_core.Integrator(temperature=0.6, step_size_rad=0.05)
-        integrator.set_seed(seed)
-        integrator.set_move_weights(0.5, 0.5, 0.0)
-        integrator.run(context, 400)
-        # The RECOMPUTED energy, not the incrementally maintained one: the
-        # question is whether the two runs ended in the same place.
-        return list(integrator.last_accept_bits()), context.calculate_total_energy(-1)
-
-    for seed in (3, 17, 42, 101, 2024):
-        bits_on, energy_on = run(True, seed)
-        bits_off, energy_off = run(False, seed)
-        assert bits_on == bits_off, f"seed {seed}: the skip changed the trajectory"
-        assert energy_on == pytest.approx(energy_off, rel=1e-6), (
-            f"seed {seed}: the two runs ended at different structures"
-        )
+    _run_verifier(engine_map)

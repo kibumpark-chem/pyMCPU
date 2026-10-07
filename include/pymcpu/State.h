@@ -8,7 +8,6 @@
 #include <string>
 
 #include "pymcpu/utils/CoordsSoA.h"
-#include "pymcpu/utils/CoordSyncStats.h"
 #include "pymcpu/utils/CoordView.h"
 #include "pymcpu/neighbor/PairLedger.h"
 #include "pymcpu/forces/korp/common/KorpStateCache.h"
@@ -81,9 +80,6 @@ public:
         mu_list_drift = 0.0;
     }
 
-    [[nodiscard]] bool has_mu_contact_list() const noexcept {
-        return mu_contacts.ready();
-    }
     /// Hard-Q native pair cache (accepted state). Empty on proposal buffers.
     std::vector<uint8_t> q_pair_cache;
 
@@ -132,12 +128,10 @@ public:
                 "State.coords: got coordinates for " + std::to_string(m.cols()) +
                 " atoms, but this state has " + std::to_string(coords_soa.n));
         }
-        note_coords_eigen_write_back();
         coords_soa.load_from_eigen(m);
         invalidate_coordinate_caches();
     }
     [[nodiscard]] Eigen::Matrix3Xf coords_as_eigen() const {
-        note_coords_eigen_materialization();
         return coords_soa.as_eigen();
     }
 

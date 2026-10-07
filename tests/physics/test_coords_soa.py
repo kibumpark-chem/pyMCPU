@@ -26,11 +26,10 @@ pytestmark = pytest.mark.slow
 
 # Frozen regression baseline of the CURRENT engine's own output under a fixed
 # recipe (seed=42, 100-step warmup then reseed to 42+1_000_003, 1000 measured
-# steps, temperature=0.6, step_size_rad=0.1, pooled proposal
-# enabled) -- not independently derivable from physics first principles or
-# from legacy MCPU. This is the fourth capture of this baseline; each prior
+# steps, temperature=0.6, step_size_rad=0.1) -- not independently derivable
+# from physics first principles or from legacy MCPU. This is the fourth capture of this baseline; each prior
 # refresh followed a genuine physics-changing engine fix (stale proposal
-# torsions on distorted residues under pooled reuse; ang_CACA cross-chain
+# torsions on distorted residues in the reused proposal; ang_CACA cross-chain
 # operands vs. wrong radian/degree threshold; the four Ramachandran
 # hard-reject gates plus relocating the secondary-structure 'H'-gate; and
 # Integrator::set_seed not resetting angle_dist's cached spare Gaussian on

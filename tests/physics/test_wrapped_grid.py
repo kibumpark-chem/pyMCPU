@@ -98,6 +98,27 @@ def test_nan_and_huge_coordinates_get_a_cell() -> None:
         _check_walk(xyz, probes, 5.1, 5.1, (0, 0, 0), (30, 30, 30), 10**6, walk, 2.83)
 
 
+@pytest.mark.parametrize(
+    "hi, max_cells",
+    [((1e12, 30.0, 30.0), 10**6), ((1e9, 1e9, 1e9), 4096),
+     ((np.inf, 30.0, 30.0), 10**6), ((np.nan, 30.0, 30.0), 10**6)],
+)
+def test_a_huge_or_nan_box_gets_a_bounded_grid(hi, max_cells) -> None:
+    """The cell count per axis is capped before the float-to-int conversion,
+    so a huge or infinite box is trimmed like any large one, and a NaN
+    extent gets 2R + 1 cells."""
+    rng = np.random.default_rng(13)
+    xyz = _cloud(rng, 300, 0.0, 30.0, FAR[:2])
+    probes = np.ascontiguousarray(xyz[:, ::7])
+    for walk in WALKS:
+        nx, ny, nz = _check_walk(xyz, probes, 5.1, 5.1, (0, 0, 0), hi, max_cells, walk, 2.83)
+        assert min(nx, ny, nz) >= 3 and nx * ny * nz <= max_cells
+        if np.isnan(hi[0]):
+            assert nx == 3
+        elif hi[1] == 30.0:
+            assert nx > 1000, "the long axis keeps most of the cells"
+
+
 # --- the engine's grids -------------------------------------------------------
 
 
@@ -159,7 +180,7 @@ def _run_and_check(ctx, steps, seed, temperature, after_chunk=None):
     for _ in range(steps // 1000):
         ctx.reset_neighbor_proxy_stats()
         integ.run(ctx, 1000)
-        assert ctx.neighbor_aabb_rebuilds() == 0, "a grid was rebuilt during the run"
+        assert ctx.neighbor_grid_rebuilds() == 0, "a grid was rebuilt during the run"
         if after_chunk:
             after_chunk(np.asarray(ctx.get_state().coords))
     running = float(ctx.get_state().current_energy)

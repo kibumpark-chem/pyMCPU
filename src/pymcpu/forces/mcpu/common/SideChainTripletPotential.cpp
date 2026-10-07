@@ -78,21 +78,14 @@ namespace mcpu::forces {
         const System& sys = context.getSystem();
         for (int r = 0; r < n_pos; ++r) {
             if (sys.is_residue_energy_ignored(r + 1)) continue;
-            // FIXED: skip residues with no chi angles at all (GLY, ALA), as
-            // legacy sctenergy() does:
-            //     if (native_residue[i+1].ntorsions == 0) continue;
-            //
-            // Without this the residue still reads its table cell at chi bins
-            // (0,0,0,0) -- and that cell holds +1000, the table's saturated
-            // "never observed" sentinel, for 3390 of the 8000 residue-type
-            // triplets. After the /1000 below and the 2.50 SCT weight that is
-            // +2.5 per zero-chi residue, with the WRONG SIGN. On actin (58 such
-            // residues) it came to +145, which was essentially the entire
-            // sidechain-torsion disagreement with legacy (+140.3 measured).
-            //
-            // Note the chi DEFAULT is fine: -pi maps to bin 0, matching legacy's
-            // i_ang[j] = 0 for unused slots, so residues with 1-3 real chi
-            // angles already agreed.
+            // Skip residues with no chi angles at all (GLY, ALA), as legacy
+            // sctenergy() does (`if (native_residue[i+1].ntorsions == 0)
+            // continue;`). Their table cell at chi bins (0,0,0,0) holds +1000,
+            // the saturated "never observed" sentinel, for 3390 of the 8000
+            // residue-type triplets: +2.5 per such residue after the /1000
+            // and the 2.50 SCT weight. Unused chi slots default to -pi, which
+            // maps to bin 0 like legacy's i_ang[j] = 0, so residues with 1-3
+            // chi angles need nothing.
             if (residue_has_no_chi(sys, r + 1)) continue;
             const auto& chi = state.sidechain_torsions[r + 1].chi_angles;
             total_energy += get(r, 

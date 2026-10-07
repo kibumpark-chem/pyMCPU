@@ -8,7 +8,7 @@
 
 namespace mcpu::neighbor {
 
-/// How a proposed move affects a site (an atom, or a residue frame).
+/// How a proposed move affects an atom.
 /// The one definition every term uses:
 ///   Fixed  the site did not move;
 ///   Rigid  it moved under a rigid move, together with every other Rigid
@@ -17,11 +17,10 @@ namespace mcpu::neighbor {
 ///   Flex   anything else: its distances to other moved sites changed.
 enum class SiteClass : std::uint8_t { Fixed = 0, Rigid, Flex };
 
-/// Class of a site that moved. `whole` is false when only part of a
-/// multi-atom site (a residue frame) moved, which always counts as Flex.
-[[nodiscard]] inline SiteClass moved_site_class(bool move_is_rigid, bool rigid_skip_enabled,
-                                                bool whole = true) noexcept {
-    return (whole && move_is_rigid && rigid_skip_enabled) ? SiteClass::Rigid : SiteClass::Flex;
+/// Class of a site that moved.
+[[nodiscard]] inline SiteClass moved_site_class(bool move_is_rigid,
+                                                bool skip_rigid_mm) noexcept {
+    return (move_is_rigid && skip_rigid_mm) ? SiteClass::Rigid : SiteClass::Flex;
 }
 
 /// The moved atoms of one proposal and their class, read straight from the
@@ -33,12 +32,12 @@ struct MoveFootprint {
     SiteClass moved_class = SiteClass::Flex;
 
     [[nodiscard]] static MoveFootprint of(const ProposalPatch& patch,
-                                          bool rigid_skip_enabled) noexcept {
+                                          bool skip_rigid_mm) noexcept {
         MoveFootprint f;
         f.moved = patch.moved_indices.data();
         f.n_moved = patch.moved_indices.size();
         f.is_moved = patch.moving_atoms.data();
-        f.moved_class = moved_site_class(patch.is_rigid, rigid_skip_enabled);
+        f.moved_class = moved_site_class(patch.is_rigid, skip_rigid_mm);
         return f;
     }
     [[nodiscard]] SiteClass class_of(int site) const noexcept {

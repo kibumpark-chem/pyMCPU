@@ -17,13 +17,6 @@
 
 namespace mcpu::forces {
 
-namespace {
-constexpr std::uint8_t kBitN = 1;
-constexpr std::uint8_t kBitCA = 2;
-constexpr std::uint8_t kBitC = 4;
-constexpr std::uint8_t kBitAll = kBitN | kBitCA | kBitC;
-} // namespace
-
 OrientationalPairPotential::OrientationalPairPotential(
     std::shared_ptr<const OrientationalPairMap> map,
     std::vector<int> n_atom,
@@ -58,8 +51,7 @@ OrientationalPairPotential::OrientationalPairPotential(
 
     frames_old_.resize(n);
     frames_new_.resize(n);
-    cls_.assign(n, FrameClass::Fixed);
-    bits_.assign(n, 0);
+    moved_.assign(n, 0);
     rebuild_atom_lookup();
 }
 
@@ -72,13 +64,11 @@ void OrientationalPairPotential::rebuild_atom_lookup() {
     }
     const std::size_t size = static_cast<std::size_t>(max_atom) + 1;
     frame_residue_of_atom_.assign(size, -1);
-    frame_bit_of_atom_.assign(size, 0);
 
     const int n = num_residues();
     for (int r = 0; r < n; ++r) {
         const std::size_t u = static_cast<std::size_t>(r);
         const int atoms[3] = {n_atom_[u], ca_atom_[u], c_atom_[u]};
-        const std::uint8_t bit[3] = {kBitN, kBitCA, kBitC};
         for (int k = 0; k < 3; ++k) {
             const std::size_t a = static_cast<std::size_t>(atoms[k]);
             // A backbone atom belongs to exactly one residue, so a collision
@@ -89,7 +79,6 @@ void OrientationalPairPotential::rebuild_atom_lookup() {
                     " is claimed as a frame atom by more than one residue");
             }
             frame_residue_of_atom_[a] = r;
-            frame_bit_of_atom_[a] = bit[k];
         }
     }
 }
@@ -203,32 +192,24 @@ double OrientationalPairPotential::resyncEnergy(
 bool OrientationalPairPotential::classify(const ProposalPatch& patch) const
 {
     const int n = num_residues();
-    bits_.assign(static_cast<std::size_t>(n), 0);
-    cls_.assign(static_cast<std::size_t>(n), FrameClass::Fixed);
+    moved_.assign(static_cast<std::size_t>(n), 0);
     changed_.clear();
 
-    // Which of each residue's three frame atoms moved. Keyed on membership in
-    // the moved set, NOT on displacement: a C-terminal phi pivot at residue r
-    // moves C(r) but leaves N(r) and CA(r) behind, so residue r's frame is
-    // reshaped even though the move as a whole is rigid. Classifying by
-    // displacement would call that residue rigid and wrongly skip its pairs --
-    // and CA and C sit ON the rotation axis of an N-terminal pivot, so they do
-    // not move at all while still being carried by the rotation.
+    // Residues with a frame atom (N, CA or C) in the moved set. Every pair
+    // with one of them is re-scored, including pairs of two moved residues:
+    // the table is nearest-bin, so even a rigid rotation, applied in float32,
+    // can move such a pair across a bin edge.
     const std::size_t lookup_size = frame_residue_of_atom_.size();
     for (int atom : patch.moved_indices) {
         const std::size_t a = static_cast<std::size_t>(atom);
         if (atom < 0 || a >= lookup_size) continue;  // O atom, or not ours
         const int r = frame_residue_of_atom_[a];
         if (r < 0) continue;
-        bits_[static_cast<std::size_t>(r)] |= frame_bit_of_atom_[a];
+        moved_[static_cast<std::size_t>(r)] = 1;
     }
 
     for (int r = 0; r < n; ++r) {
-        const std::size_t u = static_cast<std::size_t>(r);
-        if (bits_[u] == 0) continue;
-        cls_[u] = neighbor::moved_site_class(patch.is_rigid, rigid_skip_enabled_,
-                                             /*whole=*/bits_[u] == kBitAll);
-        changed_.push_back(r);
+        if (moved_[static_cast<std::size_t>(r)]) changed_.push_back(r);
     }
     return !changed_.empty();
 }
@@ -288,14 +269,13 @@ EnergyChangeResult OrientationalPairPotential::calculateEnergyChange(
     // and folds the changes in, in the same order as a single pass would.
     cand_.resize(un + 8);   // the 8-wide pass stores a full block past k
 #if defined(__AVX2__)
-    // Fixed and Rigid residues as bit sets, for the 8-wide candidate pass.
+    // Residues whose frame did not move as a bit set, for the 8-wide
+    // candidate pass.
     const std::size_t words = (un + 63) / 64 + 1;
     fixed_bits_.assign(words, ~std::uint64_t{0});
-    rigid_bits_.assign(words, 0);
     for (int r : changed_) {
         const std::size_t u = static_cast<std::size_t>(r);
         fixed_bits_[u >> 6] &= ~(std::uint64_t{1} << (u & 63));
-        if (cls_[u] == FrameClass::Rigid) rigid_bits_[u >> 6] |= std::uint64_t{1} << (u & 63);
     }
 #endif
     entry_.resize(un);
@@ -305,8 +285,6 @@ EnergyChangeResult OrientationalPairPotential::calculateEnergyChange(
     for (int a : changed_) {
         const std::size_t ua = static_cast<std::size_t>(a);
         const float* old_row = cache.row(a);
-        // Rigid exists only with the rigid skip on; see the header.
-        const bool a_rigid = cls_[ua] == FrameClass::Rigid;
         const double ax = ox_[ua], ay = oy_[ua], az = oz_[ua];
         std::size_t k = 0;
         int j0 = 0;
@@ -339,12 +317,10 @@ EnergyChangeResult OrientationalPairPotential::calculateEnergyChange(
                                   _CMP_NEQ_UQ)));
                 const unsigned fixed = static_cast<unsigned>(
                     fixed_bits_[u0 >> 6] >> (u0 & 63)) & 0xFFu;
-                const unsigned rigid = static_cast<unsigned>(
-                    rigid_bits_[u0 >> 6] >> (u0 & 63)) & 0xFFu;
                 int shift = a - j0 + 1;   // lanes above a: j0 + l > a
                 shift = shift < 0 ? 0 : (shift > 8 ? 8 : shift);
                 const unsigned above = (0xFFu << shift) & 0xFFu;
-                const unsigned visit = fixed | (above & ~(a_rigid ? rigid : 0u));
+                const unsigned visit = fixed | above;
                 const unsigned keep = visit & (near | nonzero);
                 const __m256i idx = _mm256_add_epi32(_mm256_set1_epi32(j0), lane);
                 const __m256i near_lanes = _mm256_cmpeq_epi32(
@@ -362,9 +338,7 @@ EnergyChangeResult OrientationalPairPotential::calculateEnergyChange(
 #endif
         for (int j = j0; j < n; ++j) {
             const std::size_t uj = static_cast<std::size_t>(j);
-            const FrameClass cj = cls_[uj];
-            const bool visit = (cj == FrameClass::Fixed)
-                | ((j > a) & !(a_rigid & (cj == FrameClass::Rigid)));
+            const bool visit = (moved_[uj] == 0) | (j > a);
             const double dx = ox_[uj] - ax;
             const double dy = oy_[uj] - ay;
             const double dz = oz_[uj] - az;

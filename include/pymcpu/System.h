@@ -41,9 +41,6 @@ struct BlockIndices {
     int res_end   = -1;         // one-past-last atom of residue block
 
     // -- Semantic helpers: hide raw -1 checks at all call sites --
-    [[nodiscard]] bool has_sidechain() const noexcept { return sc_start != -1; }
-    [[nodiscard]] bool has_hydrogen()  const noexcept { return amide_donor; }
-    [[nodiscard]] bool has_oxygen()    const noexcept { return o_start  != -1; }
     [[nodiscard]] bool has_explicit_h() const noexcept { return h_start >= 0; }
 
     [[nodiscard]] int n_atom() const noexcept { return bb_start; }
@@ -70,10 +67,10 @@ struct DownstreamCache {
 };
 
 // ---------------------------------------------------------------
-// KIC FIX (fixed targets): the loop-closure move's bond lengths, bond angles
-// and omegas, measured ONCE from the start structure. The move used to
-// re-measure them from the current coordinates on every proposal, so a bad
-// closure became the next move's target and N-CA-C drifted without bound.
+// The loop-closure move's bond lengths, bond angles and omegas, measured ONCE
+// from the start structure. Re-measured from the current coordinates on every
+// proposal, a bad closure would become the next move's target and N-CA-C
+// would drift without bound.
 // Internal coordinates only (no atom indices), so an atom permutation, a
 // replica exchange or a checkpoint restore -- which replace positions, never
 // the System -- cannot change them. Double precision on the float32 start
@@ -170,13 +167,12 @@ private:
     /// reused under another (State::mu_list_mask_epoch).
     std::uint64_t energy_mask_epoch_ = 0;
 
-    KicReference kic_reference_;  // KIC FIX: start-structure closure targets (setKicReference)
+    KicReference kic_reference_;  // start-structure closure targets (setKicReference)
 
 public:
     System(int atoms, int residues);
 
     std::vector<int> atom_to_residue;
-    Eigen::MatrixXf mu_hard_core_sq;
 
     // Controlled setters for the Python builder
     void setAtomCounts(int bb, int o, int sc, int h) noexcept {
@@ -187,7 +183,6 @@ public:
     }
     void setVirtualAmideH(bool on) noexcept { virtual_amide_h_ = on; }
     [[nodiscard]] bool virtualAmideH() const noexcept { return virtual_amide_h_; }
-    void setResidueContiguousLayout(bool on) noexcept { residue_contiguous_layout_ = on; }
     [[nodiscard]] bool residueContiguousLayout() const noexcept {
         return residue_contiguous_layout_;
     }
@@ -225,9 +220,8 @@ public:
         if (res_id < 0 || res_id >= static_cast<int>(is_proline_.size())) return false;
         return is_proline_[static_cast<size_t>(res_id)] != 0;
     }
-    const std::vector<uint8_t>& isProlineFlags() const noexcept { return is_proline_; }
 
-    /// KIC FIX: store the closure targets from the START coordinates (3 x num_atoms,
+    /// Store the KIC closure targets from the START coordinates (3 x num_atoms,
     /// Angstrom, build order -- the coordinates the replicas are positioned with).
     /// Needs block indices; refused after a Context has reordered the atoms.
     void setKicReference(const Eigen::Matrix3Xf& start_coords);
@@ -241,7 +235,6 @@ public:
         if (res_id < 0 || res_id >= static_cast<int>(amino_index_.size())) return 0;
         return static_cast<int>(amino_index_[static_cast<size_t>(res_id)]);
     }
-    const std::vector<uint8_t>& aminoIndexArray() const noexcept { return amino_index_; }
 
     void setSecondaryStructure(std::string ss) {
         secondary_structure_ = std::move(ss);
@@ -251,7 +244,6 @@ public:
         if (res_id < 0 || res_id >= static_cast<int>(secondary_structure_.size())) return 'C';
         return secondary_structure_[static_cast<size_t>(res_id)];
     }
-    const std::string& secondaryStructureString() const noexcept { return secondary_structure_; }
 
     /// Mark residues whose Mu energy terms are suppressed (linker masking).
     void set_energy_ignored_residues(const std::vector<int>& residues,
@@ -305,17 +297,11 @@ public:
     [[nodiscard]] bool is_amide_h_atom(int atom_id) const noexcept;
 
     // -- Computed segment boundaries (call after builder sets totals) --
-    [[nodiscard]] int sc_segment_start() const noexcept {
-        return total_bb_atoms + total_o_atoms;
-    }
     [[nodiscard]] int sc_segment_end() const noexcept {
         return total_bb_atoms + total_o_atoms + total_sc_atoms;
     }
     [[nodiscard]] int h_segment_start() const noexcept {
         return sc_segment_end();
-    }
-    [[nodiscard]] int h_segment_end() const noexcept {
-        return sc_segment_end() + total_h_atoms;
     }
 
     int  addPotential(std::shared_ptr<Potential> potential);
@@ -345,12 +331,6 @@ public:
         int            target_group = -1) const;
 
     double getDeltaEnergy(
-        const Context&      ctx,
-        const State&        old_state,
-        const State&        proposed_state,
-        const ProposalPatch& patch) const;
-
-    double getDeltaEnergyRaw(
         const Context&      ctx,
         const State&        old_state,
         const State&        proposed_state,

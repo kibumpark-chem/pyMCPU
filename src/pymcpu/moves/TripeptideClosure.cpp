@@ -305,7 +305,6 @@ void TripeptideSolver::get_poly_coeff(Eigen::Matrix<double, 17, 1>& poly_coeff)
     poly_mul_sub2<2, 0, 2, 2, 2, 0, 2, 2>(u13, um4, u12, um3, um6);
     poly_mul_sub2<2, 0, 2, 4, 0, 2, 4, 2>(u11, um5, u31, um6, q_tmp);
     
-    Q.block<5,5>(0,0) = q_tmp;
     R.block<3, 1>(0, 0) = C0.col(2); 
     R.block<3, 1>(0, 1) = C1.col(2);
     R.block<3, 1>(0, 2) = C2.col(2);
@@ -370,37 +369,12 @@ void TripeptideSolver::solve_roots(const Eigen::Matrix<double, 17, 1>& poly_coef
     sturm.solve(poly_coeff, roots);
 }
 
-// double TripeptideSolver::calc_t2(double t0) const {
-//     double t0_2 = t0 * t0;
-//     double t0_3 = t0_2 * t0;
-//     double t0_4 = t0_3 * t0;
-    
-//     double num = Q(0,4) + Q(1,4)*t0 + Q(2,4)*t0_2 + Q(3,4)*t0_3 + Q(4,4)*t0_4;
-//     double den = Q(0,3) + Q(1,3)*t0 + Q(2,3)*t0_2 + Q(3,3)*t0_3 + Q(4,3)*t0_4;
-//     return -num / den;
-// }
-
-// double TripeptideSolver::calc_t1(double t0, double t2) const {
-//     double t0_2 = t0 * t0;
-//     double t2_2 = t2 * t2;
-
-//     double U11 = C0(0, 1) + C0(1, 1) * t0 + C0(2, 1) * t0_2;
-//     double U12 = C1(0, 1) + C1(1, 1) * t0 + C1(2, 1) * t0_2;
-//     double U13 = C2(0, 1) + C2(1, 1) * t0 + C2(2, 1) * t0_2;
-
-//     double U31 = C0(0, 2) + C0(1, 2) * t2 + C0(2, 2) * t2_2;
-//     double U32 = C1(0, 2) + C1(1, 2) * t2 + C1(2, 2) * t2_2;
-//     double U33 = C2(0, 2) + C2(1, 2) * t2 + C2(2, 2) * t2_2;
-
-//     return (U31 * U13 - U11 * U33) / (U12 * U33 - U13 * U32);
-// }
-
-// Replaces calc_t2 / calc_t1 in coord_from_poly_roots. Those return the half-tangents t2, t1 as ratios whose
+// Back-substitution for coord_from_poly_roots. Solving for the half-tangents t2, t1 gives ratios whose
 // numerator and denominator both fall to rounding level when tau2 or tau1 is near pi or two roots nearly
-// coincide. Here every equation is used in the (1, cos, sin) basis, where no variable has a pole.
+// coincide, so every equation is used in the (1, cos, sin) basis instead, where no variable has a pole.
 //
 // T_i = M^T E_i M, with E_i(j, k) = C_k(j, i) the coefficient of
-//   eq0: t3^j t1^k,   eq1: t2^j t1^k,   eq2: t3^j t2^k     (t3 = the polynomial root, half_tan[2])
+//   eq0: t3^j t1^k,   eq1: t2^j t1^k,   eq2: t3^j t2^k     (t3 = the polynomial root)
 // and M mapping (1, cos, sin) to the half-angle monomials (c^2, s c, s^2): c^2 = (1 + cos)/2, s c = sin/2,
 // s^2 = (1 - cos)/2.
 void TripeptideSolver::build_trig_coeff()
@@ -426,7 +400,7 @@ void TripeptideSolver::build_trig_coeff()
 // Given (cos tau3, sin tau3) of a root, return (cos, sin) of tau1 and tau2.
 //   tau2: eq2(tau3, .) is a line in (cos tau2, sin tau2); of its two circle points keep the one for which
 //         eq0(tau3, .) and eq1(tau2, .) meet on the circle (pair_residual; this is the quartic condition
-//         calc_t2 reduced, written without a division).
+//         in t2, written without a division).
 //   tau1: of the two circle points of eq0(tau3, .) keep the one that satisfies eq1(tau2, .).
 void TripeptideSolver::back_substitute(double c3, double s3,
                                        double& c1, double& s1,
@@ -468,51 +442,6 @@ bool TripeptideSolver::closes(const Solution& sol) const
         if (!(std::abs(std::acos(cosang) - theta[i]) <= kClosureTol)) return false;
     }
     return true;
-}
-
-double TripeptideSolver::calc_t1(double t0, double t2) const {
-    double t0_2 = t0 * t0;
-    double t2_2 = t2 * t2;
-    
-    // Notice the indices are flipped to (row, power) to match the below code's [row][col]
-    double U11 = C0(0, 0) + C0(1, 0) * t0 + C0(2, 0) * t0_2;
-    double U12 = C1(0, 0) + C1(1, 0) * t0 + C1(2, 0) * t0_2;
-    double U13 = C2(0, 0) + C2(1, 0) * t0 + C2(2, 0) * t0_2;
-
-    double U31 = C0(0, 1) + C0(1, 1) * t2 + C0(2, 1) * t2_2;
-    double U32 = C1(0, 1) + C1(1, 1) * t2 + C1(2, 1) * t2_2;
-    double U33 = C2(0, 1) + C2(1, 1) * t2 + C2(2, 1) * t2_2;
-
-    return (U31 * U13 - U11 * U33) / (U12 * U33 - U13 * U32);
-}
-
-double TripeptideSolver::calc_t2(double t0) const {
-    double t0_2 = t0 * t0;
-    double t0_3 = t0_2 * t0;
-    double t0_4 = t0_3 * t0;
-
-    // Evaluating polynomials A0 through A4 using rows of Q
-    double A0 = Q(0,0) + Q(1,0)*t0 + Q(2,0)*t0_2 + Q(3,0)*t0_3 + Q(4,0)*t0_4;
-    double A1 = Q(0,1) + Q(1,1)*t0 + Q(2,1)*t0_2 + Q(3,1)*t0_3 + Q(4,1)*t0_4;
-    double A2 = Q(0,2) + Q(1,2)*t0 + Q(2,2)*t0_2 + Q(3,2)*t0_3 + Q(4,2)*t0_4;
-    double A3 = Q(0,3) + Q(1,3)*t0 + Q(2,3)*t0_2 + Q(3,3)*t0_3 + Q(4,3)*t0_4;
-    double A4 = Q(0,4) + Q(1,4)*t0 + Q(2,4)*t0_2 + Q(3,4)*t0_3 + Q(4,4)*t0_4;
-
-    // Evaluating polynomials B0 through B2 using rows of R
-    // Note: Your TripeptideSolver MUST have the R matrix defined for this to work.
-    double B0 = R(0,0) + R(1,0)*t0 + R(2,0)*t0_2;
-    double B1 = R(0,1) + R(1,1)*t0 + R(2,1)*t0_2;
-    double B2 = R(0,2) + R(1,2)*t0 + R(2,2)*t0_2;
-
-    double B2_2 = B2 * B2;
-    double B2_3 = B2_2 * B2;
-
-    double K0 = A2 * B2 - A4 * B0;
-    double K1 = A3 * B2 - A4 * B1;
-    double K2 = A1 * B2_2 - K1 * B0;
-    double K3 = K0 * B2 - K1 * B1;
-    
-    return (K3 * B0 - A0 * B2_3) / (K2 * B2 - K3 * B1);
 }
 
 void TripeptideSolver::coord_from_poly_roots(const std::vector<double>& roots, 
@@ -558,8 +487,7 @@ void TripeptideSolver::coord_from_poly_roots(const std::vector<double>& roots,
 
     build_trig_coeff();
     for (size_t i_soln = 0; i_soln < roots.size(); ++i_soln) {
-        // tau3 from the root t3 = tan(tau3/2); tau1, tau2 from the pole-free back-substitution
-        // (was: half_tan[1] = calc_t2(t3); half_tan[0] = calc_t1(t3, half_tan[1]); then t -> cos, sin).
+        // tau3 from the root t3 = tan(tau3/2); tau1, tau2 from the pole-free back-substitution.
         const double t3 = roots[i_soln];
         const double d3 = 1.0 + t3 * t3;
         cos_tau[3] = (1.0 - t3 * t3) / d3;
@@ -650,10 +578,10 @@ void TripeptideSolver::coord_from_poly_roots(const std::vector<double>& roots,
 //     return 1.0 / std::abs(det); 
 // }
 
-// KIC FIX (F6): orientation-free Jacobian. The previous body (legacy jac_local.h:114-130) used
-// the lab x/y (or x/z) components of the CA3->C3 bond; the phi driver rotates that bond, so its J
-// was J_true / |u_z| and a phi-driver move's weight depended on how the molecule sat in the lab
-// (checked to 1e-12 on 1,240 closures). This is 1/|det| of the 6x6 matrix of Pluecker twists
+// Orientation-free Jacobian. Legacy jac_local.h:114-130 used the lab x/y (or x/z)
+// components of the CA3->C3 bond; the phi driver rotates that bond, so its J is
+// J_true / |u_z| and a phi-driver move's weight would depend on how the molecule sits in the
+// lab (checked to 1e-12 on 1,240 closures). This is 1/|det| of the 6x6 matrix of Pluecker twists
 // (u_i, p_i x u_i) of the six window torsion axes (phi1, psi1, phi2, psi2, phi3, psi3): invariant
 // under any rigid motion, equal to J_true. Moments are taken about CA1 to keep them small.
 double TripeptideSolver::calculate_jacobian(const Solution& sol) const

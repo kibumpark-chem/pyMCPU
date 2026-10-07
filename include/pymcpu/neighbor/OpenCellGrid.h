@@ -82,14 +82,22 @@ inline int stencil_radius_for(float query_radius, float cell) {
 /// never meets the same cell twice after wrapping, then, while the total is
 /// over `max_cells`, the longest axis trimmed (never below 2R + 1). A
 /// trimmed grid still files every atom (the index wraps); it only lists
-/// more far-away atoms per cell. Returns false for an invalid box.
+/// more far-away atoms per cell. Before trimming, an axis has at most
+/// kMaxAxisCells cells (a huge or infinite extent, which would overflow the
+/// int conversion and the cell-count product) and a NaN or negative extent
+/// gets 2R + 1.
+/// Returns false for an invalid box.
 inline bool compute_grid_shape(const BoxBounds& b, float cell, float query_radius,
                                std::uint64_t max_cells,
                                int& nx, int& ny, int& nz) {
     if (!b.valid || !(cell > 0.f)) return false;
     const int min_n = 2 * stencil_radius_for(query_radius, cell) + 1;
+    constexpr int kMaxAxisCells = 1 << 20;
     auto dim = [&](float lo, float hi) -> int {
-        return std::max(min_n, static_cast<int>(std::ceil((hi - lo) / cell)));
+        const float n = std::ceil((hi - lo) / cell);
+        if (!(n >= 0.0f)) return min_n;
+        if (n >= static_cast<float>(kMaxAxisCells)) return std::max(min_n, kMaxAxisCells);
+        return std::max(min_n, static_cast<int>(n));
     };
     nx = dim(b.lo.x(), b.hi.x());
     ny = dim(b.lo.y(), b.hi.y());
@@ -110,15 +118,17 @@ inline bool compute_grid_shape(const BoxBounds& b, float cell, float query_radiu
  * Dense cell grid with a wrapped cell index.
  * An atom at x is filed under cell floor((x - lo) / cell) mod n on each axis,
  * so atoms anywhere, however far outside the box the grid was sized for,
- * have a cell, and a stencil walk wraps the same way. A cell then also
- * lists atoms a whole number of grid periods (n * cell) away from the query;
- * every caller measures each candidate's true distance, so those are
- * dropped and the pairs found are exactly the pairs in range. Nothing ever
- * leaves the grid: it is rebuilt only to recentre it (set_positions) or
- * after an overflow. Inside the box the cells are the old ones, in the same
- * order, and the cells a stencil wraps into are the empty margin cells of
- * the far face, so a state that stays in the box walks the same atoms in the
- * same order as an open grid.
+ * have a cell, and a stencil walk wraps the same way. Nothing ever leaves the
+ * grid: it is rebuilt only to recentre it (set_positions) or after an
+ * overflow.
+ *
+ * The wrapping is exact. A cell can also list atoms a whole number of grid
+ * periods (n * cell) away from the query; every caller measures each
+ * candidate's true distance, so those are dropped, and the atoms in range
+ * keep their relative slot order. A walk therefore finds the pairs in range,
+ * in the order an unwrapped grid would. While every atom is inside an
+ * untrimmed box, the cells a stencil wraps into are the empty margin cells
+ * of the far face and add no candidates at all.
  *
  * Each cell keeps its atoms in one fixed block of Cap slots (ids plus packed
  * x/y/z), newest first, so a walk over a cell is one sequential read. With
@@ -161,53 +171,6 @@ public:
     /// owner must stop using it until a rebuild fits.
     bool overflowed() const noexcept { return overflowed_; }
 
-    /// Diagnostic: count empty vs nonempty stencil cells at (x,y,z). O(stencil).
-    /// Temporary for walk characterization; not used in production denselist.
-    struct StencilOccupancy {
-        std::size_t empty = 0;
-        std::size_t nonempty = 0;
-        std::size_t atoms = 0;   ///< sum of cell_count over nonempty in-stencil cells
-    };
-    StencilOccupancy probe_stencil_occupancy(float x, float y, float z) const {
-        StencilOccupancy s;
-        if (!configured_ || neighbor_offsets_.empty()) return s;
-        const int ix0 = wrap_(unwrapped_cell_(x, bounds_.lo.x()), nx_);
-        const int iy0 = wrap_(unwrapped_cell_(y, bounds_.lo.y()), ny_);
-        const int iz0 = wrap_(unwrapped_cell_(z, bounds_.lo.z()), nz_);
-        for (const CellOffset& o : neighbor_offsets_) {
-            const int c = cell_at_(wrap_(ix0 + o.dx, nx_), wrap_(iy0 + o.dy, ny_),
-                                   wrap_(iz0 + o.dz, nz_));
-            const int count = cell_count_[static_cast<size_t>(c)];
-            if (count == 0) {
-                ++s.empty;
-            } else {
-                ++s.nonempty;
-                s.atoms += static_cast<std::size_t>(count);
-            }
-        }
-        return s;
-    }
-
-    /// Atom-id span for cell ``c``. O(1).
-    [[nodiscard]] std::pair<const int*, int> cell_atoms_span(int c) const noexcept {
-        if (c < 0 ||
-            c >= static_cast<int>(cell_count_.size())) {
-            return {nullptr, 0};
-        }
-        return {cell_atoms_.data() + static_cast<size_t>(c) * CELL_CAPACITY,
-                cell_count_[static_cast<size_t>(c)]};
-    }
-
-    /// Packed x/y/z spans parallel to cell_atoms_span. O(1).
-    [[nodiscard]] const float* cell_x_span(int c) const noexcept {
-        return cell_x_.data() + static_cast<size_t>(c) * CELL_CAPACITY;
-    }
-    [[nodiscard]] const float* cell_y_span(int c) const noexcept {
-        return cell_y_.data() + static_cast<size_t>(c) * CELL_CAPACITY;
-    }
-    [[nodiscard]] const float* cell_z_span(int c) const noexcept {
-        return cell_z_.data() + static_cast<size_t>(c) * CELL_CAPACITY;
-    }
 
     /**
      * Visit only the cells that can hold an atom within `radius` and an atom
@@ -495,16 +458,6 @@ public:
     inline int atom_cell(int atom_id) const noexcept {
         if (atom_id < 0 || atom_id >= static_cast<int>(atom_cell_.size())) return -1;
         return atom_cell_[static_cast<size_t>(atom_id)];
-    }
-
-    /// Walk atoms currently in cell ``c`` (read-only). O(cell_count).
-    template <typename Func>
-    void for_each_in_cell(int c, Func&& func) const {
-        if (!configured_ || c < 0 || c >= static_cast<int>(cell_count_.size())) return;
-        const int* atoms =
-            cell_atoms_.data() + static_cast<size_t>(c) * CELL_CAPACITY;
-        const int count = cell_count_[static_cast<size_t>(c)];
-        for (int k = 0; k < count; ++k) func(atoms[k]);
     }
 
     void insert(int atom_id, float px, float py, float pz) {

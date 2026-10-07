@@ -21,7 +21,6 @@
 #include "pymcpu/neighbor/PairScratch.h"
 #include "pymcpu/neighbor/NeighborConfig.h"
 #include "pymcpu/neighbor/NeighborSystem.h"
-#include "pymcpu/utils/CoordSyncStats.h"
 
 namespace mcpu {
 
@@ -234,9 +233,6 @@ private:
                                   const std::optional<Eigen::Vector3d>& frame_offset);
 
 public:
-    float contactCutoffA() const noexcept { return neighbors_.mu_cutoff_A(); }
-    static constexpr float hbondCutoffA() noexcept { return NeighborSystem::kHBondCutoffA; }
-
     explicit Context(std::shared_ptr<System> sys);
     /// Places the atoms, in build order and the user's frame. The first
     /// placement fixes the frame offset (utils/FrameOffset.h) unless
@@ -253,9 +249,6 @@ public:
     double calculate_total_energy(int target_group = -1);
     double calculate_total_energy_raw(int target_group = -1) const;
     double calculate_delta_energy(const State& proposed_state, const ProposalPatch& patch) const;
-    [[nodiscard]] bool has_hard_constraint_violation() const noexcept {
-        return last_total_reject_reason_ != RejectReason::None;
-    }
     [[nodiscard]] bool has_steric_clash() const noexcept {
         return last_total_reject_reason_ == RejectReason::StericClash;
     }
@@ -324,10 +317,6 @@ public:
     void reset_neighbor_proxy_stats() {
         neighbors_.stats().reset();
     }
-    [[deprecated(
-        "Neighbor-list tuning only. Auto-print was removed from Integrator::run(). "
-        "Will be removed in a future release.")]]
-    void print_neighbor_proxy_stats(const char* tag = "neighbor-proxy") const;
     /// Skip the pairs a rigid pivot carries (default true); see
     /// NeighborConfig::skip_rigid_mm. O(1) flag.
     void set_skip_rigid_mm(bool on) noexcept {
@@ -376,14 +365,6 @@ public:
     }
 
 
-    // NOTE: coord_sync_stats() is a single process-wide global (see
-    // CoordSyncStats.h), not per-Context state. Calling these on any one
-    // Context reads/resets the SAME counters shared by every other Context
-    // instance (e.g. all walkers in a multi-walker/replica run).
-    void reset_coord_sync_stats() noexcept { coord_sync_stats().reset(); }
-    CoordSyncStats& coordSyncStats() noexcept { return coord_sync_stats(); }
-    const CoordSyncStats& coordSyncStats() const noexcept { return coord_sync_stats(); }
-
     MuWorkspace& getWorkspace() noexcept { return mu_workspace_; }
     const MuWorkspace& getMuWorkspace() const { return mu_workspace_; }
     neighbor::PairScratch& pairScratch() const noexcept { return pair_scratch_; }
@@ -420,9 +401,6 @@ public:
     [[nodiscard]] State&            getState() { return state; }
     [[nodiscard]] const System&     getSystem() const { return *system; }
     [[nodiscard]] System&           getSystem() { return *system; }
-
-    /// Mu index only (BB+O+SC).
-    [[nodiscard]] const CellListMC& getGridContact() const { return neighbors_.muGrid(); }
 
 };
 

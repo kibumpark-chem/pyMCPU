@@ -181,7 +181,7 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
 
     static constexpr float kHardCorePenalty = 99999.0f;
     /// Absolute parameter sanity bound (Å²). Denselist uses mu_exact_cutoff_.
-    static constexpr float kLegacyContactCutoffSq = 6.0f * 6.0f;
+    static constexpr float kMaxParamCutoffSq = 6.0f * 6.0f;
     static constexpr float kMuCutoffFallbackA = 6.0f;
 
     /// True when MCPU_VERBOSE is set (not "0"); read once.
@@ -277,12 +277,12 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
         atom_types(std::move(atom_types)),
         atom_to_residue(std::move(atom_to_residue)) {
         if (this->contact_dist_sq.size() > 0 &&
-            this->contact_dist_sq.maxCoeff() > kLegacyContactCutoffSq) {
+            this->contact_dist_sq.maxCoeff() > kMaxParamCutoffSq) {
             throw std::invalid_argument(
                 "MuPotential: contact distance exceeds the 6 A neighbor cutoff");
         }
         if (this->hard_core_sq.size() > 0 &&
-            this->hard_core_sq.maxCoeff() > kLegacyContactCutoffSq) {
+            this->hard_core_sq.maxCoeff() > kMaxParamCutoffSq) {
             throw std::invalid_argument(
                 "MuPotential: hard-core distance exceeds the 6 A neighbor cutoff");
         }
@@ -618,7 +618,7 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
                          topo_flag_.size() / (1024.0 * 1024.0));
         }
         build_compact_topo();
-        // CHANGED: exact denselist cutoff from type_params_ (default ON).
+        // The query cutoff from type_params_ (see mu_exact_cutoff_).
         apply_mu_denselist_cutoff();
     }
 

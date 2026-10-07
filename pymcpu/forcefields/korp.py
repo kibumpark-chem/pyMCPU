@@ -486,9 +486,8 @@ class KORPForceField(BaseForceField):
         potential.set_energy_group(KORP_ENERGY_GROUP)
         potential.set_name("korp_6d")
         system.add_potential(potential)
-        #: Kept so callers can reach the term after the system is built -- the
-        #: rigid-skip toggle in particular, which tests use to check the
-        #: incremental path against an enumeration that assumes nothing.
+        #: The KORP pair term added to the system, so callers can reach it
+        #: after ``create_system``.
         self.pair_potential = potential
         return system
 

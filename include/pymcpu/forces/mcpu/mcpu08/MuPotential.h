@@ -59,12 +59,9 @@ namespace mcpu::forces::mcpu08 {
         /// Indexed [type_i * n_types_ + type_j]. At N_TYPES=84 that is 7056
         /// entries = 110 KB -- L2-resident, NOT L1 (32 KB L1d).
         ///
-        /// FIXED: keep sizeof == 16. A precomputed `hard_r` field briefly took
-        /// this to 20 B, which is not a divisor of the 64 B line, so 25% of
-        /// entries straddled two lines (at 16 B: none do) and the by-value copy
-        /// in eval_pair stopped being a single movups. `hard_r` was
-        /// write-only anyway -- it existed solely to feed hard_tol_r2_from() on
-        /// the following line at setup, so it is now a local there instead.
+        /// Keep sizeof == 16: it divides the 64 B line, so no entry straddles
+        /// two lines, and the by-value copy in eval_pair is a single movups
+        /// (20 B would split 25% of entries).
         struct TypePairParams {
             float hard_r2    = 0.f;
             float contact_r2 = 0.f;
@@ -494,28 +491,12 @@ namespace mcpu::forces::mcpu08 {
             const ProposalPatch& patch
         ) const override;
 
-        /// Diagnostic sizes (KB). O(1).
-        [[nodiscard]] double type_params_size_kb() const noexcept {
-            return static_cast<double>(type_params_.size() * sizeof(TypePairParams))
-                / 1024.0;
-        }
-
         /// The Mu query cutoff (Å); see mu_exact_cutoff_. O(1).
         [[nodiscard]] float mu_exact_cutoff() const noexcept {
             return mu_exact_cutoff_;
         }
-        /// Active denselist r² prefilter (= mu_exact_cutoff_²). O(1).
-        [[nodiscard]] float mu_cutoff_sq() const noexcept {
-            return contact_cutoff_sq_;
-        }
-        [[nodiscard]] float contact_cutoff_sq() const noexcept {
-            return contact_cutoff_sq_;
-        }
-        /// Recompute mu_exact_cutoff_ from type_params_ (or matrices) + env override.
+        /// Recompute mu_exact_cutoff_ from type_params_ (or the matrices).
         void apply_mu_denselist_cutoff();
-        [[nodiscard]] double topo_flag_size_mb() const noexcept {
-            return static_cast<double>(topo_flag_.size()) / (1024.0 * 1024.0);
-        }
 
     };
 

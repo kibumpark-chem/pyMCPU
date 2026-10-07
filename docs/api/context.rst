@@ -92,10 +92,6 @@ Core state
    Method form of reading :py:attr:`Context.coords`; returns a ``float64``
    ``(3, n)`` array.
 
-.. py:method:: Context.set_coords_from_python(coords, /) -> None
-
-   Method form of writing :py:attr:`Context.coords`.
-
 .. _context-frame:
 
 The engine frame
@@ -215,12 +211,6 @@ Clash and constraint queries
    Whether the most recent total-energy evaluation was rejected for a
    hard-core overlap.
 
-.. py:method:: Context.has_hard_constraint_violation() -> bool
-
-   Whether the most recent total-energy evaluation was hard-rejected
-   for any reason. Steric clash is currently the only such reason, so
-   this and :py:meth:`Context.has_steric_clash` agree today.
-
 .. important::
    Both queries report the result of the **last** total-energy
    evaluation; neither re-evaluates. Call
@@ -323,24 +313,12 @@ play; nothing about the physics depends on them.
 
    Whether the hydrogen-bond term fell back off its indexed path.
 
-.. py:method:: Context.coord_sync_stats() -> dict
+.. py:method:: Context.neighbor_grid_rebuilds() -> int
 
-   Coordinate-materialization counters, with keys
-   ``num_coords_eigen_materializations`` and
-   ``num_coords_eigen_writes_back``.
-
-.. py:method:: Context.reset_coord_sync_stats() -> None
-
-   Zero the counters above.
-
-Deprecated
-----------
-
-.. py:method:: Context.print_neighbor_proxy_stats(tag='neighbor-proxy') -> None
-
-   .. deprecated:: 0.1.0
-      Print neighbor-list proxy statistics (developer tuning only).
-      Will be removed in a future version.
+   Full rebuilds of the neighbour grids since the last
+   ``reset_neighbor_proxy_stats()``: one per ``set_positions`` and one
+   after each cell overflow. Atoms that leave a grid's box wrap, so a run
+   does not rebuild otherwise.
 
 State
 -----
