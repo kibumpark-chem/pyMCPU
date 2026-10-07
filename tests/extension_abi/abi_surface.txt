@@ -169,10 +169,8 @@ Potential.is_enabled
 Potential.set_enabled
 Potential.set_energy_group
 Potential.set_name
-MuPotential.bench_eval_pair_only
 MuPotential.cache_necessary_data
 MuPotential.calculate_energy_change
-MuPotential.clash_exception_count
 MuPotential.contact_list_rebuilds
 MuPotential.get_energy_group
 MuPotential.get_name
@@ -182,11 +180,8 @@ MuPotential.mu_exact_cutoff
 MuPotential.set_enabled
 MuPotential.set_energy_group
 MuPotential.set_name
-MuPotential.set_topology_atom_meta
 MuPotential.topo_flag_size_mb
 MuPotential.type_params_size_kb
-MuPotential.use_topo_flags
-MuPotential.verify_layered_eval_consistency
 HBondPotential.get_energy_group
 HBondPotential.get_name
 HBondPotential.is_enabled

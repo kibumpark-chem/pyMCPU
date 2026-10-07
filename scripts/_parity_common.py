@@ -37,8 +37,7 @@ def build_ctx(pdb: Path):
 
     Callers that need non-default settings (e.g. skip_rigid_mm)
     keep their own build_ctx variant -- this only covers the exact sequence
-    duplicated byte-for-byte across parity_layered_eval.py and
-    parity_sparse_proposal.py.
+    parity_sparse_proposal.py uses.
     """
     traj = md.load(str(pdb))
     if any(a.element.symbol == "H" for a in traj.topology.atoms):

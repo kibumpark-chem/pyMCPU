@@ -22,17 +22,7 @@ import pymcpu
 REPO_ROOT = Path(pymcpu.PACKAGE_ROOT).parent
 TINY_PDB = REPO_ROOT / "examples" / "data" / "1uao.pdb"
 
-# Both tests below need a real MCPUForceField/System built via the Python
-# forcefield API, which requires a newer mcpu_core than plain MC stepping
-# does -- shared here so the reason for skipping is stated once, not
-# copy-pasted per test.
-pytestmark = [
-    pytest.mark.skipif(not TINY_PDB.is_file(), reason="example PDB missing"),
-    pytest.mark.skipif(
-        not hasattr(pymcpu.mcpu_core.MuPotential, "set_topology_atom_meta"),
-        reason="Installed mcpu_core is older than Python forcefield API",
-    ),
-]
+pytestmark = pytest.mark.skipif(not TINY_PDB.is_file(), reason="example PDB missing")
 
 
 def test_rex_checkpoint_restores_coords_and_cycle(tmp_path: Path) -> None:

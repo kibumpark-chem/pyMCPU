@@ -563,10 +563,6 @@ class MCPUForceField(BaseForceField):
             lambda_val=_MU_LAMBDA_DEFAULT,
             alpha_val=_MU_ALPHA_DEFAULT
         )
-        # Layer 1 metadata for three-layer Mu eval
-        mu_potential.set_topology_atom_meta(
-            *MuPotentialBuilder.layer1_atom_meta(self.ordered_atom_list)
-        )
         topo_contact, topo_clash = MuPotentialBuilder.build_topology_masks(
             self.ordered_atom_list,
             self.n_atoms

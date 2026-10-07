@@ -1219,27 +1219,6 @@ PYBIND11_MODULE(mcpu_core, m) {
              py::arg("types"), py::arg("to_residue"))
         .def("cache_necessary_data", &m08::MuPotential::cache_necessary_data,
              py::arg("topo_contact_mask"), py::arg("topo_clash_mask"), py::arg("coords"))
-        .def(
-            "set_topology_atom_meta",
-            &m08::MuPotential::set_topology_atom_meta,
-            py::arg("res_index"), py::arg("is_sidechain"), py::arg("atom_role"),
-            py::arg("res_class"),
-            "Layer 1 per-atom topology metadata for three-layer eval.")
-        .def_property(
-            "use_topo_flags",
-            &m08::MuPotential::use_topo_flags,
-            &m08::MuPotential::set_use_topo_flags,
-            "Layered v2: precomputed topo_flag_ (default True). "
-            "False = v1 on-the-fly Layer 1 decode. MCPU_TOPO_FLAGS=0.")
-        .def("verify_layered_eval_consistency",
-             &m08::MuPotential::verify_layered_eval_consistency,
-             "Compare layered v1 vs v2 for all pairs × test r².")
-        .def("bench_eval_pair_only", &m08::MuPotential::bench_eval_pair_only,
-             py::arg("n_iter") = 1000000,
-             "Microbench eval_pair ns/call (stderr).")
-        .def_property_readonly(
-            "clash_exception_count",
-            &m08::MuPotential::clash_exception_count)
         .def_property_readonly(
             "topo_flag_size_mb", &m08::MuPotential::topo_flag_size_mb)
         .def_property_readonly("type_params_size_kb", &m08::MuPotential::type_params_size_kb)

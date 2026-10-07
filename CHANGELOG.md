@@ -1252,6 +1252,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   now sends every Mu move to the all-pairs moved-vs-all delta, an exact
   reference that costs O(n_moved x N) per move, for checks only. Each
   `Context` is about 200 KB smaller. Default runs are bit-identical.
+- **The second, hand-mirrored copy of the Mu pair rules.** `MuPotential`
+  could decide which pairs clash or make contacts either from the per-pair
+  flag table built in `cache_necessary_data` (the default) or by decoding
+  per-atom roles on the fly, the path `MCPU_TOPO_FLAGS=0` selected. The two
+  copies had drifted apart before, so the variable changed trajectories, not
+  just the code path. The flag table is now the only one, and a Mu rule
+  change is a Python change in `MuPotentialBuilder.build_topology_masks`.
+  Gone with it: the `MCPU_TOPO_FLAGS` environment variable; the
+  `MuPotential` methods and properties `set_topology_atom_meta`,
+  `use_topo_flags`, `verify_layered_eval_consistency`,
+  `bench_eval_pair_only` and `clash_exception_count`;
+  `MuPotentialBuilder.layer1_atom_meta`; and
+  `scripts/parity_layered_eval.py`. Results are bit-identical.
 
 ## [0.1.0] — 2026-09-16
 
