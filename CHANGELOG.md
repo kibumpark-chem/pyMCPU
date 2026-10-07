@@ -554,6 +554,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rebuilds (set_positions and overflow recovery), not bounding-box
   rebuilds after a move.
 
+- **`scripts/run_mcpu_replica_exchange.py` takes a config file only.** The
+  old flag interface (`--pdb`, `--temp-min`/`--temp-step`/`--n-temps`,
+  `--temperatures`, `--n-targets`, `--k-bias`, `--num-cycles`,
+  `--mc-replica-steps`, `--output-prefix`, `--fixed-residue-indices` and
+  the rest) is gone, with its second config-to-kwargs adapter. `-c` is now
+  required; `--mpi`, `--hdf5` and the checkpoint options (`--resume`,
+  `--checkpoint-dir`, ...) stay. Write the old flags as keys of a YAML
+  config (see `examples/configs/template.yaml`).
+
 - **`FoldingRunner` raises when it cannot build its native-contact CV.** It
   used to log a warning and rebuild the contacts from CA atoms, so a run
   set to `contact_atom_mode: cb` could silently track CA contacts instead.

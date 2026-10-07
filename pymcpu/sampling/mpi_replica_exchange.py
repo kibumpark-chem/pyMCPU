@@ -119,7 +119,8 @@ class MPIReplicaExchange:
     Launch with fewer MPI ranks than replicas to run multiple trajectories
     sequentially on each CPU::
 
-        mpirun -n 10 python scripts/run_mcpu_replica_exchange.py --mpi --n-temps 20
+        # config.yaml with 20 replicas
+        mpirun -n 10 python scripts/run_mcpu_replica_exchange.py --mpi -c config.yaml
 
     Each rank steps its local replicas one after another, then all ranks
     participate in exchange attempts. Exchanges between two replicas on the

@@ -1,20 +1,10 @@
 """Characterization + regression tests for scripts/run_mcpu_replica_exchange.py.
 
-Before this file existed, this script had zero test coverage anywhere in the
-repo, despite being what drives real production REMD jobs on the cluster
-(see ~/group_folder/p18.8.3__pymcpu_bug_fix/submission.sh, which calls
-``python scripts/run_mcpu_replica_exchange.py --mpi -c <yaml>``). The
-``--config``/YAML-JSON path used to hand-roll its own config-to-kwargs
-adapter (``_kwargs_from_config``) that duplicated ``pymcpu.config``'s
-parsing and constructed ``ReplicaExchange``/``MPIReplicaExchange`` directly,
-bypassing ``pymcpu.runners.run_from_config`` -- the same path ``mcpu run``
-and the GROMACS-style example already use. It has since been rewritten to
-go through ``run_from_config`` (see ``_run_from_config_path``); these tests
-pin that rewrite's dispatch behavior and, separately, run it for real
-end-to-end against a tiny config.
-
-The legacy CLI-flags path (``_rex_kwargs``, no ``--config``) is untouched by
-that rewrite and isn't re-tested here.
+This script drives the production REMD jobs on the cluster
+(``python scripts/run_mcpu_replica_exchange.py --mpi -c <yaml>``). It takes a
+config file only and goes through ``pymcpu.runners.run_from_config``, the
+same path as ``mcpu run``; these tests pin its dispatch behavior and,
+separately, run it for real end-to-end against a tiny config.
 """
 
 from __future__ import annotations
@@ -148,6 +138,23 @@ def test_config_path_keeps_the_config_checkpoint_settings_without_flags(
 
     checkpoint = called.call_args.args[0].checkpoint
     assert (checkpoint.checkpoint_interval, checkpoint.keep_last_n) == (7, 2)
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        [],
+        ["--pdb", str(EXAMPLE_PDB), "--temp-min", "0.4", "--n-temps", "2"],
+    ],
+    ids=["no-config", "old-flags"],
+)
+def test_requires_a_config_file(
+    script: ModuleType, monkeypatch: pytest.MonkeyPatch, argv: list[str]
+) -> None:
+    monkeypatch.setattr(sys, "argv", ["run_mcpu_replica_exchange.py", *argv])
+    with pytest.raises(SystemExit) as exit_info:
+        script.parse_args()
+    assert exit_info.value.code == 2
 
 
 def test_config_path_rejects_config_missing_replica_exchange(
