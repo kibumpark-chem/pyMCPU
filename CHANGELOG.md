@@ -477,6 +477,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The neighbour grid keeps each cell once.** With the linked lists gone
+  (see Removed), an insert or removal touches only the cell's packed block,
+  and the occupied stencil is no longer timed with two clock reads per
+  update. Bit-identical (parity vs ec954cf; actin, PGK1 and T4L default,
+  actin pivot-only and KIC-only, PGK1 pivot-only, and the masked runs all
+  give the same accept bits and final energy as before). Cycles per step,
+  n=3, 50k steps: actin -1.3% default, -2.4% pivot-only, PGK1 -1.6% and
+  -2.6%, T4L -0.8%, with instructions within 0.3%; masked runs (with the
+  grid change above) actin ignore_all:0:40 -8.7%, ignore_all:150:30 -5.1%,
+  clash_only:0:40 -1.1%, PGK1 ignore_all:0:40 -5.9%. About 650 lines of C++
+  go.
+
+- **A neighbour-grid cell that fills up switches its grid off instead of
+  falling back to linked lists.** Cells hold 48 atoms. A cell asked to hold
+  more used to switch the whole grid to per-cell linked lists for the rest
+  of the grid's life, about 35x slower (actin with 10 A cells: 398 s against
+  11 s per million steps). The atom is now left out, the grid goes inactive
+  (Mu takes the exact all-pairs delta, H-bonds the brute-force search), and
+  every accepted move retries the rebuild until the grid fits.
+  `neighbor_proxy_stats()` gains `mu_grid_active`, `mu_grid_overflows` and
+  `hbond_grid_overflows`; the warning prints once under `MCPU_VERBOSE`.
+
+- **The Mu neighbour grid leaves out the atoms of residues an `ignore_all`
+  energy mask switches off.** Every pair with such an atom scores 0 and
+  cannot clash, so only zero terms go and the order of the other atoms in
+  each cell is kept: masked runs are bit-identical (actin ignore_all at
+  residues 0-39 and 150-179, clash_only at 0-39, PGK1 ignore_all at 0-39,
+  same accept bits and final energy), and faster, about 7% fewer
+  instructions per step on actin ignore_all:0:40. It also restores the
+  hard-core bound on how many atoms share a cell: masked atoms overlap
+  freely, and actin with the whole chain masked filled a 48-atom cell. A
+  mask set or cleared between runs updates the membership in place: at
+  `MCIntegrator.run`, on the next accepted move, or lazily when
+  `MuPotential::calculateEnergyChange` sees the mask has changed, so Mu
+  never runs on a stale grid (until the sync, `neighbor_proxy_stats()`
+  shows the grid as inactive).
+  `neighbor_proxy_stats()` gains `mu_grid_n_atoms`.
+
 - **Rigid pivots carry an H-bond again until rounding could change its
   score, which gives back the 6-8% pivot cost of re-scoring them.** Each
   listed H-bond pair now records its slack: the smallest change in the
@@ -1176,6 +1214,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the only hard-rejecting term.
 
 ### Removed
+
+- **The neighbour grid's linked lists and the knobs around them.** Each
+  grid kept every cell twice, as a fixed 48-slot block and as a linked list
+  that served queries only after a cell overflowed; a full cell now
+  switches the grid off instead, so the lists, `MCPU_USE_CONTIGUOUS_CELLS`
+  and the per-atom Mu grid walk they fed are gone (a Mu move the contact
+  list cannot follow takes the exact all-pairs delta, as under
+  `MCPU_CONTACT_LIST=0`). Also gone: the scratch grid of moved atoms that
+  walk used; the occupied-stencil modes and `MCPU_OCCUPIED_STENCIL` (the Mu
+  grid always walks its occupied stencil, the H-bond grids the full one, as
+  by default before) with their timers and the end-of-run `occ_stencil`
+  line under `MCPU_VERBOSE`; and the Mu cell-size knobs `MCPU_MU_CELL_SCALE`,
+  `Context.set_mu_cell_size_scale` / `set_mu_cell_size_angstrom` /
+  `set_mu_cell_size_min_angstrom`, their getters and
+  `effective_mu_cell_size_A`, with the matching `neighbor_proxy_stats()`
+  keys. The cell is the Mu cutoff: larger cells were slower in wall time
+  and are what the occupancy bound does not cover (10 A cells overflowed).
+  `Context.mu_cell_size_A()` still reports it. `neighbor_proxy_stats()`
+  drops `mu_grid_contiguous`, and `mu_num_candidates_iterated` and
+  `avg_mu_candidates_per_step`, which only the per-atom walk fed.
 
 - **Checkpoint upload: `cloud_sync`, `cloud_bucket` and `cloud_sync_cmd`.**
   After each save it started `<cloud_sync_cmd> last.chk

@@ -45,7 +45,6 @@ public:
     NeighborSystem() = default;
 
     void init(const System& sys, NeighborConfig cfg = {}) {
-        apply_neighbor_env_overrides(cfg);
         cfg_ = cfg;
         n_atoms_ = sys.getNumAtoms();
         n_bb_ = sys.getTotalBBAtoms();
@@ -115,6 +114,9 @@ public:
             h_atom_ids_.clear();
             for (int i = h_begin_; i < n_atoms_; ++i) h_atom_ids_.push_back(i);
         }
+        in_mu_base_ = in_mu_;
+        sys_ = &sys;
+        apply_energy_mask_();
 
         mu_grid_ = std::make_unique<CellListMC>(kMuCutoffFallbackA, n_atoms_);
         hb_o_grid_ = std::make_unique<CellListMC>(kHBondListA, n_atoms_);
@@ -195,7 +197,34 @@ public:
     const NeighborConfig& config() const noexcept { return cfg_; }
     NeighborStats& stats() const noexcept { return stats_; }
     const BoxBounds& bounds() const noexcept { return bounds_; }
-    bool denseActive() const noexcept { return dense_active_; }
+    /// The Mu grid can answer queries: it is built, and its membership
+    /// follows the System's current energy mask (see sync_energy_mask).
+    bool denseActive() const noexcept { return dense_active_ && mask_current(); }
+    /// True when the Mu grid membership was taken from the System's current
+    /// energy mask.
+    bool mask_current() const noexcept {
+        return sys_ != nullptr && sys_->energy_mask_epoch() == mask_epoch_;
+    }
+
+    /// Bring the Mu grid membership up to the System's energy mask after
+    /// set/clear_energy_ignored_residues. Atoms that leave are removed in
+    /// place, which keeps the order of every other atom in its cell; atoms
+    /// that join go in at ``coords`` (the accepted state). O(N) when the
+    /// mask changed, O(1) otherwise.
+    void sync_energy_mask(const CoordsSoA& coords) {
+        if (mask_current()) return;
+        const std::vector<uint8_t> before = in_mu_;
+        apply_energy_mask_();
+        if (!dense_active_ || !mu_grid_) return;
+        for (int i = 0; i < n_atoms_; ++i) {
+            const size_t k = static_cast<size_t>(i);
+            if (in_mu_[k] == before[k]) continue;
+            if (in_mu_[k]) mu_grid_->insert(i, coords);
+            else mu_grid_->remove(i);
+        }
+        if (note_overflow_(*mu_grid_, "Mu", stats_.mu_grid_overflows))
+            dense_active_ = false;
+    }
     bool hbondUsesFallback() const noexcept { return hb_fallback_; }
     /// The O and H grids, for walks on the pair-search layer; null before
     /// setup. Their ids are O atoms, and H atoms or (virtual amide H) donor
@@ -238,7 +267,7 @@ public:
             hb_fallback_ ? 1 : 0);
     }
 
-    /// Read-only Mu index (BB+O+SC). For moved_new_grid bounds.
+    /// Read-only Mu index (BB+O+SC).
     const CellListMC& muGrid() const { return *mu_grid_; }
 
     bool trial_in_bounds(const CoordsSoA& trial_coords,
@@ -366,10 +395,14 @@ public:
     /// Full rebuild from accepted coords. Only public mutator besides commit.
     bool rebuild_from_accepted_state(const CoordsSoA& coords) {
         ++stats_.num_aabb_rebuild_accept;
+        if (!mask_current()) apply_energy_mask_();
+        retry_rebuild_ = false;
         // AABB margin gives AutoExpand headroom around the Mu cutoff.
         // Denselist cell + query stay at mu_cutoff (legacy 6 Å or exact contact).
+        // Cell == cutoff: a one-cell stencil (27 cells) finds every pair,
+        // and the hard core bounds what a cell of that size can hold.
         const float r_mu = mu_cutoff_A();
-        const float mu_cell = effective_mu_cell_size_A(r_mu, cfg_);
+        const float mu_cell = r_mu;
         const float margin = cfg_.effective_margin(r_mu);
         BoxBounds b = aabb_of_coords(coords, margin);
         bounds_ = b;
@@ -387,11 +420,11 @@ public:
                 for (int i = 0; i < n_atoms_; ++i) {
                     if (in_mu_[static_cast<size_t>(i)]) mu_grid_->insert(i, coords);
                 }
-                // Bulk insert then enable Mu-only occupied stencil (default Full).
-                // HB/scratch grids stay Off (never call enable_occupied_stencil).
-                mu_grid_->grid().enable_occupied_stencil(
-                    OpenCellGrid::occupied_mode_from_env());
-                dense_active_ = true;
+                // Bulk insert, then the occupied stencil (Mu grid only: the
+                // H-bond grids walk the full stencil, measured wall-neutral).
+                mu_grid_->grid().enable_occupied_stencil();
+                dense_active_ = !note_overflow_(*mu_grid_, "Mu",
+                                                stats_.mu_grid_overflows);
                 stats_.neighbor_offsets_count =
                     static_cast<std::uint64_t>(
                         mu_grid_->grid().neighbor_offsets_count());
@@ -421,12 +454,12 @@ public:
                         std::fprintf(stderr, // CHANGED: gated behind MCPU_VERBOSE
                             "INFO: Mu grid occupancy cell=%.3f Å dims=%dx%dx%d "
                             "n_cells=%llu occupied=%d avg_occ=%.2f max_occ=%d "
-                            "peak=%d contiguous=%d CELL_CAPACITY=%d stencil_R=%d "
+                            "peak=%d CELL_CAPACITY=%d stencil_R=%d "
                             "offsets=%zu query=%.3f\n",
                             g.cell_size(), g.nx(), g.ny(), g.nz(),
                             static_cast<unsigned long long>(g.num_cells()), n_occ,
                             avg, mx, g.peak_cell_occupancy(),
-                            g.use_contiguous() ? 1 : 0, OpenCellGrid::CELL_CAPACITY,
+                            OpenCellGrid::CELL_CAPACITY,
                             g.stencil_radius(), g.neighbor_offsets_count(),
                             r_mu);
                         if (mx > OpenCellGrid::CELL_CAPACITY * 4 / 5) {
@@ -489,13 +522,13 @@ public:
                     std::fprintf(stderr, // CHANGED: gated behind MCPU_VERBOSE
                         "INFO: HB O-grid stencil empty_frac=%.3f "
                         "(empty=%zu nonempty=%zu probes=%d) "
-                        "contig=%d cell=%.3f cutoff=%.3f\n",
+                        "cell=%.3f cutoff=%.3f\n",
                         tot > 0.0 ? empty / tot : 0.0, empty, nonempty, nprobe,
-                        hb_o_grid_->grid().use_contiguous() ? 1 : 0, hb_cell,
+                        hb_cell,
                         kHBondCutoffA);
                 }
             }
-            hb_fallback_ = false;
+            hb_fallback_ = hbond_overflowed_();
         } else {
             hb_fallback_ = true;
             ++stats_.num_dense_cap_fallback;
@@ -510,6 +543,10 @@ public:
             for (int i : g.spec.members) {
                 if (i >= 0 && i < n_atoms_) g.grid->insert(i, coords);
             }
+            if (g.grid->grid().overflowed()) {
+                g.active = false;
+                retry_rebuild_ = true;
+            }
         }
 
         return dense_active_;
@@ -518,6 +555,7 @@ public:
     /// Incremental update after Metropolis accept. Call exactly once per accept.
     void commit_accepted_move(const ProposalPatch& patch,
                               const CoordsSoA& coords_new) {
+        sync_energy_mask(coords_new);
         bool left_bounds = false;
         if (bounds_.valid) {
             if (!patch.moved_indices.empty()) {
@@ -532,7 +570,9 @@ public:
             }
         }
 
-        if (left_bounds) {
+        // A grid retired by an overflow is rebuilt on every accept until
+        // the atoms spread out enough for it to fit.
+        if (left_bounds || retry_rebuild_) {
             rebuild_from_accepted_state(coords_new);
             return;
         }
@@ -573,6 +613,20 @@ public:
             });
         }
 
+        // A cell that filled up during the update leaves its grid
+        // incomplete: retire it (Mu takes the all-pairs delta, H-bonds the
+        // brute-force search) until the next accept rebuilds it.
+        if (dense_active_ &&
+            note_overflow_(*mu_grid_, "Mu", stats_.mu_grid_overflows))
+            dense_active_ = false;
+        if (!hb_fallback_ && hbond_overflowed_()) hb_fallback_ = true;
+        for (SubsetGrid& g : subset_grids_) {
+            if (g.active && g.grid->grid().overflowed()) {
+                g.active = false;
+                retry_rebuild_ = true;
+            }
+        }
+
 #if !defined(NDEBUG)
         if (dense_active_ && mu_grid_) {
             mu_grid_->grid().verify_sync();
@@ -593,46 +647,6 @@ public:
     }
 
     // ---- Candidate enumeration (read-only; indices = accepted state) ----
-
-    template <typename Func>
-    void for_each_mu_candidate(const Eigen::Vector3f& pos, Func&& func) const {
-        for_each_mu_candidate(pos.x(), pos.y(), pos.z(), std::forward<Func>(func));
-    }
-
-    template <typename Func>
-    void for_each_mu_candidate(float x, float y, float z, Func&& func) const {
-        if (!dense_active_) return;
-        const float r_cut = mu_cutoff_A();
-        const float r2 = r_cut * r_cut;
-        mu_grid_->for_each_neighbor(
-            x, y, z,
-            [&](int j) {
-                ++stats_.mu_num_candidates_iterated;
-                func(j);
-            },
-            &stats_.neighbor_num_cell_visits, r2);
-    }
-
-    template <typename Func>
-    bool for_each_mu_candidate_while(const Eigen::Vector3f& pos, Func&& func) const {
-        return for_each_mu_candidate_while(pos.x(), pos.y(), pos.z(),
-                                           std::forward<Func>(func));
-    }
-
-    template <typename Func>
-    bool for_each_mu_candidate_while(float x, float y, float z, Func&& func) const {
-        if (!dense_active_) return true;
-        const float r_cut = mu_cutoff_A();
-        const float r2 = r_cut * r_cut;
-        return mu_grid_->for_each_neighbor_while(
-            x, y, z,
-            [&](int j) {
-                ++stats_.mu_num_candidates_iterated;
-                return func(j);
-            },
-            &stats_.neighbor_num_cell_visits, r2);
-    }
-
 
     template <typename Func>
     void for_each_hbond_acceptor_candidate(const Eigen::Vector3f& pos, Func&& func) const {
@@ -973,6 +987,64 @@ private:
         g.grid->ensure_atom_capacity(n_atoms_);
         g.active = false;
     }
+    /// in_mu_ = in_mu_base_ less the atoms of residues an ignore_all energy
+    /// mask switches off. Every pair with such an atom scores 0 and cannot
+    /// clash (MuPotential::mask_ignores_pair), so leaving them out of the
+    /// grid drops only zero terms and keeps the order of the rest: deltas
+    /// are the same to the bit. It also keeps the hard-core bound on cell
+    /// occupancy, which masked atoms, free to overlap, do not obey.
+    void apply_energy_mask_() {
+        mask_epoch_ = sys_->energy_mask_epoch();
+        in_mu_ = in_mu_base_;
+        if (!sys_->has_energy_mask() ||
+            sys_->energy_mask_mode() != EnergyMaskMode::IgnoreAll)
+            return;
+        const std::vector<uint8_t>& mask = sys_->energy_ignored_mask();
+        const std::vector<int>& res = sys_->atom_to_residue;
+        for (int i = 0; i < n_atoms_ && static_cast<size_t>(i) < res.size(); ++i) {
+            const int r = res[static_cast<size_t>(i)];
+            if (r >= 0 && static_cast<size_t>(r) < mask.size() &&
+                mask[static_cast<size_t>(r)])
+                in_mu_[static_cast<size_t>(i)] = 0;
+        }
+    }
+
+    /// True (and counted, with one MCPU_VERBOSE warning per process) when
+    /// ``g`` had to leave an atom out because its cell was full. The caller
+    /// then retires the grid: the exact fallbacks for an inactive grid take
+    /// over, and the next accepted move rebuilds it. CELL_CAPACITY stays a
+    /// compile-time constant so the hot walks keep their fixed strides; the
+    /// hard core keeps real occupancy near half of it (peaks of 20-24 on
+    /// actin and PGK1), so this is a guard, not a path runs live on.
+    bool note_overflow_(const CellListMC& g, const char* name,
+                        std::uint64_t& counter) {
+        if (!g.grid().overflowed()) return false;
+        ++counter;
+        retry_rebuild_ = true;
+        static bool warned = false;
+        static const bool kVerbose = [] {
+            const char* e = std::getenv("MCPU_VERBOSE");
+            return e && e[0] && e[0] != '0';
+        }();
+        if (kVerbose && !warned) {
+            warned = true;
+            std::fprintf(stderr,
+                "WARN: a %s grid cell is over its capacity of %d atoms; the "
+                "grid is off (exact fallback) until an accepted move "
+                "rebuilds it.\n",
+                name, OpenCellGrid::CELL_CAPACITY);
+        }
+        return true;
+    }
+    /// Either H-bond grid overflowed (both are checked and counted).
+    bool hbond_overflowed_() {
+        const bool o = note_overflow_(*hb_o_grid_, "H-bond O",
+                                      stats_.hbond_grid_overflows);
+        const bool h = note_overflow_(*hb_h_grid_, "H-bond H",
+                                      stats_.hbond_grid_overflows);
+        return o || h;
+    }
+
     std::vector<RegisteredGrid> grids_;
     std::vector<SubsetGrid> subset_grids_;
     std::vector<int> commit_order_;
@@ -982,6 +1054,7 @@ private:
     BoxBounds bounds_{};
     bool dense_active_ = false;
     bool hb_fallback_ = false;
+    bool retry_rebuild_ = false;  ///< a grid overflowed: rebuild on the next accept
     bool virtual_amide_h_ = false;
     bool hb_h_ids_are_residues_ = false;
 
@@ -995,6 +1068,9 @@ private:
     std::vector<uint8_t> amide_donor_;
     std::vector<int> h_dep_;
     std::vector<uint8_t> in_mu_;
+    std::vector<uint8_t> in_mu_base_;  ///< every non-amide-H atom
+    const System* sys_ = nullptr;
+    std::uint64_t mask_epoch_ = 0;
     std::vector<uint8_t> is_o_;
     std::vector<uint8_t> is_h_;
     std::vector<int> o_atom_ids_;

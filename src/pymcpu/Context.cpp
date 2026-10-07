@@ -69,9 +69,7 @@ void Context::maybe_apply_init_only_reorder_() {
     require_current_atom_order();
 
     std::vector<BlockIndices> new_blocks;
-    const NeighborConfig& ncfg = neighbors_.config();
-    const float mu_cell = ::mcpu::effective_mu_cell_size_A(
-        neighbors_.mu_cutoff_A(), ncfg);
+    const float mu_cell = neighbors_.mu_cutoff_A();
     atom_perm_ = compute_init_only_atom_permutation(
         *system, state.coords_soa, mu_cell, &new_blocks);
     atom_perm_identity_ = atom_perm_.is_identity();

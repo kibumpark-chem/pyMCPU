@@ -184,7 +184,7 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
     static constexpr float kLegacyContactCutoffSq = 6.0f * 6.0f;
     static constexpr float kMuCutoffFallbackA = 6.0f;
 
-    /// Same gate as Integrator::run occ_stencil dump (MCPU_VERBOSE).
+    /// True when MCPU_VERBOSE is set (not "0"); read once.
     [[nodiscard]] static bool mcpu_verbose_enabled() noexcept {
         static const bool kVerbose = [] {
             const char* e = std::getenv("MCPU_VERBOSE");
@@ -243,11 +243,6 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
                 mu_exact_cutoff_, max_contact_r2, contact_band_w_r2_, max_hard_r2);
         }
     }
-
-    // The per-atom walk's skip_mask is 64-bit, indexed by `1ull << m` for a
-    // cell slot m < CELL_CAPACITY, so the capacity must fit in it.
-    static_assert(::mcpu::OpenCellGrid::CELL_CAPACITY <= 64,
-                  "skip_mask is 64-bit; CELL_CAPACITY must fit");
 
     /// Report the atom pair that trips the hard-core sentinel in the full
     /// recompute (MCPU_CLASH_REPORT=1); see the call site in calculateEnergy.
@@ -642,6 +637,11 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
         require_topology_table(topo_flag_.size(),
                                context.getSystem().getNumAtoms());
         const bool kContactList = contact_list_enabled();
+        // A mask set or cleared since the grid was built (outside a run, which
+        // syncs at its start) changes which atoms the grid holds; apply it
+        // now so this move can use the grid. O(1) when the mask is unchanged.
+        if (!context.neighbors().mask_current())
+            const_cast<Context&>(context).sync_energy_mask();
         float delta;
         if (kContactList) {
             // A rigid move adds to the drift budget of the pairs it carries
@@ -666,7 +666,6 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
             }
             const bool usable =
                 context.denseGridsActive() &&
-                context.neighbors().muGrid().grid().use_contiguous() &&
                 context.trial_in_bounds(new_state, patch) &&
                 carry_bound <= budget;
             if (usable) {
@@ -707,7 +706,6 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
                 // keeps, as eval_pair does, and reads the mask afresh.
                 int overlap = -1;
                 if (context.denseGridsActive() &&
-                    context.neighbors().muGrid().grid().use_contiguous() &&
                     !patch.moved_indices.empty()) {
                     overlap = fallback_grid_overlap(context, new_state, patch);
                 }
@@ -954,10 +952,6 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
         setup_mask_cache(context.getSystem());
         auto& ws = const_cast<mcpu::MuWorkspace&>(context.getMuWorkspace());
         ws.clear();
-        // Direct delta callers do not pass through Integrator's bounds policy.
-        // Derive fallback from the trial itself so an out-of-grid clash cannot
-        // be omitted by cell-list enumeration.
-        ws.use_trial_fallback = !context.trial_in_bounds(new_state, patch);
         eval_pair_calls_local_ = 0;
         eval_pair_nonzero_local_ = 0;
         auto& nstats_flush = const_cast<NeighborStats&>(context.neighborStats());
@@ -973,253 +967,26 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
         } eval_flush{&nstats_flush, this};
 
 
-        const int num_atoms = context.getSystem().getNumAtoms();
-        auto& ns = const_cast<NeighborSystem&>(context.neighbors());
-        // Mu index (BB+O+SC only). Prefer NeighborSystem candidate API.
-        const std::vector<uint8_t>& is_moved = patch.moving_atoms;
-        // Prefer patch.moved_indices; fall back to a one-time scan if empty
+        // Prefer patch.moved_indices; fall back to a one-time scan if empty.
         std::vector<int> fallback_moved;
         const std::vector<int>* moved_ptr = &patch.moved_indices;
-        {
-            if (moved_ptr->empty()) {
-                fallback_moved.reserve(64);
-                for (int i = 0; i < num_atoms; ++i) {
-                    if (is_moved[static_cast<size_t>(i)]) fallback_moved.push_back(i);
-                }
-                moved_ptr = &fallback_moved;
+        if (moved_ptr->empty()) {
+            const int num_atoms = context.getSystem().getNumAtoms();
+            const std::vector<uint8_t>& is_moved = patch.moving_atoms;
+            fallback_moved.reserve(64);
+            for (int i = 0; i < num_atoms; ++i) {
+                if (is_moved[static_cast<size_t>(i)]) fallback_moved.push_back(i);
             }
-        }
-        const std::vector<int>& moved_indices = *moved_ptr;
-
-
-        float delta_E = 0.0f;
-        bool clash = false;
-
-        const bool skip_rigid_mm =
-            neighbor::MoveFootprint::of(patch, context.neighborConfig().skip_rigid_mm)
-                .moved_rigid();
-
-        // Hot pair loop #3: moved-vs-all, for a trial that leaves the grid
-        // (no dense-grid rebuild under AUTO_EXPAND), a run without dense
-        // grids, and every move under MCPU_CONTACT_LIST=0, where it is the
-        // exact slow reference for the contact-list delta.
-        if (ws.use_trial_fallback || !context.denseGridsActive() ||
-            !contact_list_enabled()) {
-            return delta_moved_vs_all(context, old_state, new_state, patch,
-                                      moved_indices, list_exact);
+            moved_ptr = &fallback_moved;
         }
 
-        auto& nstats = const_cast<NeighborStats&>(context.neighborStats());
-
-        CellListMC* moved_grid = nullptr;
-        // Rigid pivot: skip moved_new_grid -- its moved-moved pairs are not
-        // re-measured on this path (see the contact-list notes in the header).
-        if (!moved_indices.empty() && !skip_rigid_mm) {
-            ws.ensure_moved_grid(mu_exact_cutoff_, num_atoms);
-            moved_grid = ws.moved_new_grid.get();
-            // Share contact-grid bounds so inserts index correctly (open, no wrap)
-            const auto& gb = ns.muGrid().grid().bounds();
-            if (gb.valid) {
-                NeighborConfig cfg = context.neighborConfig();
-                const float mu_cell = effective_mu_cell_size_A(mu_exact_cutoff_, cfg);
-                // Match accepted Mu denselist: r_mu cell/query.
-                // CRITICAL: configure() assigns n_cells×CAPACITY packed arrays (~MB).
-                // Only reconfigure when geometry changes — was called every SC/KIC
-                // denselist step and dominated SC Mu (~80 µs fixed overhead).
-                moved_grid->set_cutoff(mu_exact_cutoff_);
-                if (!moved_grid->grid().matches_geometry(gb, mu_cell, cfg)) {
-                    moved_grid->configure(gb, cfg, mu_cell);
-                }
-                // Scratch MM grid never uses occupied stencil (Mu denselist only).
-                moved_grid->grid().set_occupied_stencil_mode(
-                    OccupiedStencilMode::Off);
-            }
-            // No reset()/clear_cells_keep_shape: ensure_moved_grid already removed
-            // prior membership via clear_moved_grid (O(n_moved)).
-            moved_grid->ensure_atom_capacity(num_atoms);
-            ws.moved_grid_atoms.reserve(moved_indices.size());
-            for (int j : moved_indices) {
-                moved_grid->insert(j, new_state.coords_soa);
-                ws.moved_grid_atoms.push_back(j);
-            }
-        }
-
-        // Hot pair loop #1: classic denselist OpenCellGrid.
-        // CSR pack-all-then-SIMD-r² was tried and reverted (wall ~150→459 µs):
-        // packing before clash exit overflows (>98k pairs) and double-walks;
-        // cell walk is ~71% of pivot Mu so splitting r² cannot win.
-        const CoordView cold(old_state.coord_view());
-        const CoordView cnew(new_state.coord_view());
-
-        // Per-moved-atom fused walk of the dense Mu grid. The contact list
-        // cannot follow an in-grid move only when the grid lost its
-        // contiguous layout after a cell overflow, so that is when this runs.
-        const OpenCellGrid& mu_grid_ref = ns.muGrid().grid();
-        const bool use_span = mu_grid_ref.use_contiguous();
-        for (int i : moved_indices) {
-            const float ox = cold.x(i), oy = cold.y(i), oz = cold.z(i);
-            const float nx = cnew.x(i), ny = cnew.y(i), nz = cnew.z(i);
-
-            if (use_span) {
-                mu_grid_ref.for_each_neighbor_cell_span(
-                    ox, oy, oz,
-                    [&](const int* __restrict__ cids,
-                        const float* __restrict__ cx,
-                        const float* __restrict__ cy,
-                        const float* __restrict__ cz, int count) {
-                        std::uint64_t skip_mask = 0ull;
-                        for (int m = 0; m < count; ++m) {
-                            const int j = cids[m];
-                            if (j == i) {
-                                skip_mask |= (1ull << m);
-                                continue;
-                            }
-                            if (is_moved[static_cast<size_t>(j)]) {
-                                if (skip_rigid_mm) {
-                                    ++nstats.elided_rigid_mm;
-                                    skip_mask |= (1ull << m);
-                                } else if (i > j) {
-                                    skip_mask |= (1ull << m);
-                                }
-                            }
-                        }
-                        float r2_buf[OpenCellGrid::CELL_CAPACITY];
-#pragma GCC ivdep
-                        for (int m = 0; m < count; ++m) {
-                            const float dx = ox - cx[m];
-                            const float dy = oy - cy[m];
-                            const float dz = oz - cz[m];
-                            r2_buf[m] = pair_r2(dx, dy, dz);
-                        }
-                        for (int m = 0; m < count; ++m) {
-                            if (skip_mask & (1ull << m)) continue;
-                            const float r2 = r2_buf[m];
-                            note_mu_pair_r2(nstats, r2, contact_cutoff_sq_);
-                            if (r2 <= contact_cutoff_sq_)
-                                delta_E -=
-                                    eval_pair<ClashCutoff::None>(i, cids[m], r2, nullptr);
-                        }
-                    },
-                    &nstats.neighbor_num_cell_visits);
-
-                const bool ok_fixed =
-                    mu_grid_ref.for_each_neighbor_cell_span_while(
-                        nx, ny, nz,
-                        [&](const int* __restrict__ cids,
-                            const float* __restrict__ cx,
-                            const float* __restrict__ cy,
-                            const float* __restrict__ cz, int count) {
-                            std::uint64_t skip_mask = 0ull;
-                            for (int m = 0; m < count; ++m) {
-                                const int j = cids[m];
-                                if (j == i ||
-                                    is_moved[static_cast<size_t>(j)])
-                                    skip_mask |= (1ull << m);
-                            }
-                            float r2_buf[OpenCellGrid::CELL_CAPACITY];
-#pragma GCC ivdep
-                            for (int m = 0; m < count; ++m) {
-                                const float dx = nx - cx[m];
-                                const float dy = ny - cy[m];
-                                const float dz = nz - cz[m];
-                                r2_buf[m] = pair_r2(dx, dy, dz);
-                            }
-                            for (int m = 0; m < count; ++m) {
-                                if (skip_mask & (1ull << m)) continue;
-                                const float r2 = r2_buf[m];
-                                bool local_clash = false;
-                                note_mu_pair_r2(nstats, r2, contact_cutoff_sq_);
-                                if (r2 <= contact_cutoff_sq_) {
-                                    delta_E += eval_pair(
-                                        i, cids[m], r2, &local_clash);
-                                }
-                                if (local_clash) {
-                                    clash = true;
-                                    return false;
-                                }
-                            }
-                            return true;
-                        },
-                        &nstats.neighbor_num_cell_visits);
-                if (!ok_fixed || clash) {
-                    clash = true;
-                    break;
-                }
-            } else {
-                ns.for_each_mu_candidate(ox, oy, oz, [&](int j) {
-                    if (j == i) return;
-                    if (is_moved[static_cast<size_t>(j)]) {
-                        if (skip_rigid_mm) {
-                            ++nstats.elided_rigid_mm;
-                            return;
-                        }
-                        if (i > j) return;
-                    }
-                    const float r2 = cold.dist2(i, j);
-                    note_mu_pair_r2(nstats, r2, contact_cutoff_sq_);
-                    if (r2 <= contact_cutoff_sq_)
-                        delta_E -= eval_pair<ClashCutoff::None>(i, j, r2, nullptr);
-                });
-
-                {
-                    const bool ok_fixed = ns.for_each_mu_candidate_while(
-                        nx, ny, nz, [&](int j) {
-                            if (j == i) return true;
-                            if (is_moved[static_cast<size_t>(j)])
-                                return true;
-                            const float r2 = cnew.dist2(i, j);
-                            bool local_clash = false;
-                            note_mu_pair_r2(nstats, r2, contact_cutoff_sq_);
-                            if (r2 <= contact_cutoff_sq_) {
-                                delta_E +=
-                                    eval_pair(i, j, r2, &local_clash);
-                            }
-                            if (local_clash) {
-                                clash = true;
-                                return false;
-                            }
-                            return true;
-                        });
-                    if (!ok_fixed || clash) {
-                        clash = true;
-                        break;
-                    }
-                }
-            }
-
-            if (moved_grid) {
-                const bool ok_moved = moved_grid->for_each_neighbor_while(
-                    nx, ny, nz, [&](int j) {
-                        ++nstats.mu_num_candidates_iterated;
-                        if (j == i) return true;
-                        if (i > j) return true;
-                        const float r2 = cnew.dist2(i, j);
-                        bool local_clash = false;
-                        note_mu_pair_r2(nstats, r2, contact_cutoff_sq_);
-                        if (r2 <= contact_cutoff_sq_) {
-                            delta_E += eval_pair(i, j, r2, &local_clash);
-                        }
-                        if (local_clash) {
-                            clash = true;
-                            return false;
-                        }
-                        return true;
-                    });
-                if (!ok_moved || clash) {
-                    clash = true;
-                    break;
-                }
-            }
-        }
-
-        if (clash) {
-            ws.clear();
-            ws.clear_moved_grid();
-            return kHardCorePenalty;
-        }
-
-        ws.clear_moved_grid();
-        return delta_E;
+        // Hot pair loop #3: moved-vs-all, the exact delta for every move the
+        // contact list cannot follow: one that leaves the grid, a carry past
+        // the list's drift budget, a run whose grid is off (overflowed, or
+        // built for another energy mask), and every move under
+        // MCPU_CONTACT_LIST=0, where it is the slow reference.
+        return delta_moved_vs_all(context, old_state, new_state, patch,
+                                  *moved_ptr, list_exact);
     }
 
     // ================================================================
@@ -1517,9 +1284,7 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
                     // coordinates came from outside (set_positions, a restore)
                     // or a delta path missed the pair. Reports the geometry
                     // plus the Mu cutoff, so a pair that sits outside the
-                    // cell-grid's enumeration radius (the out-of-grid case the
-                    // ws.use_trial_fallback comment in calculateEnergyChange
-                    // guards against) is identifiable.
+                    // cell grid's enumeration radius is identifiable.
                     if (clash_report_enabled()) {
                         const size_t NT = static_cast<size_t>(n_types_);
                         const int ti = atom_types[static_cast<size_t>(i)];

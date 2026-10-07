@@ -450,8 +450,7 @@ EnergyChangeResult HBondPotential::calculateEnergyChange(
     // acceptor's new O (an unaffected donor's H has not moved either).
     const CellListMC* o_cells = ns.hbond_o_cells();
     const CellListMC* h_cells = ns.hbond_h_cells();
-    const bool on_layer = !use_brute && o_cells && h_cells
-        && o_cells->grid().use_contiguous() && h_cells->grid().use_contiguous();
+    const bool on_layer = !use_brute && o_cells && h_cells;
     if (on_layer) {
         // The shared pair-search walk: cells whose listed sites all belong
         // to affected residues are skipped, and eight slots at a time are
@@ -530,6 +529,7 @@ EnergyChangeResult HBondPotential::calculateEnergyChange(
         for (int o : o_sites) atom_aff[static_cast<size_t>(o)] = 0;
         if (!virt) for (int h : h_sites) atom_aff[static_cast<size_t>(h)] = 0;
     } else {
+        // The H-bond grids are off (a cell overflowed): brute force.
         auto process_donor = [&](int r_don) {
             float nh[3];
             if (!load_donor_h(proposed_state, sys, r_don, nh)) return;
@@ -541,11 +541,7 @@ EnergyChangeResult HBondPotential::calculateEnergyChange(
                 if (pair_r2(bx, by, bz) > kFarCut2) return;
                 evaluate_new(r_don, r_acc);
             };
-            if (use_brute) {
-                ns.for_each_hbond_acceptor_bruteforce(old_state.coords_soa, nh[0], nh[1], nh[2], kFarCut2, query_oxygen);
-            } else {
-                ns.for_each_hbond_acceptor_candidate(nh[0], nh[1], nh[2], query_oxygen);
-            }
+            ns.for_each_hbond_acceptor_bruteforce(old_state.coords_soa, nh[0], nh[1], nh[2], kFarCut2, query_oxygen);
         };
         auto process_acceptor = [&](int r_acc, int o_atom) {
             const float x = cnew.x(o_atom), y = cnew.y(o_atom), z = cnew.z(o_atom);
@@ -557,14 +553,10 @@ EnergyChangeResult HBondPotential::calculateEnergyChange(
                 if (res_affected[static_cast<size_t>(r_don)]) return;
                 evaluate_new(r_don, r_acc);
             };
-            if (use_brute) {
-                if (virt) {
-                    ns.for_each_hbond_donor_bruteforce(old_state.coords_soa, sys, x, y, z, kFarCut2, query_donor);
-                } else {
-                    ns.for_each_hbond_h_bruteforce(old_state.coords_soa, x, y, z, kFarCut2, query_donor);
-                }
+            if (virt) {
+                ns.for_each_hbond_donor_bruteforce(old_state.coords_soa, sys, x, y, z, kFarCut2, query_donor);
             } else {
-                ns.for_each_hbond_h_candidate(x, y, z, query_donor);
+                ns.for_each_hbond_h_bruteforce(old_state.coords_soa, x, y, z, kFarCut2, query_donor);
             }
         };
         for (int r : aff_list) {

@@ -1714,6 +1714,7 @@ void MCIntegrator::verify_physics_consistency(Context& context, int num_steps, f
     }
     check_move_weights_are_usable(context);
     context.require_current_atom_order();
+    context.sync_energy_mask();
     pivot_residue_dist = std::uniform_int_distribution<int>(1, N - 2);
     sc_residue_dist    = std::uniform_int_distribution<int>(0, N - 1);
     ensure_proposal_buffers(context);
@@ -1745,9 +1746,6 @@ void MCIntegrator::verify_physics_consistency(Context& context, int num_steps, f
             context.getHBondWorkspace().clear();
             continue;
         }
-
-        auto& mu_ws = context.getWorkspace();
-        mu_ws.use_trial_fallback = !context.trial_in_bounds(proposal, move_patch);
 
         const auto checks = PhysicsVerifier::verify_all_potential_deltas(
             context, context.getState(), proposal, move_patch, atol);
@@ -1783,6 +1781,7 @@ void MCIntegrator::run(Context& context, int num_steps, int step_offset)
     }
     check_move_weights_are_usable(context);
     context.require_current_atom_order();
+    context.sync_energy_mask();
     pivot_residue_dist = std::uniform_int_distribution<int>(1, N - 2);
     sc_residue_dist    = std::uniform_int_distribution<int>(0, N - 1);
     ensure_proposal_buffers(context);
@@ -1937,14 +1936,8 @@ void MCIntegrator::run(Context& context, int num_steps, int step_offset)
         else if (tried_sc) move_kind = MoveKind::Sidechain;
 
         if (move_patch.is_valid) {
-            auto& mu_ws = context.mu_workspace_;
-            mu_ws.use_trial_fallback = false;
-
-            const bool in_box = context.trial_in_bounds(proposal, move_patch);
-            if (!in_box) {
-                mu_ws.use_trial_fallback = true;
+            if (!context.trial_in_bounds(proposal, move_patch))
                 ++context.neighborStats().num_trial_fallback;
-            }
         }
 
         uint8_t accepted_bit = 0;
@@ -2131,38 +2124,6 @@ void MCIntegrator::run(Context& context, int num_steps, int step_offset)
     step_stats_.mu_eval_pair_calls = context.neighborStats().mu_eval_pair_calls;
     context.set_energy_delta_timing(false);
 
-    // Occupied-stencil maintenance diagnostic (opt-in).
-    // CHANGED: gate behind MCPU_VERBOSE — was unconditional every Integrator::run.
-    {
-        static const bool kVerbose = [] {
-            const char* e = std::getenv("MCPU_VERBOSE");
-            return e && e[0] && e[0] != '0';
-        }();
-        if (kVerbose) {
-            const auto& g = context.neighbors().muGrid().grid();
-            if (g.occupied_stencil_mode() != OccupiedStencilMode::Off) {
-                const auto n = step_stats_.n_steps > 0 ? step_stats_.n_steps : 1;
-                std::fprintf(
-                    stderr,
-                    "occ_stencil mode=%d maint_ns/step=%.0f maint_calls/step=%.2f "
-                    "commit_ns/step=%.0f mu_energy_ns/step=%.0f "
-                    "delta_energy_ns/step=%.0f step_total_ns/step=%.0f\n",
-                    static_cast<int>(g.occupied_stencil_mode()),
-                    static_cast<double>(g.occupied_maint_ns()) /
-                        static_cast<double>(n),
-                    static_cast<double>(g.occupied_maint_calls()) /
-                        static_cast<double>(n),
-                    static_cast<double>(step_stats_.commit_ns) /
-                        static_cast<double>(n),
-                    static_cast<double>(step_stats_.energy_delta_ns[1]) /
-                        static_cast<double>(n),
-                    static_cast<double>(step_stats_.delta_energy_ns) /
-                        static_cast<double>(n),
-                    static_cast<double>(step_stats_.step_total_ns) /
-                        static_cast<double>(n));
-            }
-        }
-    }
 }
 
 bool MCIntegrator::debug_force_pivot(Context& context, int residue, bool is_phi) {

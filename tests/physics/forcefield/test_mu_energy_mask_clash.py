@@ -206,17 +206,11 @@ def test_a_rigid_move_does_not_recheck_the_overlap_it_carries(heavy, overlap) ->
     assert abs(check.delta_incremental) < CLASH
 
 
-@pytest.mark.parametrize(
-    ("env_var", "walks_grid"),
-    [("MCPU_CONTACT_LIST", False), ("MCPU_USE_CONTIGUOUS_CELLS", True)],
-    ids=["moved-vs-all", "per-atom-walk"],
-)
-def test_without_the_contact_list_the_carried_overlap_agrees(env_var: str, walks_grid: bool) -> None:
+def test_without_the_contact_list_the_carried_overlap_agrees() -> None:
     """The same move without the contact list: MCPU_CONTACT_LIST=0 sends it
-    to the all-pairs moved-vs-all delta, and a grid without its contiguous
-    layout (MCPU_USE_CONTIGUOUS_CELLS=0, as after a cell overflow) to the
-    per-atom grid walk. Both variables are read once per process, so this
-    runs in a fresh one."""
+    to the all-pairs moved-vs-all delta, the path every move takes that the
+    list cannot follow (and every move while the grid is off). The variable
+    is read once per process, so this runs in a fresh one."""
     code = textwrap.dedent("""
         from tests.physics.forcefield import test_mu_energy_mask_clash as t
         heavy = t._load_heavy()
@@ -228,13 +222,12 @@ def test_without_the_contact_list_the_carried_overlap_agrees(env_var: str, walks
         print("CHECK", check.passed, check.delta_incremental, walked)
     """)
     repo = Path(__file__).resolve().parents[3]
-    env = dict(os.environ, **{env_var: "0"})
+    env = dict(os.environ, MCPU_CONTACT_LIST="0")
     run = subprocess.run([sys.executable, "-c", code], cwd=repo, env=env,
                          capture_output=True, text=True, check=True)
     passed, delta, walked = [line.split()[1:] for line in run.stdout.splitlines()
                              if line.startswith("CHECK ")][-1]
-    # The per-atom walk counts cell visits and moved-vs-all does not, so
-    # this confirms which path ran.
-    assert walked == str(walks_grid)
+    # Moved-vs-all walks no grid cell, which confirms the path that ran.
+    assert walked == "False"
     assert passed == "True"
     assert abs(float(delta)) < CLASH
