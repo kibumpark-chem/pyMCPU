@@ -6,9 +6,9 @@
 > them would imply a reproducibility path that does not exist. Every number
 > quoted below is recorded inline, along with the arithmetic that reconciles
 > it against the legacy run's own printed total — which is what makes the
-> comparison checkable without the files. The five ladder tests in
-> `tests/legacy_parity/test_hbond_ablation_ladder.py` skip in their absence;
-> the assertions about pyMCPU's own H-bond energy do not depend on them.
+> comparison checkable without the files.
+> `tests/legacy_parity/test_hbond_engine_parity.py` checks pyMCPU's own
+> H-bond energy against the recorded legacy total and does not need them.
 
 pyMCPU's `HBondPotential` (`src/pymcpu/forces/mcpu/common/HydrogenBondPotential.cpp`,
 `include/pymcpu/utils/hydrogen_bond_utils.h`) is a from-scratch C++ rewrite of legacy
@@ -21,9 +21,9 @@ the rewrite bug-for-bug against the legacy reference on
 An independent NumPy oracle transliterating `hbonds.h` directly from the legacy
 source (not from pyMCPU's compiled `.bin` tables) lives at
 `tests/legacy_parity/helpers/legacy_hbond_oracle.py`, with inline citations of the
-exact legacy line ranges each function mirrors. `tests/legacy_parity/test_hbond_ablation_ladder.py`
-and `tests/legacy_parity/test_hbond_engine_parity.py` pin every rung of the ladder
-below to an exact numeric target, via `tests/legacy_parity/framework.py`'s
+exact legacy line ranges each function mirrors; it produced the ladder below.
+`tests/legacy_parity/test_hbond_engine_parity.py` pins its final rung (stage 3)
+through the compiled engine, via `tests/legacy_parity/framework.py`'s
 `LegacyReference`/`assert_legacy_parity`.
 
 ## Ablation ladder
@@ -181,9 +181,6 @@ and `we/propagator.py`, which all rely on the same RNG save/restore contract.
 - `pymcpu/forcefields/builders/hbond_builder.py` — `AMINO_ORDER`, seq-dep table loader.
 - `pymcpu/forcefields/mcpu.py` — DSSP computation, `amino_index`/SS plumbing into `System`.
 - `tests/legacy_parity/helpers/legacy_hbond_oracle.py`,
-  `tests/legacy_parity/test_hbond_ablation_ladder.py`,
   `tests/legacy_parity/test_hbond_engine_parity.py` — independent verification
-  oracle and the pinned ablation-ladder targets.
+  oracle and the pinned stage-3 target.
 - `scripts/convert_hbond_seq_dep.py` — legacy text table → `hbond_seq_dep.bin`.
-- `scripts/validate_energy.py --legacy-hbond` — human-readable pyMCPU-vs-legacy-log
-  side-by-side on the actin structure.

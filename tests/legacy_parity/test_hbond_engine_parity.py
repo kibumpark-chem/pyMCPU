@@ -1,12 +1,9 @@
 """End-to-end H-bond legacy parity through the *compiled* engine
-(``pymcpu.mcpu_core``), as opposed to ``test_hbond_ablation_ladder.py``'s
-pure-Python oracle checks.
+(``pymcpu.mcpu_core``).
 
-Kept in its own file so that a stale or ABI-mismatched compiled extension
-(e.g. missing a method added later in the same source tree) produces a
-clean, explicit skip here rather than an opaque ``AttributeError`` that
-would otherwise also take down the fast oracle-only tests in the same
-module.
+A stale or ABI-mismatched compiled extension (e.g. missing a method added
+later in the same source tree) produces a clean, explicit skip here rather
+than an opaque ``AttributeError``.
 
 This is a plain numeric assertion, not an ``xfail``: it fails outright if
 the compiled engine's H-bond energy drifts from the legacy target, so
@@ -29,9 +26,8 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 ACTA_PDB = REPO_ROOT / "examples" / "actin" / "input_pdb" / "acta.pdb"
 LEGACY_LOG = REPO_ROOT / "examples" / "actin" / "legacy" / "outputs" / "acta_T_0.600.log"
 
-# Same legacy citation as test_hbond_ablation_ladder.py's Stage 3 -- see that
-# file's module docstring for why this is 2-decimal-precision-limited rather
-# than a higher-precision figure.
+# Stage 3 of the ladder in docs/hbond_legacy_parity.md. The legacy log prints
+# the H-bond energy to 2 decimals, which bounds the achievable agreement.
 LEGACY_HBOND_LOG_WEIGHTED = -128.12 * HBOND_WEIGHT
 
 
@@ -71,9 +67,8 @@ def test_engine_matches_legacy_log() -> None:
             ),
             tolerance=ParityTolerance.KNOWN_RESIDUAL,
             reason=(
-                "same 2-decimal log-precision bound as the oracle's Stage 3 "
-                "(test_hbond_ablation_ladder.py), plus this path adds a "
-                "float32 compiled engine vs. float64 NumPy oracle -- both "
+                "the legacy log's 2-decimal precision, plus the float32 "
+                "compiled engine vs. the float64 NumPy oracle -- both "
                 "comfortably inside KNOWN_RESIDUAL's atol=1e-1."
             ),
         ),

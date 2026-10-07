@@ -32,8 +32,7 @@ reference was recorded).
 Why the numbers are stored as hex floats
 ----------------------------------------
 Nothing else in this repo prints a bit-faithful float -- every parity script
-uses ``.4f``/``.6f``/``:g``, and ``scripts/validate_energy.py`` uses
-``:>16.6f``.
+uses ``.4f``/``.6f``/``:g``.
 
 The reason that matters is the opposite of the intuitive one. ``%.6f``
 round-trips a float32 *fine* at actin's magnitudes: at |x| ~ 323 the ULP is

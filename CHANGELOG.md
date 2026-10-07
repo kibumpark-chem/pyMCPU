@@ -1474,6 +1474,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `step_stats`: they cost no measurable time (actin, 34.8k vs 34.9k
   cycles/step) and always run.
 
+- `tests/legacy_parity/test_hbond_ablation_ladder.py` and
+  `scripts/validate_energy.py`, which needed the undistributed legacy MCPU
+  sources and inputs and so always skipped or could not run, with the
+  `.gitignore` block that kept a copied-in legacy tree out of commits. The
+  ladder's numbers stay in `docs/hbond_legacy_parity.md`, and
+  `test_hbond_engine_parity.py` still pins its final rung.
+
 - **The third way to launch a YAML run.** `examples/gromacs_style/` and
   `pymcpu.utils.yaml_parser` (`load_yaml`, `config_from_yaml`,
   `simulation_from_yaml`, `SimulationHandle`) wrapped the same config
