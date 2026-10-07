@@ -47,6 +47,7 @@ Context.clash_first_min_moved
 Context.coords
 Context.coords_for_python
 Context.energy_breakdown
+Context.energy_resyncs
 Context.frame_offset
 Context.get_atom_reorder_mode
 Context.get_energy_weights
