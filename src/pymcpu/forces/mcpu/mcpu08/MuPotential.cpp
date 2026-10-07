@@ -117,16 +117,6 @@ int clash_first_min_moved_env() noexcept {
     return v;
 }
 
-// MCPU_FALLBACK_PRECHECK=0 skips the grid overlap check that runs ahead of
-// the all-pairs fallback delta.
-bool fallback_precheck_enabled() noexcept {
-    static const bool on = [] {
-        const char* e = std::getenv("MCPU_FALLBACK_PRECHECK");
-        return !(e && e[0] == '0');
-    }();
-    return on;
-}
-
 /// The atoms the Mu pair loops visit, in increasing order: every atom but the
 /// amide hydrogens. Iterating this list visits the same pairs in the same
 /// order as testing System::is_amide_h_atom on both atoms of every pair.
@@ -1139,11 +1129,12 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
                 // fixed amide H, which it skips too), so ask the clash-first
                 // question there first: an overlap it finds is one the delta
                 // would find, and the move is rejected the same way. A move
-                // it clears goes through the delta as before.
+                // it clears goes through the delta as before. An energy mask
+                // changes neither answer: the overlap test drops the pairs
+                // ignore_all switches off and keeps the clashes clash_only
+                // keeps, as eval_pair does, and reads the mask afresh.
                 int overlap = -1;
-                if (!context.getSystem().has_energy_mask() &&
-                    fallback_precheck_enabled() &&
-                    context.denseGridsActive() &&
+                if (context.denseGridsActive() &&
                     context.neighbors().muGrid().grid().use_contiguous() &&
                     !patch.moved_indices.empty()) {
                     overlap = fallback_grid_overlap(context, new_state, patch);
@@ -1268,6 +1259,30 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
         const bool skip_rigid_mm =
             neighbor::MoveFootprint::of(patch, context.neighborConfig().skip_rigid_mm)
                 .moved_rigid();
+        // Under an energy mask, a moved atom of a masked residue adds only
+        // zeros to the old half (eval_pair scores its pairs 0 in either
+        // mode), and under ignore_all to the new half too (its pairs cannot
+        // clash). Leave such atoms out of the O(N) scans below: only zero
+        // terms go, so the delta is the same to the bit. A masked tail that
+        // leaves the grid on its own then costs O(n_moved), not
+        // O(n_moved x N). (calculateEnergyChange_fast set the mask cache.)
+        std::vector<int> unmasked;
+        if (energy_mask_ptr_) {
+            unmasked.reserve(moved_indices.size());
+            for (int i : moved_indices) {
+                if (!energy_mask_ptr_[static_cast<size_t>(
+                        atom_to_residue[static_cast<size_t>(i)])]) {
+                    unmasked.push_back(i);
+                }
+            }
+        }
+        const std::vector<int>& old_scan =
+            energy_mask_ptr_ ? unmasked : moved_indices;
+        const std::vector<int>& new_scan =
+            energy_mask_ptr_ &&
+                    energy_mask_mode_cached_ == EnergyMaskMode::IgnoreAll
+                ? unmasked
+                : moved_indices;
         float delta_E = 0.0f;
         bool clash = false;
         auto& nstats = const_cast<NeighborStats&>(context.neighborStats());
@@ -1296,7 +1311,7 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
         }
         // Old energy: moved at old pos vs all (accepted coords for partners)
         NeighborFallback::for_each_moved_neighbor(
-            old_state.coords_soa, old_state.coords_soa, moved_indices, is_moved, cut2,
+            old_state.coords_soa, old_state.coords_soa, old_scan, is_moved, cut2,
             /*is_rigid=*/skip_rigid_mm,
             [&](int i, int j, float r2) __attribute__((always_inline)) {
                 if (skip_fixed_h(j)) return;
@@ -1312,7 +1327,7 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
             });
         // New energy: moved at new pos vs fixed(old); MM skipped when rigid.
         NeighborFallback::for_each_moved_neighbor(
-            new_state.coords_soa, old_state.coords_soa, moved_indices, is_moved, cut2,
+            new_state.coords_soa, old_state.coords_soa, new_scan, is_moved, cut2,
             /*is_rigid=*/true, // always skip MM here; handled below if needed
             [&](int i, int j, float r2) __attribute__((always_inline)) {
                 if (is_moved[static_cast<size_t>(j)]) return; // fixed only here
@@ -1323,10 +1338,10 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
                 if (local_clash) clash = true;
             });
         if (!clash && !skip_rigid_mm) {
-            for (size_t a = 0; a < moved_indices.size() && !clash; ++a) {
-                const int i = moved_indices[a];
-                for (size_t b = a + 1; b < moved_indices.size(); ++b) {
-                    const int j = moved_indices[b];
+            for (size_t a = 0; a < new_scan.size() && !clash; ++a) {
+                const int i = new_scan[a];
+                for (size_t b = a + 1; b < new_scan.size(); ++b) {
+                    const int j = new_scan[b];
                     const float r2 = new_state.coord_view().dist2(i, j);
                     note_mu_pair_r2(nstats, r2, contact_cutoff_sq_);
                     bool local_clash = false;
