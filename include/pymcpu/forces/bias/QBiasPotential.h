@@ -53,10 +53,15 @@ private:
     std::vector<int> pairs_j_;
     float q_cutoff_sq_ = 0.0f;
     int n_pairs_ = 0;
-    /// pair indices touching each atom (for incremental delta evaluation)
-    std::vector<std::vector<int>> atom_to_pairs_;
+    /// Every atom that ends a native pair, with the pairs it ends, in ascending
+    /// atom order. A move's ΔE looks at these few atoms only.
+    struct PairAtom {
+        int atom;
+        std::vector<int> pairs;
+    };
+    std::vector<PairAtom> pair_atoms_;
 
-    void rebuild_atom_to_pairs();
+    void rebuild_pair_atoms();
     bool pairFormed(const State& state, int pair_idx) const noexcept;
     static float biasEnergy(float n, float k_bias, float n_target) noexcept;
 };

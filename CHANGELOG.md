@@ -500,6 +500,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The native-contacts bias checks only the atoms that end a native
+  pair.** Its energy change scanned every atom up to the highest pair atom,
+  testing four moved flags each, and allocated a new vector on every move;
+  it now walks the short list of pair atoms built with the pair table and
+  reuses a buffer in `Context`'s bias workspace. Bit-identical (parity vs
+  d38a246; same energies and accept counts). User-space cycles per step,
+  n=3, 50k steps, on top of the change below: production `sce` checkpoint
+  -15.8% at T=0.4 (slot 0) and -14.8% at T=1.0 (slot 57), melted `sce`
+  -7.6% at T=1.0. Runs without the bias are unaffected.
+
 - **The Mu grid no longer keeps a list of occupied neighbour cells.** Every
   cell carried the occupied cells of its 27-cell stencil, updated whenever a
   cell turned empty or occupied, but no energy term read it: the Mu walks

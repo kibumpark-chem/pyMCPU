@@ -32,18 +32,24 @@ QBiasPotential::QBiasPotential(
             throw std::invalid_argument("QBiasPotential: negative atom index in pair list");
         }
     }
-    rebuild_atom_to_pairs();
+    rebuild_pair_atoms();
 }
 
-void QBiasPotential::rebuild_atom_to_pairs() {
+void QBiasPotential::rebuild_pair_atoms() {
     int max_atom = 0;
     for (int p = 0; p < n_pairs_; ++p) {
         max_atom = std::max({max_atom, pairs_i_[p], pairs_j_[p]});
     }
-    atom_to_pairs_.assign(static_cast<size_t>(max_atom) + 1u, {});
+    std::vector<std::vector<int>> pairs_of_atom(static_cast<size_t>(max_atom) + 1u);
     for (int p = 0; p < n_pairs_; ++p) {
-        atom_to_pairs_[static_cast<size_t>(pairs_i_[p])].push_back(p);
-        atom_to_pairs_[static_cast<size_t>(pairs_j_[p])].push_back(p);
+        pairs_of_atom[static_cast<size_t>(pairs_i_[p])].push_back(p);
+        pairs_of_atom[static_cast<size_t>(pairs_j_[p])].push_back(p);
+    }
+    pair_atoms_.clear();
+    for (size_t a = 0; a < pairs_of_atom.size(); ++a) {
+        if (!pairs_of_atom[a].empty()) {
+            pair_atoms_.push_back({static_cast<int>(a), std::move(pairs_of_atom[a])});
+        }
     }
 }
 
@@ -66,7 +72,7 @@ void QBiasPotential::permute_atom_indices(const AtomPermutation& perm) {
     }
     pairs_i_.swap(new_i);
     pairs_j_.swap(new_j);
-    rebuild_atom_to_pairs();
+    rebuild_pair_atoms();
 }
 
 bool QBiasPotential::pairFormed(const State& state, int pair_idx) const noexcept {
@@ -135,14 +141,11 @@ EnergyChangeResult QBiasPotential::calculateEnergyChange(
             || patch.o_atom_moved[static_cast<size_t>(atom_idx)] != 0;
     };
 
-    std::vector<int> pairs_to_check;
-    pairs_to_check.reserve(32);
-    for (size_t atom_idx = 0; atom_idx < atom_to_pairs_.size(); ++atom_idx) {
-        if (!atom_moved(static_cast<int>(atom_idx))) {
-            continue;
-        }
-        for (int pair_idx : atom_to_pairs_[atom_idx]) {
-            pairs_to_check.push_back(pair_idx);
+    auto& pairs_to_check = workspace.pairs_to_check;
+    pairs_to_check.clear();
+    for (const PairAtom& pa : pair_atoms_) {
+        if (atom_moved(pa.atom)) {
+            pairs_to_check.insert(pairs_to_check.end(), pa.pairs.begin(), pa.pairs.end());
         }
     }
     if (pairs_to_check.empty()) {
