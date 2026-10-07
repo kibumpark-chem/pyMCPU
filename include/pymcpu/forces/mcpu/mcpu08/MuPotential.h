@@ -22,15 +22,9 @@ namespace mcpu::forces::mcpu08 {
 
     class MuPotential : public mcpu::Potential {
     private:
-        Eigen::MatrixXf contact_energies;
-        Eigen::MatrixXf contact_dist_sq;
-        Eigen::MatrixXf hard_core_sq;
-
         std::vector<int> atom_types;
         std::vector<int> atom_to_residue;
 
-        std::vector<uint8_t> topo_contact_mask_;
-        std::vector<uint8_t> topo_clash_mask_;
         int num_atoms_cached_ = 0;
         /// Accumulated across calculateEnergyChange_*; flushed into NeighborStats.
         mutable std::uint64_t eval_pair_calls_local_ = 0;
@@ -70,6 +64,9 @@ namespace mcpu::forces::mcpu08 {
             // rejected. See hard_tol_r2_from() and ClashCutoff.
             float hard_tol_r2 = 0.f;
         };
+        /// Built by the constructor from its per-atom-pair matrices, which
+        /// are not kept: every pair of the same two types must agree, so this
+        /// table holds all they say.
         std::vector<TypePairParams> type_params_;  ///< size n_types_ * n_types_
 
         /// r² beyond which no pair can overlap: the largest hard-core radius
@@ -175,8 +172,6 @@ namespace mcpu::forces::mcpu08 {
         static_assert(kTopoBand == kSkipLocalContactRange,
                       "the band holds the pairs whose contacts are switched off by sequence");
 
-        /// Rebuild type_params_ from contact matrices (after atom permute). O(N²).
-        void rebuild_type_params_from_matrices();
         /// Stores atom pair (i, j)'s parameters as its type pair's entry.
         /// type_params_ keeps one entry per unordered type pair and is filled
         /// in atom order, so every pair of the same two types must agree; a
@@ -185,6 +180,8 @@ namespace mcpu::forces::mcpu08 {
         /// in atom order silently winning.
         void store_type_pair_params(std::vector<uint8_t>& filled, int i, int j,
                                     const TypePairParams& tp);
+        /// Set mu_exact_cutoff_ and the clash prefilter from type_params_.
+        void apply_mu_denselist_cutoff();
 
         /// The move cutoff (squared) for one type pair: the hard-core radius
         /// rounded to 0.001 A, less 0.0015 A. In 3-decimal terms,
@@ -272,8 +269,7 @@ namespace mcpu::forces::mcpu08 {
             const int ti = atom_types[static_cast<size_t>(i)];
             const int tj = atom_types[static_cast<size_t>(j)];
             float hard_tol_r2 = 0.f;
-            if (ti >= 0 && tj >= 0 && NT > 0 &&
-                !type_params_.empty()) {
+            if (ti >= 0 && tj >= 0) {
                 hard_tol_r2 = type_params_[static_cast<size_t>(ti) * NT +
                                            static_cast<size_t>(tj)]
                                   .hard_tol_r2;
@@ -300,7 +296,7 @@ namespace mcpu::forces::mcpu08 {
             const int ti = atom_types[static_cast<size_t>(i)];
             const int tj = atom_types[static_cast<size_t>(j)];
             TypePairParams g{};
-            if (ti >= 0 && tj >= 0 && NT > 0) {
+            if (ti >= 0 && tj >= 0) {
                 g = type_params_[static_cast<size_t>(ti) * NT +
                                  static_cast<size_t>(tj)];
             }
@@ -443,9 +439,9 @@ namespace mcpu::forces::mcpu08 {
 
     public:
         explicit MuPotential(
-            Eigen::MatrixXf  contact_energies,
-            Eigen::MatrixXf  contact_dist_sq,
-            Eigen::MatrixXf  hard_core_sq,
+            const Eigen::MatrixXf& contact_energies,
+            const Eigen::MatrixXf& contact_dist_sq,
+            const Eigen::MatrixXf& hard_core_sq,
             std::vector<int> atom_types,
             std::vector<int> atom_to_residue
         );
@@ -495,8 +491,6 @@ namespace mcpu::forces::mcpu08 {
         [[nodiscard]] float mu_exact_cutoff() const noexcept {
             return mu_exact_cutoff_;
         }
-        /// Recompute mu_exact_cutoff_ from type_params_ (or the matrices).
-        void apply_mu_denselist_cutoff();
 
     };
 

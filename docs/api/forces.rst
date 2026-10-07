@@ -73,14 +73,19 @@ your own tables.
    Pairwise contact ("mu") potential, plus the hard-core overlap test.
    Default energy group **1**.
 
-   :param energies: ``float32`` array of shape ``(m, n)``: the contact
-      energy for each atom-type pair.
-   :param dist_sq: ``float32`` array of shape ``(m, n)``: squared
-      contact distance per atom-type pair.
-   :param hard_core: ``float32`` array of shape ``(m, n)``: squared
-      hard-core radius per atom-type pair.
-   :param types: ``Sequence[int]`` -- per-atom type index.
+   :param energies: ``float32`` array of shape ``(n, n)``, ``n`` atoms:
+      the contact energy of each atom pair.
+   :param dist_sq: ``float32`` array of shape ``(n, n)``: squared
+      contact distance per atom pair.
+   :param hard_core: ``float32`` array of shape ``(n, n)``: squared
+      hard-core distance per atom pair.
+   :param types: ``Sequence[int]`` -- per-atom type index (``-1``: an
+      untyped atom, which neither clashes nor makes contacts).
    :param to_residue: ``Sequence[int]`` -- per-atom residue index.
+
+   Mu keeps one entry per atom-type pair, so every pair of the same two
+   types must have the same three values; the constructor raises
+   ``ValueError`` on a pair that disagrees.
 
    .. py:method:: cache_necessary_data(topo_contact_mask, topo_clash_mask, coords) -> None
 
