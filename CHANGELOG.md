@@ -596,6 +596,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   type pair whose atom pairs disagree is refused at construction instead
   of in `cache_necessary_data`. The unused `System.mu_hard_core_sq` is gone.
 
+- **KORP runs no longer keep the Mu and H-bond neighbour grids.** No KORP
+  term reads them (the CA steric guard walks all pairs), yet the engine built
+  them at `set_positions` and updated them on every accepted move. A potential
+  now says whether it reads the grids (`Potential::readsNeighborGrids`; Mu and
+  H-bond do), and the grids are built and kept only while some potential on
+  the System does; otherwise they stay off, the state every grid query
+  already handles exactly. A reader added later gets its grids at the next
+  accepted move. `Context.mu_backend_name()` and `hbond_backend_name()`
+  report `off_no_reader` then. Results are unchanged: KORP actin and PGK1
+  trajectories (energy, accept bits, coordinates) are bit-identical to before,
+  and so is mcpu08 (arch_parity_dump 4/4 IDENTICAL). An unfolded KORP state
+  (T=32) takes 11-13% fewer cycles per step (actin 223k to 195k, PGK1 258k
+  to 230k); native states at T=1 are within 1%. Peak memory drops by 45-75 MB.
+
 - **With fixed residues, no step is spent on a fixed residue.** A KIC step
   drew its window once and gave up when the window touched a fixed residue;
   it now draws again, as pivot and sidechain steps already did, so the

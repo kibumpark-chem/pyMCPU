@@ -80,6 +80,7 @@ namespace mcpu::forces {
         /// Stores no atom ids: it reads State torsions and System blocks,
         /// which are remapped for it.
         void permute_atom_indices(const AtomPermutation&) override {}
+        bool readsNeighborGrids() const noexcept override { return true; }
 
         EnergyChangeResult calculateEnergyChange(
             const Context& context, 

@@ -121,6 +121,11 @@ public:
     /// Override when this potential can hard-reject via a clash energy sentinel.
     virtual bool canHardReject() const noexcept { return false; }
 
+    /// Override to return true when the term queries the Mu or H-bond
+    /// neighbour grids (Context::neighbors()). NeighborSystem builds and
+    /// maintains those grids only while some potential on the System says so.
+    virtual bool readsNeighborGrids() const noexcept { return false; }
+
     /// Whether the proposal puts a pair that the move re-evaluates (at least
     /// one atom moved, and not carried by a rigid move) under the cutoff a
     /// move is tested against. calculateEnergy judges with a cutoff

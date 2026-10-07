@@ -6,6 +6,9 @@
 ///
 /// Desync is prevented by construction: potentials never insert/remove/update grids.
 /// Only rebuild_from_accepted_state() and commit_accepted_move() mutate indices.
+/// The grids exist only while something reads them: a potential whose
+/// readsNeighborGrids() is true, or a registered subset grid. Otherwise (KORP)
+/// they stay empty and off, which every query treats as its exact fallback.
 #include <Eigen/Dense>
 #include <algorithm>
 #include <cassert>
@@ -235,9 +238,11 @@ public:
 
     /// One-shot audit label for HBond candidate source (current NeighborSystem).
     const char* hbond_backend_name() const noexcept {
+        if (!grids_read_) return "off_no_reader";
         return hb_fallback_ ? "bruteforce_OH_after_overflow" : "opencell_typed_OH_grids";
     }
     const char* mu_backend_name() const noexcept {
+        if (!grids_read_) return "off_no_reader";
         return dense_active_ ? "opencell_mu_BBO_SC" : "mu_grid_off_after_overflow";
     }
     float mu_cell_size_A() const noexcept {
@@ -250,10 +255,11 @@ public:
 
     /// A bound on |x|, |y| and |z| over the accepted state and the moved
     /// atoms of ``trial``: the reach of the box the grids were last built
-    /// on, raised by every accepted atom that has since wrapped past it and
-    /// by the trial's own moved atoms (the float rounding of a rigid move
-    /// scales with it; see Context::rigid_carry_bound_A). A state that stays
-    /// in the box gets the box's reach. O(n_moved).
+    /// on (with no grid reader, the accepted state's box), raised by every
+    /// accepted atom that has since wrapped past it and by the trial's own
+    /// moved atoms (the float rounding of a rigid move scales with it; see
+    /// Context::rigid_carry_bound_A). A state that stays in the box gets the
+    /// box's reach. O(n_moved).
     float coord_reach(const CoordsSoA& trial, const ProposalPatch& patch) const {
         return std::max(reach_, max_abs_moved_(trial, patch));
     }
@@ -317,7 +323,8 @@ public:
     /// box plus a margin, its cell count capped at max_grid_cells_ (see
     /// kGridCellsPerAtom). Atoms that later wander past the box wrap (see
     /// OpenCellGrid), so this runs only from set_positions and after an
-    /// overflow.
+    /// overflow. With no reader it only sets the reach and leaves the
+    /// grids off: Mu inactive, H-bonds on the brute-force search.
     bool rebuild_from_accepted_state(const CoordsSoA& coords) {
         ++stats_.num_grid_rebuilds;
         if (!mask_current()) apply_energy_mask_();
@@ -329,6 +336,12 @@ public:
         const BoxBounds b = aabb_of_coords(coords, cfg_.effective_margin(r_mu));
         dense_active_ = false;
         hb_fallback_ = false;
+        grids_read_ = sys_->readsNeighborGrids() || !subset_grids_.empty();
+        if (!grids_read_) {
+            hb_fallback_ = true;
+            set_reach_(b);
+            return false;
+        }
 
         // --- Mu grid ---
         {
@@ -347,12 +360,7 @@ public:
                 stats_.neighbor_offsets_count = 0;
             }
         }
-        reach_ = 0.f;
-        for (const BoxBounds& box : {b, mu_grid_->grid().bounds()}) {
-            if (!box.valid) continue;
-            for (int d = 0; d < 3; ++d)
-                reach_ = std::max({reach_, std::fabs(box.lo[d]), std::fabs(box.hi[d])});
-        }
+        set_reach_(b);
 
         // --- HBond O / H grids (same lo, smaller cell) ---
         if (hb_o_grid_->configure(b, max_grid_cells_) &&
@@ -394,6 +402,12 @@ public:
                               const CoordsSoA& coords_new) {
         sync_energy_mask(coords_new);
         reach_ = std::max(reach_, max_abs_moved_(coords_new, patch));
+
+        // No grids to keep, unless a reader was added since the last rebuild.
+        if (!grids_read_) {
+            if (sys_->readsNeighborGrids()) rebuild_from_accepted_state(coords_new);
+            return;
+        }
 
         // A grid retired by an overflow is rebuilt on every accept until
         // the atoms spread out enough for it to fit.
@@ -869,6 +883,15 @@ private:
         }
         return true;
     }
+    /// The reach of the box ``b`` and of the Mu grid's own box (when built).
+    void set_reach_(const BoxBounds& b) {
+        reach_ = 0.f;
+        for (const BoxBounds& box : {b, mu_grid_->grid().bounds()}) {
+            if (!box.valid) continue;
+            for (int d = 0; d < 3; ++d)
+                reach_ = std::max({reach_, std::fabs(box.lo[d]), std::fabs(box.hi[d])});
+        }
+    }
     /// Either H-bond grid overflowed (both are checked and counted).
     bool hbond_overflowed_() {
         const bool o = note_overflow_(*hb_o_grid_, "H-bond O",
@@ -891,6 +914,7 @@ private:
     bool dense_active_ = false;
     bool hb_fallback_ = false;
     bool retry_rebuild_ = false;  ///< a grid overflowed: rebuild on the next accept
+    bool grids_read_ = true;      ///< something reads the grids, so they are kept
     bool virtual_amide_h_ = false;
     bool hb_h_ids_are_residues_ = false;
 

@@ -144,6 +144,41 @@ def test_monte_carlo_runs_and_proposes_no_sidechain_moves(chain_traj):
     assert stats["num_propose_pivot"] + stats["num_propose_kic"] == 200
 
 
+def test_no_term_reads_the_neighbour_grids_so_none_are_built(chain_traj):
+    """KORP's terms walk all pairs: the Mu and H-bond grids stay off."""
+    ff = KORPForceField(chain_traj)
+    sim = _simulate(ff, chain_traj)
+    sim.integrator.set_seed(7)
+    sim.integrator.set_move_weights(0.5, 0.5, 0.0)
+    sim.step(200)
+    ctx = sim.context
+    assert ctx.mu_backend_name() == "off_no_reader"
+    assert ctx.hbond_backend_name() == "off_no_reader"
+    assert not ctx.neighbor_proxy_stats()["mu_grid_active"]
+
+
+def test_a_term_that_reads_the_grids_turns_them_on(chain_traj):
+    """A grid reader added after set_positions gets its grids at the next accept."""
+    from pymcpu.forcefields.builders.hbond_builder import HydrogenBondBuilder
+    from pymcpu.forcefields.mcpu import MCPUForceField
+
+    mcpu = MCPUForceField(chain_traj)
+    ff = KORPForceField(chain_traj)
+    sim = _simulate(ff, chain_traj)
+    ctx = sim.context
+    assert ctx.hbond_backend_name() == "off_no_reader"
+    hbond = HydrogenBondBuilder.build(raw_params=mcpu.hbond,
+                                      seq_dep_params=mcpu.hbond_seq_dep)
+    hbond.set_energy_group(4)
+    hbond.set_name("hydrogen_bond")
+    ctx.get_system().add_potential(hbond)
+    sim.integrator.set_seed(7)
+    sim.integrator.set_move_weights(0.5, 0.5, 0.0)
+    sim.step(200)
+    assert ctx.hbond_backend_name() == "opencell_typed_OH_grids"
+    assert ctx.hbond_index_ok()
+
+
 def test_the_default_move_mix_is_refused(chain_traj):
     """These residues have no chi angles, so the engine must say so."""
     ff = KORPForceField(chain_traj)

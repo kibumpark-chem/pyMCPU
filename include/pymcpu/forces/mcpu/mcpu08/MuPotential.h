@@ -468,6 +468,7 @@ namespace mcpu::forces::mcpu08 {
         /// Also rewrites the state's live contact list from the same pass.
         double resyncEnergy(const Context& context, const State& state) const override;
         bool canHardReject() const noexcept override { return true; }
+        bool readsNeighborGrids() const noexcept override { return true; }
         RejectReason rejectionForEnergy(double energy) const noexcept override {
             return energy >= 99999.0f * 0.5f
                 ? RejectReason::StericClash

@@ -103,6 +103,7 @@ private:
     int num_atoms;
     int num_residues;
     std::vector<std::shared_ptr<Potential>> potentials;
+    bool reads_neighbor_grids_ = false;  ///< some potential reads the neighbour grids
 
     // Variables set by Python builders
     int total_bb_atoms = 0;
@@ -309,6 +310,9 @@ public:
     int  getNumResidues() const noexcept;
 
     const std::vector<std::shared_ptr<Potential>>& getPotentials() const;
+    /// Whether any potential, enabled or not, reads the neighbour grids
+    /// (Potential::readsNeighborGrids). O(1).
+    bool readsNeighborGrids() const noexcept { return reads_neighbor_grids_; }
 
     /// (group, name) for every energy group that has a potential, sorted by
     /// group id. Disabled potentials are included. A group whose potentials

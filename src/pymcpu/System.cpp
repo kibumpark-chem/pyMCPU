@@ -374,6 +374,7 @@ int System::addPotential(std::shared_ptr<Potential> potential) {
         potentials.pop_back();
         throw;
     }
+    reads_neighbor_grids_ = reads_neighbor_grids_ || potentials.back()->readsNeighborGrids();
     return static_cast<int>(potentials.size() - 1);
 }
 
