@@ -37,14 +37,6 @@ struct NeighborConfig {
     /// HBondPotential). False evaluates them all exactly, as a reference.
     bool skip_rigid_mm = true;
 
-    /// If true (default), denselist Mu uses cell-pair inversion (group moved by
-    /// cell). Set false / ``MCPU_USE_CELL_PAIR=0`` for per-atom walks (parity).
-    bool use_cell_pair = true;
-
-    /// Minimum moved-atom count to use cell-pair inversion. Below this, per-atom
-    /// denselist is cheaper (SC ~3.5 atoms). Default 20 ≈ KIC size.
-    int cell_pair_min_moved = 20;
-
     /// Minimum moved-atom count for the clash-first pass (MuPotential). Below
     /// this the pass is nearly pure overhead: a small move examines few pairs
     /// anyway, so skipping the contact walk saves little while the extra pass
@@ -99,10 +91,9 @@ inline float effective_mu_cell_size_A(float r_cut,
                      ? cfg.mu_cell_size_angstrom
                      : r_cut * (cfg.mu_cell_size_scale > 0.f ? cfg.mu_cell_size_scale
                                                             : 1.f);
-    // FIXED: never below the cutoff. The Mu grid code walks a one-cell stencil
-    // (27 cells, NeighborCellList::kCap); a smaller cell needs a wider stencil,
-    // which overflowed those buffers: set_positions crashed, and the cell-pair
-    // path silently dropped cells.
+    // Never below the cutoff. The Mu grid code walks a one-cell stencil
+    // (27 cells, NeighborCellList::kCap); a smaller cell would need a wider
+    // stencil and overflow those buffers.
     float mn = cfg.mu_cell_size_min_angstrom > 0.f ? cfg.mu_cell_size_min_angstrom : 0.f;
     if (mn < r_cut) mn = r_cut;
     if (cell < mn) cell = mn;
@@ -148,13 +139,6 @@ struct NeighborStats {
     std::uint64_t hbond_num_candidates_iterated = 0;
     std::uint64_t hbond_num_geom_checks = 0;
     std::uint64_t neighbor_num_cell_visits = 0;
-    /// Span slots the cell-pair r2 loop actually scans, i.e. sum of n_static
-    /// over every (moved atom, neighbour cell). Compare against
-    /// mu_num_pair_distance_checks -- which counts only the slots that survive
-    /// skip_mask -- to see how much r2 work is computed and then discarded.
-    std::uint64_t mu_span_slots_scanned = 0;
-    /// (moved atom, stencil cell) pairs skipped by the distance cull.
-    std::uint64_t mu_stencil_cells_culled = 0;
 
     /// Mu denselist stencil (variable radius).
     std::uint64_t neighbor_offsets_count = 0;
@@ -166,32 +150,6 @@ struct NeighborStats {
     /// Moved–moved denselist candidates skipped for rigid pivots.
     std::uint64_t elided_rigid_mm = 0;
 
-    /// Cell-pair inversion diagnostics (production denselist when use_cell_pair).
-    std::uint64_t pivot_mu_cell_pairs = 0;     ///< (mc,nc) nonempty iterations
-    std::uint64_t pivot_mu_cell_pairs_empty = 0; ///< stencil nc with count==0
-    std::uint64_t pivot_mu_n_groups = 0;       ///< sum of old+new group counts
-    std::uint64_t pivot_mu_group_atoms = 0;    ///< sum of group.counts (for avg)
-    std::uint64_t pivot_mu_cell_pair_evals = 0; ///< denselist steps using cell-pair
-
-    /// Cell-pair path phase timers (MCPU_CELL_PAIR_BREAKDOWN=1, pivot/rigid only).
-    std::uint64_t cp_group_build_ns = 0;
-    std::uint64_t cp_new_walk_ns = 0;
-    std::uint64_t cp_new_r2_ns = 0;
-    std::uint64_t cp_new_eval_ns = 0;
-    std::uint64_t cp_old_walk_ns = 0;
-    std::uint64_t cp_old_r2_ns = 0;
-    std::uint64_t cp_old_eval_ns = 0;
-    std::uint64_t cp_movedbits_ns = 0;  ///< per-cell moved mask (random is_moved[] loads)
-    std::uint64_t cp_skipmask_ns = 0;   ///< per-(moved atom, cell) skip mask
-    std::uint64_t cp_clash_aborts = 0;
-    std::uint64_t cp_full_evals = 0;
-    std::uint64_t cp_new_r2_checks = 0;
-    std::uint64_t cp_old_r2_checks = 0;
-    std::uint64_t cp_new_eval_calls = 0;
-    std::uint64_t cp_old_eval_calls = 0;
-    std::uint64_t cp_n_steps = 0;  ///< pivot/rigid denselist steps timed
-    std::uint64_t cp_new_n_groups = 0;
-    std::uint64_t cp_new_group_atoms = 0;
 
     /// MC steps counted in the current Integrator::run (or manual increments).
     std::uint64_t num_steps_executed = 0;

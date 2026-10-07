@@ -457,13 +457,6 @@ PYBIND11_MODULE(mcpu_core, m) {
              "on both sides) moved as one body, and carries its ledger entry. "
              "Default True; False evaluates them all exactly, as a reference.")
         .def("skip_rigid_mm", &Context::skip_rigid_mm)
-        .def("set_use_cell_pair", &Context::set_use_cell_pair, py::arg("on"),
-             "Cell-pair denselist Mu (default true). False = per-atom walks.")
-        .def("use_cell_pair", &Context::use_cell_pair)
-        .def("set_cell_pair_min_moved", &Context::set_cell_pair_min_moved,
-             py::arg("n"),
-             "Min moved atoms to use cell-pair (default 20; SC uses per-atom).")
-        .def("cell_pair_min_moved", &Context::cell_pair_min_moved)
         .def("set_clash_first_min_moved", &Context::set_clash_first_min_moved,
              "Minimum moved-atom count for the Mu clash-first pass (default 50). "
              "Below it the pass is skipped; it costs ~10% on very small moves and "
@@ -519,8 +512,6 @@ PYBIND11_MODULE(mcpu_core, m) {
                  d["hbond_num_candidates_iterated"] = s.hbond_num_candidates_iterated;
                  d["hbond_num_geom_checks"] = s.hbond_num_geom_checks;
                  d["neighbor_num_cell_visits"] = s.neighbor_num_cell_visits;
-                 d["mu_span_slots_scanned"] = s.mu_span_slots_scanned;
-                 d["mu_stencil_cells_culled"] = s.mu_stencil_cells_culled;
                  d["mu_eval_pair_calls"] = s.mu_eval_pair_calls;
                  d["elided_rigid_mm"] = s.elided_rigid_mm;
                  d["skip_rigid_mm"] = cfg.skip_rigid_mm;
@@ -764,103 +755,6 @@ PYBIND11_MODULE(mcpu_core, m) {
                      by_kind.append(dmk);
                  }
                  d["mu_by_kind"] = by_kind;
-                 {
-                     const auto& b = s.pivot_mu_breakdown;
-                     py::dict pb;
-                     pb["cell_pairs"] = b.cell_pairs;
-                     pb["cell_pairs_empty"] = b.cell_pairs_empty;
-                     pb["n_groups"] = b.n_groups;
-                     pb["group_atoms"] = b.group_atoms;
-                     pb["cell_pair_evals"] = b.cell_pair_evals;
-                     if (b.cell_pair_evals > 0) {
-                         const double inv_cp =
-                             1.0 / static_cast<double>(b.cell_pair_evals);
-                         pb["avg_cell_pairs"] =
-                             static_cast<double>(b.cell_pairs) * inv_cp;
-                         pb["avg_cell_pairs_empty"] =
-                             static_cast<double>(b.cell_pairs_empty) * inv_cp;
-                         pb["avg_n_groups"] =
-                             static_cast<double>(b.n_groups) * inv_cp;
-                     }
-                     if (b.n_groups > 0) {
-                         pb["avg_atoms_per_group"] =
-                             static_cast<double>(b.group_atoms) /
-                             static_cast<double>(b.n_groups);
-                     }
-                     const auto cp_tot = b.cell_pairs + b.cell_pairs_empty;
-                     if (cp_tot > 0) {
-                         pb["cell_pair_empty_frac"] =
-                             static_cast<double>(b.cell_pairs_empty) /
-                             static_cast<double>(cp_tot);
-                     }
-                     d["pivot_mu_breakdown"] = pb;
-                 }
-                 {
-                     const auto& b = s.cell_pair_breakdown;
-                     py::dict cpb;
-                     cpb["group_build_ns"] = b.group_build_ns;
-                     cpb["new_walk_ns"] = b.new_walk_ns;
-                     cpb["new_r2_ns"] = b.new_r2_ns;
-                     cpb["new_eval_ns"] = b.new_eval_ns;
-                     cpb["old_walk_ns"] = b.old_walk_ns;
-                     cpb["old_r2_ns"] = b.old_r2_ns;
-                     cpb["old_eval_ns"] = b.old_eval_ns;
-                    cpb["movedbits_ns"] = b.movedbits_ns;
-                    cpb["skipmask_ns"] = b.skipmask_ns;
-                    cpb["clash_aborts"] = b.clash_aborts;
-                     cpb["full_evals"] = b.full_evals;
-                     cpb["new_r2_checks"] = b.new_r2_checks;
-                     cpb["old_r2_checks"] = b.old_r2_checks;
-                     cpb["new_eval_calls"] = b.new_eval_calls;
-                     cpb["old_eval_calls"] = b.old_eval_calls;
-                     cpb["n_steps"] = b.n_steps;
-                     cpb["new_n_groups"] = b.new_n_groups;
-                     cpb["new_group_atoms"] = b.new_group_atoms;
-                     cpb["cell_pairs"] = b.cell_pairs;
-                     cpb["cell_pairs_empty"] = b.cell_pairs_empty;
-                     if (b.n_steps > 0) {
-                         const double inv =
-                             1.0 / static_cast<double>(b.n_steps);
-                         cpb["avg_group_build_ns"] =
-                             static_cast<double>(b.group_build_ns) * inv;
-                         cpb["avg_new_walk_ns"] =
-                             static_cast<double>(b.new_walk_ns) * inv;
-                         cpb["avg_new_r2_ns"] =
-                             static_cast<double>(b.new_r2_ns) * inv;
-                         cpb["avg_new_eval_ns"] =
-                             static_cast<double>(b.new_eval_ns) * inv;
-                         cpb["avg_old_walk_ns"] =
-                             static_cast<double>(b.old_walk_ns) * inv;
-                         cpb["avg_old_r2_ns"] =
-                             static_cast<double>(b.old_r2_ns) * inv;
-                         cpb["avg_old_eval_ns"] =
-                             static_cast<double>(b.old_eval_ns) * inv;
-                         cpb["avg_new_r2_checks"] =
-                             static_cast<double>(b.new_r2_checks) * inv;
-                         cpb["avg_old_r2_checks"] =
-                             static_cast<double>(b.old_r2_checks) * inv;
-                         cpb["avg_new_eval_calls"] =
-                             static_cast<double>(b.new_eval_calls) * inv;
-                         cpb["avg_old_eval_calls"] =
-                             static_cast<double>(b.old_eval_calls) * inv;
-                         cpb["avg_new_n_groups"] =
-                             static_cast<double>(b.new_n_groups) * inv;
-                         cpb["clash_abort_rate"] =
-                             static_cast<double>(b.clash_aborts) * inv;
-                     }
-                     if (b.new_n_groups > 0) {
-                         cpb["avg_atoms_per_new_group"] =
-                             static_cast<double>(b.new_group_atoms) /
-                             static_cast<double>(b.new_n_groups);
-                     }
-                     const auto cp_tot = b.cell_pairs + b.cell_pairs_empty;
-                     if (cp_tot > 0) {
-                         cpb["cell_pair_empty_frac"] =
-                             static_cast<double>(b.cell_pairs_empty) /
-                             static_cast<double>(cp_tot);
-                     }
-                     d["cell_pair_breakdown"] = cpb;
-                 }
                  py::dict by_group;
                  // Only groups 1..7 have a timing slot (energy_delta_ns is [8]).
                  for (const auto& [g, name] : s.energy_terms) {

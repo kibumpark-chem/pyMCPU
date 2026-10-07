@@ -35,7 +35,7 @@ from pymcpu.forcefields.mcpu import MCPUForceField  # noqa: E402
 def build_ctx(pdb: Path):
     """Build an mcpu_core.Context for ``pdb`` with default settings.
 
-    Callers that need non-default settings (e.g. use_cell_pair, skip_rigid_mm)
+    Callers that need non-default settings (e.g. skip_rigid_mm)
     keep their own build_ctx variant -- this only covers the exact sequence
     duplicated byte-for-byte across parity_layered_eval.py and
     parity_sparse_proposal.py.

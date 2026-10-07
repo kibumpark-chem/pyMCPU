@@ -50,39 +50,6 @@ struct MuKindStats {
     std::size_t moved_atoms_sum = 0;
 };
 
-/// Cell-pair inversion counters (copied from NeighborStats).
-struct PivotMuBreakdown {
-    std::uint64_t cell_pairs = 0;
-    std::uint64_t cell_pairs_empty = 0;
-    std::uint64_t n_groups = 0;
-    std::uint64_t group_atoms = 0;
-    std::uint64_t cell_pair_evals = 0;
-};
-
-/// Cell-pair denselist phase split (MCPU_CELL_PAIR_BREAKDOWN=1).
-struct CellPairBreakdown {
-    std::uint64_t group_build_ns = 0;
-    std::uint64_t new_walk_ns = 0;
-    std::uint64_t new_r2_ns = 0;
-    std::uint64_t new_eval_ns = 0;
-    std::uint64_t old_walk_ns = 0;
-    std::uint64_t old_r2_ns = 0;
-    std::uint64_t old_eval_ns = 0;
-    std::uint64_t movedbits_ns = 0;
-    std::uint64_t skipmask_ns = 0;
-    std::uint64_t clash_aborts = 0;
-    std::uint64_t full_evals = 0;
-    std::uint64_t new_r2_checks = 0;
-    std::uint64_t old_r2_checks = 0;
-    std::uint64_t new_eval_calls = 0;
-    std::uint64_t old_eval_calls = 0;
-    std::size_t n_steps = 0;
-    std::uint64_t new_n_groups = 0;
-    std::uint64_t new_group_atoms = 0;
-    std::uint64_t cell_pairs = 0;
-    std::uint64_t cell_pairs_empty = 0;
-};
-
 /// Per-step hot-path accumulators (Integrator::run instrumentation).
 struct StepStats {
     std::uint64_t copy_dynamic_ns = 0;
@@ -117,9 +84,6 @@ struct StepStats {
     std::uint64_t mu_eval_pair_calls = 0;
     /// Index: 0=Pivot, 1=KIC, 2=Sidechain.
     MuKindStats mu_by_kind[3] = {};
-    /// Copied from NeighborStats.
-    PivotMuBreakdown pivot_mu_breakdown;
-    CellPairBreakdown cell_pair_breakdown;
 };
 
 // Monte Carlo integrator using pivot + sidechain compound moves.

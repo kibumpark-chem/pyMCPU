@@ -16,6 +16,12 @@ clash. It is a contact pair, so its energy shows whether it is counted.
 
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
+import textwrap
+from pathlib import Path
+
 import mdtraj as md
 import numpy as np
 import pytest
@@ -28,7 +34,7 @@ CLASH = 1e4  # the clash sentinel, weighted, is about 4e4
 CUTOFF = 2.7285  # (round(1000 * hard_r) - 1.5) / 1000 for CB-CH2, hard_r = 2.73
 
 
-def _build(mask=None, use_cell_pair=True):
+def _build(mask=None):
     traj = md.load(str(default_example_pdb()))
     heavy = traj.atom_slice(traj.topology.select("not element H"))
     ff = MCPUForceField(heavy)
@@ -52,7 +58,6 @@ def _build(mask=None, use_cell_pair=True):
     if mask is not None:
         system.set_energy_ignored_residues([4], mask)  # a residue the pair is not in
     ctx = mcpu_core.Context(system)
-    ctx.set_use_cell_pair(use_cell_pair)
     return ctx, place, cb, tip, ff
 
 
@@ -107,27 +112,43 @@ def test_a_move_into_the_buffer_is_still_rejected(setup, under: float) -> None:
         assert "move cutoff" in check.message
 
 
-@pytest.mark.parametrize(
-    ("mask", "use_cell_pair"),
-    [(None, True), ("ignore_all", True), ("ignore_all", False)],
-    ids=["contact-list", "cell-pair", "per-atom"],
-)
-@pytest.mark.parametrize("to", [5.5, CUTOFF + 0.3], ids=["breaks-contact", "keeps-contact"])
-def test_a_move_out_of_the_buffer_scores_the_pair_as_the_full_energy_does(mask, use_cell_pair, to) -> None:
-    """The old side of a move judges the state that exists, so it counts a
-    pair inside the buffer as the full energy does: here the contact it holds
-    is broken (to 5.5 A) or kept (to just outside the cutoff). A mask on an
-    unrelated residue makes Mu re-measure the old side instead of reading
-    its contact list."""
-    ctx, place, _, tip, _ = _build(mask, use_cell_pair)
+def _check_out_of_buffer(mask, to: float) -> None:
+    ctx, place, _, tip, _ = _build(mask)
     ctx.set_positions(place(CUTOFF - 0.0005))
     ctx.calculate_total_energy(-1)
     assert not ctx.has_steric_clash()
-    ctx.set_cell_pair_min_moved(1)
     check = _move_tip(ctx, place(to), tip)
     assert check.passed, check.message
     assert abs(check.delta_incremental) < CLASH
     assert (abs(check.delta_direct) > 0.1) is (to == 5.5)
+
+
+@pytest.mark.parametrize("mask", [None, "ignore_all"], ids=["unmasked", "ignore-all"])
+@pytest.mark.parametrize("to", [5.5, CUTOFF + 0.3], ids=["breaks-contact", "keeps-contact"])
+def test_a_move_out_of_the_buffer_scores_the_pair_as_the_full_energy_does(mask, to) -> None:
+    """The old side of a move judges the state that exists, so it counts a
+    pair inside the buffer as the full energy does: here the contact it holds
+    is broken (to 5.5 A) or kept (to just outside the cutoff). A mask on an
+    unrelated residue must not change that."""
+    _check_out_of_buffer(mask, to)
+
+
+@pytest.mark.parametrize("to", [5.5, CUTOFF + 0.3], ids=["breaks-contact", "keeps-contact"])
+def test_without_the_contact_list_a_move_out_of_the_buffer_agrees(to) -> None:
+    """The same move on the moved-vs-all delta, which re-measures the old
+    side instead of reading the contact list. MCPU_CONTACT_LIST is read once
+    per process, so this runs in a fresh one."""
+    code = textwrap.dedent(f"""
+        from tests.physics.forcefield import test_mu_state_cutoff as t
+        t._check_out_of_buffer(None, {to!r})
+        print("CHECK ok")
+    """)
+    repo = Path(__file__).resolve().parents[3]
+    env = dict(os.environ, MCPU_CONTACT_LIST="0")
+    run = subprocess.run([sys.executable, "-c", code], cwd=repo, env=env,
+                         capture_output=True, text=True)
+    assert run.returncode == 0, run.stderr[-2000:]
+    assert "CHECK ok" in run.stdout
 
 
 def test_a_rigid_move_carries_a_pair_inside_the_buffer(setup) -> None:

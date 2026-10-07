@@ -2133,35 +2133,6 @@ void MCIntegrator::run(Context& context, int num_steps, int step_offset)
 
     context.copy_energy_delta_ns_into(step_stats_.energy_delta_ns);
     step_stats_.mu_eval_pair_calls = context.neighborStats().mu_eval_pair_calls;
-    {
-        const auto& ns = context.neighborStats();
-        auto& b = step_stats_.pivot_mu_breakdown;
-        b.cell_pairs = ns.pivot_mu_cell_pairs;
-        b.cell_pairs_empty = ns.pivot_mu_cell_pairs_empty;
-        b.n_groups = ns.pivot_mu_n_groups;
-        b.group_atoms = ns.pivot_mu_group_atoms;
-        b.cell_pair_evals = ns.pivot_mu_cell_pair_evals;
-
-        auto& cpb = step_stats_.cell_pair_breakdown;
-        cpb.group_build_ns = ns.cp_group_build_ns;
-        cpb.new_walk_ns = ns.cp_new_walk_ns;
-        cpb.new_r2_ns = ns.cp_new_r2_ns;
-        cpb.new_eval_ns = ns.cp_new_eval_ns;
-        cpb.old_walk_ns = ns.cp_old_walk_ns;
-        cpb.old_r2_ns = ns.cp_old_r2_ns;
-        cpb.old_eval_ns = ns.cp_old_eval_ns;
-        cpb.clash_aborts = ns.cp_clash_aborts;
-        cpb.full_evals = ns.cp_full_evals;
-        cpb.new_r2_checks = ns.cp_new_r2_checks;
-        cpb.old_r2_checks = ns.cp_old_r2_checks;
-        cpb.new_eval_calls = ns.cp_new_eval_calls;
-        cpb.old_eval_calls = ns.cp_old_eval_calls;
-        cpb.n_steps = static_cast<std::size_t>(ns.cp_n_steps);
-        cpb.new_n_groups = ns.cp_new_n_groups;
-        cpb.new_group_atoms = ns.cp_new_group_atoms;
-        cpb.cell_pairs = ns.pivot_mu_cell_pairs;
-        cpb.cell_pairs_empty = ns.pivot_mu_cell_pairs_empty;
-    }
     context.set_energy_delta_timing(false);
 
     // Occupied-stencil maintenance diagnostic (opt-in).

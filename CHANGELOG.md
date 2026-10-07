@@ -154,8 +154,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   recompute after each `step()` resets it anyway). A pivot out of the
   neighbour grid re-decides them too: the listed ones, or every carried pair
   when there is no list. The running energy now equals the full energy after
-  every move, except under a residue energy mask or with
-  `MCPU_CONTACT_LIST=0`, which take a path without the list. The Mu neighbour
+  every move, except under a residue energy mask, which takes a path
+  without the list. The Mu neighbour
   cutoff grows by the band (5.0765 to 5.1265 Å on actin), and
   `MuPotential.contact_list_rebuilds` counts rebuilds. The full Mu energy now
   skips pairs beyond that cutoff, which makes the actin recompute about 40%
@@ -193,7 +193,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `Context.set_mu_cell_size_scale` below 1, or `set_mu_cell_size_angstrom`
   below the Mu cutoff, crashed the interpreter in `set_positions`: the
   neighbour grid only supports a one-cell stencil, and a smaller cell
-  overflowed its buffers (the cell-pair path also silently dropped cells).
+  overflowed its buffers.
   Such a cell is now raised to the cutoff. Larger cells are unchanged.
 - **KORP keeps chain IDs and residue numbers.** Its backbone slice goes through
   mdtraj's `Topology.subset`, which drops every chain ID and renumbers a
@@ -872,8 +872,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `MCPU_JCC_PAD=ON`.
 
 - **Runs with a residue energy mask use the Mu contact list.** A mask used
-  to switch the Mu term off the list, so every masked move took the slower
-  per-atom or cell-pair walk. Masked pairs score 0, so a list built under a
+  to switch the Mu term off the list, so every masked move took a slower
+  walk of the neighbour grid. Masked pairs score 0, so a list built under a
   mask never holds them; the list is now kept under a mask and rebuilt when
   the mask is set or cleared. Masked runs take 44-64% fewer cycles per step
   on actin and PGK1. The accept sequence is unchanged, but the running
@@ -1174,15 +1174,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   neighbour cutoff below the contact list's near-miss band.
 - `mcpu_core.build_flags()`, deprecated since `build_info()` replaced it;
   `scripts/install_check.py` now reads `build_info()`.
-- `MCPU_MM_GUARD_N2`, and the always-zero `mmguard_ns` field of the cell-pair
-  breakdown in `Integrator.step_stats()`, with the rigid-move re-check they
-  belonged to (see Changed).
+- `MCPU_MM_GUARD_N2`, with the rigid-move re-check it belonged to (see
+  Changed).
 - `Context.set_mm_clash_margin` / `mm_clash_margin`,
   `Context.set_mm_double_boundary` / `mm_double_boundary`, the matching
   `MuPotential` properties and the `MCPU_MM_CLASH_MARGIN` and
   `MCPU_MM_DOUBLE_BOUNDARY` environment variables. They were experiments for
-  the rigid-move clash problem (see Changed), and only the cell-pair path
-  read them. The double-boundary check had become the default check without
+  the rigid-move clash problem (see Changed), and only one Mu pair walk,
+  since removed, read them. The double-boundary check had become the default check without
   its prefilter, so it changed only speed. The margin rejected rigid moves
   that have no clash, on that one path only, so a masked run's trajectory
   depended on which path a move took. Runs that did not set them are
@@ -1203,7 +1202,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `r2_filter_ns`, `eval_pair_ns`, `overhead_ns`, `candidates`, `in_cutoff`,
   `n_pivot_steps`, their `avg_*` forms and `in_cutoff_frac`, plus the
   `avg_walk_*`, `walk_empty_frac` and `avg_atoms_per_nonempty_cell` keys,
-  whose counters nothing ever filled. The dict keeps its cell-pair counters.
+  whose counters nothing ever filled.
   Neither ran unless set, so default runs are bit-identical.
 - The `MCPU_CLASH_FIRST` and `MCPU_CLASH_FIRST_MIN_MOVED` environment
   variables. The clash-first pass now always runs as it did by default:
@@ -1235,6 +1234,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   drop the call. Results are bit-identical.
 - `Context.set_proxy_print_every()`. The 0.1.0 notes list it as removed, but
   the deprecated no-op binding was still there; it is gone now.
+- **The cell-pair Mu walk.** `calculateEnergyChange_fast` carried a second
+  pair walk of the dense grid that grouped the moved atoms by cell. The
+  contact list replaced it, and it ran 0 times in every audited run, masked
+  or not. Gone with it: `Context.set_use_cell_pair` / `use_cell_pair` and
+  `Context.set_cell_pair_min_moved` / `cell_pair_min_moved`; the
+  `MCPU_USE_CELL_PAIR`, `MCPU_CELL_PAIR_MIN_MOVED`, `MCPU_UNIFORM_SKIPMASK`,
+  `MCPU_LIVE_R2`, `MCPU_CLASH_ORDER_BY_DENSITY`, `MCPU_NC_SHARE_DIAG` and
+  `MCPU_HOT_COUNTERS` environment variables (the last counted only on that
+  walk) and the `MCPU_CP_BREAKDOWN` diagnostic build; the
+  `cell_pair_breakdown` and `pivot_mu_breakdown` entries of
+  `Integrator.step_stats()` (the latter held only cell-pair counters by
+  then: `cell_pairs`, `cell_pairs_empty`, `n_groups`, `group_atoms`,
+  `cell_pair_evals` and the averages and fractions built from them); the `mu_span_slots_scanned` and
+  `mu_stencil_cells_culled` entries of `Context.neighbor_proxy_stats()`;
+  and `scripts/parity_cell_pair_vs_per_atom.py`. `MCPU_CONTACT_LIST=0`
+  now sends every Mu move to the all-pairs moved-vs-all delta, an exact
+  reference that costs O(n_moved x N) per move, for checks only. Each
+  `Context` is about 200 KB smaller. Default runs are bit-identical.
 
 ## [0.1.0] — 2026-09-16
 

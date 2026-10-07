@@ -49,32 +49,6 @@ struct MuWorkspace {
     bool use_trial_fallback = false;
     MoveKind move_kind = MoveKind::Other;
 
-    /// Per-side grouping of moved atoms by cell (cell-pair denselist). O(1) reuse.
-    struct MovedCellGroups {
-        struct CellGroup {
-            int cell_id = -1;
-            // FIXED: was int[32] while build_moved_cell_groups bounds-checks
-            // g.count against OpenCellGrid::CELL_CAPACITY, which was raised
-            // from 32 to 48. Counts 32..47 therefore wrote past this array
-            // into `count` and the next CellGroup. Unreachable at production
-            // occupancy (actin peaks ~22) but reachable at
-            // MCPU_MU_CELL_SCALE>=1.2, which measured max_occ 31/46 -- i.e.
-            // this made that knob unsafe to even benchmark. Bind the size to
-            // the capacity that is actually enforced.
-            int moved_ids[OpenCellGrid::CELL_CAPACITY]{};
-            int count = 0;
-        };
-        // 512: exact denselist (~5.1 Å cells) can exceed 256 unique moved
-        // cells on large pivots; 256 was sized for 6 Å cells.
-        static constexpr int MAX_GROUPS = 512;
-        CellGroup groups[MAX_GROUPS]{};
-        int n_groups = 0;
-    };
-    MovedCellGroups old_moved_groups;
-    MovedCellGroups new_moved_groups;
-    /// Scratch: cell_id → group index; size = n_cells. Filled with -1. O(1) reuse.
-    std::vector<int> cell_to_group_scratch;
-
     // The moved-cell counts and the clash_hot list live in Context's
     // neighbor::PairScratch, shared by every term's pair walks.
 
@@ -367,20 +341,6 @@ public:
         return neighbors_.config().skip_rigid_mm;
     }
 
-    /// Cell-pair denselist Mu (default true). O(1) flag.
-    void set_use_cell_pair(bool on) noexcept {
-        neighbors_.config().use_cell_pair = on;
-    }
-    bool use_cell_pair() const noexcept {
-        return neighbors_.config().use_cell_pair;
-    }
-    /// Min moved atoms for cell-pair (default 20). O(1).
-    void set_cell_pair_min_moved(int n) noexcept {
-        neighbors_.config().cell_pair_min_moved = n;
-    }
-    int cell_pair_min_moved() const noexcept {
-        return neighbors_.config().cell_pair_min_moved;
-    }
     /// Min moved atoms for the Mu clash-first pass (default 50). O(1).
     void set_clash_first_min_moved(int n) noexcept {
         neighbors_.config().clash_first_min_moved = n;

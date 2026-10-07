@@ -43,7 +43,6 @@ Context.atom_permutation_info
 Context.calculate_delta_energy
 Context.calculate_total_energy
 Context.calculate_total_energy_raw
-Context.cell_pair_min_moved
 Context.clash_first_min_moved
 Context.coord_sync_stats
 Context.coords
@@ -78,7 +77,6 @@ Context.print_neighbor_proxy_stats
 Context.reset_coord_sync_stats
 Context.reset_neighbor_proxy_stats
 Context.set_atom_reorder_mode
-Context.set_cell_pair_min_moved
 Context.set_clash_first_min_moved
 Context.set_coords_from_python
 Context.set_energy_weight
@@ -91,10 +89,8 @@ Context.set_output_internal_order
 Context.set_positions
 Context.set_q_bias
 Context.set_skip_rigid_mm
-Context.set_use_cell_pair
 Context.set_use_legacy_weights
 Context.skip_rigid_mm
-Context.use_cell_pair
 Context.use_legacy_weights
 Integrator.add_reporter
 Integrator.backbone_step_size_rad
