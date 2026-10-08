@@ -102,6 +102,11 @@ class CheckpointState:
     #: (Integrator.get_move_counters). Empty in checkpoints written before
     #: counters were saved; those replicas count from 0 again on resume.
     integrator_move_counters: list[Any] = field(default_factory=list)
+    #: Replica exchange attempts and acceptances so far, under the
+    #: write_rex_stats names (n_temp_attempts, n_temp_accepts, n_q_attempts,
+    #: n_q_accepts). Empty in checkpoints written before they were saved;
+    #: those runs count from 0 again on resume.
+    exchange_counts: dict[str, int] = field(default_factory=dict)
     n_replicas: int = 0
     # basename -> frame/row count at checkpoint time
     traj_frame_indices: dict[str, int] = field(default_factory=dict)

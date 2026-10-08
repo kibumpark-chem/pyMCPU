@@ -247,6 +247,58 @@ class TestXtcTruncation:
         truncate_xtc_to_frame(xtc_path, pdb_path, last_frame=9)
         assert not os.path.exists(xtc_path + ".trunc.tmp")
 
+    @pytest.mark.parametrize("n_atoms", [1, 20])
+    def test_keeps_the_kept_frames_byte_for_byte(self, tmp_path: Path, n_atoms: int) -> None:
+        """The cut keeps the first frames exactly as written, step numbers
+        included, so a resumed run's XTC matches an uninterrupted run's. (It
+        used to load and rewrite the kept frames, which renumbered their
+        steps 0, 1, 2, ...) Plain (up to 9 atoms) and compressed frames alike;
+        a partly written last frame, as a killed job can leave, goes too."""
+        from mdtraj.formats import XTCTrajectoryFile
+
+        from pymcpu.trajectory_utils import truncate_xtc_to_frame
+
+        xyz = np.random.default_rng(0).uniform(0, 3, size=(8, n_atoms, 3)).astype(np.float32)
+        steps = np.arange(8) * 500
+        files = {}
+        for n in (8, 5):
+            files[n] = tmp_path / f"frames_{n}.xtc"
+            with XTCTrajectoryFile(str(files[n]), "w") as f:
+                f.write(xyz[:n], time=steps[:n].astype(np.float32), step=steps[:n])
+
+        xtc = tmp_path / "replica_0.xtc"
+        xtc.write_bytes(files[8].read_bytes() + files[5].read_bytes()[:30])
+        truncate_xtc_to_frame(str(xtc), "", last_frame=99)
+        assert xtc.read_bytes() == files[8].read_bytes()
+
+        truncate_xtc_to_frame(str(xtc), "", last_frame=4)
+        assert xtc.read_bytes() == files[5].read_bytes()
+
+    @pytest.mark.parametrize("field", ["natoms", "nbytes"])
+    def test_a_corrupt_header_ends_the_frame_scan(self, tmp_path: Path, field: str) -> None:
+        """A header with a negative atom or byte count, which only a corrupted
+        file has, ends the scan: the frames before it are kept and the rest is
+        cut. Reading on would give an offset at or before the frame's own
+        start, which cuts into a kept frame or never ends."""
+        import struct
+
+        from mdtraj.formats import XTCTrajectoryFile
+
+        from pymcpu.trajectory_utils import truncate_xtc_to_frame
+
+        xyz = np.random.default_rng(0).uniform(0, 3, size=(4, 20, 3)).astype(np.float32)
+        good = tmp_path / "good.xtc"
+        with XTCTrajectoryFile(str(good), "w") as f:
+            f.write(xyz, time=np.arange(4, dtype=np.float32), step=np.arange(4))
+        if field == "natoms":
+            bad = struct.pack(">ii", 1995, -3) + bytes(84)
+        else:
+            bad = struct.pack(">ii", 1995, 20) + bytes(80) + struct.pack(">i", -200)
+        xtc = tmp_path / "replica_0.xtc"
+        xtc.write_bytes(good.read_bytes() + bad)
+        truncate_xtc_to_frame(str(xtc), "", last_frame=99)
+        assert xtc.read_bytes() == good.read_bytes()
+
 
 def test_replica_exchange_traj_reporter_hooks_exist() -> None:
     """Existence/wiring smoke check: the reporter attach/detach hooks that

@@ -13,7 +13,11 @@ import numpy as np
 
 from pymcpu import mcpu_core
 from pymcpu.simulation import check_state_clash
-from pymcpu.trajectory_utils import trajectory_topology_path
+from pymcpu.trajectory_utils import (
+  trajectory_topology_path,
+  truncate_all_trajectories_on_resume,
+  truncate_csv_to_cycle,
+)
 from pymcpu.checkpointing import (
     CHECKPOINT_FORMAT_VERSION,
     CheckpointConfig,
@@ -41,12 +45,14 @@ from pymcpu.sampling.replica_exchange_core import (
     build_replica_simulation,
     build_system_and_cv,
     catch_termination_signals,
+    count_exchanges,
     evaluate_exchange_acceptance,
     exchange_record_to_row,
     get_coords,
     get_frame_offset,
     replica_index,
     resolve_n_targets,
+    restore_exchange_counts,
     swap_context_coordinates,
     unbiased_energy,
     write_rex_stats,
@@ -261,7 +267,10 @@ class ReplicaExchange:
       self._traj_prior_frames: dict[str, int] = {}
       self._reporters_attached = False
       self.sample_writer = None
-      # Topology for XTC truncation (mdtraj); PDB path is fine.
+      # Exchange attempts/acceptances of the whole run, checkpointed so a
+      # resumed run's rex_stats.json counts every cycle.
+      self._exchange_counts = restore_exchange_counts()
+      # Topology to read this run's XTCs against; the input PDB for MCPU.
       self.top_path = trajectory_topology_path(
         self.forcefield, pdb_path, self.reference_pdb, f"{self.output_prefix}_topology.pdb")
       self.traj_dir = str(Path(self.output_prefix).parent)
@@ -383,6 +392,7 @@ class ReplicaExchange:
         "exchange_rng": serialize_numpy_rng(self.rng),
         "integrator_rng_states": get_integrator_rng_states(self.replicas),
         "integrator_move_counters": get_integrator_move_counters(self.replicas),
+        "exchange_counts": dict(self._exchange_counts),
         "n_replicas": int(self.n_replicas),
         "traj_frame_indices": {
           os.path.basename(fname): int(count)
@@ -478,6 +488,7 @@ class ReplicaExchange:
       )
 
       self._cycle = int(checkpoint["cycle"])
+      self._exchange_counts = restore_exchange_counts(checkpoint.get("exchange_counts"))
       self._walker_at_state = np.asarray(
         checkpoint["walker_at_state"], dtype=np.int32
       ).copy()
@@ -606,8 +617,6 @@ class ReplicaExchange:
       self._detach_traj_reporters()
 
       if resume is not None and checkpoint_state is not None:
-        from pymcpu.trajectory_utils import truncate_all_trajectories_on_resume
-
         truncate_all_trajectories_on_resume(
           checkpoint_state=checkpoint_state,
           traj_dir=self.traj_dir,
@@ -660,8 +669,18 @@ class ReplicaExchange:
         if resume_append:
           try:
             loaded_n = sample_writer.load_existing()
+            fname = os.path.basename(str(sample_writer.path))
+            saved = ((checkpoint_state or {}).get("traj_frame_indices") or {}).get(fname)
+            if saved is not None and loaded_n > int(saved):
+              # Samples written after the checkpoint in a file outside
+              # traj_dir, which the cut above does not reach: cut them here.
+              truncate_all_trajectories_on_resume(
+                {"traj_frame_indices": {fname: int(saved)}},
+                traj_dir=str(Path(sample_writer.path).parent),
+                top_path=self.top_path,
+              )
+              loaded_n = sample_writer.load_existing()
             if loaded_n > 0:
-              fname = os.path.basename(str(sample_writer.path))
               self.traj_frame_counts[fname] = loaded_n
           except Exception as exc:
             logger.warning(
@@ -672,6 +691,8 @@ class ReplicaExchange:
       write_state = bool(write_logs) and self.state_log_interval > 0
       if write_exchange:
         ex_mode = "a" if resume_append and exchange_log.exists() else "w"
+        if ex_mode == "a":
+          truncate_csv_to_cycle(str(exchange_log), self._cycle)
         exchange_file = exchange_log.open(ex_mode, newline="")
         exchange_writer = csv.DictWriter(
           exchange_file,
@@ -681,6 +702,8 @@ class ReplicaExchange:
           exchange_writer.writeheader()
       if write_state:
         st_mode = "a" if resume_append and state_log.exists() else "w"
+        if st_mode == "a":
+          truncate_csv_to_cycle(str(state_log), self._cycle)
         state_file = state_log.open(st_mode, newline="")
         state_writer = csv.DictWriter(
           state_file,
@@ -703,25 +726,22 @@ class ReplicaExchange:
           state_writer.writeheader()
 
       start_time = time.perf_counter()
-      n_temp_accepts = 0
-      n_q_accepts = 0
       written_analysis: Path | None = None
       cycles_completed_this_run = 0
       written_rex_stats: Path | None = None
 
       def _dump_rex_stats() -> Path:
         return write_rex_stats(
-          rex_stats_path,
-          n_temp_accepts=n_temp_accepts,
-          n_temp_attempts=cycles_completed_this_run
-          * max(self.n_temps - 1, 0)
-          * self.n_q_windows,
-          n_q_accepts=n_q_accepts,
-          n_q_attempts=cycles_completed_this_run
-          * self.n_temps
-          * max(self.n_q_windows - 1, 0),
-          cycles_completed=int(self._cycle),
+          rex_stats_path, **self._exchange_counts, cycles_completed=int(self._cycle)
         )
+
+      def _save_checkpoint() -> Path:
+        # Log rows reach the file before the checkpoint that covers them, so
+        # a job killed later cannot lose them.
+        for log_file in (exchange_file, state_file):
+          if log_file is not None:
+            log_file.flush()
+        return self.save_checkpoint(self.checkpoint_dir)
 
       try:
         with catch_termination_signals() as shutdown:
@@ -767,13 +787,9 @@ class ReplicaExchange:
                     }
                   )
 
-            for record in exchanges:
-              if record.dim == "temperature":
-                n_temp_accepts += int(record.accepted)
-              else:
-                n_q_accepts += int(record.accepted)
-
-              if exchange_writer is not None:
+            count_exchanges(self._exchange_counts, exchanges)
+            if exchange_writer is not None:
+              for record in exchanges:
                 exchange_writer.writerow(exchange_record_to_row(record))
 
             self._sync_walker_ids_to_reporters()
@@ -784,7 +800,7 @@ class ReplicaExchange:
             # Save after cycle N when interval divides N (and always on interrupt).
             if self.checkpoint_dir is not None and self._cycle > 0:
               if self._cycle % self.checkpoint_interval == 0:
-                ckpt_path = self.save_checkpoint(self.checkpoint_dir)
+                ckpt_path = _save_checkpoint()
                 written_rex_stats = _dump_rex_stats()
                 if verbose:
                   print(f"Checkpoint written: {ckpt_path}")
@@ -793,7 +809,7 @@ class ReplicaExchange:
               for rep in self.replicas:
                 rep.simulation.flush_reporters()
               if self.checkpoint_dir is not None:
-                ckpt_path = self.save_checkpoint(self.checkpoint_dir)
+                ckpt_path = _save_checkpoint()
                 written_rex_stats = _dump_rex_stats()
                 if verbose:
                   print(f"Emergency checkpoint written: {ckpt_path}")
@@ -808,7 +824,7 @@ class ReplicaExchange:
           if self.checkpoint_dir is not None and (
             cycles_completed_this_run > 0 or resume is not None
           ):
-            ckpt_path = self.save_checkpoint(self.checkpoint_dir)
+            ckpt_path = _save_checkpoint()
             written_rex_stats = _dump_rex_stats()
             if verbose:
               print(f"Final checkpoint written: {ckpt_path}")
@@ -821,22 +837,17 @@ class ReplicaExchange:
           written_analysis = sample_writer.close()
 
       elapsed = time.perf_counter() - start_time
-      n_temp_attempts = cycles_completed_this_run * max(self.n_temps - 1, 0) * self.n_q_windows
-      n_q_attempts = cycles_completed_this_run * self.n_temps * max(self.n_q_windows - 1, 0)
-      written_rex_stats = write_rex_stats(
-        rex_stats_path,
-        n_temp_accepts=n_temp_accepts,
-        n_temp_attempts=n_temp_attempts,
-        n_q_accepts=n_q_accepts,
-        n_q_attempts=n_q_attempts,
-        cycles_completed=int(self._cycle),
-      )
+      written_rex_stats = _dump_rex_stats()
+      counts = self._exchange_counts
 
       if verbose:
         print(f"Finished in {elapsed:.2f} s")
-        print(f"Temperature exchanges accepted: {n_temp_accepts}/{n_temp_attempts}")
+        print(
+          "Temperature exchanges accepted: "
+          f"{counts['n_temp_accepts']}/{counts['n_temp_attempts']}"
+        )
         if self.n_q_windows > 1:
-          print(f"N exchanges accepted: {n_q_accepts}/{n_q_attempts}")
+          print(f"N exchanges accepted: {counts['n_q_accepts']}/{counts['n_q_attempts']}")
         print(f"RE stats: {written_rex_stats}")
         if write_exchange:
           print(f"Exchange log: {exchange_log}")
@@ -847,10 +858,7 @@ class ReplicaExchange:
 
       return RunSummary(
         elapsed_s=elapsed,
-        n_temp_accepts=n_temp_accepts,
-        n_temp_attempts=n_temp_attempts,
-        n_q_accepts=n_q_accepts,
-        n_q_attempts=n_q_attempts,
+        **counts,
         exchange_log=exchange_log if write_exchange else None,
         state_log=state_log if write_state else None,
         analysis_path=written_analysis,

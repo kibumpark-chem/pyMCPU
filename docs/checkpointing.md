@@ -45,8 +45,8 @@ during a save leaves the previous checkpoint intact.
 
 A checkpoint holds what the run needs to continue exactly: the coordinates of
 every replica, its position in the run, the random number streams of the MC
-moves and of the exchanges, the move counters, and how much of each output
-file had been written.
+moves and of the exchanges, the move counters, the exchange counts, and how
+much of each output file had been written.
 
 ## Resuming
 
@@ -59,6 +59,25 @@ or set `resume: true` in the config. The run continues after the state in
 been written at that checkpoint and then appended to, so nothing written after
 the last save is duplicated. This covers the XTC, CSV, HDF5 and NPZ files
 pyMCPU writes.
+
+A resume from one of the regular saves, made every `checkpoint_interval`
+cycles, continues the run exactly. With the same build and interval, the XTC,
+CSV and `rex_stats.json` files then come out byte for byte as if the run had
+never stopped, however many times it is resumed this way. This is the case
+after a job is killed outright, as by SIGKILL, and after an MPI job ends
+between saves. A node failure is different: the checkpoint is synced to disk,
+but the trajectory and log files are only flushed to the operating system, so
+a crash of the node can lose output written before the last save. A resume
+then keeps what is on disk (warning when a trajectory is shorter than the
+checkpoint says) and continues from the checkpoint, which leaves a gap in the
+files. A save at any other cycle is one the uninterrupted
+run does not make, and it changes what follows, because each save reads the MC
+random state, which discards a cached normal draw. Replica exchange saves
+where it stops on SIGTERM or SIGINT, and a single-process replica-exchange or
+folding job saves at its last cycle. When that is not one of the regular
+saves, a run resumed from it continues along a different trajectory, just as
+valid, and its files still hold each frame and row once. A different
+`checkpoint_interval` changes the trajectory for the same reason.
 
 If there is no checkpoint yet, folding and MPI replica exchange start from the
 beginning, while single-process replica exchange stops with an error.

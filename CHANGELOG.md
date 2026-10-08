@@ -91,6 +91,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A resumed run writes what the uninterrupted run writes.** Resuming an MPI
+  replica-exchange run a second time cut its trajectories short: reattaching
+  the XTC and data CSV writers reset each rank's frame counts to zero, so the
+  next checkpoint recorded only the frames written since the first resume,
+  and the second resume trimmed the files back to that count (1igd, 4 ranks,
+  run to cycle 20 and resumed to 40 and then 48: 5 frames per replica instead
+  of 10). A resume now keeps the counts it restores. Replica exchange, MPI and
+  single-process, also counted only the last job's exchanges in
+  `rex_stats.json` (4/24 temperature swaps accepted after two resumes, 42/144
+  uninterrupted); the counts are now saved in the checkpoint
+  (`exchange_counts`) and carried on, and `RunSummary` and the printed totals
+  cover the whole run too. A checkpoint without them still resumes, counting
+  from 0 as before. A resume from a checkpoint older than the files, as after
+  a job killed between saves, left the exchange and state logs with the rows
+  of the cycles after the checkpoint twice (150 exchange rows instead of 144),
+  and under MPI the analysis samples too; these are now cut back to the
+  checkpoint first. The two logs are also flushed before each save: a job
+  killed at cycle 35 had lost its exchange rows from cycle 18 on, although its
+  checkpoint was at cycle 30. Cutting an XTC back no longer rewrites it
+  through mdtraj, which renumbered the steps of the frames it kept (0, 1, 2,
+  ... instead of 0, 20, 40, ...): the file is cut at a frame boundary, so the
+  frames kept stay byte for byte as written, and a partly written last frame
+  goes too. The single-process replica exchange now also cuts back an analysis
+  file kept outside the output directory, which it used to skip (172 samples
+  instead of 160 after a resume from an older checkpoint). A run resumed any
+  number of times from the regular saves made every checkpoint interval now
+  writes XTC, data CSV, state and exchange logs and `rex_stats.json`
+  byte-identical to the uninterrupted run with the same seed and interval,
+  with the MPI driver, the single-process replica exchange and the folding
+  runner; that includes a job killed outright between saves. A save at another
+  cycle, such as the one replica exchange makes when it stops on SIGTERM or
+  SIGINT, or the one a single-process job makes at a last cycle off the
+  interval, changes the random stream, so a run resumed from it continues
+  along a different trajectory, as a different interval does. Checkpoints that
+  an earlier version wrote after resuming an MPI run undercount its frames,
+  and a resume from one still cuts the trajectories to that count, leaving a
+  gap; resume such a run from a checkpoint saved before its first resume,
+  copied over `last.chk`, instead.
 - **A rigid pivot can no longer carry a pair into a hard-core overlap.** A
   pivot does not re-measure the pairs it carries, since the rotation keeps
   their distances, but it rounds every carried coordinate to float. Those

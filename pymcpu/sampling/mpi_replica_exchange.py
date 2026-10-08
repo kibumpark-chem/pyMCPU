@@ -40,18 +40,22 @@ from pymcpu.sampling.replica_exchange_core import (
     build_replica_simulation,
     build_system_and_cv,
     catch_termination_signals,
+    count_exchanges,
     evaluate_exchange_acceptance,
     exchange_record_to_row,
     get_coords,
     get_frame_offset,
     replica_index,
     resolve_n_targets,
+    restore_exchange_counts,
     swap_context_coordinates,
     unbiased_energy,
     write_rex_stats,
 )
 from pymcpu.trajectory_utils import (
     trajectory_topology_path,
+    truncate_all_trajectories_on_resume,
+    truncate_csv_to_cycle,
     truncate_csv_to_row,
     truncate_xtc_to_frame,
 )
@@ -282,6 +286,9 @@ class MPIReplicaExchange:
         self._traj_prior_frames: dict[str, int] = {}
         self._reporters_attached = False
         self.sample_writer = None
+        # Exchange attempts/acceptances of the whole run, checkpointed so a
+        # resumed run's rex_stats.json counts every cycle.
+        self._exchange_counts = restore_exchange_counts()
 
         if self.rank == 0:
             grid = build_grid_metadata(
@@ -349,7 +356,7 @@ class MPIReplicaExchange:
             )
         )
         n_res = self.system.get_num_residues()
-        # Topology for XTC truncation (mdtraj). Rank 0 writes it when the
+        # Topology to read this run's XTCs against. Rank 0 writes it when the
         # force field simulates fewer atoms than the input (KORP). Its error,
         # if any, is broadcast so the other ranks raise instead of waiting.
         top_error = None
@@ -428,7 +435,11 @@ class MPIReplicaExchange:
         return names
 
     def _detach_traj_reporters(self) -> None:
-        """Release local reporter file handles before truncation."""
+        """Release local reporter file handles before truncation.
+
+        The frame counts are kept: on resume they come from the checkpoint
+        and must survive until the reporters are attached again.
+        """
         for slot in self.replicas.values():
             try:
                 slot.simulation.flush_reporters()
@@ -444,16 +455,19 @@ class MPIReplicaExchange:
             except Exception:
                 pass
         self._traj_writers = {}
-        self.traj_frame_counts = {}
-        self._traj_prior_frames = {}
         self._reporters_attached = False
 
     def _attach_traj_reporters(self, resume: bool = False) -> None:
         """
         Create or reopen trajectory reporters for local replicas.
-        On resume: reporters open in append mode (files already truncated).
+        On resume: reporters open in append mode (files already truncated)
+        and count on from the checkpoint's frame counts. Otherwise the files
+        start over, and so do the counts.
         """
         self._detach_traj_reporters()
+        if not resume:
+            self.traj_frame_counts = {}
+            self._traj_prior_frames = {}
         mapping = self.forcefield.inverse_mapping
         Path(self.traj_dir).mkdir(parents=True, exist_ok=True)
 
@@ -666,6 +680,7 @@ class MPIReplicaExchange:
                 exchange_rng=None,  # MPI exchange RNG is deterministic from seed+cycle
                 integrator_rng_states=rng_ordered,
                 integrator_move_counters=counters_ordered,
+                exchange_counts=dict(self._exchange_counts),
                 n_replicas=n_replicas,
                 traj_frame_indices=dict(frame_idx_merged),
             )
@@ -752,6 +767,7 @@ class MPIReplicaExchange:
         if state.get("temperatures") is not None:
             self.temperatures = np.asarray(state["temperatures"], dtype=np.float64)
         self._cycle = int(state.get("cycle", 0))
+        self._exchange_counts = restore_exchange_counts(state.get("exchange_counts"))
         self._traj_prior_frames = {
             str(k): int(v) for k, v in (state.get("traj_frame_indices") or {}).items()
         }
@@ -1287,8 +1303,18 @@ class MPIReplicaExchange:
             if resume_append:
                 try:
                     loaded_n = sample_writer.load_existing()
+                    fname = os.path.basename(str(sample_writer.path))
+                    saved = (checkpoint_state.get("traj_frame_indices") or {}).get(fname)
+                    if saved is not None and loaded_n > int(saved):
+                        # Samples written after the checkpoint (the run went
+                        # on past its last save): cut them like the others.
+                        truncate_all_trajectories_on_resume(
+                            {"traj_frame_indices": {fname: int(saved)}},
+                            traj_dir=str(Path(sample_writer.path).parent),
+                            top_path=self.top_path,
+                        )
+                        loaded_n = sample_writer.load_existing()
                     if loaded_n > 0:
-                        fname = os.path.basename(str(sample_writer.path))
                         self.traj_frame_counts[fname] = loaded_n
                 except Exception as exc:
                     logger.warning(
@@ -1299,6 +1325,8 @@ class MPIReplicaExchange:
         write_state = bool(write_logs) and self.state_log_interval > 0
         if write_exchange and self.rank == 0:
             ex_mode = "a" if resume_append and exchange_log.exists() else "w"
+            if ex_mode == "a":
+                truncate_csv_to_cycle(str(exchange_log), self._cycle)
             exchange_file = exchange_log.open(ex_mode, newline="")
             exchange_writer = csv.DictWriter(
                 exchange_file,
@@ -1308,6 +1336,8 @@ class MPIReplicaExchange:
                 exchange_writer.writeheader()
         if write_state and self.rank == 0:
             st_mode = "a" if resume_append and state_log.exists() else "w"
+            if st_mode == "a":
+                truncate_csv_to_cycle(str(state_log), self._cycle)
             state_file = state_log.open(st_mode, newline="")
             state_writer = csv.DictWriter(
                 state_file,
@@ -1330,33 +1360,27 @@ class MPIReplicaExchange:
                 state_writer.writeheader()
 
         start_time = time.perf_counter()
-        n_temp_accepts = 0
-        n_q_accepts = 0
         written_analysis: Path | None = None
         written_rex_stats: Path | None = None
         interval = max(1, int(cfg.checkpoint_interval))
-        cycles_completed_this_run = 0
 
         def _dump_rex_stats() -> Path:
             return write_rex_stats(
-                rex_stats_path,
-                n_temp_accepts=n_temp_accepts,
-                n_temp_attempts=cycles_completed_this_run
-                * max(self.n_temps - 1, 0)
-                * self.n_q_windows,
-                n_q_accepts=n_q_accepts,
-                n_q_attempts=cycles_completed_this_run
-                * self.n_temps
-                * max(self.n_q_windows - 1, 0),
-                cycles_completed=int(self._cycle),
+                rex_stats_path, **self._exchange_counts, cycles_completed=int(self._cycle)
             )
+
+        def _flush_logs() -> None:
+            # Rows reach the file before the checkpoint that covers them, so
+            # a job killed later cannot lose them.
+            for log_file in (exchange_file, state_file):
+                if log_file is not None:
+                    log_file.flush()
 
         try:
             with catch_termination_signals() as shutdown:
                 for _ in range(remaining_cycles):
                     # Enforced order: MC → snapshot → gather → HDF5 → exchange.
                     local_states = self.run_cycle(mc_replica_steps)
-                    cycles_completed_this_run += 1
                     gathered_states = self.comm.gather(local_states, root=0)
 
                     if self.rank == 0 and gathered_states is not None:
@@ -1413,18 +1437,16 @@ class MPIReplicaExchange:
                     exchanges = self.exchange_all()
                     self._sync_walker_ids_to_reporters()
                     if self.rank == 0:
-                        for record in exchanges:
-                            if record.dim == "temperature":
-                                n_temp_accepts += int(record.accepted)
-                            else:
-                                n_q_accepts += int(record.accepted)
-                            if exchange_writer is not None:
+                        count_exchanges(self._exchange_counts, exchanges)
+                        if exchange_writer is not None:
+                            for record in exchanges:
                                 exchange_writer.writerow(exchange_record_to_row(record))
 
                     if verbose and self.rank == 0:
                         print(f"Cycle {self._cycle}/{num_cycles} complete", flush=True)
 
                     if self._cycle > 0 and self._cycle % interval == 0:
+                        _flush_logs()
                         self._mpi_save_checkpoint(self._cycle, self.comm)
                         if self.rank == 0:
                             written_rex_stats = _dump_rex_stats()
@@ -1433,6 +1455,7 @@ class MPIReplicaExchange:
                     if stop:
                         for slot in self.replicas.values():
                             slot.simulation.flush_reporters()
+                        _flush_logs()
                         self._mpi_save_checkpoint(self._cycle, self.comm)
                         if self.rank == 0:
                             written_rex_stats = _dump_rex_stats()
@@ -1449,26 +1472,21 @@ class MPIReplicaExchange:
         self.comm.Barrier()
 
         elapsed = time.perf_counter() - start_time
-        n_temp_attempts = cycles_completed_this_run * max(self.n_temps - 1, 0) * self.n_q_windows
-        n_q_attempts = cycles_completed_this_run * self.n_temps * max(self.n_q_windows - 1, 0)
 
         if self.rank != 0:
             return None
 
-        written_rex_stats = write_rex_stats(
-            rex_stats_path,
-            n_temp_accepts=n_temp_accepts,
-            n_temp_attempts=n_temp_attempts,
-            n_q_accepts=n_q_accepts,
-            n_q_attempts=n_q_attempts,
-            cycles_completed=int(self._cycle),
-        )
+        written_rex_stats = _dump_rex_stats()
+        counts = self._exchange_counts
 
         if verbose:
             print(f"Finished in {elapsed:.2f} s")
-            print(f"Temperature exchanges accepted: {n_temp_accepts}/{n_temp_attempts}")
+            print(
+                "Temperature exchanges accepted: "
+                f"{counts['n_temp_accepts']}/{counts['n_temp_attempts']}"
+            )
             if self.n_q_windows > 1:
-                print(f"N exchanges accepted: {n_q_accepts}/{n_q_attempts}")
+                print(f"N exchanges accepted: {counts['n_q_accepts']}/{counts['n_q_attempts']}")
             print(f"RE stats: {written_rex_stats}")
             if write_exchange:
                 print(f"Exchange log: {exchange_log}")
@@ -1479,10 +1497,7 @@ class MPIReplicaExchange:
 
         return RunSummary(
             elapsed_s=elapsed,
-            n_temp_accepts=n_temp_accepts,
-            n_temp_attempts=n_temp_attempts,
-            n_q_accepts=n_q_accepts,
-            n_q_attempts=n_q_attempts,
+            **counts,
             exchange_log=exchange_log if write_exchange else None,
             state_log=state_log if write_state else None,
             analysis_path=written_analysis,

@@ -173,6 +173,28 @@ class RunSummary:
     rex_stats_path: Path | None = None
 
 
+#: Exchange counts as write_rex_stats and RunSummary name them.
+EXCHANGE_COUNT_KEYS = ("n_temp_accepts", "n_temp_attempts", "n_q_accepts", "n_q_attempts")
+
+
+def restore_exchange_counts(saved: Mapping[str, Any] | None = None) -> dict[str, int]:
+    """Exchange counts from a checkpoint's ``exchange_counts``, or zeros.
+
+    Checkpoints written before the counts were saved have none; such a run
+    counts from 0 again on resume.
+    """
+    saved = saved or {}
+    return {key: int(saved.get(key, 0)) for key in EXCHANGE_COUNT_KEYS}
+
+
+def count_exchanges(counts: dict[str, int], records: Sequence[ExchangeRecord]) -> None:
+    """Add a cycle's exchange attempts and acceptances to ``counts``."""
+    for record in records:
+        dim = "temp" if record.dim == "temperature" else "q"
+        counts[f"n_{dim}_attempts"] += 1
+        counts[f"n_{dim}_accepts"] += int(record.accepted)
+
+
 def write_rex_stats(
     path: str | Path,
     *,
