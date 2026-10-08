@@ -26,6 +26,7 @@ from pymcpu.checkpointing import (
     load_checkpoint,
     restore_numpy_rng,
     save_checkpoint,
+    saved_frame_offset,
     serialize_numpy_rng,
     set_integrator_move_counters,
     set_integrator_rng_states,
@@ -43,6 +44,7 @@ from pymcpu.sampling.replica_exchange_core import (
     evaluate_exchange_acceptance,
     exchange_record_to_row,
     get_coords,
+    get_frame_offset,
     replica_index,
     resolve_n_targets,
     swap_context_coordinates,
@@ -336,6 +338,7 @@ class ReplicaExchange:
     def build_checkpoint_state(self) -> dict[str, Any]:
       """Serialize RE state needed to resume after interruption."""
       replica_coords = [get_coords(rep.simulation.context) for rep in self.replicas]
+      frame_offsets = [get_frame_offset(rep.simulation.context) for rep in self.replicas]
       current_steps = [int(rep.simulation.current_step) for rep in self.replicas]
       self._sync_traj_frame_counts_from_writers()
 
@@ -375,6 +378,7 @@ class ReplicaExchange:
         "linker_energy_mode": str(self.linker_energy_mode),
         "walker_at_state": np.asarray(self._walker_at_state, dtype=np.int32),
         "replica_coords": replica_coords,
+        "replica_frame_offsets": frame_offsets,
         "current_steps": current_steps,
         "exchange_rng": serialize_numpy_rng(self.rng),
         "integrator_rng_states": get_integrator_rng_states(self.replicas),
@@ -399,7 +403,7 @@ class ReplicaExchange:
       if out_dir is None:
         raise ValueError("checkpoint_dir is required to save a checkpoint")
       for rep in self.replicas:
-        rep.simulation.recompute_energy()
+        rep.simulation.recompute_and_recenter()
       state = self.build_checkpoint_state()
       name = filename if filename is not None else checkpoint_cycle_filename(self._cycle)
       path = save_checkpoint(
@@ -460,7 +464,9 @@ class ReplicaExchange:
 
       for i, rep in enumerate(self.replicas):
         coords = np.asarray(coords_list[i], dtype=np.float64)
-        rep.simulation.context.set_positions(coords)
+        rep.simulation.context.set_positions(
+          coords, frame_offset=saved_frame_offset(checkpoint, i)
+        )
         rep.simulation.context.set_native_contacts_bias(self.k_bias, float(rep.n_target))
         rep.simulation.context.calculate_total_energy(-1)
         check_state_clash(rep.simulation.context, f"replica {i} restored from checkpoint")

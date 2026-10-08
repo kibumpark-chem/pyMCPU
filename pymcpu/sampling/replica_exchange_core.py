@@ -282,13 +282,21 @@ def evaluate_exchange_acceptance(
 
 def get_coords(context: mcpu_core.Context) -> np.ndarray:
     """The context's coordinates, float64, in build (topology) order and the
-    caller's frame: what ``set_positions`` takes. Placing them again in a
-    Context with the same frame offset restores it bit for bit, except for an
-    engine coordinate within a few 1e-6 A of zero (see
+    caller's frame: what ``set_positions`` takes. Placing them again with the
+    same frame offset (:func:`get_frame_offset`) restores the context bit for
+    bit, except for an engine coordinate within a few 1e-6 A of zero (see
     ``Context.frame_offset``); storing them as float32 would not, for a
     structure the engine runs shifted. ``get_state().coords`` is storage
     order and the engine frame."""
     return np.asarray(context.coords, dtype=np.float64)
+
+
+def get_frame_offset(context: mcpu_core.Context) -> np.ndarray:
+    """The context's frame offset, float64, shape (3,). It moves with the
+    chain (``Context.recenter``), so a walker's coordinates are saved and
+    swapped together with it: ``set_positions(coords, frame_offset=...)``
+    then re-enters them bit for bit."""
+    return np.asarray(context.frame_offset, dtype=np.float64)
 
 
 def swap_context_coordinates(
@@ -297,8 +305,12 @@ def swap_context_coordinates(
     coords_a: np.ndarray,
     coords_b: np.ndarray,
 ) -> None:
-    context_a.set_positions(coords_b)
-    context_b.set_positions(coords_a)
+    # Each walker keeps its own engine frame, so its offset travels with its
+    # coordinates and both re-enter bit for bit.
+    offset_a = get_frame_offset(context_a)
+    offset_b = get_frame_offset(context_b)
+    context_a.set_positions(coords_b, frame_offset=offset_b)
+    context_b.set_positions(coords_a, frame_offset=offset_a)
     context_a.calculate_total_energy(-1)
     context_b.calculate_total_energy(-1)
     check_state_clash(context_a, "replica swap")

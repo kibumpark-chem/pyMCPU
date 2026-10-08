@@ -13,8 +13,12 @@ namespace mcpu {
 // pivot carries reach the hard-core margin sooner. A Context therefore
 // runs a structure placed far from the origin in an engine frame shifted
 // next to it: engine = user - frame_offset. Every exit adds the offset back.
+// The first placement chooses the offset (choose_frame_offset below), and
+// Context::recenter moves it with a chain that drifts away during a run;
+// Simulation.step calls it after each periodic full recompute.
 
-/// Below this largest |coordinate| (A) nothing is shifted.
+/// Below this largest |coordinate| (A) neither a placement nor
+/// Context::recenter shifts anything.
 inline constexpr double kFrameShiftMinA = 64.0;
 /// Engine-frame largest |coordinate| (A) from which a Context notes (once per
 /// process) that its coordinates are still far out: a structure several

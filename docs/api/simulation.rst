@@ -99,8 +99,10 @@ residues overlap the rest of the chain does that. A caller's own
 raise, so whoever makes it checks the verdict: the drivers call
 :func:`~pymcpu.simulation.check_state_clash` on their start structure.
 
-Between those, a periodic recompute checks the running total. Three
-attributes control it:
+Between those, a periodic recompute checks the running total, and then
+moves the engine frame to the chain if it has drifted far out
+(:meth:`~pymcpu.Simulation.recompute_and_recenter`). These attributes
+control it:
 
 .. py:attribute:: pymcpu.Simulation.full_energy_every_steps
    :type: int
@@ -112,11 +114,29 @@ attributes control it:
    stays within about 1e-10 of a full recompute over 1e7 steps: the
    recompute is a check for a clash or a pair a delta path missed, not a
    correction. It costs 2-6 ms at 270-415 residues. The folding and
-   replica-exchange drivers also recompute before every checkpoint save,
-   and the YAML config sets it with ``full_energy_every_steps``.
+   replica-exchange drivers also run it before every checkpoint save, and
+   that restarts the count, so a run that saves more often than this
+   recomputes (and recentres) at its saves instead. The YAML config sets
+   it with ``full_energy_every_steps``.
    Assigning the old name ``full_energy_every`` raises ``AttributeError``.
    :meth:`~pymcpu.Simulation.recompute_energy` does the same recompute on
    demand.
+
+.. py:attribute:: pymcpu.Simulation.recenter_frame
+   :type: bool
+   :value: True
+
+   Whether :meth:`~pymcpu.Simulation.recompute_and_recenter` calls
+   :py:meth:`pymcpu.Context.recenter` after its recompute: that is, after
+   each periodic recompute in :meth:`~pymcpu.Simulation.step` and before
+   every checkpoint save of the folding and replica-exchange drivers.
+   Once an engine coordinate reaches 64 Å, that centres the chain in its
+   engine frame, so moves keep rounding at the precision they have near the
+   origin; :py:attr:`~pymcpu.Context.coords` do not change, and the energy
+   is recomputed in the new frame. A chain within 64 Å of the origin is
+   never shifted, so most runs are unaffected. See :ref:`context-frame`.
+   :meth:`~pymcpu.Simulation.recompute_energy` called on its own does not
+   recentre.
 
 .. py:attribute:: pymcpu.Simulation.energy_drift_warn_atol
    :type: float

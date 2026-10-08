@@ -96,9 +96,9 @@ void Context::maybe_apply_init_only_reorder_() {
     reorder_applied_ = true;
 }
 
-Eigen::Matrix3Xd Context::coords_for_python() const {
+Eigen::Matrix3Xd Context::user_coords_(bool internal_order) const {
     Eigen::Matrix3Xd out =
-        (output_internal_order_ || atom_perm_.is_identity())
+        (internal_order || atom_perm_.is_identity())
             ? state.coords_as_eigen().cast<double>().eval()
             : scatter_internal_to_external(state.coords_soa, atom_perm_).cast<double>().eval();
     // Back to the user's frame. Exact in double unless an engine coordinate
@@ -159,14 +159,63 @@ Eigen::Matrix3Xf Context::enter_frame_(
             "frame (frame_offset %.0f %.0f %.0f A). One float32 step there is "
             "%.1e A, and every move rounds the atoms it moves to it, so bond "
             "lengths drift and KIC moves fail more often than near the origin. "
-            "The engine shifts a structure toward the origin only along axes "
+            "A placement shifts a structure toward the origin only along axes "
             "it does not straddle, and keeps an explicit frame_offset as "
-            "given. (Printed once per process.)\n",
+            "given; Context.recenter(), which Simulation.step runs after each "
+            "periodic full recompute, centres it. (Printed once per process.)\n",
             static_cast<double>(far), frame_offset_[0], frame_offset_[1],
             frame_offset_[2],
             static_cast<double>(std::nextafter(far, 2.f * far) - far));
     }
     return engine;
+}
+
+Eigen::Vector3d Context::recenter(double min_reach_A) {
+    const Eigen::Vector3d none = Eigen::Vector3d::Zero();
+    if (!positions_set_) return none;
+    const CoordsSoA& c = state.coords_soa;
+    const std::vector<float>* axes[3] = {&c.x, &c.y, &c.z};
+    Eigen::Vector3d s;
+    double reach = 0.0;
+    for (int d = 0; d < 3; ++d) {
+        float lo = std::numeric_limits<float>::infinity();
+        float hi = -lo;
+        for (int i = 0; i < c.n; ++i) {
+            const float v = (*axes[d])[static_cast<size_t>(i)];
+            if (!std::isfinite(v)) return none;
+            lo = std::min(lo, v);
+            hi = std::max(hi, v);
+        }
+        reach = std::max({reach, -static_cast<double>(lo), static_cast<double>(hi)});
+        // Whole A, so the shift itself is exact; + 0.0 turns -0.0 into 0.
+        s[d] = std::round(0.5 * (static_cast<double>(lo) + static_cast<double>(hi))) + 0.0;
+    }
+    if (reach < min_reach_A || s.isZero()) return none;
+
+    // The clash check below needs a clean state to compare with and to go
+    // back to. A stale energy is recomputed here, as the next run would do
+    // (and like it, this throws on a clash); a state the last recompute
+    // found clashing (MCPU_CLASH_FATAL=0) keeps its frame.
+    ensure_energy_current();
+    if (has_steric_clash()) return none;
+
+    const Eigen::Vector3d old_offset = frame_offset_;
+    const double old_energy = state.current_energy;
+    const Eigen::Matrix3Xd user = user_coords_(/*internal_order=*/false);
+    // setPositions drops the contact list and the grids, and resyncs the
+    // geometry, torsions and native-contact cache, as for any new placement.
+    setPositions(user, old_offset + s);
+    calculate_total_energy(-1);
+    if (has_steric_clash()) {
+        // Atoms that ended farther out were rounded, and that can put a pair
+        // the rigid-carry check held just above the state cutoff under it.
+        // Going back is exact: user - old_offset is the old engine frame.
+        setPositions(user, old_offset);
+        calculate_total_energy(-1);
+        state.current_energy = old_energy;
+        return none;
+    }
+    return s;
 }
 
 void Context::set_coords_from_python(const Eigen::Matrix3Xd& coords) {

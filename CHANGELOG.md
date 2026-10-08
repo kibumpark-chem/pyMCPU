@@ -581,6 +581,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The engine frame follows a chain that drifts away from the origin.**
+  Coordinates are float32, and every move rounds the atoms it moves at their
+  distance from the origin, but the frame offset was chosen only at the first
+  placement. In the mcpu08 replica-exchange test, unfolded hot 1igd chains sat
+  a median 52-63 Å out (up to 165 Å), and their bond lengths and angles, which
+  moves keep fixed, drifted by up to 9-18 mÅ and 0.5-1.0°, against 1-2 mÅ and
+  0.05-0.13° for folded chains near the origin. The new
+  `Context.recenter(min_reach_A=64.0)` shifts the engine frame by the
+  whole-Å midpoint of each axis's coordinate range once an engine coordinate
+  reaches 64 Å, places the coordinates again and recomputes the energy;
+  `Context.coords` do not change. The shift is exact for every atom that ends
+  no farther from the origin than it started; one that ends farther out is
+  rounded once, by at most half a float32 step there, and a shift whose
+  rounding would leave a pair under its hard-core state cutoff is undone.
+  The new `Simulation.recompute_and_recenter()` runs it after a full
+  recompute (`Simulation.recenter_frame`, default `True`): `Simulation.step`
+  calls that after each periodic recompute, and the folding and
+  replica-exchange drivers before every checkpoint save, which restarts the
+  count, so a run that saves more often than it recomputes (the defaults
+  do) recentres at its saves. Each walker keeps its own
+  frame: replica swaps (serial and MPI, where the offset travels with the
+  coordinates) and the folding and replica-exchange checkpoints (new field
+  `replica_frame_offsets`) carry the offset, so swaps and resumes stay bit for
+  bit; a checkpoint without the field restores as before. `EngineSession` has
+  `frame_offset()` and `set_coords(..., frame_offset=)` to restart exactly.
+  A chain within 64 Å of the origin is never shifted, so standard runs are
+  bit-identical (`arch_parity_dump`). From a hot 1igd state 172 Å out, at
+  T = 1.6 over 2e7 steps, the largest engine coordinate stays under 64 Å
+  (median 46 Å, against 167 Å without), the RMS drift of the 475 bond lengths
+  is 0.68 mÅ instead of 3.4 mÅ and that of the 647 bond angles 0.045° instead
+  of 0.20°; the 302 recentres cost 0.3 s of the 249 s run.
+
 - `Context.neighbor_aabb_rebuilds()` is now `neighbor_grid_rebuilds()`,
   and the `neighbor_proxy_stats()` key `num_aabb_rebuild_accept` is now
   `num_grid_rebuilds`: since grids wrap, the counter counts full grid

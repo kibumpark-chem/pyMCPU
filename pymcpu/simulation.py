@@ -119,6 +119,11 @@ class Simulation:
         # The Integrator also recomputes on entry whenever the coordinates or
         # the energy definition changed (Context.energy_resyncs).
         self.full_energy_every_steps = 1_000_000
+        # After each periodic recompute and before each checkpoint save, move
+        # the engine frame to the chain once a coordinate reaches 64 A
+        # (recompute_and_recenter, Context.recenter). Every move rounds at
+        # |coordinate|, and an unfolded chain drifts far from the origin.
+        self.recenter_frame = True
         # Warn if the incremental energy has drifted from a full recompute by
         # more than this (absolute). Only checked on recomputes. Rounding
         # stays far below it at any run length, so a warning means a pair the
@@ -241,18 +246,38 @@ class Simulation:
         self._current_step = offset + int(n_steps)
         self._steps_since_full_energy += int(n_steps)
         if self._steps_since_full_energy >= int(self.full_energy_every_steps):
-            self.recompute_energy()
+            self.recompute_and_recenter()
+
+    def recompute_and_recenter(self) -> float:
+        """Recompute the energy in full, then recentre the engine frame.
+
+        Runs :meth:`recompute_energy` and then, when :attr:`recenter_frame`
+        is set, :py:meth:`pymcpu.Context.recenter`, which centres a chain
+        that has reached 64 A from the origin in its engine frame. Returns
+        the energy, recomputed again in the new frame if the frame moved.
+        :meth:`step` calls this every :attr:`full_energy_every_steps` steps,
+        and the folding and replica-exchange drivers before every checkpoint
+        save. A save restarts that count, so when saves come more often than
+        the periodic recompute (as with the defaults), they are where the
+        frame moves; the checkpoint then holds the recentred state, and a run
+        resumed from it continues exactly.
+        """
+        energy = self.recompute_energy()
+        if self.recenter_frame and any(self.context.recenter()):
+            energy = float(self.context.get_state().current_energy)
+        return energy
 
     def recompute_energy(self) -> float:
         """Recompute the total energy in full and check the state.
 
-        Replaces ``current_energy`` with the full recompute and returns it.
-        :meth:`step` calls this every :attr:`full_energy_every_steps` steps, and
-        the folding and replica-exchange drivers before every checkpoint save.
-        A hard-core overlap raises :class:`StericClashError` (with
-        ``MCPU_CLASH_FATAL=0`` it is counted and warned about instead), and a
-        running total more than :attr:`energy_drift_warn_atol` away from the
-        recompute logs a warning.
+        Replaces ``current_energy`` with the full recompute and returns it,
+        and restarts the count toward the next periodic recompute.
+        :meth:`step` and the drivers' checkpoint saves run it through
+        :meth:`recompute_and_recenter`; called on its own, it leaves the
+        engine frame as it is. A hard-core overlap raises
+        :class:`StericClashError` (with ``MCPU_CLASH_FATAL=0`` it is counted
+        and warned about instead), and a running total more than
+        :attr:`energy_drift_warn_atol` away from the recompute logs a warning.
         """
         self._steps_since_full_energy = 0
         incremental = float(self.context.get_state().current_energy)

@@ -110,8 +110,8 @@ wrong: the children are distinct objects, the weights divide correctly, and
 every log line looks healthy. You have one walker counted N times, and only
 the statistics will ever show it.
 
-So pyMCPU's restart state is the coordinates and the step count, and
-deliberately not the random state, and `EngineSpec` has no `seed` field.
+So pyMCPU's restart state is the coordinates, their frame offset and the
+step count, and deliberately not the random state, and `EngineSpec` has no `seed` field.
 Derive a seed for each stream instead: `derive_seed` gives a different seed
 for each `(round_index, stream_index)`, the same on every process and
 machine. Its output is fixed for good, because changing it would reseed
@@ -124,15 +124,21 @@ them across a clone.
 ## 5. Restart safely
 
 ```python
-session.set_coords(saved_coords)
+session.set_coords(saved_coords, frame_offset=saved_offset)
 session.current_step = saved_step
 session.set_seed(derive_seed(base_seed, round_index, stream_index))
 ```
 
-Store `session.coords()` as it comes, as float64. The engine runs a
-structure far from the origin shifted toward it, and `coords()` adds the
-shift back; a float32 copy would round the coordinates again, and the
-restart would no longer continue the run exactly.
+Store `session.coords()` as it comes, as float64, and `session.frame_offset()`
+with it. The engine runs a structure far from the origin shifted toward it,
+moves the shift with the chain as it drifts, and `coords()` adds it back. A
+float32 copy, or coordinates placed without their offset, are rounded once
+more, and the restart would no longer continue the run exactly. An exact
+replay with `get_rng_state()` also needs the frame to move at the same steps.
+A session recomputes the energy every `full_energy_every_steps` steps of its
+own and then recentres a chain that has reached 64 Å from the origin, so a
+restarted session can recentre at a different step than the original run did;
+from there the two trajectories differ, at first only by float32 rounding.
 
 `session.coords_from_auxref(path)` reads starting coordinates from a file:
 
@@ -140,7 +146,10 @@ restart would no longer continue the run exactly.
   code writes. Either orientation, `(3, n_atoms)` or `(n_atoms, 3)`, is
   accepted.
 - `.chk`: a pyMCPU checkpoint. It takes the first replica, which in replica
-  exchange is the first temperature of the ladder in the first window.
+  exchange is the first temperature of the ladder in the first window. Its
+  saved frame offset is not used, so the coordinates enter in the session's
+  own frame, rounded once to float32, which does not matter for a start
+  state.
 - `.pdb`: a structure of the same protein as `spec.pdb`.
 
 `session.fingerprint` is a hash of what the engine was built from: the PDB's

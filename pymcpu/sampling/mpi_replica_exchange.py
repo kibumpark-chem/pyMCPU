@@ -28,6 +28,7 @@ from pymcpu.checkpointing import (
     checkpoint_layout_error,
     load_checkpoint,
     save_checkpoint,
+    saved_frame_offset,
 )
 from pymcpu.sampling.replica_exchange_core import (
     EXCHANGE_CSV_FIELDS,
@@ -42,6 +43,7 @@ from pymcpu.sampling.replica_exchange_core import (
     evaluate_exchange_acceptance,
     exchange_record_to_row,
     get_coords,
+    get_frame_offset,
     replica_index,
     resolve_n_targets,
     swap_context_coordinates,
@@ -565,13 +567,15 @@ class MPIReplicaExchange:
         # ── Step 1: each rank packages its local replicas ──────────
         replica_ids = list(self.local_replica_indices)
         coords: list[Any] = []
+        frame_offsets: list[Any] = []
         current_steps: list[int] = []
         integrator_rng_states: list[str] = []
         move_counters: list[dict[str, int]] = []
         for rid in replica_ids:
             slot = self.replicas[rid]
-            slot.simulation.recompute_energy()
+            slot.simulation.recompute_and_recenter()
             coords.append(np.asarray(get_coords(slot.simulation.context), dtype=np.float64))
+            frame_offsets.append(get_frame_offset(slot.simulation.context))
             current_steps.append(int(slot.simulation.current_step))
             integ = slot.simulation.integrator
             if hasattr(integ, "get_rng_state"):
@@ -586,6 +590,7 @@ class MPIReplicaExchange:
         local_state = {
             "replica_ids": replica_ids,
             "coords": coords,
+            "frame_offsets": frame_offsets,
             "current_steps": current_steps,
             "integrator_rng_states": integrator_rng_states,
             "integrator_move_counters": move_counters,
@@ -615,6 +620,7 @@ class MPIReplicaExchange:
         if rank == 0:
             n_replicas = int(self.n_replicas)
             coords_ordered: list[Any] = [None] * n_replicas
+            offsets_ordered: list[Any] = [None] * n_replicas
             steps_ordered: list[int] = [0] * n_replicas
             rng_ordered: list[str] = [""] * n_replicas
             counters_ordered: list[dict[str, int]] = [{} for _ in range(n_replicas)]
@@ -623,6 +629,7 @@ class MPIReplicaExchange:
             for s in all_states or []:
                 for i, rid in enumerate(s["replica_ids"]):
                     coords_ordered[int(rid)] = s["coords"][i]
+                    offsets_ordered[int(rid)] = s["frame_offsets"][i]
                     steps_ordered[int(rid)] = int(s["current_steps"][i])
                     rng_ordered[int(rid)] = s["integrator_rng_states"][i]
                     counters_ordered[int(rid)] = s["integrator_move_counters"][i]
@@ -653,6 +660,7 @@ class MPIReplicaExchange:
                 linker_residues=list(self.linker_residues),
                 linker_energy_mode=str(self.linker_energy_mode),
                 replica_coords=coords_ordered,
+                replica_frame_offsets=offsets_ordered,
                 walker_at_state=np.asarray(self._walker_at_state, dtype=np.int32).copy(),
                 current_steps=steps_ordered,
                 exchange_rng=None,  # MPI exchange RNG is deterministic from seed+cycle
@@ -759,10 +767,11 @@ class MPIReplicaExchange:
                 continue
             slot = self.replicas[rid]
             coords = np.asarray(coords_list[rid], dtype=np.float64)
-            if coords.ndim == 2 and coords.shape[0] == 3:
-                slot.simulation.context.set_positions(coords)
-            else:
-                slot.simulation.context.set_positions(coords.T)
+            if coords.ndim != 2 or coords.shape[0] != 3:
+                coords = coords.T
+            slot.simulation.context.set_positions(
+                coords, frame_offset=saved_frame_offset(state, rid)
+            )
             slot.simulation.context.calculate_total_energy(-1)
             check_state_clash(
                 slot.simulation.context, "checkpoint restore"
@@ -977,6 +986,25 @@ class MPIReplicaExchange:
             e_j_total=e_j_total,
         )
 
+    def _swap_walker_with(self, rep: Any, coords: np.ndarray, peer: int, tag: int) -> None:
+        """Trade this replica's walker for the one on rank ``peer``. The frame
+        offset travels with the coordinates, as one more column, so each
+        walker keeps its own engine frame and re-enters bit for bit."""
+        context = rep.simulation.context
+        send = np.column_stack((coords, get_frame_offset(context)))
+        recv = np.empty_like(send)
+        self.comm.Sendrecv(
+            send,
+            dest=peer,
+            sendtag=tag,
+            recvbuf=recv,
+            source=peer,
+            recvtag=tag,
+        )
+        context.set_positions(recv[:, :-1], frame_offset=recv[:, -1])
+        context.calculate_total_energy(-1)
+        check_state_clash(context, "post-exchange coordinate swap")
+
     def _attempt_mpi_exchange(
         self,
         i: int,
@@ -1025,20 +1053,7 @@ class MPIReplicaExchange:
             comm.Send(send_buf, dest=owner_j, tag=tag_base + 2)
 
             if accepted:
-                new_coords = np.empty_like(coords)
-                comm.Sendrecv(
-                    coords,
-                    dest=owner_j,
-                    sendtag=tag_base + 1,
-                    recvbuf=new_coords,
-                    source=owner_j,
-                    recvtag=tag_base + 1,
-                )
-                rep.simulation.context.set_positions(new_coords)
-                rep.simulation.context.calculate_total_energy(-1)
-                check_state_clash(
-                    rep.simulation.context, "post-exchange coordinate swap"
-                )
+                self._swap_walker_with(rep, coords, owner_j, tag_base + 1)
 
             record = self._build_exchange_record(
                 i,
@@ -1068,20 +1083,7 @@ class MPIReplicaExchange:
             accepted = bool(recv_buf[2])
 
             if accepted:
-                new_coords = np.empty_like(coords)
-                comm.Sendrecv(
-                    coords,
-                    dest=owner_i,
-                    sendtag=tag_base + 1,
-                    recvbuf=new_coords,
-                    source=owner_i,
-                    recvtag=tag_base + 1,
-                )
-                rep.simulation.context.set_positions(new_coords)
-                rep.simulation.context.calculate_total_energy(-1)
-                check_state_clash(
-                    rep.simulation.context, "post-exchange coordinate swap"
-                )
+                self._swap_walker_with(rep, coords, owner_i, tag_base + 1)
 
             record = self._build_exchange_record(
                 i,

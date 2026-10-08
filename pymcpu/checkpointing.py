@@ -88,6 +88,13 @@ class CheckpointState:
     linker_energy_mode: str = "ignore_all"
     walker_at_state: Any = None
     replica_coords: list[Any] = field(default_factory=list)
+    #: Per replica, the engine frame offset (Context.frame_offset, float64,
+    #: shape (3,)) its coordinates were saved from; set_positions(coords,
+    #: frame_offset=...) restores the engine coordinates bit for bit. The
+    #: offset moves with the chain (Context.recenter), so a fresh Context's
+    #: own may differ. Empty in checkpoints written before it was saved;
+    #: those restore in the fresh Context's frame, as before.
+    replica_frame_offsets: list[Any] = field(default_factory=list)
     current_steps: list[int] = field(default_factory=list)
     exchange_rng: Any = None
     integrator_rng_states: list[Any] = field(default_factory=list)
@@ -391,6 +398,20 @@ def set_integrator_rng_states(replicas: list[Any], states: list[Any]) -> None:
                     "Rebuild with C++20 toolchain to activate exact RNG restore."
                 )
                 warned = True
+
+
+def saved_frame_offset(state: dict[str, Any] | CheckpointState, index: int) -> np.ndarray | None:
+    """Replica ``index``'s saved frame offset, for ``set_positions(...,
+    frame_offset=)``; None for a checkpoint written before offsets were
+    saved, which then restores in the Context's own frame."""
+    offsets = (
+        state.get("replica_frame_offsets")
+        if isinstance(state, dict)
+        else state.replica_frame_offsets
+    )
+    if not offsets or index >= len(offsets) or offsets[index] is None:
+        return None
+    return np.asarray(offsets[index], dtype=np.float64)
 
 
 def checkpoint_forcefield_error(
