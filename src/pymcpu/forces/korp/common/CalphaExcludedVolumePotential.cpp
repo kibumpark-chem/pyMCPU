@@ -125,16 +125,19 @@ bool CalphaExcludedVolumePotential::clashesAtMoveCutoff(
     if (moved_residues_.empty()) return false;
 
     // A rigid move keeps the distance of a pair it carries, so such a pair
-    // cannot start to overlap. Rounding can move it a few 1e-6 A, which
-    // calculateEnergy allows for (kStateClashBufferA).
-    const bool skip_carried =
+    // cannot start to overlap. Rounding moves it a few 1e-6 A per carry,
+    // though, and over many carries that adds up as a random walk, so a
+    // carried pair is held to calculateEnergy's floor (kStateClashBufferA
+    // lower) instead of the move cutoff: a move that takes one under the
+    // floor is rejected.
+    const bool carry =
         patch.is_rigid && context.neighborConfig().skip_rigid_mm;
-    const auto clashes = [&](int a, int b) {
+    const auto clashes = [&](int a, int b, float cut_sq) {
         const Eigen::Vector3f pa =
             proposed_state.atom_pos(ca_atom_[static_cast<std::size_t>(a)]);
         const Eigen::Vector3f pb =
             proposed_state.atom_pos(ca_atom_[static_cast<std::size_t>(b)]);
-        return pair_r2(pb - pa) < min_distance_sq_;
+        return pair_r2(pb - pa) < cut_sq;
     };
 
     // Prefilter: for each moved residue, one branch-free pass over every
@@ -174,12 +177,12 @@ bool CalphaExcludedVolumePotential::clashesAtMoveCutoff(
 
         for (int j = 0; j < n; ++j) {
             if (j == a) continue;
-            if (moved_[static_cast<std::size_t>(j)]) {
-                if (skip_carried) continue;
-                if (j < a) continue;  // unordered pair, visit once
-            }
+            const bool both_moved = moved_[static_cast<std::size_t>(j)] != 0;
+            if (both_moved && j < a) continue;  // unordered pair, visit once
             if (!pair_is_checked(a, j) || (skip && skip[j])) continue;
-            if (clashes(a, j)) return true;
+            const float cut_sq =
+                both_moved && carry ? min_distance_state_sq_ : min_distance_sq_;
+            if (clashes(a, j, cut_sq)) return true;
         }
     }
     return false;

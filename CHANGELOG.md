@@ -91,6 +91,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A rigid pivot can no longer carry a pair into a hard-core overlap.** A
+  pivot does not re-measure the pairs it carries, since the rotation keeps
+  their distances, but it rounds every carried coordinate to float. Those
+  errors add up over carries as a random walk (about 2e-6 A per carry ~100 A
+  from the origin), so a pair a move left just outside its hard-core cutoff
+  could be walked past the 0.001 A a state is allowed under it. Two 1igd
+  replica-exchange runs aborted this way on the hot replica (T = 1.6), after
+  ~1e5 carries of an intra-residue pair (VAL59 C-CG2): `steric clash in the
+  ACCEPTED state`. Mu's contact list now also holds every clash pair within
+  0.05 A of its cutoff, and a rigid move that carries a listed pair under the
+  state cutoff is rejected; without an exact list (`MCPU_CONTACT_LIST=0`, or
+  a Mu grid overflow once the list is dropped) every carried unmasked pair is
+  tested. The KORP CA-CA guard tests carried
+  pairs against its state floor the same way. Runs that never carried a pair
+  that far are unchanged (bit-identical); runs that did would have aborted,
+  or held an overlap between two per-cycle checks.
 - **The runners ignored `forcefield`.** `mcpu run`, `run_from_config`,
   `FoldingRunner` and both replica-exchange engines always built mcpu08, so
   `forcefield: korp` in a config ran mcpu08 without a warning. Replica

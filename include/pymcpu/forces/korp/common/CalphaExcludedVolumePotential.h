@@ -17,7 +17,8 @@
 /// A move is rejected if it puts a CA pair under min_distance. A whole state
 /// is judged against a floor kStateClashBufferA (0.001 A) lower, which allows
 /// for a pair a rigid pivot carried a few 1e-6 A under min_distance by
-/// rounding.
+/// rounding. Such carries add up, so a rigid move is rejected when it carries
+/// a pair under that floor.
 ///
 /// A residue masked with ignore_all (System::set_energy_ignored_residues) is
 /// never tested, in the delta and the full energy alike; clash_only keeps
@@ -88,8 +89,9 @@ public:
 
     bool canHardReject() const noexcept override { return true; }
 
-    /// The delta's test: a moved CA under min_distance of another, except a
-    /// pair a rigid move carries (with skip_rigid_mm on).
+    /// The delta's test: a moved CA under min_distance of another. A pair a
+    /// rigid move carries (with skip_rigid_mm on) is held to calculateEnergy's
+    /// floor instead, which is all its rounding can take it under.
     bool clashesAtMoveCutoff(
         const Context& context,
         const State& proposed_state,

@@ -196,9 +196,11 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
     void MuPotential::apply_mu_denselist_cutoff() {
         float max_contact_r2 = 0.f;
         float max_hard_r2 = 0.f;
+        float max_hard_tol_r2 = 0.f;
         for (const auto& p : type_params_) {
             max_contact_r2 = std::max(max_contact_r2, p.contact_r2);
             max_hard_r2 = std::max(max_hard_r2, p.hard_r2);
+            max_hard_tol_r2 = std::max(max_hard_tol_r2, p.hard_tol_r2);
         }
         // No pair overlaps beyond the largest hard-core radius (see
         // clash_prefilter_r2_): + 0.001 (rounding resolution) + 0.001 (float slack).
@@ -215,8 +217,18 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
                 static_cast<float>(2.0 * cmax * band + band * band),
                 std::numeric_limits<float>::infinity());
         }
+        // The same band outside the move cutoff, for the clash pairs the
+        // list holds (see kContactBandA).
+        if (max_hard_tol_r2 > 0.f) {
+            const double hmax = std::sqrt(static_cast<double>(max_hard_tol_r2));
+            const double band = static_cast<double>(kContactBandA);
+            clash_band_w_r2_ = std::nextafter(
+                static_cast<float>(2.0 * hmax * band + band * band),
+                std::numeric_limits<float>::infinity());
+        }
         const float max_r2 =
-            std::max(max_contact_r2 + contact_band_w_r2_, max_hard_r2);
+            std::max({max_contact_r2 + contact_band_w_r2_,
+                      max_hard_tol_r2 + clash_band_w_r2_, max_hard_r2});
         float exact = kMuCutoffFallbackA;
         if (max_r2 <= 0.f) {
             std::fprintf(stderr,
@@ -728,13 +740,24 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
                     for (const auto& c : old_state.mu_contacts.partners(i)) {
                         const int j = c.j;
                         if (i > j || !is_moved[static_cast<size_t>(j)]) continue;
-                        delta_E += static_cast<double>(listed_contact_energy(
-                                       i, j, cnew_mm.dist2(i, j))) -
+                        float e;
+                        if (!carried_listed_pair(i, j, cnew_mm.dist2(i, j),
+                                                 c.payload, &e)) {
+                            ws.clear();
+                            return kHardCorePenalty;
+                        }
+                        delta_E += static_cast<double>(e) -
                                    static_cast<double>(c.payload);
                     }
                 }
             } else {
-                delta_E += carried_pairs_delta(old_state, new_state, moved_indices);
+                const double carried =
+                    carried_pairs_delta(old_state, new_state, moved_indices);
+                if (carried >= 0.5 * kHardCorePenalty) {
+                    ws.clear();
+                    return kHardCorePenalty;
+                }
+                delta_E += carried;
             }
             const std::uint64_t n = static_cast<std::uint64_t>(moved_indices.size());
             nstats.elided_rigid_mm += (n * (n > 0 ? n - 1 : 0)) / 2ull;
@@ -809,14 +832,20 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
                 const float dx = x[b] - xa, dy = y[b] - ya, dz = z[b] - za;
                 r2_row[b] = pair_r2(dx, dy, dz);
             }
-            // Beyond the Mu cutoff a pair is out of contact on both sides:
-            // the cutoff includes the contact list's 0.05 A band, and a
-            // carry is far smaller.
+            // Beyond the Mu cutoff a pair is out of contact and clear of its
+            // hard core on both sides: the cutoff includes the contact
+            // list's 0.05 A bands, and a carry is far smaller.
             for (size_t b = a + 1; b < n; ++b) {
                 if (r2_row[b] > cut2) continue;
                 const int i = moved[a], j = moved[b];
-                dE += static_cast<double>(eval_pair<ClashCutoff::None>(
-                          i, j, cnew.dist2(i, j), nullptr)) -
+                // The new side at the state cutoff: rounding adds up over
+                // carries (see carried_listed_pair). An overlap under a mask
+                // is the state's own, which the full energy does not judge.
+                bool clash = false;
+                const float e_new = eval_pair<ClashCutoff::State>(
+                    i, j, cnew.dist2(i, j), &clash);
+                if (clash && !mask_covers_pair(i, j)) return kHardCorePenalty;
+                dE += static_cast<double>(e_new) -
                       static_cast<double>(eval_pair<ClashCutoff::None>(
                           i, j, r2_row[b], nullptr));
             }
@@ -894,10 +923,11 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
         std::vector<int> atoms;
         mu_pair_atoms(sys, N, atoms);
         mu_for_each_near_pair(cv, atoms, contact_cutoff_sq_, [&](int i, int j, float r2) {
-                if (!(topo_flag(i, j) & 2u)) return false;
+                if (topo_flag(i, j) == 0) return false;
                 // No clash test (ClashCutoff::None): a pair that rounding
                 // carried under its hard-core cutoff is listed with the
-                // contact energy the running energy holds for it.
+                // contact energy the running energy holds for it, and a
+                // clash pair near its cutoff is listed with 0 (near).
                 bool near = false;
                 const float e = eval_pair<ClashCutoff::None>(i, j, r2, nullptr, &near);
                 if (e != 0.0f || near) state.mu_contacts.add(i, j, e);
@@ -1002,8 +1032,12 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
                         // rounding, which can still take a pair near its
                         // cutoff across it. Re-decide it here, from the new
                         // coordinates, and update the entry if it flipped.
-                        const float e =
-                            listed_contact_energy(i, j, cnew.dist2(i, j));
+                        float e;
+                        if (!carried_listed_pair(i, j, cnew.dist2(i, j),
+                                                 c.payload, &e)) {
+                            ws.clear();
+                            return kHardCorePenalty;
+                        }
                         if (e != c.payload) {
                             dE += static_cast<double>(e) -
                                   static_cast<double>(c.payload);
@@ -1152,9 +1186,11 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
                         return false;
                     }
                     // DIAGNOSTIC (MCPU_CLASH_REPORT=1): identify the pair that
-                    // trips the sentinel. No move can put a pair under the
-                    // move cutoff, and rounding carries one at most a few
-                    // 1e-6 A further, so on an accepted state this means the
+                    // trips the sentinel. A move that re-measures a pair cannot
+                    // put it under the move cutoff, and a rigid move that would
+                    // carry one under the state cutoff is rejected
+                    // (carried_listed_pair, or carried_pairs_delta without an
+                    // exact list), so on an accepted state this means the
                     // coordinates came from outside (set_positions, a restore)
                     // or a delta path missed the pair. Reports the geometry
                     // plus the Mu cutoff, so a pair that sits outside the

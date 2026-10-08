@@ -19,10 +19,12 @@ struct NeighborConfig {
 
     /// If true (default), the pairs a rigid pivot (``patch.is_rigid``) carries
     /// -- both atoms moved -- are not re-measured: a rigid rotation keeps their
-    /// distances, so they cannot start to overlap and only a pair on its
-    /// contact cutoff can change energy, by rounding. Mu re-decides just the
-    /// carried pairs on its contact list (see MuPotential), and the KORP CA-CA
-    /// guard skips them. The H-bond term likewise keeps the energy of a
+    /// distances, up to rounding. Rounding adds up over carries, so Mu
+    /// re-decides the carried pairs on its contact list, which holds every pair
+    /// near its contact or hard-core cutoff (every carried pair within its
+    /// cutoff when the list is not exact; see MuPotential), and the KORP
+    /// CA-CA guard holds carried pairs to its state floor (see
+    /// kStateClashBufferA). The H-bond term likewise keeps the energy of a
     /// donor-acceptor pair whose backbone geometry (residues r-1 to r+1 on both
     /// sides) moved as one body and carries its ledger entry (see
     /// HBondPotential). False evaluates them all exactly, as a reference.
