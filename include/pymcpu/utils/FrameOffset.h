@@ -9,8 +9,8 @@ namespace mcpu {
 // Coordinates are float32, and every move rounds each coordinate it changes
 // at its absolute value, so the rounding noise grows with distance from the
 // origin: one float step is 3.8e-6 A at 50 A but 2.4e-4 A at 4000 A. Far out,
-// bond lengths random-walk, KIC's reverse check fails, and pairs a rigid
-// pivot carries can slip through the hard-core margin. A Context therefore
+// bond lengths random-walk, KIC's reverse check fails, and the pairs a rigid
+// pivot carries reach the hard-core margin sooner. A Context therefore
 // runs a structure placed far from the origin in an engine frame shifted
 // next to it: engine = user - frame_offset. Every exit adds the offset back.
 

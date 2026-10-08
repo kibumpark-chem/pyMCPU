@@ -14,13 +14,15 @@ class Context;
 ///
 /// A rigid pivot carries the distances inside the moved segment without
 /// measuring them again: the rotation keeps them. It rounds each carried
-/// coordinate to float, though, so a pair a move left exactly on a cutoff can
-/// drift a few 1e-6 A under it while carried. Moves are tested against the
-/// cutoff itself; a full recompute (Simulation's clash check,
-/// has_steric_clash) allows this much under it, so such a drift is not taken
-/// for a clash. A pair deeper than that cannot come from a move and is still
-/// reported. Measured with nothing re-checking carried pairs: at most 1.8e-6 A
-/// under over 5M-step actin and 20M-step chignolin runs.
+/// coordinate to float, though, so a pair a move left on a cutoff drifts while
+/// carried: a few 1e-6 A per carry, adding up over carries as a random walk
+/// (1igd at T = 1.6, ~120 A from the origin, walked a pair 0.001 A in ~1e5
+/// carries). Moves are tested against the cutoff itself; a full recompute
+/// (Simulation's clash check, has_steric_clash) allows this much under it, and
+/// the hard-core terms reject a rigid move that would carry a pair further
+/// (Mu: carried_listed_pair, or carried_pairs_delta without an exact contact
+/// list; the CA guard). A pair under it therefore cannot come from a move and
+/// is still reported.
 inline constexpr float kStateClashBufferA = 1e-3f;
 
 class Potential {

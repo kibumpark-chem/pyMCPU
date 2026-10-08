@@ -33,14 +33,17 @@ attempt that was not accepted, so it lowers that move's acceptance rate.
 ## Hard-core clashes
 
 A move that puts a pair of atoms under its hard-core cutoff is rejected before
-the acceptance test, so no accepted move creates an overlap. Pairs that move
-together in a rigid pivot are not re-checked: the rotation keeps their
-distance, except for float32 rounding of a few 1e-6 Å. A whole state is
-therefore judged against cutoffs 0.001 Å looser
-(`mcpu_core.STATE_CLASH_BUFFER_A`). {doc}`/api/simulation` describes the
+the acceptance test, so no accepted move creates an overlap. Most pairs that
+move together in a rigid pivot are not re-measured: the rotation keeps their
+distance, except for float32 rounding of a few 1e-6 Å per pivot, which adds up
+over many pivots as a random walk. A whole state is therefore judged against
+cutoffs 0.001 Å looser (`mcpu_core.STATE_CLASH_BUFFER_A`); the carried pairs
+near a hard-core cutoff are re-measured, and a pivot that would carry one
+under that looser cutoff is rejected. {doc}`/api/simulation` describes the
 running energy, its full recompute, and what happens if a recompute finds a
 clash anyway.
 
-Rounding grows with distance from the origin, so a `Context` runs a structure
-that reaches 64 Å or more from the origin in an engine frame shifted next to
-it; see `Context.frame_offset` in {doc}`/api/context`.
+Rounding grows with distance from the origin, so a `Context` places a
+structure whose first placement has a coordinate of 64 Å or more in an engine
+frame shifted next to it; see `Context.frame_offset` in {doc}`/api/context`.
+The frame does not follow a chain that drifts away during a run.

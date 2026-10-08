@@ -111,8 +111,9 @@ def test_the_threshold_is_where_it_says_it_is(floor):
 
 def test_a_state_may_sit_a_thousandth_under_the_floor():
     """Moves are tested against the floor; a whole state against a floor
-    STATE_CLASH_BUFFER_A (0.001 A) lower, which leaves room for a pair a rigid
-    pivot carried a few 1e-6 A under the floor by rounding."""
+    STATE_CLASH_BUFFER_A (0.001 A) lower, which leaves room for a pair that
+    rigid pivots carried under the floor by rounding (a few 1e-6 A per carry,
+    adding up over carries)."""
     floor = 3.2
     coords = _chain(12, rise=6.0)
     base = coords[1, 1].copy()
@@ -204,9 +205,9 @@ def _rotation(axis, theta):
 def test_a_rigid_move_does_not_recheck_the_pairs_it_carries():
     """A rigid pivot keeps CA-CA distances only in real arithmetic: it rounds
     every carried coordinate to float, so a pair it carries that sits exactly
-    on the floor lands a few 1e-6 A either side of it. The move does not
-    re-check such a pair, and the full energy allows for the rounding (it
-    judges a state against a floor 0.001 A lower), so the two always agree."""
+    on the floor lands a few 1e-6 A either side of it. The move holds such a
+    pair only to the floor the full energy judges a state by (0.001 A lower),
+    so the two always agree."""
     n_res = 12
     floor = float(np.float32(3.2))
     coords = _chain(n_res, rise=6.0)
@@ -248,3 +249,46 @@ def test_a_rigid_move_does_not_recheck_the_pairs_it_carries():
         crossings += bool(d2 < floor_sq)
         assert np.sqrt(np.float64(d2)) > floor - 1e-4
     assert crossings > 0  # the construction really rounds the pair under the floor
+
+
+@pytest.mark.parametrize("under", [0.0005, 0.0015])
+def test_a_rigid_move_cannot_carry_a_pair_under_the_state_floor(under):
+    """Each carry's rounding is a few 1e-6 A, but successive carries add up
+    as a random walk, so a carried pair is held to the floor a state is
+    judged by: inside the 0.001 A allowance it is carried as before, past it
+    the move is rejected. The carry below also sets the pair's distance,
+    standing in for what many carries' rounding could have made of it."""
+    n_res = 12
+    floor = float(np.float32(3.2))
+    coords = _chain(n_res, rise=6.0)
+    coords[10] += coords[6, 1] + (0.0, floor + 0.01, 0.0) - coords[10, 1]
+    system, context = build_backbone_system(coords)
+    _, ca_atom, _ = residue_atom_indices(n_res)
+    guard = KorpPotentialBuilder.build_steric_guard(
+        ca_atom=ca_atom, res_seq=list(range(n_res)), chain_ids=["A"] * n_res, min_distance=floor,
+    )
+    guard.set_energy_group(GUARD_GROUP)
+    system.add_potential(guard)
+    assert context.energy_breakdown(weighted=False)["by_group"][GUARD_GROUP] == 0.0
+
+    moved = [3 * r + k for r in range(6, n_res) for k in range(3)] + [3 * n_res + r for r in range(6, n_res)]
+    pos = np.asarray(context.get_state().coords, dtype=np.float32)
+    origin = pos[:, 3 * 6].astype(np.float64)
+    new = pos.copy()
+    new[:, moved] = (_rotation(pos[:, 3 * 6 + 1] - origin, 0.3) @ (pos[:, moved] - origin[:, None])
+                     + origin[:, None]).astype(np.float32)
+    ca6, ca10 = new[:, 3 * 6 + 1].astype(np.float64), new[:, 3 * 10 + 1].astype(np.float64)
+    new[:, 3 * 10 + 1] = (ca6 + (floor - under) * (ca10 - ca6) / np.linalg.norm(ca10 - ca6)).astype(np.float32)
+    old_state = context.get_state()
+    new_state = mcpu_core.State(old_state)
+    new_state.coords = new
+    patch = mcpu_core.ProposalPatch(pos.shape[1])
+    for atom in moved:
+        patch.mark_moved(int(atom))
+    patch.is_valid = True
+    patch.is_rigid = True
+    check = mcpu_core.PhysicsVerifier.verify_potential_delta(
+        context, old_state, new_state, patch, GUARD_GROUP, 1e-3)
+    assert check.passed, check.message
+    past = under > mcpu_core.STATE_CLASH_BUFFER_A
+    assert check.delta_incremental == (CLASH_SENTINEL if past else 0.0)

@@ -2,8 +2,10 @@
 
 A rigid pivot carries the pairs inside its segment without measuring them
 again, since the rotation keeps their distances. It rounds each carried
-coordinate to float, though, so a pair a move left exactly on the cutoff can
-end up a few 1e-6 A under it. The full energy (and so has_steric_clash and
+coordinate to float, though, so a pair a move left exactly on the cutoff
+drifts under it by a few 1e-6 A per carry, adding up over carries; a rigid
+move that would carry it past the state cutoff is rejected (see
+test_mu_carried_clash.py). The full energy (and so has_steric_clash and
 Simulation's clash check) therefore allows a pair up to
 ``mcpu_core.STATE_CLASH_BUFFER_A`` under the cutoff and scores it as any pair
 at its distance. A move that re-decides a pair is still tested against the

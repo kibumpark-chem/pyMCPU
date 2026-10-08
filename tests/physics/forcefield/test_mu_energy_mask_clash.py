@@ -1,8 +1,10 @@
 """Residue energy masks, and the pairs a rigid move carries.
 
 A rigid pivot keeps every distance inside the segment it turns, so Mu does
-not re-check those pairs for a clash (``skip_rigid_mm``, on by default): they
-cannot start to overlap. The pairs a move does re-decide, with one atom
+not re-check those pairs against the move cutoff (``skip_rigid_mm``, on by
+default): they cannot start to overlap. (It only holds an unmasked one near
+its cutoff to the state cutoff, which rounding could otherwise walk it past;
+see test_mu_carried_clash.py.) The pairs a move does re-decide, with one atom
 moved and the other not, are clash-tested under every mask but ``ignore_all``:
 
 * ``ignore_all``: a pair involving a masked residue neither clashes nor makes
