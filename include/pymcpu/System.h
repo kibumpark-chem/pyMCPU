@@ -24,7 +24,7 @@ enum class EnergyMaskMode : std::uint8_t {
 
 // ---------------------------------------------------------------
 // Per-residue atom block descriptor.
-// sc_start == -1  →  no sidechain atoms: GLY (MCPU), or every residue (KORP)
+// sc_start == -1  →  no sidechain atoms (GLY)
 // h_start  == -1  →  PRO         (no amide hydrogen)
 // o_start  == -1  →  reserved for future use
 // bb_start is ALWAYS valid for every residue.
@@ -260,10 +260,6 @@ public:
     }
     [[nodiscard]] const std::vector<uint8_t>& energy_ignored_mask() const noexcept {
         return energy_ignored_mask_;
-    }
-    /// The mask (1 = ignored, one byte per residue), or nullptr when none is set.
-    [[nodiscard]] const uint8_t* energy_ignored_mask_or_null() const noexcept {
-        return has_energy_mask_ ? energy_ignored_mask_.data() : nullptr;
     }
 
     /// Remap BlockIndices / atom_to_residue / DownstreamCache under an atom permutation.

@@ -9,14 +9,14 @@
 Monte Carlo protein folding and unfolding with knowledge-based statistical
 potentials — a C++20 compute core behind an OpenMM-style Python API.
 
-Two force fields are available. **MCPU** is all-atom: five energy terms
+The force field, **MCPU**, is all-atom: five energy terms
 (contact/solvation "Mu", backbone torsion, sidechain torsion, directional
 hydrogen bonding, aromatic stacking) read from potentials fitted to the PDB.
-**KORP** is backbone-only — a 6D orientation-dependent residue-pair potential
-that reads just N, CA and C, paired with a CA–CA excluded-volume filter. It
-needs an energy map that is [downloaded separately](#korp-force-field). Sampling uses Metropolis Monte Carlo with pivot,
-continuous sidechain, rotamer-library and kinematic-closure loop moves, plus
-temperature/umbrella replica exchange and WESTPA weighted-ensemble support.
+Sampling uses Metropolis Monte Carlo with pivot, continuous sidechain,
+rotamer-library and kinematic-closure loop moves, plus temperature/umbrella
+replica exchange and WESTPA weighted-ensemble support.
+
+mcpu26 is planned for 0.2.0; KORP may return then if its licence is cleared.
 
 **Platform:** Linux x86-64. The published wheel targets the `x86-64-v3`
 baseline — AVX2, FMA and BMI2, so Intel Haswell (2013) and AMD Zen (2017) and
@@ -89,7 +89,7 @@ Two ways to satisfy it:
 
 C++20 is required. GCC 15 is the default compiler and the one the wheels are
 built with. GCC 8.5 is the oldest version verified to build and pass the full
-test suite; its builds run about 3-15% slower, and CMake warns about it.
+test suite; its builds run about 3-10% slower, and CMake warns about it.
 
 ## Quickstart
 
@@ -133,11 +133,6 @@ print(sim.context.energy_breakdown(weighted=True))
 | `hydrogen_bond` | 4 | 1.35 (**effective 2.7**) | Directional 7D hydrogen bond potential |
 | `aromatic` | 5 | 5.0 | Ring–ring aromatic stacking (PHE, TRP) |
 | `native_contacts_bias` | 6 | 1.0 | Umbrella bias on the native-contact count |
-| `korp_6d` | 7 | 1.0 | KORP 6D orientational residue-pair potential |
-| `calpha_excluded_volume` | 8 | 1.0 | CA–CA steric filter (0 in any accepted state) |
-
-Groups 1–5 are MCPU's; 7–8 are KORP's. The two force fields are alternatives,
-not layers — nothing installs both.
 
 Energies are **unitless**: sums of knowledge-based table entries scaled by a
 dimensionless per-group weight. There is no Boltzmann constant, no Kelvin and
@@ -206,72 +201,6 @@ against a shared `$HOME`:
 export MCPU_PARAMS_DIR="$(mcpu materialize-params --set mcpu08)"
 mpirun -n 32 python my_remd_run.py
 ```
-
-## KORP force field
-
-KORP ([López-Blanco & Chacón, *Bioinformatics* 2019](https://doi.org/10.1093/bioinformatics/btz026))
-scores residue pairs from a local frame built on each residue's N, CA and C,
-with the pair coordinate being CA–CA. It reads no sidechain atom, so
-`KORPForceField` drops sidechains rather than carrying them unused.
-
-### Getting the energy map
-
-The `korp6Dv1.bin` map is **not shipped**: at 316 MiB it is well over PyPI's
-per-file limit. Download it once from the Chacón lab:
-
-```bash
-# https://chaconlab.org/modeling/korp -> "KORP Linux64" -> Korp6Dv1.txz
-tar xJf Korp6Dv1.txz
-export KORP_MAP_PATH="$PWD/Korp6Dv1/korp6Dv1.bin"
-```
-
-Check you have the map these results were validated against — a different
-map scores differently, and legitimately:
-
-```bash
-sha256sum "$KORP_MAP_PATH"
-# 8c586500f80ad31f297652e050d391702a01927ee58d598017650ef2e0fbf971
-```
-
-On a cluster, pre-stage it once and point `MCPU_PARAMS_DIR` or `KORP_MAP_PATH`
-at the shared copy, exactly as for the MCPU parameter sets.
-
-### Running it
-
-```python
-import mdtraj as md, numpy as np, pymcpu as mc
-from pymcpu import mcpu_core
-from pymcpu.forcefields.korp import KORPForceField
-
-traj = md.load("protein.pdb")
-forcefield = KORPForceField(traj)          # or KORPForceField(traj, map_path=...)
-system = forcefield.create_system(traj.topology)
-
-integrator = mcpu_core.Integrator(temperature=0.6, step_size_rad=0.05)
-integrator.set_move_weights(0.5, 0.5, 0.0)   # pivot + KIC only; see below
-
-sim = mc.Simulation(forcefield.output_topology, system, integrator)
-sim.context.set_positions((forcefield.coords[0] * 10.0).T.astype(np.float32))
-forcefield.apply_energy_weights(sim.context)
-sim.step(10_000)
-```
-
-Two things differ from an MCPU run:
-
-- **Sidechain moves must be off.** These residues have no chi angles, so every
-  sidechain proposal would return without proposing anything. `set_move_weights`
-  with a zero third argument says so; `Integrator.run` raises rather than
-  silently discarding that share of the budget.
-- **The trajectory is backbone-only.** Load it against
-  `forcefield.output_topology`, not against your input PDB's topology.
-
-pyMCPU reproduces the reference `korpe` binary to within 4e-8 relative; see
-[the physics note](https://pymcpu.readthedocs.io/en/latest/physics_notes/korp_6d.html)
-for the frame convention, the binning, and a discrepancy between the KORP paper
-and the code that built the released map.
-
-If you use KORP, cite López-Blanco JR & Chacón P, *Bioinformatics* 2019,
-35(17):3013–3019, alongside pyMCPU.
 
 ## Development
 

@@ -3,19 +3,15 @@ Force fields
 
 A force field turns an MDTraj structure into a ``mcpu_core.System`` the
 engine can simulate: it brings the potentials (the energy terms), their
-parameters, and the atom order they need. There are two, and you use one or
-the other:
+parameters, and the atom order they need. pyMCPU has one, ``mcpu08`` (alias
+``mcpu``), built by :class:`~pymcpu.MCPUForceField`: all-atom, with the five
+MCPU knowledge-based potentials.
 
-- ``mcpu08``, built by :class:`~pymcpu.MCPUForceField`: all-atom, with the
-  five MCPU knowledge-based potentials.
-- ``korp``, built by :class:`~pymcpu.KORPForceField`: backbone-only, with the
-  KORP 6D orientational potential and a steric filter.
-
-A config names one with ``forcefield:`` (default ``mcpu08``) and passes
+A config names it with ``forcefield:`` (default ``mcpu08``) and passes
 constructor arguments in ``forcefield_options:``. ``mcpu run``, the
 :doc:`sampling` drivers and an :doc:`EngineSession <../integrating_pymcpu>`
 all build it through :func:`pymcpu.forcefields.load_forcefield`; an unknown
-name fails when the config is loaded. Both classes follow
+name fails when the config is loaded. A force field follows
 :class:`~pymcpu.forcefields.base.BaseForceField`.
 
 .. autofunction:: pymcpu.forcefields.load_forcefield
@@ -232,74 +228,8 @@ Supporting types
 .. autoclass:: pymcpu.forcefields.mcpu.MCPUAtom
    :members:
 
-KORPForceField (korp)
-=====================
-
-:class:`~pymcpu.KORPForceField` is a backbone-only force field built on
-KORP's 6D orientational potential. KORP reads only N, CA and C, so this force
-field drops the side chains: the engine holds N, CA, C and O, with O kept
-only so that the moves work as they do for MCPU.
-
-.. warning::
-
-   **The trajectory you get back has no side chains.** Load a trajectory
-   written from this force field against
-   :attr:`~pymcpu.KORPForceField.output_topology`, not against your input's
-   topology. Save that topology next to the trajectory::
-
-       import mdtraj as md
-       md.Trajectory(ff.coords[:1], ff.output_topology).save_pdb("top.pdb")
-
-.. warning::
-
-   **Switch the side-chain moves off.** These residues have no side-chain
-   torsions, so call ``integrator.set_move_weights(pivot, kic, 0.0)``;
-   :py:meth:`Integrator.run` raises an error otherwise.
-
-The energy map is not shipped with pyMCPU: at 316 MiB it is over PyPI's file
-size limit. Download it once and point ``KORP_MAP_PATH`` at it, as described
-in :ref:`korp-map`.
-
-.. code-block:: python
-
-   import mdtraj as md
-   import numpy as np
-   import pymcpu as mc
-   from pymcpu.forcefields.korp import KORPForceField
-
-   traj = md.load("protein.pdb")
-   ff = KORPForceField(traj)                       # or map_path=...
-   system = ff.create_system(traj.topology)
-
-   integrator = mc.Integrator(temperature=0.6, step_size_rad=0.05)
-   integrator.set_move_weights(0.5, 0.5, 0.0)      # backbone moves only
-   sim = mc.Simulation(ff.output_topology, system, integrator)
-   sim.context.set_positions((ff.coords[0] * 10.0).T.astype(np.float32))
-   ff.apply_energy_weights(sim.context)
-   sim.step(10_000)
-
-By default each process reads the map into its own memory and asks the OS for
-2 MiB pages, which makes KORP steps about 5-9% faster (160-420 residues)
-than reading the map through 4 KiB pages. That costs ~316 MiB per process. If many ranks share a
-node that is short of memory, pass ``map_mmap=True`` (in a config file,
-``forcefield_options: {map_mmap: true}``) to memory-map the file instead, so
-all processes on the node share one copy through the page cache. Force fields
-built in one process from the same map share one loaded copy in either mode.
-
-.. autoclass:: pymcpu.forcefields.korp.KORPForceField
-   :members: create_system, apply_energy_weights, inverse_mapping
-
-.. py:attribute:: KORPForceField.output_topology
-
-   The backbone-only MDTraj topology the engine actually simulates.
-   Load any trajectory this force field produces against *this*, not
-   against the input.
-
-.. seealso::
-
-   :doc:`/physics_notes/korp_6d`
-       The potential itself: frame, coordinates, binning, and the
-       paper-versus-code discrepancy in the frame definition.
+BaseForceField
+==============
 
 .. autoclass:: pymcpu.forcefields.base.BaseForceField
    :members:

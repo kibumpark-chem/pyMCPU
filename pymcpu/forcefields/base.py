@@ -48,8 +48,8 @@ class BaseForceField(ABC):
 
         Done in place on the topology, before anything reads a residue name, so
         every downstream consumer (atom typing, PRO/CYS contact rules, chi-atom
-        resolution, torsion counts, the KORP residue order) sees the canonical
-        name without each needing its own alias table.
+        resolution, torsion counts) sees the canonical name without each
+        needing its own alias table.
         """
         renamed: dict[str, str] = {}
         for res in topology.residues:
@@ -74,20 +74,11 @@ class BaseForceField(ABC):
         does its own selection. :class:`~pymcpu.forcefields.mcpu.MCPUForceField`
         overrides it to drop hydrogens.
 
-        This exists so a factory can build either force field from the same
-        loaded trajectory without knowing which one needs what -- MCPU wants
-        heavy atoms, KORP wants the backbone and slices itself.
+        This exists so a factory can build any registered force field from the
+        same loaded trajectory without knowing which atoms it needs -- MCPU
+        wants heavy atoms.
         """
         return trajectory
-
-    def apply_energy_weights(self, context) -> None:
-        """Set the per-group outer weights this force field expects.
-
-        A no-op by default, so MCPU keeps the legacy weights it has always
-        used. Weights live on ``Context``, which does not exist yet when
-        :meth:`create_system` runs, so this is a separate step.
-        """
-        return None
 
     @abstractmethod
     def create_system(self, topology: "md.Topology") -> "mcpu_core.System":

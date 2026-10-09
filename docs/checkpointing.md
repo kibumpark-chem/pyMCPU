@@ -93,8 +93,7 @@ from before this was recorded count as mcpu08. A checkpoint whose atom count doe
 not match the system stops with an error that names both counts. Format
 version 2 stores each glycine CA once, so a version 1 checkpoint of a protein
 with glycine cannot be resumed; start that run again from its input
-structure. Version 1 checkpoints of glycine-free proteins, and of KORP runs,
-still resume.
+structure. Version 1 checkpoints of glycine-free proteins still resume.
 
 ### Exact continuation
 

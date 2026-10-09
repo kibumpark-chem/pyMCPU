@@ -10,8 +10,6 @@ share one) adopt its order, or refuse if they predate the reorder.
 
 from __future__ import annotations
 
-import os
-
 import mdtraj as md
 import numpy as np
 import pytest
@@ -98,16 +96,3 @@ def test_contexts_sharing_a_reordered_system(heavy, ff) -> None:
         earlier.calculate_total_energy(-1)
     with pytest.raises(RuntimeError, match="created before"):
         mcpu_core.Integrator(temperature=0.6, step_size_rad=0.1).run(earlier, 1, 0)
-
-
-@pytest.mark.skipif(not os.environ.get("KORP_MAP_PATH"), reason="set KORP_MAP_PATH")
-def test_the_bias_follows_the_reorder_under_korp(heavy) -> None:
-    from pymcpu.forcefields.korp import KORPForceField
-
-    korp = KORPForceField(heavy, map_path=os.environ["KORP_MAP_PATH"])
-    energies = {}
-    for mode in ("off", "init_only"):
-        ctx, _, _ = _context(heavy, korp, mode)
-        energies[mode] = (ctx.calculate_total_energy(BIAS), ctx.calculate_total_energy(7))
-    assert energies["init_only"][0] == energies["off"][0] == 0.5 * K * OFFSET**2
-    assert energies["init_only"][1] == energies["off"][1]

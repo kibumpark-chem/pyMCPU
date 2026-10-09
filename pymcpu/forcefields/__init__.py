@@ -1,21 +1,20 @@
 """Force-field registry.
 
-pyMCPU has two force fields and they are alternatives, not layers: an
-all-atom MCPU system and a backbone-only KORP system are built differently,
-score differently, and never appear together. This module is what lets a
-config file name one instead of every call site hard-coding
-:class:`~pymcpu.forcefields.mcpu.MCPUForceField`.
+Force fields are alternatives, not layers: each builds and scores its own
+system, and two never appear together. This module is what lets a config file
+name one instead of every call site hard-coding
+:class:`~pymcpu.forcefields.mcpu.MCPUForceField`. pyMCPU ships one, the
+all-atom MCPU force field, registered as ``"mcpu08"`` (alias ``"mcpu"``).
 
 Deliberately a plain dict rather than entry points or plugin discovery. There
-are two implementations and a handful of call sites; ``include/pymcpu/forces/
+are few implementations and a handful of call sites; ``include/pymcpu/forces/
 README.md``'s rule against adding a tier speculatively applies to the Python
 side too.
 
-The two constructors do not take the same arguments -- MCPU wants a parameter
-set, KORP wants an energy map -- so options are passed through as a mapping
-rather than flattened into one config schema that is half-irrelevant whichever
-force field you pick. Unknown options raise, so a typo in a YAML file is not
-silently ignored.
+Force fields need not take the same constructor arguments, so options are
+passed through as a mapping rather than flattened into one config schema that
+is half-irrelevant to every force field but one. Unknown options raise, so a
+typo in a YAML file is not silently ignored.
 """
 
 from __future__ import annotations
@@ -125,8 +124,8 @@ def load_forcefield(
     ``param_set``, ``param_dir`` and the DSSP settings are top-level config
     fields because they predate ``forcefield_options``, but they belong to
     MCPU. They are forwarded to an MCPU force field (an explicit entry in
-    ``options`` wins) and refused for any other: KORP has no parameter set,
-    and silently dropping a ``param_dir`` someone set would hide a mistake.
+    ``options`` wins) and refused for any other: silently dropping a
+    ``param_dir`` someone set would hide a mistake.
     """
     import mdtraj as md
     from pymcpu.forcefields.mcpu import MCPUForceField
@@ -154,10 +153,9 @@ def load_forcefield(
 
 
 def _register_builtins() -> None:
-    # Imported here rather than at module scope: both pull in mdtraj and the
+    # Imported here rather than at module scope: it pulls in mdtraj and the
     # compiled extension, and `pymcpu.forcefields` is imported by
     # `pymcpu/__init__.py` before those are necessarily ready.
-    from pymcpu.forcefields.korp import KORPForceField
     from pymcpu.forcefields.mcpu import MCPUForceField
 
     # "mcpu08" is the fit tag: it matches forces/mcpu/mcpu08/ and the tag a
@@ -165,7 +163,6 @@ def _register_builtins() -> None:
     # obvious thing to type and the lineage currently has one fit.
     register_forcefield("mcpu08", MCPUForceField)
     register_forcefield("mcpu", MCPUForceField)
-    register_forcefield("korp", KORPForceField)
 
 
 _register_builtins()

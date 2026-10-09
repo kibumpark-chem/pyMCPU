@@ -15,7 +15,7 @@ ruff check .
 
 The build needs a C++20 compiler and CMake. GCC 15 is the default (on RHEL 8,
 `source /opt/rh/gcc-toolset-15/enable` first); GCC 8.5 is the oldest supported
-and builds about 3-15% slower code. Eigen is
+and builds about 3-10% slower code. Eigen is
 fetched automatically if it is not installed. `pip install -e .` rebuilds the
 extension when C++ sources change.
 
@@ -65,12 +65,11 @@ python scripts/tolerance_check.py --import-root MAIN --import-root NEW --cpus 0-
 python scripts/tolerance_check.py --import-root MAIN --import-root NEW --cpus 0-5 --mode full
 ```
 
-and checks four things: per-group static energies within 1e-5 relative
+and checks three things: per-group static energies within 1e-5 relative
 (1e-4 absolute for terms near zero); the running energy against a full
-recompute after a long run, within max(1e-3, 1e-5·|E|) for each build;
+recompute after a long run, within max(1e-3, 1e-5·|E|) for each build; and
 mean energy, native-contact fraction and per-move acceptance over several
-seeds, within statistical error; and KORP against the reference `korpe`
-energies when `KORP_MAP_PATH` is set. Exit 0 = PASS, 1 = a check failed,
+seeds, within statistical error. Exit 0 = PASS, 1 = a check failed,
 2 = a case crashed. It uses chignolin and actin from the repository by
 default; `--pdb` adds others, and the script's docstring says how to fetch
 the 164-417 residue structures the tolerances were validated on.

@@ -36,10 +36,10 @@ inline constexpr double kFarFrameNoteA = 256.0;
 /// integer with the sign of every x on it, and |s| <= 2|x|, so |x - s| <= |x|.
 /// Then ulp(x - s) <= ulp(x), which divides x; s, an integer (|x| < 2^24),
 /// is a multiple of it too, so x - s is a float32. Every pairwise difference,
-/// and every energy term computed from differences only (Mu, torsions, KORP,
-/// the CA guard, the Q bias), is therefore unchanged bit for bit. Points built
-/// from absolute positions (virtual amide H, aromatic ring centres) round more
-/// finely in the engine frame and can differ at a cutoff or bin edge.
+/// and every energy term computed from differences only (Mu, torsions, the
+/// Q bias), is therefore unchanged bit for bit. Points built from absolute
+/// positions (virtual amide H, aromatic ring centres) round more finely in
+/// the engine frame and can differ at a cutoff or bin edge.
 inline Eigen::Vector3d choose_frame_offset(const Eigen::Matrix3Xd& u) {
     Eigen::Vector3d s = Eigen::Vector3d::Zero();
     if (u.cols() == 0 || !u.allFinite()) return s;

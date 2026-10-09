@@ -117,9 +117,9 @@ class MCPUForceField(BaseForceField):
         self.dssp_coil_state = dssp_coil_state
         self.allow_provisional_rama = bool(allow_provisional_rama)
         self._load_parameters()
-        #: The topology the engine actually simulates. Identical in shape to
-        #: the input here, unlike KORPForceField's -- but exposed by both so a
-        #: caller can write trajectories without knowing which it has.
+        #: The topology the engine actually simulates, here the input's.
+        #: Callers read this rather than the input's, so they can write
+        #: trajectories without knowing which force field they have.
         self.output_topology = trajectory.topology
         self._canonicalize_residue_names(trajectory.topology)
         self._validate_topology(trajectory.topology)

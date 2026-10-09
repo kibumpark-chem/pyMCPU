@@ -62,7 +62,6 @@ simple, composable Python interface.
    physics_notes/mc_acceptance
    physics_notes/kic_jacobian
    physics_notes/aromatic_stacking
-   physics_notes/korp_6d
    hbond_legacy_parity
 
 .. toctree::

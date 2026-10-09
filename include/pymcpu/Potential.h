@@ -19,10 +19,10 @@ class Context;
 /// (1igd at T = 1.6, ~120 A from the origin, walked a pair 0.001 A in ~1e5
 /// carries). Moves are tested against the cutoff itself; a full recompute
 /// (Simulation's clash check, has_steric_clash) allows this much under it, and
-/// the hard-core terms reject a rigid move that would carry a pair further
+/// the hard-core term rejects a rigid move that would carry a pair further
 /// (Mu: carried_listed_pair, or carried_pairs_delta without an exact contact
-/// list; the CA guard). A pair under it therefore cannot come from a move and
-/// is still reported.
+/// list). A pair under it therefore cannot come from a move and is still
+/// reported.
 inline constexpr float kStateClashBufferA = 1e-3f;
 
 class Potential {
@@ -37,10 +37,10 @@ public:
     void setEnergyGroup(int group) { energy_group = group; }
     int getEnergyGroup() const { return energy_group; }
 
-    /// The term's name, e.g. "mu" or "korp_6d", set by the force field that
-    /// creates it. It labels the term in energy_breakdown()["by_name"], the
-    /// energy CSV header and step_stats(). Empty means unnamed, reported as
-    /// "group_<n>".
+    /// The term's name, e.g. "mu" or "hydrogen_bond", set by the force field
+    /// that creates it. It labels the term in energy_breakdown()["by_name"],
+    /// the energy CSV header and step_stats(). Empty means unnamed, reported
+    /// as "group_<n>".
     void setName(const std::string& name) {
         validateName(name);
         name_ = name;

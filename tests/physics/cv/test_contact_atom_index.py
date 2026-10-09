@@ -13,8 +13,6 @@ the original combined file lives separately in
 
 from __future__ import annotations
 
-import os
-
 import mdtraj as md
 import numpy as np
 import pytest
@@ -71,10 +69,9 @@ def test_cb_mode_uses_cb_or_falls_back_to_bb_ca() -> None:
 
 
 class _BackboneOnlyForceField:
-    """Stands in for KORPForceField, which needs its 316 MiB map to build:
-    per-residue N, CA, C blocks and no sidechain atoms. ``total_sc_atoms``
-    can pretend there are sidechains elsewhere, as for an MCPU input that
-    lacks some residue's CB."""
+    """A backbone-only force field: per-residue N, CA, C blocks and no
+    sidechain atoms. ``total_sc_atoms`` can pretend there are sidechains
+    elsewhere, as for an MCPU input that lacks some residue's CB."""
 
     def __init__(self, residue_names: list[str], total_sc_atoms: int = 0) -> None:
         self.total_sc_atoms = total_sc_atoms
@@ -134,29 +131,6 @@ def test_the_reference_skips_residues_without_a_backbone(tmp_path, mode: str) ->
     got = reference_contact_from_pdb(str(with_hetero), mode=mode)
     assert got.shape == expected.shape == (10, 3)
     assert np.array_equal(got, expected)
-
-
-@pytest.mark.skipif(not os.environ.get("KORP_MAP_PATH"), reason="set KORP_MAP_PATH")
-def test_a_korp_session_computes_native_contacts(engine_spec_factory) -> None:
-    """At its own native structure every native contact is formed."""
-    from pymcpu.sampling import EngineSession
-
-    native_q = engine_spec_factory().cv[0]
-
-    def session(contact_atom_mode: str) -> EngineSession:
-        return EngineSession(engine_spec_factory(
-            forcefield="korp",
-            forcefield_options={"map_path": os.environ["KORP_MAP_PATH"]},
-            move_weights=(0.5, 0.5, 0.0),
-            cv=(dict(native_q, contact_atom_mode=contact_atom_mode),),
-        ))
-
-    korp = session("ca")
-    native = korp.coords_from_auxref(korp.spec.pdb)
-    assert korp.compute_cv(native).tolist() == [1.0]
-    cb = session("cb")
-    with pytest.raises(ValueError, match="contact_atom_mode='ca'"):
-        cb.compute_cv(native)
 
 
 def test_gly_cb_mode_uses_backbone_ca() -> None:

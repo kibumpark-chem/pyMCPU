@@ -343,8 +343,8 @@ def build_contact_atom_index(
     * ``ca`` — backbone CA.
     * ``cb`` — CB, or the backbone CA for a residue without one (glycine, or
       a CB missing from the input), as :func:`reference_contact_from_pdb`
-      does. A force field with no sidechain atoms at all cannot be used in
-      this mode: KORP keeps only the backbone.
+      does. A force field with no sidechain atoms at all (a backbone-only
+      one) cannot be used in this mode.
 
     Works for any force field that provides ``blocks``, the per-residue
     ``BlockIndices``.

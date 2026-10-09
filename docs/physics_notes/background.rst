@@ -3,12 +3,9 @@ Physics background
 
 pyMCPU samples protein conformations by Monte Carlo, scoring them with
 knowledge-based potentials: energy tables derived from the statistics of
-known protein structures. It has two force fields, used one at a time:
-
-* **mcpu08** (:class:`~pymcpu.MCPUForceField`): all-atom, with the five MCPU
-  potentials described on this page and the pages after it.
-* **KORP** (:class:`~pymcpu.KORPForceField`): backbone-only, with one
-  orientation-dependent residue-pair potential; see :doc:`korp_6d`.
+known protein structures. Its force field, **mcpu08**
+(:class:`~pymcpu.MCPUForceField`), is all-atom, with the five MCPU potentials
+described on this page and the pages after it.
 
 The potential objects are documented in :doc:`/api/forces`, and the move
 settings in :doc:`/api/integrator`.
@@ -88,8 +85,7 @@ describes the Jacobian correction it needs.
 
 **Sidechain.** Changes the χ angles of one residue. By default it draws a
 rotamer from a rotamer library; in ``'continuous'`` mode it perturbs each χ
-by a Gaussian angle instead. Glycine and alanine have no χ angles. A KORP run
-sets this move's weight to 0, because its residues have no sidechains.
+by a Gaussian angle instead. Glycine and alanine have no χ angles.
 
 Temperature
 -----------

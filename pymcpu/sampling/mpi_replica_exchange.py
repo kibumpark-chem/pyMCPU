@@ -357,7 +357,7 @@ class MPIReplicaExchange:
         )
         n_res = self.system.get_num_residues()
         # Topology to read this run's XTCs against. Rank 0 writes it when the
-        # force field simulates fewer atoms than the input (KORP). Its error,
+        # force field simulates fewer heavy atoms than the input. Its error,
         # if any, is broadcast so the other ranks raise instead of waiting.
         top_error = None
         try:

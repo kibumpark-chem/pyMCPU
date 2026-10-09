@@ -17,9 +17,9 @@
 /// last measured, and each entry's `fresh_until` is the drift up to which
 /// its energy is still exact (see HBondPotential::calculateEnergyChange).
 ///
-/// Like KorpStateCache, a copy starts EMPTY (a copied State has its
-/// coordinates changed without telling the cache), and a move carries the
-/// cache along and leaves the source empty.
+/// A copy starts EMPTY (a copied State has its coordinates changed without
+/// telling the cache), and a move carries the cache along and leaves the
+/// source empty.
 #include <cstddef>
 #include <cstdint>
 #include <utility>

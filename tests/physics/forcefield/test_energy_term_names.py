@@ -7,8 +7,6 @@ keys of ``step_stats()`` all read those names back.
 
 from __future__ import annotations
 
-import os
-
 import numpy as np
 import pytest
 
@@ -132,17 +130,3 @@ def test_invalid_or_reserved_names_are_rejected(name: str) -> None:
         return
     with pytest.raises(ValueError):
         potential.set_name(name)
-
-
-@pytest.mark.skipif(
-    not os.environ.get("KORP_MAP_PATH"),
-    reason="set KORP_MAP_PATH to the korp6Dv1.bin energy map",
-)
-def test_korp_terms_are_named() -> None:
-    from pymcpu.forcefields.korp import KORPForceField
-
-    traj = md.load(str(default_example_pdb()))
-    ff = KORPForceField(traj, map_path=os.environ["KORP_MAP_PATH"])
-    system = ff.create_system(traj.topology)
-    # KORP adds the steric guard (8) before the KORP term (7); output is by group.
-    assert list(system.energy_terms().items()) == [(7, "korp_6d"), (8, "calpha_excluded_volume")]

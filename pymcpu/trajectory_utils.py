@@ -412,9 +412,9 @@ def trajectory_topology_path(
 
     The XTC reporters write the force field's ``output_topology``. For MCPU
     that is the input's heavy atoms, so ``default`` (an input PDB) is
-    returned unchanged. A force field that simulates fewer atoms, such as
-    backbone-only KORP, gets its topology and starting coordinates written to
-    ``out_path``, which is returned; read its trajectories against that file.
+    returned unchanged. A force field that simulates fewer atoms gets its
+    topology and starting coordinates written to ``out_path``, which is
+    returned; read its trajectories against that file.
     ``write=False`` returns the path without writing, for MPI ranks other
     than the one that writes it.
     """
