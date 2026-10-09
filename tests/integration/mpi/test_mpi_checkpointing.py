@@ -23,6 +23,8 @@ from unittest.mock import MagicMock, Mock
 
 import pytest
 
+from tests.helpers.resume_outputs import assert_same_outputs
+
 
 def _import_mpi_re():
     """Import MPIReplicaExchange even when libmpi is missing at runtime."""
@@ -257,3 +259,101 @@ def test_run_resume_loads_truncates_attaches_in_order_and_appends(
             f"{path} should have grown after resumed run, "
             "not been truncated/overwritten"
         )
+
+
+#: Stages (total cycle counts) per scenario; checkpoints every 3 cycles. The
+#: MPI driver saves only on that interval, so the ``crash`` run stops at
+#: cycle 5 with last.chk at cycle 3 and files that hold 5 cycles, as after a
+#: job killed between checkpoints. ``twice`` resumes from a checkpoint that a
+#: resumed run wrote.
+RESUME_SCENARIOS = {"once": [6, 12], "twice": [3, 6, 12], "crash": [5, 12]}
+
+
+def _run_stages(comm, pdb_path, root, stages):
+    """Run each stage as a new driver; every stage after the first resumes."""
+    from pymcpu.checkpointing import CheckpointConfig
+
+    out, ckpt = root / "out", root / "ckpt"
+    for k, n_cycles in enumerate(stages):
+        cfg = CheckpointConfig(
+            checkpoint_dir=str(ckpt), checkpoint_interval=3, keep_last_n=10, resume=k > 0
+        )
+        re = _make_two_temp_mpi_re(
+            comm, pdb_path, cfg, out, exchange_log="all", state_log_interval=1
+        )
+        re.run(n_cycles, 10, verbose=False, write_logs=True)
+    return out, ckpt / "last.chk"
+
+
+@pytest.mark.parametrize("scenario", sorted(RESUME_SCENARIOS))
+def test_resumed_run_matches_uninterrupted_with_mock_comm(
+    scenario, mock_comm_rank0, tmp_path, minimal_pdb_path, monkeypatch
+):
+    """
+    A run resumed once, twice, or after a crash between checkpoints leaves
+    the files and final checkpoint of the uninterrupted run. Before this was
+    fixed, a second resume cut each XTC and data CSV back to the frames
+    written since the first resume, rex_stats.json counted only the last
+    job's exchanges, and a crash left duplicate exchange and state rows.
+    """
+    _ensure_mpi_module_for_construction(monkeypatch)
+    straight = _run_stages(mock_comm_rank0, minimal_pdb_path, tmp_path / "straight", [12])
+    resumed = _run_stages(
+        mock_comm_rank0, minimal_pdb_path, tmp_path / "resumed", RESUME_SCENARIOS[scenario]
+    )
+    assert_same_outputs(straight[0], resumed[0], straight[1], resumed[1])
+
+
+def test_resume_from_a_checkpoint_without_exchange_counts_with_mock_comm(
+    mock_comm_rank0, tmp_path, minimal_pdb_path, monkeypatch
+):
+    """A checkpoint written before the exchange counts were saved still
+    resumes; rex_stats.json then counts from the resume on, as it used to."""
+    import json
+
+    from pymcpu.checkpointing import CheckpointConfig, load_checkpoint, save_checkpoint
+
+    _ensure_mpi_module_for_construction(monkeypatch)
+    out, last = _run_stages(mock_comm_rank0, minimal_pdb_path, tmp_path, [6])
+    state = load_checkpoint(last)
+    assert state.pop("exchange_counts")  # saved by this version...
+    save_checkpoint(state, last.parent, filename=last.name)  # ...and now removed
+
+    cfg = CheckpointConfig(checkpoint_dir=str(last.parent), checkpoint_interval=3, resume=True)
+    re = _make_two_temp_mpi_re(
+        mock_comm_rank0, minimal_pdb_path, cfg, out, exchange_log="all", state_log_interval=1
+    )
+    re.run(9, 10, verbose=False, write_logs=True)
+    stats = json.loads((out / "rex_rex_stats.json").read_text())
+    assert stats["temperature"]["attempts"] == 3  # 3 cycles after the resume, 1 pair
+    assert stats["cycles_completed"] == 9
+
+
+def test_resume_cuts_analysis_samples_past_the_checkpoint_with_mock_comm(
+    mock_comm_rank0, tmp_path, minimal_pdb_path, monkeypatch
+):
+    """A run that went on past its last checkpoint (stopped at cycle 5, saved
+    at 3) wrote analysis samples the resumed run writes again. Rank 0 now
+    cuts them on resume, so the samples match the uninterrupted run's; they
+    used to be kept, and cycles 3 and 4 appeared twice."""
+    import numpy as np
+
+    from pymcpu.checkpointing import CheckpointConfig
+
+    _ensure_mpi_module_for_construction(monkeypatch)
+
+    def samples(root, stages):
+        for k, n_cycles in enumerate(stages):
+            cfg = CheckpointConfig(
+                checkpoint_dir=str(root / "ckpt"), checkpoint_interval=3, resume=k > 0
+            )
+            re = _make_two_temp_mpi_re(mock_comm_rank0, minimal_pdb_path, cfg, root / "out")
+            re.run(n_cycles, 10, verbose=False, write_logs=False, analysis_path=root / "an.npz")
+        with np.load(root / "an.npz") as data:
+            return {key: data[key] for key in data.files}
+
+    want = samples(tmp_path / "straight", [12])
+    got = samples(tmp_path / "resumed", [5, 12])
+    assert want["cycle"].tolist() == [c for c in range(12) for _ in range(2)]
+    for key in want:
+        np.testing.assert_array_equal(got[key], want[key], err_msg=key)

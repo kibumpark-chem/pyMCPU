@@ -91,6 +91,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A resumed run writes what the uninterrupted run writes.** Resuming an MPI
+  replica-exchange run a second time cut its trajectories short: reattaching
+  the XTC and data CSV writers reset each rank's frame counts to zero, so the
+  next checkpoint recorded only the frames written since the first resume,
+  and the second resume trimmed the files back to that count (1igd, 4 ranks,
+  run to cycle 20 and resumed to 40 and then 48: 5 frames per replica instead
+  of 10). A resume now keeps the counts it restores. Replica exchange, MPI and
+  single-process, also counted only the last job's exchanges in
+  `rex_stats.json` (4/24 temperature swaps accepted after two resumes, 42/144
+  uninterrupted); the counts are now saved in the checkpoint
+  (`exchange_counts`) and carried on, and `RunSummary` and the printed totals
+  cover the whole run too. A checkpoint without them still resumes, counting
+  from 0 as before. A resume from a checkpoint older than the files, as after
+  a job killed between saves, left the exchange and state logs with the rows
+  of the cycles after the checkpoint twice (150 exchange rows instead of 144),
+  and under MPI the analysis samples too; these are now cut back to the
+  checkpoint first. The two logs are also flushed before each save: a job
+  killed at cycle 35 had lost its exchange rows from cycle 18 on, although its
+  checkpoint was at cycle 30. Cutting an XTC back no longer rewrites it
+  through mdtraj, which renumbered the steps of the frames it kept (0, 1, 2,
+  ... instead of 0, 20, 40, ...): the file is cut at a frame boundary, so the
+  frames kept stay byte for byte as written, and a partly written last frame
+  goes too. The single-process replica exchange now also cuts back an analysis
+  file kept outside the output directory, which it used to skip (172 samples
+  instead of 160 after a resume from an older checkpoint). A run resumed any
+  number of times from the regular saves made every checkpoint interval now
+  writes XTC, data CSV, state and exchange logs and `rex_stats.json`
+  byte-identical to the uninterrupted run with the same seed and interval,
+  with the MPI driver, the single-process replica exchange and the folding
+  runner; that includes a job killed outright between saves. A save at another
+  cycle, such as the one replica exchange makes when it stops on SIGTERM or
+  SIGINT, or the one a single-process job makes at a last cycle off the
+  interval, changes the random stream, so a run resumed from it continues
+  along a different trajectory, as a different interval does. Checkpoints that
+  an earlier version wrote after resuming an MPI run undercount its frames,
+  and a resume from one still cuts the trajectories to that count, leaving a
+  gap; resume such a run from a checkpoint saved before its first resume,
+  copied over `last.chk`, instead.
 - **A rigid pivot can no longer carry a pair into a hard-core overlap.** A
   pivot does not re-measure the pairs it carries, since the rotation keeps
   their distances, but it rounds every carried coordinate to float. Those
@@ -580,6 +618,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   its eight cases fail.
 
 ### Changed
+
+- **The engine frame follows a chain that drifts away from the origin.**
+  Coordinates are float32, and every move rounds the atoms it moves at their
+  distance from the origin, but the frame offset was chosen only at the first
+  placement. In the mcpu08 replica-exchange test, unfolded hot 1igd chains sat
+  a median 52-63 Å out (up to 165 Å), and their bond lengths and angles, which
+  moves keep fixed, drifted by up to 9-18 mÅ and 0.5-1.0°, against 1-2 mÅ and
+  0.05-0.13° for folded chains near the origin. The new
+  `Context.recenter(min_reach_A=64.0)` shifts the engine frame by the
+  whole-Å midpoint of each axis's coordinate range once an engine coordinate
+  reaches 64 Å, places the coordinates again and recomputes the energy;
+  `Context.coords` do not change. The shift is exact for every atom that ends
+  no farther from the origin than it started; one that ends farther out is
+  rounded once, by at most half a float32 step there, and a shift whose
+  rounding would leave a pair under its hard-core state cutoff is undone.
+  The new `Simulation.recompute_and_recenter()` runs it after a full
+  recompute (`Simulation.recenter_frame`, default `True`): `Simulation.step`
+  calls that after each periodic recompute, and the folding and
+  replica-exchange drivers before every checkpoint save, which restarts the
+  count, so a run that saves more often than it recomputes (the defaults
+  do) recentres at its saves. Each walker keeps its own
+  frame: replica swaps (serial and MPI, where the offset travels with the
+  coordinates) and the folding and replica-exchange checkpoints (new field
+  `replica_frame_offsets`) carry the offset, so swaps and resumes stay bit for
+  bit; a checkpoint without the field restores as before. `EngineSession` has
+  `frame_offset()` and `set_coords(..., frame_offset=)` to restart exactly.
+  A chain within 64 Å of the origin is never shifted, so standard runs are
+  bit-identical (`arch_parity_dump`). From a hot 1igd state 172 Å out, at
+  T = 1.6 over 2e7 steps, the largest engine coordinate stays under 64 Å
+  (median 46 Å, against 167 Å without), the RMS drift of the 475 bond lengths
+  is 0.68 mÅ instead of 3.4 mÅ and that of the 647 bond angles 0.045° instead
+  of 0.20°; the 302 recentres cost 0.3 s of the 249 s run.
 
 - `Context.neighbor_aabb_rebuilds()` is now `neighbor_grid_rebuilds()`,
   and the `neighbor_proxy_stats()` key `num_aabb_rebuild_accept` is now

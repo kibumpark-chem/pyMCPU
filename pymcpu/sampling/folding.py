@@ -22,6 +22,7 @@ from pymcpu.checkpointing import (
     get_integrator_rng_states,
     load_checkpoint as _load_checkpoint,
     save_checkpoint as _save_checkpoint,
+    saved_frame_offset,
     set_integrator_move_counters,
     set_integrator_rng_states,
 )
@@ -36,6 +37,7 @@ from pymcpu.sampling.collective_variables import (
 )
 from pymcpu.sampling.folding_bias import BasinTracker, FoldingBias
 from pymcpu.sampling.replica_exchange import get_coords
+from pymcpu.sampling.replica_exchange_core import get_frame_offset
 from pymcpu.simulation import Simulation, check_state_clash
 from pymcpu.trajectory_utils import (
     trajectory_topology_path,
@@ -588,7 +590,7 @@ class FoldingRunner:
 
     def save_checkpoint(self, cycle: int) -> None:
         """Save complete folding simulation state atomically."""
-        self.simulation.recompute_energy()
+        self.simulation.recompute_and_recenter()
         q_values = self._compute_Q_values()
         rmsd_values = self._compute_rmsd_values()
 
@@ -626,6 +628,7 @@ class FoldingRunner:
             linker_residues=list(self.linker_residues),
             linker_energy_mode=str(self.linker_energy_mode),
             replica_coords=[coords],
+            replica_frame_offsets=[get_frame_offset(self.simulation.context)],
             walker_at_state=np.array([0], dtype=np.int32),
             current_steps=[int(self.simulation.current_step)],
             exchange_rng=None,
@@ -687,10 +690,11 @@ class FoldingRunner:
             raise ValueError(layout_error)
         if state.replica_coords:
             coords = np.asarray(state.replica_coords[0], dtype=np.float64)
-            if coords.ndim == 2 and coords.shape[0] == 3:
-                self.simulation.context.set_positions(coords)
-            else:
-                self.simulation.context.set_positions(coords.T)
+            if coords.ndim != 2 or coords.shape[0] != 3:
+                coords = coords.T
+            self.simulation.context.set_positions(
+                coords, frame_offset=saved_frame_offset(state, 0)
+            )
             self.simulation.context.calculate_total_energy(-1)
             check_state_clash(self.simulation.context, f"checkpoint restore from {checkpoint_path}")
 

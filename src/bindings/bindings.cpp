@@ -330,7 +330,24 @@ PYBIND11_MODULE(mcpu_core, m) {
             "caller's: Context.coords = engine coordinates + frame_offset. "
             "Zero when every coordinate of the first placement is within 64 A "
             "of the origin; otherwise each axis whose coordinates all have "
-            "one sign is shifted. set_positions(..., frame_offset=) sets it.")
+            "one sign is shifted. set_positions(..., frame_offset=) sets it, "
+            "and recenter() moves it with the chain.")
+        .def("recenter", &Context::recenter,
+             py::arg("min_reach_A") = kFrameShiftMinA,
+             "Move the engine frame to a chain that drifted away from the "
+             "origin, and return the shift (A, float64, shape (3,)): zero, "
+             "with nothing changed, unless an engine coordinate reaches "
+             "min_reach_A. Each axis is shifted by the whole-A midpoint of its "
+             "coordinate range; frame_offset grows by the shift and "
+             "Context.coords stay the same. The shift is exact for every atom "
+             "that ends no farther from the origin than it started; one that "
+             "ends farther out is rounded once, by at most half a float32 step "
+             "there. The energy is recomputed. A stale energy is recomputed "
+             "first, as the next run would (raising on a clash), and a state "
+             "the last recompute found clashing is left alone. A shift whose "
+             "rounding leaves a hard-core clash is undone exactly and returns "
+             "zero. Simulation.step calls it after each periodic full "
+             "recompute (Simulation.recenter_frame).")
         .def_property(
             "coords",
             &Context::coords_for_python,

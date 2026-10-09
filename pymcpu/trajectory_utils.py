@@ -1,7 +1,7 @@
 """
 trajectory_utils.py
 Utilities for truncating and rejoining trajectory files on checkpoint resume.
-Supports XTC (via mdtraj), CSV energy logs, HDF5 (via h5py), and NPZ.
+Supports XTC, CSV energy logs, per-cycle CSV logs, HDF5 (via h5py), and NPZ.
 DCD truncation is not yet implemented (see the warning in
 truncate_all_trajectories_on_resume()).
 """
@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 import os
+import struct
 from pathlib import Path
 from typing import Any
 
@@ -20,10 +21,11 @@ logger = logging.getLogger(__name__)
 
 def _fsync_path(path: str) -> None:
     """fsync a file already written and closed by a library that doesn't
-    hand us its file descriptor (mdtraj's save_xtc, h5py.File, np.savez*),
+    hand us its file descriptor (h5py.File, np.savez*),
     so the os.replace() that follows is preceded by a durable write —
     matching the fsync-before-replace guarantee of the atomic-write helpers
-    elsewhere in this package (checkpointing.py, we/state.py)."""
+    elsewhere in this package (checkpointing.py, we/state.py). Also makes
+    a file just cut in place (os.truncate) durable."""
     fd = os.open(path, os.O_RDWR)
     try:
         os.fsync(fd)
@@ -31,17 +33,62 @@ def _fsync_path(path: str) -> None:
         os.close(fd)
 
 
+_XTC_MAGIC = 1995
+
+
+def _xtc_frame_offsets(xtc_path: str) -> list[int]:
+    """
+    Byte offsets of the complete frames in an XTC file, followed by the end
+    of the last one; a partly written frame at the end is not counted.
+
+    Reads only the frame headers (big-endian XDR): magic, natoms, step,
+    time, a 3x3 box and natoms again (56 bytes). Up to 9 atoms, 3 * natoms
+    floats follow; otherwise precision, minint[3], maxint[3], smallidx and
+    a byte count, then that many bytes padded to a multiple of 4. A header
+    with a negative atom or byte count, which only a corrupted file has,
+    ends the scan there.
+    """
+    offsets = [0]
+    size = os.path.getsize(xtc_path)
+    with open(xtc_path, "rb") as f:
+        while True:
+            start = offsets[-1]
+            f.seek(start)
+            head = f.read(92)
+            if len(head) < 56:
+                break
+            magic, natoms = struct.unpack(">ii", head[:8])
+            if magic != _XTC_MAGIC or natoms < 0:
+                break
+            if natoms <= 9:
+                end = start + 56 + 12 * natoms
+            elif len(head) == 92:
+                (nbytes,) = struct.unpack(">i", head[88:92])
+                if nbytes < 0:
+                    break
+                end = start + 92 + (nbytes + 3) // 4 * 4
+            else:
+                break
+            if end > size:
+                break
+            offsets.append(end)
+    return offsets
+
+
 def truncate_xtc_to_frame(xtc_path: str, top_path: str, last_frame: int) -> None:
     """
     Truncate xtc_path so it contains exactly (last_frame + 1) frames
     (frames are 0-indexed, so last_frame=49 keeps frames 0..49).
 
-    Uses atomic overwrite: writes to a .tmp file first, then os.replace().
-    A crash during truncation cannot corrupt the original file.
+    The file is cut at the end of the last frame kept, so the frames kept
+    stay byte for byte as written, step numbers included. A partly written
+    frame at the end of the file, as a killed job can leave, is cut too.
+    Cutting a file in place cannot corrupt the frames it keeps.
 
     Args:
         xtc_path:   Full path to the XTC file to truncate.
-        top_path:   Topology file needed by mdtraj to read XTC.
+        top_path:   Unused: the frame boundaries are read from the XTC
+                    itself. Kept so callers need not change.
         last_frame: Index of the last frame to KEEP (0-indexed).
                     Frames after this index are discarded.
     """
@@ -51,45 +98,32 @@ def truncate_xtc_to_frame(xtc_path: str, top_path: str, last_frame: int) -> None
         )
         return
 
-    try:
-        import mdtraj as md
-        traj = md.load(xtc_path, top=top_path)
-    except ImportError:
-        logger.error(
-            "[Trajectory] mdtraj is not installed. "
-            "Cannot truncate XTC. Install with: pip install mdtraj"
+    offsets = _xtc_frame_offsets(xtc_path)
+    n_frames = len(offsets) - 1
+    size = os.path.getsize(xtc_path)
+    if n_frames == 0 and size > 0:
+        logger.error(f"[Trajectory] No complete XTC frame in {xtc_path}; left as is")
+        return
+
+    if n_frames < last_frame + 1:
+        logger.warning(
+            f"[Trajectory] {xtc_path} has {n_frames} complete frames, "
+            f"fewer than the {last_frame + 1} to keep"
         )
-        return
-    except Exception as e:
-        logger.error(f"[Trajectory] Could not load {xtc_path}: {e}")
-        return
-
-    n_frames = len(traj)
-    target = last_frame + 1  # number of frames to keep
-
-    if target >= n_frames:
+    target = min(last_frame + 1, n_frames)  # number of frames to keep
+    if offsets[target] >= size:
         logger.info(
             f"[Trajectory] No truncation needed: {xtc_path} "
-            f"has {n_frames} frames, target is {target}"
+            f"has {n_frames} frames, target is {last_frame + 1}"
         )
         return
 
-    truncated = traj[:target]
-    tmp_path = xtc_path + ".trunc.tmp"
-
-    try:
-        truncated.save_xtc(tmp_path)
-        _fsync_path(tmp_path)
-        os.replace(tmp_path, xtc_path)
-        logger.info(
-            f"[Trajectory] Truncated {xtc_path}: "
-            f"{n_frames} → {target} frames"
-        )
-    except Exception as e:
-        logger.error(f"[Trajectory] Truncation write failed: {e}")
-        if os.path.exists(tmp_path):
-            os.remove(tmp_path)
-        raise
+    os.truncate(xtc_path, offsets[target])
+    _fsync_path(xtc_path)
+    logger.info(
+        f"[Trajectory] Truncated {xtc_path}: "
+        f"{n_frames} → {target} frames"
+    )
 
 
 def truncate_csv_to_row(csv_path: str, last_row: int) -> None:
@@ -144,6 +178,44 @@ def truncate_csv_to_row(csv_path: str, last_row: int) -> None:
         if os.path.exists(tmp_path):
             os.remove(tmp_path)
         raise
+
+
+def truncate_csv_to_cycle(csv_path: str, n_cycles: int) -> None:
+    """
+    Truncate a per-cycle log (a CSV with a ``cycle`` column, such as the
+    replica exchange and state logs) to its header and the rows of cycles
+    before n_cycles.
+
+    A run stopped between checkpoints has logged cycles past its last
+    checkpoint, and the resumed run logs them again. Rows are in cycle
+    order; a partly written last row is cut too. The rows kept are left
+    byte for byte as written (the csv module ends these lines with CRLF).
+
+    Args:
+        csv_path: Full path to the CSV log.
+        n_cycles: Cycles to keep: the checkpoint's cycle count.
+    """
+    if not os.path.exists(csv_path):
+        return
+    with open(csv_path, "rb") as f:
+        lines = f.readlines()
+    if not lines:
+        return
+    header = lines[0].decode().strip().split(",")
+    if "cycle" not in header:
+        logger.warning(f"[Trajectory] No cycle column, skipping truncation: {csv_path}")
+        return
+    col = header.index("cycle")
+
+    keep = len(lines[0])
+    for line in lines[1:]:
+        if not line.endswith(b"\n") or int(line.split(b",")[col]) >= n_cycles:
+            break
+        keep += len(line)
+    if keep < os.path.getsize(csv_path):
+        os.truncate(csv_path, keep)
+        _fsync_path(csv_path)
+        logger.info(f"[Trajectory] Truncated {csv_path} to cycles before {n_cycles}")
 
 
 def truncate_hdf5_to_sample(h5_path: str, last_sample: int) -> None:
@@ -273,7 +345,7 @@ def truncate_all_trajectories_on_resume(
                           XTC/HDF5/NPZ truncation converts count → last index
                           (count - 1).
         traj_dir:         Directory where trajectory files live.
-        top_path:         Topology file for mdtraj (XTC only).
+        top_path:         Unused (XTC frame boundaries are read from the file).
     """
     indices = None
     if hasattr(checkpoint_state, "traj_frame_indices"):

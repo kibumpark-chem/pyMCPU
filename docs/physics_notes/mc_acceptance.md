@@ -45,5 +45,10 @@ clash anyway.
 
 Rounding grows with distance from the origin, so a `Context` places a
 structure whose first placement has a coordinate of 64 Å or more in an engine
-frame shifted next to it; see `Context.frame_offset` in {doc}`/api/context`.
-The frame does not follow a chain that drifts away during a run.
+frame shifted next to it, and the frame follows a chain that drifts away
+during a run: after each periodic full recompute and before each checkpoint
+save, once a coordinate reaches 64 Å, the chain is centred again
+(`Context.recenter`). The shift is exact
+except for atoms that end farther from the origin, which are rounded once,
+and a shift that would leave a pair under its state cutoff is undone. See
+`Context.frame_offset` in {doc}`/api/context`.

@@ -39,6 +39,7 @@ from pymcpu.config import (
 from pymcpu.forcefields import load_forcefield
 from pymcpu.forcefields.base import BaseForceField
 from pymcpu.sampling.cv_factory import build_cv
+from pymcpu.sampling.replica_exchange_core import get_frame_offset
 from pymcpu.simulation import Simulation, check_state_clash
 
 __all__ = ["EngineSession", "build_forcefield", "compute_fingerprint"]
@@ -166,15 +167,29 @@ class EngineSession:
 
     def coords(self) -> np.ndarray:
         """``(3, n_atoms)`` float64 Angstrom, in the input structure's frame.
-        Stored as float64 they restore the run bit for bit through
-        :meth:`set_coords` (except for an engine coordinate within a few 1e-6 A
-        of zero); as float32 they would not for a structure the engine runs
-        shifted (see ``Context.frame_offset``)."""
+        Stored as float64, with :meth:`frame_offset`, they restore the run bit
+        for bit through :meth:`set_coords` (except for an engine coordinate
+        within a few 1e-6 A of zero); as float32 they would not for a
+        structure the engine runs shifted (see ``Context.frame_offset``)."""
         return np.asarray(self._ensure_sim().context.coords, dtype=np.float64)
 
-    def set_coords(self, coords_3xn: np.ndarray) -> None:
+    def frame_offset(self) -> np.ndarray:
+        """The engine frame's offset, float64, shape (3,), in Angstrom. It
+        moves with the chain (``Context.recenter``), so store it with
+        :meth:`coords` and pass both to :meth:`set_coords` to continue a run
+        bit for bit."""
+        return get_frame_offset(self._ensure_sim().context)
+
+    def set_coords(self, coords_3xn: np.ndarray, *, frame_offset: Any = None) -> None:
+        """Place ``(3, n_atoms)`` coordinates in Angstrom. ``frame_offset``,
+        from :meth:`frame_offset` when the coordinates were saved, re-enters
+        them bit for bit; without it they enter in the session's current
+        frame and are rounded once to float32 there."""
         sim = self._ensure_sim()
-        sim.context.set_positions(np.asarray(coords_3xn, dtype=np.float64))
+        sim.context.set_positions(
+            np.asarray(coords_3xn, dtype=np.float64),
+            frame_offset=None if frame_offset is None else np.asarray(frame_offset, dtype=np.float64),
+        )
         sim.context.calculate_total_energy(-1)
         check_state_clash(sim.context, "EngineSession.set_coords")
 
@@ -212,6 +227,8 @@ class EngineSession:
           (the endpoint of an existing ``FoldingRunner``/``ReplicaExchange``
           production run; for replica exchange, its first replica) -- lets an
           external sampler start from prior pyMCPU output with no new API.
+          The checkpoint's frame offset is not returned, so a state saved far
+          from the origin is rounded once to float32 when it is placed.
         * ``.pdb`` -- an arbitrary starting structure, mapped into engine atom
           order by a throwaway force field of the session's own kind
           (``spec.forcefield``) built from it. This assumes the PDB is the

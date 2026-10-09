@@ -51,12 +51,12 @@ Core state
 
    ``frame_offset`` (Ångström, shape ``(3,)``, under 2\ :sup:`24` Å) sets the
    frame offset instead of letting the first placement choose it, and keeps
-   it for later placements. Entry is then exact only if, on every axis, the
-   offset is a whole number of Ångström with the sign of the coordinates and
-   at most twice their smallest magnitude -- for example another
-   ``Context``'s ``frame_offset`` for the same start structure. It is rarely
-   needed: to continue a run in a fresh ``Context`` bit for bit, place its
-   start structure first, as every pyMCPU driver does.
+   it for later placements. ``Context.coords`` read from a ``Context``
+   re-enter exactly with that ``Context``'s ``frame_offset``; this is how
+   replica swaps and checkpoint restores keep each walker's frame (see
+   :ref:`context-frame`). Other ``float32`` input enters exactly only if, on
+   every axis, the offset is a whole number of Ångström with the sign of the
+   coordinates and at most twice their smallest magnitude.
 
    .. note::
       ``set_positions()`` does not compute an energy. The integrator
@@ -85,7 +85,28 @@ Core state
    (``get_state().coords``) plus this. Zero when every coordinate of the first
    placement is within 64 Å of the origin; otherwise each axis whose
    coordinates all have one sign is shifted. An explicit ``frame_offset``
-   given to :py:meth:`Context.set_positions` replaces it.
+   given to :py:meth:`Context.set_positions` replaces it, and
+   :py:meth:`Context.recenter` moves it with the chain.
+
+.. py:method:: Context.recenter(min_reach_A=64.0) -> numpy.ndarray
+
+   Move the engine frame to a chain that has drifted away from the origin,
+   and return the shift (``float64``, shape ``(3,)``, Ångström). Nothing
+   changes, and the shift is zero, unless an engine coordinate reaches
+   ``min_reach_A``. Otherwise each axis is shifted by the whole-Ångström
+   midpoint of its coordinate range: :py:attr:`Context.frame_offset` grows
+   by the shift, the engine coordinates are centred, and
+   :py:attr:`Context.coords` stay the same (see :ref:`context-frame` for the
+   rounding). The new coordinates are placed like any others (contact list
+   and grids rebuilt) and the energy is recomputed in full. A stale energy is
+   recomputed first, as the next run would do, and that raises
+   :class:`~pymcpu.simulation.StericClashError` on an overlap; a state the
+   last recompute found clashing is left as it is. If the shifted state has
+   a pair under its hard-core cutoff, the shift is undone exactly and zero is
+   returned. :meth:`pymcpu.Simulation.step` calls it after each periodic full
+   recompute, and the folding and replica-exchange drivers before every
+   checkpoint save (:meth:`pymcpu.Simulation.recompute_and_recenter`,
+   :attr:`pymcpu.Simulation.recenter_frame`).
 
 .. py:method:: Context.coords_for_python() -> numpy.ndarray
 
@@ -118,22 +139,45 @@ sitting exactly on a cutoff or bin edge can score differently.
 :py:attr:`Context.coords`, trajectory files and checkpoints are written back
 in the caller's frame by adding the offset in ``float64``.
 
-The offset stays fixed after the first placement, so restores and replica
-swaps of ``Context.coords`` re-enter bit for bit, provided the restoring
-``Context`` placed the same start structure first (as every pyMCPU driver
-does) or was given the same ``frame_offset``. One exception: an engine
+The frame then follows the chain. An unfolded chain drifts, and a hot one
+can wander more than 100 Å from the origin, where one ``float32`` step is
+7.6e-6 Å or more (9.5e-7 Å at 10 Å). :meth:`pymcpu.Simulation.step` therefore
+calls :py:meth:`Context.recenter` after each periodic full recompute, and the
+folding and replica-exchange drivers call it before every checkpoint save;
+a save restarts the count toward the periodic recompute, so a run that saves
+more often recentres at its saves, and its checkpoints hold the recentred
+state. Once an engine coordinate reaches 64 Å, the offset grows by the
+whole-Ångström midpoint of each axis's coordinate range, which centres the
+chain.
+``Context.coords`` stay the same. The shift is exact for every atom that ends
+no farther from the origin than it started; an atom that ends farther out is
+rounded once, by at most half a ``float32`` step there, which is no farther
+out than the largest coordinate was before. A shift whose rounding would put
+a pair under its hard-core cutoff is undone.
+:attr:`pymcpu.Simulation.recenter_frame` turns this off.
+
+Because each walker has its own frame, coordinates re-enter bit for bit
+only with the offset they were read with: replica-exchange swaps and the
+folding and replica-exchange checkpoints carry it with the coordinates
+(``set_positions(coords, frame_offset=...)``), and ``EngineSession`` has
+``frame_offset()`` for the same purpose. A checkpoint written before offsets
+were saved restores in the restoring ``Context``'s own frame, which is the
+frame it was written from when that ``Context`` placed the same start
+structure first (as every pyMCPU driver does). One exception: an engine
 coordinate within a few 1e-6 Å of zero (below 3.8e-6 Å for an offset of
 4000 Å) can need more bits than ``float64`` holds once the offset is added;
 it then comes back off by up to about 2e-13 Å, and the restore is not bit
 for bit. A ``-0.0`` on a shifted axis comes back as ``+0.0``. Store
 coordinates as ``float64`` to keep the rest: a ``float32`` copy of a shifted
-run rounds them at the far position again. A later placement of a different structure, or one with an explicit
-``frame_offset`` that breaks the conditions above, is rounded to ``float32``
-once, in the engine frame. Structures within 64 Å of the origin, or
-straddling it on every axis, run unshifted.
+run rounds them at the far position again. Coordinates placed in a frame
+other than the one they were read in, or with an explicit ``frame_offset``
+that breaks the conditions above, are rounded to ``float32`` once, in the
+engine frame. Structures
+within 64 Å of the origin, or straddling it on every axis, are placed
+unshifted.
 
 Rounding still grows with the distance from the origin inside the engine
-frame. If the coordinates still reach 256 Å or more there (a structure
+frame. If a placement leaves coordinates 256 Å or more out there (a structure
 several hundred Å across, an axis that straddles the origin but reaches far,
 or an explicit ``frame_offset``), the ``Context`` prints a note; it prints at
 most once per process.

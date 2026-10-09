@@ -65,6 +65,7 @@ Context.native_contacts_bias_n_target
 Context.neighbor_grid_rebuilds
 Context.neighbor_proxy_stats
 Context.output_internal_order
+Context.recenter
 Context.reset_neighbor_proxy_stats
 Context.set_atom_reorder_mode
 Context.set_clash_first_min_moved

@@ -97,6 +97,5 @@ def test_rex_resume_runs_only_remaining_cycles(tmp_path: Path) -> None:
         resume=ckpt / "last.chk",
     )
     assert rex.cycle == 4
-    # Attempt bookkeeping counts only cycles completed *this* run() call, and
-    # a single temperature means no temperature-dimension exchange exists.
+    # A single temperature has no temperature-dimension exchange to attempt.
     assert summary.n_temp_attempts == 0

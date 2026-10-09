@@ -15,6 +15,7 @@
 #include "pymcpu/AtomPermutation.h"
 #include "pymcpu/AtomReorder.h"
 #include "pymcpu/utils/geometry_utils.h"
+#include "pymcpu/utils/FrameOffset.h"
 #include "pymcpu/neighbor/Footprint.h"
 #include "pymcpu/neighbor/MovedCells.h"
 #include "pymcpu/neighbor/PairLedger.h"
@@ -223,7 +224,8 @@ private:
     /// (-1 when disabled). Compared by value.
     std::vector<double> energy_definition_() const;
     /// User coordinates = engine coordinates + frame_offset_ (see
-    /// utils/FrameOffset.h). Chosen at the first placement, kept after that.
+    /// utils/FrameOffset.h). Chosen at the first placement, kept by later
+    /// placements, and moved with the chain by recenter().
     Eigen::Vector3d frame_offset_ = Eigen::Vector3d::Zero();
 
     void maybe_apply_init_only_reorder_();
@@ -231,16 +233,29 @@ private:
     /// frame offset on the first placement, or takes frame_offset if given.
     Eigen::Matrix3Xf enter_frame_(const Eigen::Matrix3Xd& coords,
                                   const std::optional<Eigen::Vector3d>& frame_offset);
+    /// User-frame coordinates (engine + frame_offset_, in double), in
+    /// storage order if internal_order, else build order.
+    Eigen::Matrix3Xd user_coords_(bool internal_order) const;
 
 public:
     explicit Context(std::shared_ptr<System> sys);
     /// Places the atoms, in build order and the user's frame. The first
-    /// placement fixes the frame offset (utils/FrameOffset.h) unless
-    /// frame_offset is given, which replaces it.
+    /// placement chooses the frame offset (utils/FrameOffset.h) and later
+    /// ones keep it, unless frame_offset is given, which replaces it.
     void setPositions(const Eigen::Matrix3Xd& new_coords,
                       const std::optional<Eigen::Vector3d>& frame_offset = std::nullopt);
     /// Engine coordinates (get_state()) = user coordinates - frame_offset().
     [[nodiscard]] const Eigen::Vector3d& frame_offset() const noexcept { return frame_offset_; }
+    /// Follows a chain that drifted away from the origin during a run: every
+    /// move rounds at |coordinate|, so a far chain loses precision. If an
+    /// engine coordinate reaches min_reach_A, shifts each axis by the whole-A
+    /// midpoint of its range, through setPositions, and recomputes the
+    /// energy (a stale one is brought current first, as the next run would).
+    /// The shift is exact for every atom that ends no farther from the origin
+    /// than it started; one that ends farther out is rounded once, by at most
+    /// half a float32 step there. A shift that leaves a hard-core clash is
+    /// undone, exactly. Returns the shift (A), or zero if nothing moved.
+    Eigen::Vector3d recenter(double min_reach_A = kFrameShiftMinA);
     /// Throws if another Context reordered this System's atoms after this one
     /// was created: this one's coordinates are then in the wrong order. A
     /// Context created on an already reordered System adopts its permutation.
@@ -296,7 +311,9 @@ public:
 
     /// Python/IO: coords in the user's frame, in external order unless
     /// output_internal_order. Double, so engine + offset is exact.
-    [[nodiscard]] Eigen::Matrix3Xd coords_for_python() const;
+    [[nodiscard]] Eigen::Matrix3Xd coords_for_python() const {
+        return user_coords_(output_internal_order_);
+    }
     void set_coords_from_python(const Eigen::Matrix3Xd& coords);
 
     float getQBiasK() const noexcept { return q_bias_k_; }
