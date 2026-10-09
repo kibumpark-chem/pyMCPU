@@ -1120,10 +1120,16 @@ class MPIReplicaExchange:
         owner_j = int(self.owner_rank[j])
 
         if owner_i == owner_j:
-            if self.rank == owner_i:
-                return self._attempt_local_exchange(i, j, dim=dim)
+            # Every rank meets one Barrier per attempt, as after a cross-rank
+            # exchange. If the owner skipped it, the other ranks' Barrier met
+            # the owner's next collective instead, and the run deadlocked
+            # once a rank owned two neighbouring slots.
+            record = (
+                self._attempt_local_exchange(i, j, dim=dim)
+                if self.rank == owner_i else None
+            )
             self.comm.Barrier()
-            return None
+            return record
 
         return self._attempt_mpi_exchange(
             i, j, owner_i, owner_j, dim=dim
