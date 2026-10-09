@@ -80,11 +80,13 @@ struct StepStats {
 class MCIntegrator {
 public:
     // @param temperature   Simulation temperature, in reduced units (beta = 1/T)
-    // @param step_size_rad Gaussian std-dev for BACKBONE torsion perturbation
-    //                      (radians) -- used by the pivot move AND by the KIC
-    //                      driver angle, matching legacy, whose single
-    //                      MC_STEP_SIZE covers every backbone move
-    //                      (MakeMove(STEP_SIZE, ...) in move.h).
+    // @param step_size_rad Gaussian std-dev, in radians, of the PIVOT move's
+    //                      torsion change. The KIC driver has its own width,
+    //                      kic_step_size_rad. Legacy MCPU also had two widths:
+    //                      its pivots always used 2 deg (backbone.c overwrites
+    //                      MC_STEP_SIZE with 2 deg after reading the cfg), and
+    //                      its KIC driver drew YANG_SCALE x 2 deg (loop.h), 60
+    //                      deg in the reference configs.
     // @param sidechain_step_size_rad
     //                      Gaussian std-dev for the CONTINUOUS sidechain chi
     //                      perturbation (radians). Negative (the default) means
@@ -102,9 +104,19 @@ public:
     //                      Ignored by the rotamer-library sidechain mode, which
     //                      takes its per-chi widths from the library rows (see
     //                      apply_rotamer_at).
+    // @param kic_step_size_rad
+    //                      Gaussian std-dev, in radians, of the KIC driver: the
+    //                      torsion that moves one end of the three-residue window
+    //                      before the closure solves for the window's six
+    //                      torsions. Positive. Default kDefaultKicStepSizeRad.
     explicit MCIntegrator(double temperature,
                           float step_size_rad = 0.02f,
-                          float sidechain_step_size_rad = -1.0f);
+                          float sidechain_step_size_rad = -1.0f,
+                          float kic_step_size_rad = kDefaultKicStepSizeRad);
+
+    /// Default KIC driver width in radians: 0.1, the width the driver shared
+    /// with the pivot before it had its own.
+    static constexpr float kDefaultKicStepSizeRad = 0.1f;
 
     /// Effective continuous-sidechain chi amplitude in radians (never negative:
     /// resolves the "same as backbone" sentinel to the actual value in use).
@@ -112,8 +124,16 @@ public:
         return sidechain_step_size_rad_;
     }
 
-    /// Backbone amplitude in radians (pivot + KIC driver).
+    /// Pivot width in radians (step_size_rad).
     [[nodiscard]] float backbone_step_size_rad() const noexcept { return step_size_rad; }
+
+    /// KIC driver width in radians.
+    [[nodiscard]] float kic_step_size_rad() const noexcept { return kic_step_size_rad_; }
+
+    /// Re-set the KIC driver width (radians, positive and finite). Resets
+    /// kic_angle_dist_'s cached spare for the same reason set_seed does (see
+    /// get_rng_state).
+    void set_kic_step_size_rad(float sigma_rad);
 
     /// Re-set the continuous-sidechain chi amplitude. Negative restores
     /// "same as backbone". Resets sc_angle_dist_'s cached spare for the same
@@ -214,6 +234,8 @@ public:
     long long get_steric_rejected() const noexcept { return steric_rejected_; }
 
     /// Test helpers: force a pivot/SC choice. Returns whether a move was proposed.
+    /// A pivot can act on psi of residue 0, phi and psi of residues 1 to N-2 and
+    /// phi of residue N-1; any other (residue, is_phi) returns false.
     /// Proline φ / proline SC increments the resample counters and returns false;
     /// a fixed residue counts as fixed-rejected and returns false, as in run().
     /// A forced move is never committed. When one of these debug_force_*
@@ -345,6 +367,7 @@ public:
         rng.seed(seed);
         angle_dist.reset();
         sc_angle_dist_.reset();
+        kic_angle_dist_.reset();
         unit_normal_dist_.reset();
     }
 
@@ -463,6 +486,8 @@ private:
     /// Resolved continuous-sidechain chi amplitude (the "-1 = same as backbone"
     /// sentinel is never stored here; the constructor resolves it).
     float sidechain_step_size_rad_;
+    /// KIC driver width (see the constructor).
+    float kic_step_size_rad_;
 
     std::vector<std::shared_ptr<Reporter>> reporters_;
     /// (name, member) for every move counter; the single table behind
@@ -518,9 +543,31 @@ private:
     /// make. Called once per run() / verify_physics_consistency(), O(n_res).
     void check_move_weights_are_usable(const Context& context) const;
 
+    /// Whether the current sidechain move can act on residue r: r has chi
+    /// angles, is not a proline and, in rotamer-library mode, has rotamer
+    /// rows. Fixed residues are not excluded here; the draw loop redraws them.
+    [[nodiscard]] bool is_sidechain_site(const System& system, int r) const;
+
+    /// Sets up the site draws for this system (see pivot_torsion_dist,
+    /// pivot_residue_dist, sc_sites_). Called at the start of run() and
+    /// verify_physics_consistency(), after check_move_weights_are_usable.
+    void prepare_move_sites(const Context& context);
+
     std::mt19937 rng{ std::random_device{}() };
+    /// KIC window start and Ramachandran-pivot residue: 1 to N-2.
     std::uniform_int_distribution<int> pivot_residue_dist;
+    /// Pivot site, an index t over the chain's 2N-2 backbone torsions psi(0),
+    /// phi(1), psi(1), ..., psi(N-2), phi(N-1): residue (t + 1) / 2, phi when
+    /// t is odd. Uniform, so with proline phi and fixed residues redrawn the
+    /// site is uniform over the allowed torsions and does not depend on the
+    /// state, which keeps the proposal symmetric.
+    std::uniform_int_distribution<int> pivot_torsion_dist;
+    /// Sidechain site, an index into sc_sites_.
     std::uniform_int_distribution<int> sc_residue_dist;
+    /// The residues the sidechain move draws from (is_sidechain_site), in
+    /// residue order. A step never lands on a residue it cannot move, so the
+    /// sidechain acceptance counts moves that were tried.
+    std::vector<int> sc_sites_;
     std::uniform_real_distribution<float> coin_flip{ 0.0f, 1.0f };
     std::normal_distribution<float> angle_dist;
     /// Continuous-sidechain chi amplitude. A dedicated distribution rather than
@@ -537,6 +584,9 @@ private:
     /// the entire point of the knob. No test pins a fingerprint VALUE; the
     /// bit-identical tests are all same-seed self-comparisons.
     std::normal_distribution<float> sc_angle_dist_;
+    /// KIC driver width (kic_step_size_rad_). Its own distribution, like
+    /// sc_angle_dist_, so the pivot and the driver do not share a cached spare.
+    std::normal_distribution<float> kic_angle_dist_;
     /// Standard-normal draws for the rotamer-library move's per-chi noise.
     /// Deliberately a dedicated member rather than reusing angle_dist with a
     /// transient custom param_type: whether libstdc++'s cached "spare"
@@ -628,18 +678,18 @@ private:
     void apply_sidechain_at(Context& context, State& proposal, ProposalPatch& patch, int r);
     /// Discrete rotamer-library sidechain proposal (see RotamerLibrary and
     /// this function's definition for the full detailed-balance argument).
-    /// Same residue-selection contract as apply_sidechain_move (proline/
-    /// fixed-residue skip via the shared sc_residue_dist/resample loop).
+    /// Same residue-selection contract as apply_sidechain_move (a draw from
+    /// sc_sites_, fixed residues redrawn).
     void apply_rotamer_move(Context& context, State& proposal, ProposalPatch& patch);
     void apply_rotamer_at(Context& context, State& proposal, ProposalPatch& patch, int r);
     void apply_concerted_rotation_move(Context& context, State& proposal, ProposalPatch& patch);
     /// Knowledge-based backbone pivot proposal: jointly resamples (phi,psi)
     /// at one residue from RamaMixtureLibrary (see that class and this
-    /// function's definition for the full detailed-balance argument). Same
-    /// residue-selection contract as apply_pivot_move (proline/fixed-
-    /// residue skip via the shared pivot_residue_dist/resample loop), but
-    /// restricted to the C-term (downstream) direction only -- see
-    /// apply_rama_pivot_at's definition for why.
+    /// function's definition for the full detailed-balance argument). Draws
+    /// its residue from pivot_residue_dist (1 to N-2, since it sets phi and
+    /// psi together), redrawing prolines and fixed residues, and rotates the
+    /// C-term (downstream) direction only -- see apply_rama_pivot_at's
+    /// definition for why.
     void apply_rama_pivot_move(Context& context, State& proposal, ProposalPatch& patch);
     void apply_rama_pivot_at(Context& context, State& proposal, ProposalPatch& patch, int r);
     /// Shared by apply_rama_pivot_at (draws its own target via RNG) and

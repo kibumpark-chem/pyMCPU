@@ -11,7 +11,12 @@ import mdtraj as md
 import numpy as np
 
 from pymcpu import mcpu_core
-from pymcpu.config import DEFAULT_CONTACT_ATOM_MODE, DEFAULT_CONTACT_CUTOFF, DEFAULT_MIN_SEQ_SEP
+from pymcpu.config import (
+    DEFAULT_CONTACT_ATOM_MODE,
+    DEFAULT_CONTACT_CUTOFF,
+    DEFAULT_KIC_STEP_SIZE_RAD,
+    DEFAULT_MIN_SEQ_SEP,
+)
 from pymcpu.checkpointing import (
     CHECKPOINT_FORMAT_VERSION,
     CheckpointConfig,
@@ -86,6 +91,7 @@ class FoldingRunner:
         compute_dssp: bool = False,
         dssp_coil_state: str = "C",
         step_size_rad: float = 0.1,
+        kic_step_size_rad: float = DEFAULT_KIC_STEP_SIZE_RAD,
         sidechain_move_mode: str = "rotamer_library",
         pivot_rama_probability: float = 0.0,
         move_weights: tuple[float, float, float] | None = None,
@@ -143,6 +149,7 @@ class FoldingRunner:
         self.fixed_residues = list(fixed_residues) if fixed_residues else []
         self.linker_residues = list(linker_residues) if linker_residues else []
         from pymcpu.config import (
+            normalize_kic_step_size_rad,
             normalize_linker_energy_mode,
             normalize_move_weights,
             normalize_pivot_rama_probability,
@@ -155,6 +162,7 @@ class FoldingRunner:
         self.sidechain_move_mode = normalize_sidechain_move_mode(sidechain_move_mode)
         self.pivot_rama_probability = normalize_pivot_rama_probability(pivot_rama_probability)
         self.move_weights = normalize_move_weights(move_weights)
+        self.kic_step_size_rad = normalize_kic_step_size_rad(kic_step_size_rad)
         self.full_energy_every_steps = int(full_energy_every_steps)
         self.pivot_rama_schedule = normalize_pivot_rama_schedule(pivot_rama_schedule)
         validate_fixed_linker_disjoint(self.fixed_residues, self.linker_residues)
@@ -221,6 +229,7 @@ class FoldingRunner:
             sidechain_move_mode=self.sidechain_move_mode,
             pivot_rama_probability=self.pivot_rama_probability,
             pivot_rama_schedule=self.pivot_rama_schedule,
+            kic_step_size_rad=self.kic_step_size_rad,
         )
         if hasattr(integrator, "set_seed"):
             integrator.set_seed(self.seed)

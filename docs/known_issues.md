@@ -8,12 +8,18 @@ Issues fixed before the first release are not listed here — see the
 
 ## Linux x86-64 only, with an x86-64-v3 baseline
 
-**Symptom.** No wheel for your platform, or `Illegal instruction` on a CPU
-older than roughly 2013.
+**Symptom.** No wheel for your platform, or, on a CPU older than roughly
+2013, `import pymcpu` fails with `ImportError: pymcpu: this CPU cannot run the
+installed extension (pymcpu.mcpu_core)`, followed by the instructions the CPU
+lacks.
 
 **Cause.** The published wheel is built for Linux x86-64 with an
 `x86-64-v3` baseline (AVX2 + FMA + BMI2 — Haswell, Excavator or newer). macOS
-and arm64 are not built for 0.1.0.
+and arm64 are not built for 0.1.0. Each build records its baseline in
+`pymcpu/_build_arch.py`, and `import pymcpu` compares it with the CPU's flags
+in `/proc/cpuinfo` before it loads the extension, which would otherwise stop
+Python with `Illegal instruction`. Builds for `native` or a raw `-march`
+value are not checked, nor is anything off Linux.
 
 **What to do.** Build from source with a baseline your CPU supports:
 
@@ -24,6 +30,8 @@ MCPU_ARCH=v4     pip install --no-build-isolation -e .   # AVX-512, if you have 
 ```
 
 `mcpu_core.build_info()["arch"]` reports which baseline a build actually used.
+If `/proc/cpuinfo` under-reports the CPU (some virtual machines hide flags),
+`MCPU_SKIP_CPU_CHECK=1` skips the check.
 
 Changing the baseline tier does **not** change results: `v3` versus `v4` was
 verified bit-identical across chignolin and actin at two seeds, comparing

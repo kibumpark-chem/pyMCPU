@@ -18,7 +18,12 @@ from pymcpu.trajectory_utils import (
   truncate_all_trajectories_on_resume,
   truncate_csv_to_cycle,
 )
-from pymcpu.config import DEFAULT_CONTACT_ATOM_MODE, DEFAULT_CONTACT_CUTOFF, DEFAULT_MIN_SEQ_SEP
+from pymcpu.config import (
+    DEFAULT_CONTACT_ATOM_MODE,
+    DEFAULT_CONTACT_CUTOFF,
+    DEFAULT_KIC_STEP_SIZE_RAD,
+    DEFAULT_MIN_SEQ_SEP,
+)
 from pymcpu.checkpointing import (
     CHECKPOINT_FORMAT_VERSION,
     CheckpointConfig,
@@ -105,7 +110,9 @@ class ReplicaExchange:
     seed : int
         RNG seed for exchange attempts.
     step_size_rad : float
-        Monte Carlo step size for every replica, in radians.
+        Width of every replica's pivot move, in radians.
+    kic_step_size_rad : float
+        Width of every replica's KIC driver, in radians.
     move_weights, sidechain_move_mode, pivot_rama_probability, pivot_rama_schedule
         Move settings for every replica, with the same meaning and defaults as
         in :class:`~pymcpu.sampling.FoldingRunner`. A schedule sets each
@@ -146,6 +153,7 @@ class ReplicaExchange:
       sidechain_move_mode: str = "rotamer_library",
       pivot_rama_probability: float = 0.0,
       pivot_rama_schedule: dict[str, float] | None = None,
+      kic_step_size_rad: float = DEFAULT_KIC_STEP_SIZE_RAD,
       fixed_residues: list[int] | None = None,
       linker_residues: list[int] | None = None,
       linker_energy_mode: str = "ignore_all",
@@ -191,6 +199,7 @@ class ReplicaExchange:
         sidechain_move_mode=sidechain_move_mode,
         pivot_rama_probability=pivot_rama_probability,
         pivot_rama_schedule=pivot_rama_schedule,
+        kic_step_size_rad=kic_step_size_rad,
       )
       ex_mode = str(exchange_log or "none").strip().lower()
       if ex_mode not in ("none", "all"):

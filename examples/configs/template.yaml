@@ -41,7 +41,8 @@ min_seq_sep: 7                        # int | minimum sequence separation for co
 num_cycles: 10                        # int | number of exchange cycles  # default: 10
 mc_replica_steps: 10                  # int | MC steps per replica per cycle  # default: 1000
 seed: 0                               # int | random seed for reproducibility  # default: 42
-# step_size_rad: 0.1                  # float | MC move step size in radians  # default: 0.1
+# step_size_rad: 0.1                  # float | pivot move width in radians  # default: 0.1
+# kic_step_size_rad: 0.1              # float | KIC driver width in radians  # default: 0.1
 
 # ── Folding only (1 temperature, no targets) ──────────────────
 # steps: 1000000                      # int | TOTAL MC steps, in cycles of mc_replica_steps

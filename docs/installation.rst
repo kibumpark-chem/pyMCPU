@@ -135,6 +135,13 @@ package. Set ``MCPU_ARCH`` to change it:
 Accepted values are ``v2``, ``v3``, ``v4``, ``native``, ``none`` (no
 ``-march`` flag; use your own ``CXXFLAGS``), or any ``-march`` value.
 
+A ``v2``, ``v3`` or ``v4`` build checks the CPU when it is imported: on Linux,
+on a CPU that lacks the baseline's instructions, ``import pymcpu`` raises an
+``ImportError`` that names them, instead of the extension crashing with
+``Illegal instruction``. Other builds are not checked, and
+``MCPU_SKIP_CPU_CHECK=1`` turns the check off (``0``, ``false``, ``no`` and
+``off`` leave it on).
+
 .. warning::
 
    On a cluster with mixed hardware, do not build with ``native`` on a login

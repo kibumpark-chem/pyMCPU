@@ -19,7 +19,12 @@ import numpy as np
 
 from pymcpu import mcpu_core
 from pymcpu.simulation import check_state_clash
-from pymcpu.config import DEFAULT_CONTACT_ATOM_MODE, DEFAULT_CONTACT_CUTOFF, DEFAULT_MIN_SEQ_SEP
+from pymcpu.config import (
+    DEFAULT_CONTACT_ATOM_MODE,
+    DEFAULT_CONTACT_CUTOFF,
+    DEFAULT_KIC_STEP_SIZE_RAD,
+    DEFAULT_MIN_SEQ_SEP,
+)
 from pymcpu.checkpointing import (
     CHECKPOINT_FORMAT_VERSION,
     CheckpointConfig,
@@ -150,7 +155,7 @@ class MPIReplicaExchange:
         MPI communicator (typically ``MPI.COMM_WORLD``).
     pdb_path : str
         Input structure path.
-    step_size_rad, move_weights, sidechain_move_mode, pivot_rama_probability, pivot_rama_schedule
+    step_size_rad, kic_step_size_rad, move_weights, sidechain_move_mode, pivot_rama_probability, pivot_rama_schedule
         Move settings for every replica, as in
         :class:`~pymcpu.sampling.ReplicaExchange`.
     full_energy_every_steps : int
@@ -189,6 +194,7 @@ class MPIReplicaExchange:
         sidechain_move_mode: str = "rotamer_library",
         pivot_rama_probability: float = 0.0,
         pivot_rama_schedule: dict[str, float] | None = None,
+        kic_step_size_rad: float = DEFAULT_KIC_STEP_SIZE_RAD,
         fixed_residues: list[int] | None = None,
         linker_residues: list[int] | None = None,
         linker_energy_mode: str = "ignore_all",
@@ -239,6 +245,7 @@ class MPIReplicaExchange:
             sidechain_move_mode=sidechain_move_mode,
             pivot_rama_probability=pivot_rama_probability,
             pivot_rama_schedule=pivot_rama_schedule,
+            kic_step_size_rad=kic_step_size_rad,
         )
         self._cycle = 0
         self._exchange_tag = 0

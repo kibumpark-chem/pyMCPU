@@ -122,8 +122,20 @@ pytestmark = pytest.mark.slow
 # A GCC 8.5 build gave ACCEPT 271 and E_HBOND -180.06430053710938 here until
 # the rotation fix of 2026-10-02 (rigid rotations done in double and rounded
 # once), and gives exactly these values since.
+#
+# TENTH capture, 2026-10-09, after pivots gained the chain-end torsions and
+# sidechain steps lost the residues without chi angles: a pivot draws one of
+# the chain's 2N-2 backbone torsions with one draw instead of two, and a
+# sidechain step draws only residues it can move, so the run reads different
+# random numbers. The previous values, ACCEPT 264 and E_HBOND
+# -177.14263916015625, still come out of the parent engine. Replaying both
+# engines one step at a time, warmup steps 1 and 2 (a KIC move and a
+# sidechain step, both rejected) leave the coordinates identical, and from
+# step 3 on the two runs draw different moves. ACCEPT is 264 again by
+# coincidence. Captured with GCC 15 by re-running the recipe above via
+# `run_hotpath`.
 BASELINE_ACCEPT = 264
-BASELINE_E_HBOND = -177.14263916015625
+BASELINE_E_HBOND = -179.62722607272156
 
 # See tests/physics/test_hbond_delta_hotpath.py's DETERMINISM_ATOL for why
 # this is an empirical repeatability allowance, not a physics constant.

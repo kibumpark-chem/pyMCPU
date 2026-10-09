@@ -98,10 +98,10 @@ by group number). The per-term values are weighted by default; pass
        print(f"{name:20} {value:12.4f}")
 
 Acceptance rates are the first thing to check on any Monte Carlo run. For
-``pivot`` and ``kic``, a very low rate means ``step_size_rad`` is too large for
-the temperature, and a very high rate means the moves are too small to
-explore. The ``rotamer`` move draws whole rotamers from a library and does not
-use ``step_size_rad``:
+``pivot``, a very low rate means ``step_size_rad`` is too large for the
+temperature, and a very high rate means the moves are too small to explore;
+``kic_step_size_rad`` plays the same part for ``kic``. The ``rotamer`` move
+draws whole rotamers from a library and uses neither:
 
 .. code-block:: python
 

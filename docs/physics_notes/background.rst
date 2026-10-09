@@ -69,23 +69,26 @@ With fixed residues, each move draws only among the residues (for KIC, the
 windows) it can change without moving a fixed residue, so no step is spent
 on a fixed residue (``Integrator.set_fixed_residues``).
 
-**Pivot.** Picks a residue and one of its backbone torsions, φ or ψ (never
-the φ of a proline), and rotates the shorter end of the chain about that bond
-by a random angle, drawn from a Gaussian of width ``step_size_rad``. A small
-rotation near the middle of the chain moves the far end a long way.
+**Pivot.** Picks one backbone torsion of the chain: ψ of the first residue,
+φ or ψ of any inner residue, or φ of the last residue (never the φ of a
+proline). It rotates the shorter end of the chain about that bond by a random
+angle, drawn from a Gaussian of width ``step_size_rad``. A small rotation near
+the middle of the chain moves the far end a long way.
 Optionally, some pivot moves set (φ, ψ) to a pair drawn from a Ramachandran
 library instead; this is off by default
 (``Integrator.set_pivot_rama_probability``).
 
 **KIC (kinematic closure).** Rotates a backbone torsion next to a window of
-three residues, then rebuilds the backbone of the window so that the rest of
-the chain does not move. The window keeps the bond lengths and angles of the
+three residues, by a Gaussian angle of width ``kic_step_size_rad``, then
+rebuilds the backbone of the window so that the rest of the chain does not
+move. The window keeps the bond lengths and angles of the
 starting structure. It is a local backbone move; :doc:`kic_jacobian`
 describes the Jacobian correction it needs.
 
-**Sidechain.** Changes the χ angles of one residue. By default it draws a
-rotamer from a rotamer library; in ``'continuous'`` mode it perturbs each χ
-by a Gaussian angle instead. Glycine and alanine have no χ angles.
+**Sidechain.** Changes the χ angles of one residue, drawn from the residues
+that have χ angles (glycine and alanine have none, and prolines are left
+alone). By default it draws a rotamer from a rotamer library; in
+``'continuous'`` mode it perturbs each χ by a Gaussian angle instead.
 
 Temperature
 -----------

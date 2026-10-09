@@ -735,6 +735,17 @@ class MCPUForceField(BaseForceField):
             )
     
     @property
+    def sidechain_move_residues(self) -> list[int]:
+        """Residues a sidechain move can act on: those with chi angles, except
+        proline, whose ring the moves leave alone. The engine draws its
+        sidechain moves from these."""
+        return [
+            r
+            for r, rows in enumerate(self.chi_atom_indices)
+            if rows and rows[0][0] >= 0 and not self.is_proline[r]
+        ]
+
+    @property
     def inverse_mapping(self) -> list[int]:
         """
         Topology atom index of each engine atom, in engine order.

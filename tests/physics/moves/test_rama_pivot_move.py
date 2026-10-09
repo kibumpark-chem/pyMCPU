@@ -262,17 +262,44 @@ def test_p_zero_is_bit_identical_to_genuine_legacy_code() -> None:
     done in double and rounded to float once. Same head, sum 81 instead of
     79. Replayed one step at a time, the coordinates first differ at step 7,
     an accepted sidechain move whose chi rotation lands one float step
-    (4.8e-7 A) away, and the accept bits first differ at step 106."""
+    (4.8e-7 A) away, and the accept bits first differ at step 106.
+
+    RE-CAPTURED 2026-10-09 after pivots gained the chain-end torsions and
+    sidechain steps lost the residues without chi angles: a pivot now draws
+    one of the chain's 2N-2 backbone torsions with one draw instead of two,
+    and a sidechain step draws only residues it can move. Neither touches
+    dispatch_pivot_move or the rama-mixture move, but both change which
+    random numbers a run reads. The parent engine still gives sum 81 and the
+    head above. Replayed one step at a time, steps 1 and 2 (a sidechain step
+    and a pivot, both rejected) leave the coordinates identical in the two
+    engines, and from step 3 on the runs draw different moves. Since the
+    pinned numbers no longer tie this test to the pre-feature engine, the
+    no-extra-draw property is now also checked directly: at p = 1e-30 the
+    coin is drawn on every pivot step but never picks the Ramachandran move,
+    so that run must differ from the p = 0 run."""
     ctx, _ = build_raw_context(virtual_amide_h=True)
     integ = mcpu_core.Integrator(temperature=300.0, step_size_rad=0.1)
     integ.set_pivot_rama_probability(0.0)
     integ.set_seed(99)
     integ.run(ctx, 300)
 
-    legacy_accept_bits_head = [0, 0, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 1, 1, 1, 0, 1, 0, 1, 1]
-    legacy_accept_bits_sum = 81  # 92 before the KIC fix, 79 before the rotation fix
+    legacy_accept_bits_head = [0, 0, 0, 1, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0, 0, 1]
+    # 92 before the KIC fix, 79 before the rotation fix, 81 before the
+    # chain-end pivots and sidechain sites
+    legacy_accept_bits_sum = 77
 
     bits = list(integ.last_accept_bits())
     assert bits[:20] == legacy_accept_bits_head
     assert sum(bits) == legacy_accept_bits_sum
     assert integ.get_rama_pivot_attempted() == 0
+
+    # Any p above 0 draws the coin on every pivot step. At 1e-30 the coin
+    # never picks the Ramachandran move, so the extra draw is the only thing
+    # that can separate this run from the p = 0 one.
+    ctx_tiny, _ = build_raw_context(virtual_amide_h=True)
+    tiny = mcpu_core.Integrator(temperature=300.0, step_size_rad=0.1)
+    tiny.set_pivot_rama_probability(1e-30)
+    tiny.set_seed(99)
+    tiny.run(ctx_tiny, 300)
+    assert tiny.get_rama_pivot_attempted() == 0
+    assert list(tiny.last_accept_bits()) != bits

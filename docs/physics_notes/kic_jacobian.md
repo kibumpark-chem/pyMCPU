@@ -18,9 +18,10 @@ structure's values; only its six φ and ψ torsions change.
    C(r+2) with the window's bond lengths and angles. Closures are the real
    roots of a degree-16 polynomial (Coutsias et al. 2004), so there are at
    most 16. Call their number n_old.
-3. Rotate the driver by a Gaussian angle of width `step_size_rad`. This moves
-   one end of the window: CA(r+2) and C(r+2) for a φ driver, N(r) and CA(r)
-   for a ψ driver.
+3. Rotate the driver by a Gaussian angle of width `kic_step_size_rad` (0.1
+   rad by default; `step_size_rad` sets the pivot only). This moves one end
+   of the window: CA(r+2) and C(r+2) for a φ driver, N(r) and CA(r) for a ψ
+   driver.
 4. Find every closure for the new end, n_new of them, and pick one uniformly
    at random.
 5. Accept or reject with w = (J_new / J_old) × (n_new / n_old); see
@@ -58,6 +59,24 @@ move draws its window and driver again (see `Integrator.set_fixed_residues`).
 A closure whose three N–CA–C angles miss their targets by more than 1e-6 rad
 is discarded, in both solves. {doc}`/api/integrator` lists counters for most
 of these cases.
+
+## How detailed balance is tested
+
+With every residue fixed except a proline and the three after it, KIC is the
+only move, and the only window it can draw is the one after the proline,
+with the proline's ψ as driver. The states then lie on closed curves: a
+driver angle and one closure of the window for it.
+`tests/physics/moves/test_kic_detailed_balance.py` enumerates the exact
+distribution along these curves, with density J exp(−E/T) per unit of driver
+angle, where E is the engine's own energy and a state the engine's hard-core
+check rejects has none. It finds the closures without the solver above. It
+then starts KIC-only runs from states drawn from that distribution and
+compares the sampled torsions with it: on chignolin (two closures per driver
+angle) at driver widths of 0.1 and 1 rad, and, in the `slow` suite, on a
+piece of actin with up to eight closures at 1 rad. The same samples reject the
+distributions a move without J, or without n_new / n_old, would sample. A
+φ-driver window cannot be isolated this way, because the ψ-driver window one
+residue on needs the same residues free.
 
 ## Reference
 

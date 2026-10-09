@@ -90,6 +90,7 @@ class _SingleRankComm:
 
 _SETTINGS = dict(
     step_size_rad=0.07,
+    kic_step_size_rad=0.3,
     move_weights=(0.5, 0.3, 0.2),
     sidechain_move_mode="continuous",
     pivot_rama_probability=0.4,
@@ -115,6 +116,7 @@ def test_every_move_setting_is_forwarded(tmp_path: Path, monkeypatch, mpi: bool)
         runners.run_from_config(_remd_config(tmp_path, integrator), comm=comm, verbose=False)
 
     assert seen["step_size_rad"] == pytest.approx(0.07)
+    assert seen["kic_step_size_rad"] == pytest.approx(0.3)
     assert seen["move_weights"] == pytest.approx(integrator.move_weights)
     assert seen["sidechain_move_mode"] == "continuous"
     assert seen["pivot_rama_probability"] == pytest.approx(0.4)

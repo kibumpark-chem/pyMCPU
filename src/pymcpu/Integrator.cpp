@@ -307,19 +307,38 @@ void mark_ranges(ProposalPatch& patch, const System& system,
 
 } // namespace
 
+namespace {
+float checked_kic_step_size(float sigma_rad) {
+    if (!(sigma_rad > 0.0f) || !std::isfinite(sigma_rad)) {
+        throw std::invalid_argument(
+            "kic_step_size_rad must be positive and finite, got " + std::to_string(sigma_rad));
+    }
+    return sigma_rad;
+}
+} // namespace
+
 MCIntegrator::MCIntegrator(double temperature, float step_size_rad,
-                           float sidechain_step_size_rad)
+                           float sidechain_step_size_rad, float kic_step_size_rad)
     : temperature(temperature),
       step_size_rad(step_size_rad),
       // Resolve the "negative means same as backbone" sentinel once, here, so
       // no downstream code ever sees it.
       sidechain_step_size_rad_(sidechain_step_size_rad < 0.0f ? step_size_rad
                                                              : sidechain_step_size_rad),
+      kic_step_size_rad_(checked_kic_step_size(kic_step_size_rad)),
       pivot_residue_dist(1, 1),   // re-seeded in run() after system is known
+      pivot_torsion_dist(0, 1),
       sc_residue_dist(0, 1),
       angle_dist(0.0f, step_size_rad),  // Fix Round2-#5: now wired to parameter
-      sc_angle_dist_(0.0f, sidechain_step_size_rad_)
+      sc_angle_dist_(0.0f, sidechain_step_size_rad_),
+      kic_angle_dist_(0.0f, kic_step_size_rad_)
 {}
+
+void MCIntegrator::set_kic_step_size_rad(float sigma_rad) {
+    kic_step_size_rad_ = checked_kic_step_size(sigma_rad);
+    kic_angle_dist_.param(std::normal_distribution<float>::param_type(0.0f, kic_step_size_rad_));
+    kic_angle_dist_.reset();
+}
 
 std::string MCIntegrator::get_rng_state() {
     // Discard any pending normal_distribution spare (see header doc) so the
@@ -327,10 +346,12 @@ std::string MCIntegrator::get_rng_state() {
     // from the returned string are then guaranteed to agree on all future draws
     // given the same rng state, regardless of how many angle_dist(rng) calls
     // happened to precede this checkpoint. unit_normal_dist_ (rotamer-library
-    // move's per-chi noise) and sc_angle_dist_ (continuous sidechain chi) have
-    // the identical caching hazard and need the same treatment.
+    // move's per-chi noise), sc_angle_dist_ (continuous sidechain chi) and
+    // kic_angle_dist_ (KIC driver) have the identical caching hazard and need
+    // the same treatment.
     angle_dist.reset();
     sc_angle_dist_.reset();
+    kic_angle_dist_.reset();
     unit_normal_dist_.reset();
     std::ostringstream oss;
     oss << rng;
@@ -348,6 +369,7 @@ void MCIntegrator::set_rng_state(const std::string& state) {
     // against restoring into a previously-used (already-run) Integrator instance.
     angle_dist.reset();
     sc_angle_dist_.reset();
+    kic_angle_dist_.reset();
     unit_normal_dist_.reset();
 }
 
@@ -426,20 +448,61 @@ void MCIntegrator::set_move_weights(float pivot, float kic, float sidechain) {
     move_w_sc_    = sidechain / sum;
 }
 
+bool MCIntegrator::is_sidechain_site(const System& system, int r) const {
+    if (system.getTorsionsPerResidue()[static_cast<size_t>(r)] <= 0) return false;  // Gly/Ala
+    if (system.is_proline(r)) return false;  // ring geometry: never moved
+    if (sidechain_move_mode_ == SidechainMoveMode::RotamerLibrary &&
+        system.getRotamerLibrary().num_rows(system.amino_index(r)) <= 0) {
+        return false;  // no rotamer table for this residue type
+    }
+    return true;
+}
+
 void MCIntegrator::check_move_weights_are_usable(const Context& context) const {
     if (move_w_sc_ <= 0.0f) return;
-    const std::vector<int>& ntors = context.getSystem().getTorsionsPerResidue();
-    const bool any_chi = std::any_of(ntors.begin(), ntors.end(),
-                                     [](int n) { return n > 0; });
-    if (any_chi) return;
-    // Every sidechain proposal would return early with patch.is_valid false,
-    // so this share of the step budget is spent producing nothing. That is
-    // exactly what a backbone-only force field walks into, and it is silent:
-    // the run completes, just with (1 - pivot - kic) of its steps discarded.
+    const System& system = context.getSystem();
+    const int n_res = system.getNumResidues();
+    for (int r = 0; r < n_res; ++r) {
+        if (is_sidechain_site(system, r)) return;
+    }
+    // Every sidechain step would have no residue to move, so this share of the
+    // step budget would be spent producing nothing. That is exactly what a
+    // backbone-only force field walks into, and it is silent: the run
+    // completes, just with (1 - pivot - kic) of its steps discarded.
+    const std::vector<int>& ntors = system.getTorsionsPerResidue();
+    const bool any_movable_chi = [&] {
+        for (int r = 0; r < n_res; ++r) {
+            if (ntors[static_cast<size_t>(r)] > 0 && !system.is_proline(r)) return true;
+        }
+        return false;
+    }();
+    if (any_movable_chi) {
+        throw std::invalid_argument(
+            "MCIntegrator: the sidechain move weight is positive but no residue in "
+            "this system has rotamer-library rows, so the rotamer_library sidechain "
+            "move has nothing to move. Call set_sidechain_move_mode('continuous') or "
+            "set_move_weights(pivot, kic, 0.0).");
+    }
     throw std::invalid_argument(
         "MCIntegrator: the sidechain move weight is positive but no residue in "
-        "this system has a chi angle, so every sidechain proposal would be a "
-        "silent no-op. Call set_move_weights(pivot, kic, 0.0).");
+        "this system has a chi angle a sidechain move can change (glycine and "
+        "alanine have none, and proline's are never moved), so every sidechain "
+        "step would be a silent no-op. Call set_move_weights(pivot, kic, 0.0).");
+}
+
+void MCIntegrator::prepare_move_sites(const Context& context) {
+    const System& system = context.getSystem();
+    const int n = system.getNumResidues();
+    pivot_residue_dist = std::uniform_int_distribution<int>(1, n - 2);
+    pivot_torsion_dist = std::uniform_int_distribution<int>(0, 2 * n - 3);
+    sc_sites_.clear();
+    for (int r = 0; r < n; ++r) {
+        if (is_sidechain_site(system, r)) sc_sites_.push_back(r);
+    }
+    // Never drawn from when sc_sites_ is empty: check_move_weights_are_usable
+    // has refused a positive sidechain weight, and a zero one is unreachable.
+    sc_residue_dist = std::uniform_int_distribution<int>(
+        0, std::max(0, static_cast<int>(sc_sites_.size()) - 1));
 }
 
 std::string MCIntegrator::sidechain_move_mode() const {
@@ -487,12 +550,16 @@ void MCIntegrator::apply_pivot_move(Context& context, State& proposal, ProposalP
     patch.is_valid = false;
     int num_residues = system.getNumResidues();
 
+    // One draw picks a backbone torsion: psi(0), phi(1), psi(1), ...,
+    // phi(N-1). The two chain ends have one pivot torsion each (residue 0
+    // has no phi to turn, residue N-1 no psi).
     constexpr int kMaxPivotResample = 64;
     bool is_phi = false;
     int r = 1;
     for (int attempt = 0; attempt < kMaxPivotResample; ++attempt) {
-        r = pivot_residue_dist(rng);
-        is_phi = (coin_flip(rng) < 0.5f);
+        const int t = pivot_torsion_dist(rng);
+        r = (t + 1) / 2;
+        is_phi = (t % 2) == 1;
         if (is_phi && system.is_proline(r)) {
             ++num_pivot_resample_pro_phi_;
             continue;
@@ -515,6 +582,11 @@ void MCIntegrator::apply_pivot_at(Context& context, State& proposal, ProposalPat
     const bool residue_contig = system.residueContiguousLayout();
     const bool scattered = !context.atom_permutation_is_identity();
 
+    // The torsions a pivot turns: psi of residue 0, phi and psi of residues
+    // 1 to N-2, phi of residue N-1.
+    if (r < 0 || r >= num_residues || (r == 0 && is_phi) || (r == num_residues - 1 && !is_phi)) {
+        return;
+    }
     if (pivotTouchesFixed_(r, num_residues)) {
         ++fixed_rejected_;
         return;
@@ -620,16 +692,20 @@ void MCIntegrator::apply_pivot_at(Context& context, State& proposal, ProposalPat
         patch.last_affected_residue = num_residues - 1;
 
         if (!scattered) {
-            const int sc_start = system.getDownstreamCache().first_sc_of_residue[
-                static_cast<size_t>(start_res_sc)];
-            const int o_start  = system.getDownstreamCache().first_o_of_residue[
-                static_cast<size_t>(start_res_o)];
-            const int h_start  = system.getDownstreamCache().first_h_of_residue[
-                static_cast<size_t>(start_res_h)];
             const int bb_end = system.getTotalBBAtoms();
             const int o_end  = bb_end + system.getTotalOAtoms();
             const int sc_end = o_end  + system.getTotalSCAtoms();
             const int h_end  = sc_end + system.getTotalHAtoms();
+            const int sc_start = system.getDownstreamCache().first_sc_of_residue[
+                static_cast<size_t>(start_res_sc)];
+            // The O segment from O(r) on also holds the C-terminal OXT, which
+            // the builder puts after the last residue's O.
+            const int o_start  = system.getDownstreamCache().first_o_of_residue[
+                static_cast<size_t>(start_res_o)];
+            // phi of the last residue: its H stays with N, and no residue follows.
+            const int h_start  = start_res_h < num_residues
+                ? system.getDownstreamCache().first_h_of_residue[static_cast<size_t>(start_res_h)]
+                : h_end;
             rotate_range(bb_start_contig, bb_end, patch.bb_atom_moved);
             rotate_range(o_start, o_end, patch.o_atom_moved);
             rotate_range(sc_start, sc_end, patch.sc_atom_moved);
@@ -637,17 +713,28 @@ void MCIntegrator::apply_pivot_at(Context& context, State& proposal, ProposalPat
                 rotate_range(h_start, h_end, patch.h_atom_moved);
             }
         } else if (residue_contig) {
+            const auto& br = blocks[static_cast<size_t>(r)];
             if (is_phi) {
                 // Rotate SC(r), C(r) and O(r) only: H(r) is bonded to N(r) and stays
                 // with the fixed N side.
-                const auto& br = blocks[static_cast<size_t>(r)];
                 if (br.sc_start >= 0 && br.sc_count > 0)
                     rotate_and_mark(br.sc_start, br.sc_start + br.sc_count);
                 rotate_and_mark(br.c_atom(), br.c_atom() + 1);
                 if (br.o_start >= 0) rotate_and_mark(br.o_start, br.o_start + 1);
             } else {
-                const auto& br = blocks[static_cast<size_t>(r)];
                 if (br.o_start >= 0) rotate_and_mark(br.o_start, br.o_start + 1);
+            }
+            // An atom of r's span that no block field names is the C-terminal
+            // OXT (or OCT), which the reorder places after O. It is bonded to
+            // C(r), so it moves with O(r). Only the last residue has one.
+            if (br.has_residue_span()) {
+                for (int i = br.res_begin; i < br.res_end; ++i) {
+                    const bool named =
+                        i == br.bb_start || i == br.ca_atom() || i == br.c_atom() ||
+                        i == br.o_start || i == br.h_start ||
+                        (br.sc_start >= 0 && i >= br.sc_start && i < br.sc_start + br.sc_count);
+                    if (!named) rotate_and_mark(i, i + 1);
+                }
             }
             rotate_residue_spans(r + 1, num_residues);
         } else {
@@ -980,21 +1067,18 @@ void MCIntegrator::dispatch_pivot_move(Context& context, State& proposal, Propos
 // selected via sidechain_move_mode_ (default: RotamerLibrary).
 // ---------------------------------------------------------
 void MCIntegrator::apply_sidechain_move(Context& context, State& proposal, ProposalPatch& patch) {
-    const System& system = context.getSystem();
     patch.is_valid = false;
+    if (sc_sites_.empty()) return;
 
+    // The draw is over sc_sites_, the residues this move can change (chi
+    // angles, not proline): uniform and independent of the state.
     constexpr int kMaxScResample = 64;
-    int r = 0;
+    int r = sc_sites_.front();
     for (int attempt = 0; attempt < kMaxScResample; ++attempt) {
-        r = sc_residue_dist(rng);
-        if (system.is_proline(r)) {
-            ++num_sc_resample_pro_;
-            continue;
-        }
+        r = sc_sites_[static_cast<size_t>(sc_residue_dist(rng))];
         if (sidechainTouchesFixed_(r)) continue;  // see "Fixed-residue rules" in Integrator.h
         break;
     }
-    if (system.is_proline(r)) return;
     apply_sidechain_at(context, proposal, patch, r);
 }
 
@@ -1074,21 +1158,18 @@ void MCIntegrator::apply_sidechain_at(Context& context, State& proposal, Proposa
 // acceptance code (see `run()`) are needed.
 // ---------------------------------------------------------------
 void MCIntegrator::apply_rotamer_move(Context& context, State& proposal, ProposalPatch& patch) {
-    const System& system = context.getSystem();
     patch.is_valid = false;
+    if (sc_sites_.empty()) return;
 
+    // Same site draw as apply_sidechain_move; in this mode sc_sites_ also
+    // leaves out residue types without rotamer rows.
     constexpr int kMaxScResample = 64;
-    int r = 0;
+    int r = sc_sites_.front();
     for (int attempt = 0; attempt < kMaxScResample; ++attempt) {
-        r = sc_residue_dist(rng);
-        if (system.is_proline(r)) {
-            ++num_sc_resample_pro_;
-            continue;
-        }
+        r = sc_sites_[static_cast<size_t>(sc_residue_dist(rng))];
         if (sidechainTouchesFixed_(r)) continue;  // see "Fixed-residue rules" in Integrator.h
         break;
     }
-    if (system.is_proline(r)) return;
     apply_rotamer_at(context, proposal, patch, r);
 }
 
@@ -1361,7 +1442,7 @@ void MCIntegrator::apply_concerted_rotation_move(Context& context, State& propos
     // 3c. Apply driver rotation to perturb one set of KIC endpoints.
     //     phi: rotate CA(r+2), C(r+2) around axis CA(r+3)→N(r+3)
     //     psi: rotate N(r),  CA(r)  around axis CA(r-1)→C(r-1)
-    float dih_ch = angle_dist(rng);
+    float dih_ch = kic_angle_dist_(rng);
 
     Eigen::Vector3d driver_axis_origin, driver_center;
     if (is_phi) {
@@ -1643,14 +1724,13 @@ void MCIntegrator::verify_physics_consistency(Context& context, int num_steps, f
     if (N < 3) {
         throw std::invalid_argument(
             "MCIntegrator::verify_physics_consistency: needs at least 3 "
-            "residues; the pivot residue range is [1, n_residues-2].");
+            "residues; KIC windows start at residues 1 to n_residues-2.");
     }
     check_move_weights_are_usable(context);
     context.require_current_atom_order();
     context.sync_energy_mask();
     context.ensure_energy_current();
-    pivot_residue_dist = std::uniform_int_distribution<int>(1, N - 2);
-    sc_residue_dist    = std::uniform_int_distribution<int>(0, N - 1);
+    prepare_move_sites(context);
     ensure_proposal_buffers(context);
 
     std::uniform_real_distribution<float> move_type_dist(0.0f, 1.0f);
@@ -1710,15 +1790,14 @@ void MCIntegrator::run(Context& context, int num_steps, int step_offset)
     // a release build it returns garbage rather than complaining.
     if (N < 3) {
         throw std::invalid_argument(
-            "MCIntegrator::run: needs at least 3 residues; the pivot residue "
-            "range is [1, n_residues-2].");
+            "MCIntegrator::run: needs at least 3 residues; KIC windows start at "
+            "residues 1 to n_residues-2.");
     }
     check_move_weights_are_usable(context);
     context.require_current_atom_order();
     context.sync_energy_mask();
     context.ensure_energy_current();
-    pivot_residue_dist = std::uniform_int_distribution<int>(1, N - 2);
-    sc_residue_dist    = std::uniform_int_distribution<int>(0, N - 1);
+    prepare_move_sites(context);
     ensure_proposal_buffers(context);
 
     std::uniform_real_distribution<float> move_type_dist(0.0f, 1.0f);
@@ -1985,7 +2064,10 @@ void MCIntegrator::run(Context& context, int num_steps, int step_offset)
 
 bool MCIntegrator::debug_force_pivot(Context& context, int residue, bool is_phi) {
     const System& system = context.getSystem();
-    if (residue < 1 || residue > system.getNumResidues() - 2) return false;
+    const int n = system.getNumResidues();
+    // psi of residue 0, phi and psi of 1 to N-2, phi of N-1 (see apply_pivot_move).
+    if (residue < 0 || residue > n - 1) return false;
+    if ((residue == 0 && is_phi) || (residue == n - 1 && !is_phi)) return false;
     if (is_phi && system.is_proline(residue)) {
         ++num_pivot_resample_pro_phi_;
         return false;

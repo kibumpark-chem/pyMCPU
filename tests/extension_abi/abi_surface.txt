@@ -110,6 +110,7 @@ Integrator.get_sc_accepted
 Integrator.get_sc_attempted
 Integrator.get_steric_rejected
 Integrator.has_fixed_residues
+Integrator.kic_step_size_rad
 Integrator.last_accept_bits
 Integrator.last_delta_energy
 Integrator.last_log_jacobian_weight
@@ -126,6 +127,7 @@ Integrator.pivot_rama_probability
 Integrator.reset_step_stats
 Integrator.run
 Integrator.set_fixed_residues
+Integrator.set_kic_step_size_rad
 Integrator.set_move_counters
 Integrator.set_move_weights
 Integrator.set_pivot_rama_probability

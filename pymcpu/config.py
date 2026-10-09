@@ -30,6 +30,7 @@ __all__ = [
     "ContactAtomMode",
     "DEFAULT_CONTACT_ATOM_MODE",
     "DEFAULT_CONTACT_CUTOFF",
+    "DEFAULT_KIC_STEP_SIZE_RAD",
     "DEFAULT_MIN_SEQ_SEP",
     "LinkerEnergyMode",
     "Mode",
@@ -42,6 +43,7 @@ __all__ = [
     # so that every entry point rejects the same inputs identically.
     "apply_linker_energy_mask",
     "check_yaml_keys",
+    "normalize_kic_step_size_rad",
     "normalize_linker_energy_mode",
     "normalize_move_weights",
     "check_move_weights",
@@ -123,6 +125,25 @@ def normalize_sidechain_move_mode(mode: str | None) -> SidechainMoveMode:
     return m  # type: ignore[return-value]
 
 
+#: Width (Gaussian std-dev, radians) of the KIC driver, the torsion that moves
+#: one end of the three-residue window before the closure. ``step_size_rad``
+#: sets the pivot only. 0.1 rad is the width the driver shared with the pivot
+#: before it had its own; the engine's ``Integrator`` has the same default.
+DEFAULT_KIC_STEP_SIZE_RAD = 0.1
+
+
+def normalize_kic_step_size_rad(sigma: float | None) -> float:
+    """Validate the KIC driver width; ``None`` means the default."""
+    if sigma is None:
+        return DEFAULT_KIC_STEP_SIZE_RAD
+    if isinstance(sigma, bool):
+        raise ValueError(f"kic_step_size_rad must be a positive number of radians, got {sigma!r}")
+    value = float(sigma)
+    if not (value > 0.0) or value == float("inf"):
+        raise ValueError(f"kic_step_size_rad must be a positive number of radians, got {sigma!r}")
+    return value
+
+
 def normalize_pivot_rama_probability(p: float | None) -> float:
     # None means "not set": the engine's default, 0.0, because the rama pivot
     # is opt-in (see MCIntegrator::set_pivot_rama_probability).
@@ -163,23 +184,38 @@ def normalize_move_weights(
 def check_move_weights(
     forcefield: Any, move_weights: Sequence[float] | None, name: str = ""
 ) -> None:
-    """Refuse sidechain moves on a force field that has no sidechains.
+    """Refuse sidechain moves on a chain that has no sidechain to move.
 
     The engine refuses them too, but only when it first steps -- after a
     replica-exchange run has opened its output files. A system without
-    sidechain atoms (an all-glycine chain, say) needs a sidechain weight of
-    zero; it is not zeroed silently, because that would change the pivot/KIC
-    mix the config asked for.
+    sidechain atoms (an all-glycine chain, say), or whose residues have no
+    chi angle a sidechain move can change (glycine and alanine have none,
+    and proline's are never moved), needs a sidechain weight of zero; it is
+    not zeroed silently, because that would change the pivot/KIC mix the
+    config asked for.
     """
     weights = normalize_move_weights(move_weights)
-    if weights[2] > 0.0 and int(getattr(forcefield, "total_sc_atoms", 1)) == 0:
-        label = repr(name) if name else type(forcefield).__name__
+    if weights[2] <= 0.0:
+        return
+    label = repr(name) if name else type(forcefield).__name__
+    fix = (
+        "set move_weights (top-level in a flat config, or "
+        "integrator.move_weights in a nested one) to [pivot, kic, 0.0], "
+        "e.g. [0.5, 0.5, 0.0]"
+    )
+    if int(getattr(forcefield, "total_sc_atoms", 1)) == 0:
         raise ValueError(
             f"forcefield {label} has no sidechains, so sidechain moves are "
             f"impossible, but move_weights gives them {weights[2]:.3g} of the "
-            f"moves; set move_weights (top-level in a flat config, or "
-            f"integrator.move_weights in a nested one) to [pivot, kic, 0.0], "
-            f"e.g. [0.5, 0.5, 0.0]"
+            f"moves; {fix}"
+        )
+    movable = getattr(forcefield, "sidechain_move_residues", None)
+    if movable is not None and len(movable) == 0:
+        raise ValueError(
+            f"no residue of this chain has a chi angle a sidechain move can change "
+            f"(glycine and alanine have none, and proline's are never moved), so "
+            f"sidechain moves are impossible under forcefield {label}, but "
+            f"move_weights gives them {weights[2]:.3g} of the moves; {fix}"
         )
 
 
@@ -210,7 +246,10 @@ class IntegratorConfig:
     steps: int = 1000
     seed: int = 42
     report_interval: int = 100
+    #: Width (radians) of the pivot move's torsion change.
     step_size_rad: float = 0.1
+    #: Width (radians) of the KIC driver; see DEFAULT_KIC_STEP_SIZE_RAD.
+    kic_step_size_rad: float = DEFAULT_KIC_STEP_SIZE_RAD
     sidechain_move_mode: SidechainMoveMode = "rotamer_library"
     pivot_rama_probability: float = 0.0
     pivot_rama_schedule: dict[str, float] | None = None
@@ -224,6 +263,7 @@ class IntegratorConfig:
 
     def __post_init__(self) -> None:
         self.move_weights = normalize_move_weights(self.move_weights)
+        self.kic_step_size_rad = normalize_kic_step_size_rad(self.kic_step_size_rad)
         steps = self.full_energy_every_steps
         if isinstance(steps, bool) or not isinstance(steps, (int, float)) or steps != int(steps) or steps < 1:
             raise ValueError(
@@ -388,6 +428,7 @@ def normalize_move_settings(
     sidechain_move_mode: str | None = "rotamer_library",
     pivot_rama_probability: float | None = 0.0,
     pivot_rama_schedule: Mapping[str, float] | None = None,
+    kic_step_size_rad: float | None = DEFAULT_KIC_STEP_SIZE_RAD,
 ) -> dict[str, Any]:
     """Validate the move settings a sampler passes to :func:`configure_integrator`.
 
@@ -399,6 +440,7 @@ def normalize_move_settings(
         "sidechain_move_mode": normalize_sidechain_move_mode(sidechain_move_mode),
         "pivot_rama_probability": normalize_pivot_rama_probability(pivot_rama_probability),
         "pivot_rama_schedule": normalize_pivot_rama_schedule(pivot_rama_schedule),
+        "kic_step_size_rad": normalize_kic_step_size_rad(kic_step_size_rad),
     }
 
 
@@ -409,6 +451,7 @@ def configure_integrator(
     sidechain_move_mode: str,
     pivot_rama_probability: float,
     pivot_rama_schedule: Mapping[str, float] | None,
+    kic_step_size_rad: float = DEFAULT_KIC_STEP_SIZE_RAD,
 ) -> None:
     """Apply already-validated move settings to a new Integrator.
 
@@ -416,6 +459,7 @@ def configure_integrator(
     fields of a config that normalized them itself. A schedule, when given,
     overrides ``pivot_rama_probability``.
     """
+    integrator.set_kic_step_size_rad(kic_step_size_rad)
     integrator.set_move_weights(*move_weights)
     integrator.set_sidechain_move_mode(sidechain_move_mode)
     if pivot_rama_schedule is not None:
@@ -504,6 +548,7 @@ class EngineSpec:
     dssp_coil_state: str = "C"
     temperature: float = 0.6
     step_size_rad: float = 0.1
+    kic_step_size_rad: float = DEFAULT_KIC_STEP_SIZE_RAD
     sidechain_move_mode: str = "rotamer_library"
     pivot_rama_probability: float = 0.0
     pivot_rama_schedule: dict[str, float] | None = None
@@ -520,6 +565,7 @@ class EngineSpec:
         )
         self.pivot_rama_schedule = normalize_pivot_rama_schedule(self.pivot_rama_schedule)
         self.move_weights = normalize_move_weights(self.move_weights)
+        self.kic_step_size_rad = normalize_kic_step_size_rad(self.kic_step_size_rad)
         # Resolved here rather than at build time, so a typo'd name is
         # reported against the config that carries it.
         from pymcpu.forcefields import get_forcefield
@@ -563,6 +609,7 @@ class EngineSpec:
             param_dir=cfg.param_dir,
             temperature=cfg.integrator.temperature,
             step_size_rad=cfg.integrator.step_size_rad,
+            kic_step_size_rad=cfg.integrator.kic_step_size_rad,
             sidechain_move_mode=cfg.integrator.sidechain_move_mode,
             pivot_rama_probability=cfg.integrator.pivot_rama_probability,
             pivot_rama_schedule=cfg.integrator.pivot_rama_schedule,
@@ -828,8 +875,9 @@ _YAML_KEYS = frozenset({
     "temperatures", "temp_min", "temp_step", "n_temps",
     # run length and moves
     "seed", "mc_replica_steps", "steps", "num_cycles", "log_interval",
-    "step_size_rad", "sidechain_move_mode", "pivot_rama_probability",
-    "pivot_rama_schedule", "move_weights", "full_energy_every_steps",
+    "step_size_rad", "kic_step_size_rad", "sidechain_move_mode",
+    "pivot_rama_probability", "pivot_rama_schedule", "move_weights",
+    "full_energy_every_steps",
     # folding only: the early stop
     "q_threshold", "convergence_window",
     # replica exchange
@@ -1134,6 +1182,7 @@ def yaml_dict_to_config(
         seed=seed,
         report_interval=log_interval,
         step_size_rad=step_size_rad,
+        kic_step_size_rad=normalize_kic_step_size_rad(data.get("kic_step_size_rad")),
         sidechain_move_mode=normalize_sidechain_move_mode(
             data.get("sidechain_move_mode", "rotamer_library")
         ),

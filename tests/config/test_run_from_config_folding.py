@@ -97,8 +97,8 @@ class _Stop(Exception):
 
 
 def test_folding_settings_reach_the_runner(tmp_path: Path, monkeypatch) -> None:
-    """The config's cycle length, reference structure, native-contact
-    definition and early stop all reach FoldingRunner."""
+    """The config's cycle length, step widths, reference structure,
+    native-contact definition and early stop all reach FoldingRunner."""
     from pymcpu.config import yaml_dict_to_config
     import pymcpu.sampling.folding as folding_module
 
@@ -119,6 +119,8 @@ def test_folding_settings_reach_the_runner(tmp_path: Path, monkeypatch) -> None:
             "temperatures": [0.5],
             "steps": 900,
             "mc_replica_steps": 300,
+            "step_size_rad": 0.05,
+            "kic_step_size_rad": 0.25,
             "q_threshold": 0.7,
             "convergence_window": 3,
             "contact_cutoff": 7.5,
@@ -134,6 +136,7 @@ def test_folding_settings_reach_the_runner(tmp_path: Path, monkeypatch) -> None:
         runners.run_from_config(cfg, verbose=False)
 
     assert seen["steps_per_cycle"] == 300
+    assert (seen["step_size_rad"], seen["kic_step_size_rad"]) == (0.05, 0.25)
     assert Path(seen["reference_pdb"]) == Path(pdb).resolve()
     assert (seen["q_threshold"], seen["convergence_window"]) == (0.7, 3)
     assert (seen["contact_cutoff_ang"], seen["min_seq_sep"]) == (7.5, 5)

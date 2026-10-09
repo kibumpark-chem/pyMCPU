@@ -322,6 +322,25 @@ if(MCPU_ARCH_FLAGS)
 endif()
 message(STATUS "CPU baseline: MCPU_ARCH=${MCPU_ARCH} -> tier ${MCPU_ARCH_TIER} -> ${MCPU_ARCH_FLAGS}")
 
+# The baseline the import checks before it loads the extension. pymcpu/__init__.py
+# compares it with the CPU's flags, so on a CPU without, say, AVX2 the import
+# fails with a message that names what is missing, instead of the process dying
+# of an illegal instruction. Only the x86-64 tiers name a fixed instruction set;
+# native, custom and none (and Debug, which applies no -march) record "none" and
+# are not checked. Installed next to the extension; a build copied by hand into a
+# source tree has no such file, and nothing is checked.
+if(MCPU_ARCH_FLAGS AND MCPU_ARCH_TIER MATCHES "^v[234]$"
+   AND NOT CMAKE_CXX_COMPILER_ID MATCHES "MSVC")
+    set(MCPU_CPU_BASELINE_TIER "${MCPU_ARCH_TIER}")
+else()
+    set(MCPU_CPU_BASELINE_TIER "none")
+endif()
+configure_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/cmake/_build_arch.py.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/generated/_build_arch.py"
+    @ONLY)
+install(FILES "${CMAKE_CURRENT_BINARY_DIR}/generated/_build_arch.py" DESTINATION pymcpu)
+
 # ---------------------------------------------------------------------------
 # Floating-point contraction
 # ---------------------------------------------------------------------------

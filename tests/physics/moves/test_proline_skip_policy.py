@@ -6,8 +6,8 @@ rather than proposing a phi-pivot or sidechain move and then rejecting it
 post-hoc (which would count as a wasted/degenerate proposal), it *resamples*
 a different move up front. This file checks that policy end-to-end: which
 residues get flagged proline, which forced move types resample vs. propose
-normally, and that both PRO-specific resample counters accumulate during a
-real run. Purely an internal move-selection policy check -- no legacy MCPU
+normally, and that a real run redraws proline phi pivots but never draws a
+proline sidechain at all (the sidechain move draws only residues it can move). Purely an internal move-selection policy check -- no legacy MCPU
 reference value is involved.
 """
 
@@ -90,13 +90,15 @@ def test_non_pro_sc_unchanged_policy() -> None:
 
 
 @pytest.mark.parametrize("reorder", ["off", "init_only"])
-def test_run_accumulates_pro_resamples(reorder: str) -> None:
+def test_run_redraws_pro_phi_and_never_draws_a_pro_sidechain(reorder: str) -> None:
     ctx, top = build_raw_context(virtual_amide_h=True, reorder=reorder)
     assert _pro_residues(top)
     integ = mcpu_core.Integrator(temperature=0.6, step_size_rad=0.1)
     integ.set_seed(42)
     integ.run(ctx, 400)
-    # With actin-sized PRO content, both counters should fire over 400 steps
-    # regardless of whether atom reordering is applied.
+    # With actin-sized PRO content the phi counter fires over 400 steps
+    # regardless of whether atom reordering is applied. The sidechain move
+    # draws only residues it can move, so a run never lands on a proline
+    # sidechain; that counter counts refused debug_force_* calls only.
     assert integ.num_pivot_resample_pro_phi() > 0
-    assert integ.num_sc_resample_pro() > 0
+    assert integ.num_sc_resample_pro() == 0
