@@ -40,8 +40,8 @@ home directory:
 The command always unpacks the shipped copy, even when an earlier step of the
 lookup, such as ``MCPU_PARAMS_DIR``, would supply other parameters; in that
 case do not export its output. The directory name includes a hash of the
-shipped tables, so a release with different tables unpacks into a new
-directory, and running the command again is quick.
+shipped tables and constants files, so a release that changes any of them
+unpacks into a new directory, and running the command again is quick.
 
 .. option:: --set SET
 
@@ -84,6 +84,38 @@ from a source checkout (see :doc:`running_remd`):
 
    run_from_config(load_config_auto("config.yaml"), comm=MPI.COMM_WORLD)
 
+A YAML config runs replica exchange when it lists more than one temperature
+or sets umbrella targets (see :doc:`running_remd`). Otherwise it runs folding:
+one trajectory at its one temperature. In a folding config:
+
+* ``steps`` is the total number of MC steps. The run is divided into cycles,
+  the unit ``checkpoint_interval`` counts: 1000 steps each, or all of
+  ``steps`` if fewer, with a shorter last cycle when 1000 does not divide
+  ``steps``. ``mc_replica_steps`` sets another cycle length, and
+  ``num_cycles`` divides ``steps`` into that many equal cycles; a config that
+  sets all three needs ``steps`` equal to ``num_cycles`` ×
+  ``mc_replica_steps``.
+  Without ``steps``, the run is ``num_cycles`` (default 10) cycles of
+  ``mc_replica_steps`` (default 1000) steps, as in replica exchange.
+  (In a replica exchange config, ``steps`` is read as ``mc_replica_steps``,
+  the steps per cycle, when that key is not set.)
+  ``log_interval`` defaults to one cycle. The trajectory
+  (``<output_prefix>.xtc``) and ``<output_prefix>_data.csv`` record every
+  ``log_interval`` steps from the start, so steps after the last multiple of
+  ``log_interval`` (a shorter last cycle, for example) are run but not
+  recorded.
+* The run takes every step unless ``q_threshold`` is set. Then it stops once
+  Q, the fraction of native contacts formed, has stayed at or above
+  ``q_threshold`` for ``convergence_window`` cycles in a row (default 10),
+  and prints how many of the steps it ran. Q counts the native contacts of
+  ``reference_pdb`` (default: ``pdb``), defined by the same keys and defaults
+  as in replica exchange.
+
+A JSON config sets these in its ``folding`` block, as ``steps_per_cycle``,
+``q_threshold``, ``convergence_window`` and the native-contact keys. There
+``integrator.steps`` is the total, and a cycle is one
+``integrator.report_interval`` unless ``steps_per_cycle`` is set.
+
 .. option:: config
 
    Path to the config file (``.json``, ``.yaml`` or ``.yml``).
@@ -118,7 +150,8 @@ it either. See :doc:`checkpointing`.
 -----------------
 
 Load a config and check its settings without running anything, then print the
-mode, the PDB path, and the checkpoint directory and interval it resolved. It
+mode, the PDB path, and the checkpoint directory and interval it resolved, or
+that checkpointing is off. It
 takes the same checkpoint options as ``mcpu run``, so you can check a config in
 the form you will run it.
 
@@ -127,7 +160,7 @@ the form you will run it.
    mcpu validate config.yaml
 
 It exits with status 1 and the reason if the config has an unknown key or a
-value the loader rejects, or if the ``pdb`` file, or the ``reference_pdb`` file
-of a replica exchange config, is missing or is not a file. It does not read
+value the loader rejects, or if the ``pdb`` or ``reference_pdb`` file is
+missing or is not a file. It does not read
 the structure or the force-field parameters, so a problem inside the PDB file
 shows up only when the run starts.

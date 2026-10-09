@@ -168,11 +168,30 @@ def _bundled_root(set_name: str) -> Path:
     return Path(PACKAGE_ROOT) / "data" / "params" / set_name
 
 
-def _digest12(path: Path) -> str:
+def _cache_digest12(set_name: str, archive: Path) -> str:
+    """First 12 hex digits of a sha256 over everything a materialized set holds.
+
+    That is the table archive and every constants file copied next to it,
+    each by its relative path (sorted) and contents, so a release that changes
+    only a constants file gets a new cache directory too. A constants file
+    the package lacks is hashed as absent, as ``_materialize_into`` skips it.
+    """
     digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1 << 20), b""):
-            digest.update(chunk)
+
+    def _add(label: str, path: Path) -> None:
+        digest.update(label.encode() + b"\0")
+        if not path.is_file():
+            digest.update(b"absent\0")
+            return
+        digest.update(str(path.stat().st_size).encode() + b"\0")
+        with path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1 << 20), b""):
+                digest.update(chunk)
+
+    _add("tables.npz", archive)
+    src_root = _bundled_root(set_name)
+    for relpath in sorted(constants_files(set_name)):
+        _add(relpath, src_root / relpath)
     return digest.hexdigest()[:12]
 
 
@@ -232,9 +251,11 @@ def materialize_from_wheel(
     exactly the shape every other resolution step returns, so the loader has a
     single code path.
 
-    The cache directory is **content-addressed** (``<set>-<sha256(npz)[:12]>``),
-    which removes staleness logic entirely: a wheel upgrade that changes the
-    tables produces a different directory, so there is nothing to invalidate.
+    The cache directory is **content-addressed** (``<set>-<sha256[:12]>``, the
+    hash covering the table archive and every constants file), which removes
+    staleness logic entirely: a wheel upgrade that changes the tables or a
+    constants file produces a different directory, so there is nothing to
+    invalidate.
 
     Concurrency: ``scripts/job_template.slurm`` starts N MPI ranks per node
     against a shared ``$HOME``, so N processes can race here. ``os.mkdir`` is
@@ -261,7 +282,7 @@ def materialize_from_wheel(
     required = list(required_files(set_name).values())
     base = get_cache_dir() / "materialized"
     base.mkdir(parents=True, exist_ok=True)
-    tag = f"{set_name}-{_digest12(archive)}"
+    tag = f"{set_name}-{_cache_digest12(set_name, archive)}"
     final = base / tag
     lock = base / f".{tag}.lock"
 

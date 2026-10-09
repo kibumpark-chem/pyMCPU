@@ -1,9 +1,9 @@
 """Self-consistency tests for ``FoldingRunner``'s folding-progress metrics.
 
 Covers native-contact detection, Q (fraction of native contacts formed) and
-CA RMSD-to-native computation, convergence-window logic, and the
-``FoldingBias`` / ``BasinTracker`` skeleton classes (including their
-checkpoint round-trip). None of this compares against legacy MCPU -- legacy
+CA RMSD-to-native computation, convergence-window logic, and the removal of
+the ``FoldingBias`` / ``BasinTracker`` skeletons (old checkpoints that carry
+their fields still load). None of this compares against legacy MCPU -- legacy
 MCPU has no folding-progress-tracking feature to compare against, so every
 check here is an internal consistency property (e.g. "the native structure
 scores near-perfect on its own metric", "RMSD is never negative", "a window
@@ -35,7 +35,6 @@ import mdtraj as md  # noqa: E402
 
 from pymcpu.checkpointing import CheckpointConfig, FoldingCheckpointState, load_checkpoint  # noqa: E402
 from pymcpu.sampling.folding import FoldingRunner  # noqa: E402
-from pymcpu.sampling.folding_bias import BasinTracker, FoldingBias  # noqa: E402
 
 # ── Shared test-runner construction ──────────────────────────────
 
@@ -63,12 +62,6 @@ def _ca_blocks_forcefield(pdb: str | Path) -> SimpleNamespace:
 def _make_minimal_folding_runner(
     reference_pdb: str | Path | None = None,
     pdb_path: str | Path | None = None,
-    enable_bias: bool = False,
-    bias_k: float = 0.0,
-    bias_r0: float = 0.0,
-    bias_mode: str = "none",
-    enable_basins: bool = False,
-    n_basins: int = 1,
 ) -> FoldingRunner:
     """Lightweight FoldingRunner for metric unit tests (no full MC engine)."""
     if pdb_path is None:
@@ -106,7 +99,6 @@ def _make_minimal_folding_runner(
     runner._ca_internal_idx = None
     runner.native_contact_pairs = None
     runner.convergence_history = []
-    runner.folding_events = []
     runner.checkpoint_config = CheckpointConfig()
     runner.traj_reporters = {}
     runner.traj_frame_counts = {}
@@ -116,12 +108,6 @@ def _make_minimal_folding_runner(
     runner.fixed_residues = []
     runner.linker_residues = []
     runner.linker_energy_mode = _INIT_DEFAULTS["linker_energy_mode"].default
-    runner.folding_bias = (
-        FoldingBias(k=bias_k, r0=bias_r0, mode=bias_mode) if enable_bias else None
-    )
-    runner.basin_tracker = (
-        BasinTracker(n_basins=n_basins, n_replicas=1) if enable_basins else None
-    )
     return runner
 
 
@@ -319,6 +305,14 @@ class TestComputeRmsd:
 
 
 class TestConvergenceWindow:
+    def test_off_without_a_threshold(self) -> None:
+        """The early stop is opt-in: with no q_threshold (the default) a
+        history of folded cycles never stops the run."""
+        runner = _make_minimal_folding_runner(reference_pdb=None)
+        assert runner.q_threshold is None
+        runner.convergence_history = [1.0] * 50
+        assert runner._check_folding_convergence() is False
+
     def test_false_on_empty_history(self) -> None:
         runner = _make_minimal_folding_runner(reference_pdb=None)
         runner.convergence_history = []
@@ -395,147 +389,49 @@ def test_save_checkpoint_captures_convergence_history(
     assert loaded.convergence_history == [0.5, 0.6, 0.7]
 
 
-# ── FoldingBias ────────────────────────────────────────────────────
+# ── FoldingBias / BasinTracker were removed ──────────────────────────
 
 
-class TestFoldingBias:
-    def test_default_mode_is_none(self) -> None:
-        b = FoldingBias()
-        assert b.mode == "none"
-        assert b.k == 0.0
-        assert b.r0 == 0.0
+class TestSkeletonsRemoved:
+    """``FoldingBias`` and ``BasinTracker`` never acted on a run
+    (``enable_bias=True`` ran unbiased), so they are gone, with the six
+    FoldingRunner arguments that built them."""
 
-    def test_apply_none_mode_returns_zero(self) -> None:
-        b = FoldingBias(mode="none", k=5.0, r0=0.8)
-        assert b.apply(np.zeros((10, 3)), q=0.5) == 0.0
+    def test_not_exported(self) -> None:
+        import pymcpu.sampling as sampling
 
-    def test_apply_harmonic(self) -> None:
-        b = FoldingBias(mode="harmonic", k=2.0, r0=0.8)
-        energy = b.apply(np.zeros((10, 3)), q=0.6)
-        expected = 0.5 * 2.0 * (0.6 - 0.8) ** 2  # closed-form harmonic well
-        assert abs(energy - expected) < 1e-9
+        for name in ("FoldingBias", "BasinTracker"):
+            assert not hasattr(sampling, name)
+            assert name not in sampling.__all__
+        with pytest.raises(ModuleNotFoundError):
+            __import__("pymcpu.sampling.folding_bias")
 
-    def test_get_set_params_round_trip(self) -> None:
-        b1 = FoldingBias(k=3.0, r0=0.7, mode="harmonic")
-        params = b1.get_params()
+    @pytest.mark.parametrize(
+        "name", ["enable_bias", "bias_k", "bias_r0", "bias_mode", "enable_basins", "n_basins"]
+    )
+    def test_folding_runner_argument_is_gone(self, name: str) -> None:
+        assert name not in _INIT_DEFAULTS
 
-        b2 = FoldingBias()
-        b2.set_params(params)
+    def test_an_old_checkpoint_with_their_fields_loads(self, tmp_path: Path, monkeypatch) -> None:
+        """A checkpoint written while they existed carries folding_bias_params,
+        basin_assignments and folding_events; a runner loads it and ignores them."""
+        from pymcpu.checkpointing import save_checkpoint
 
-        assert b2.k == 3.0
-        assert b2.r0 == 0.7
-        assert b2.mode == "harmonic"
-
-    def test_extra_params_preserved_round_trip(self) -> None:
-        """Extra kwargs (forward-compatible funnel-bias params) must survive
-        get/set round-trip."""
-        b = FoldingBias(k=1.0, r0=0.5, mode="funnel", width=0.3, offset=0.1)
-        params = b.get_params()
-        assert params["width"] == 0.3
-        assert params["offset"] == 0.1
-
-        b2 = FoldingBias()
-        b2.set_params(params)
-        assert b2.extra["width"] == 0.3
-        assert b2.extra["offset"] == 0.1
-
-
-class TestBasinTracker:
-    def test_default_assigns_all_to_basin_zero(self) -> None:
-        bt = BasinTracker(n_basins=3, n_replicas=4)
-        bt.update(np.array([0.5, 0.6, 0.7, 0.8]))
-        assert all(bt.assignments == 0)
-
-    def test_get_assignments_returns_a_copy(self) -> None:
-        bt = BasinTracker(n_basins=2, n_replicas=2)
-        a1 = bt.get_assignments()
-        a1[0] = 99
-        assert bt.assignments[0] == 0, "get_assignments must return a copy, not a reference"
-
-
-# ── FoldingRunner <-> FoldingBias/BasinTracker wiring ────────────────
-
-
-class TestFoldingRunnerBiasWiring:
-    def test_bias_and_basins_none_by_default(self) -> None:
-        """With enable_bias=False/enable_basins=False (defaults), both are None."""
-        runner = _make_minimal_folding_runner(reference_pdb=None)
-        assert runner.folding_bias is None
-        assert runner.basin_tracker is None
-
-    def test_bias_and_basins_set_when_enabled(self) -> None:
-        runner = _make_minimal_folding_runner(
-            reference_pdb=None,
-            enable_bias=True,
-            bias_k=1.5,
-            bias_r0=0.7,
-            bias_mode="harmonic",
-            enable_basins=True,
-            n_basins=2,
-        )
-        assert isinstance(runner.folding_bias, FoldingBias)
-        assert isinstance(runner.basin_tracker, BasinTracker)
-        assert runner.folding_bias.k == 1.5
-        assert runner.folding_bias.mode == "harmonic"
-
-
-class TestFoldingBiasCheckpointRoundTrip:
-    def test_params_survive_round_trip_when_enabled(self, tmp_path: Path, monkeypatch) -> None:
-        runner = _make_minimal_folding_runner(
-            reference_pdb=None, enable_bias=True, bias_k=2.0, bias_r0=0.8, bias_mode="harmonic"
-        )
-        loaded = _save_and_reload(runner, tmp_path, monkeypatch, cycle=1)
-        assert loaded.folding_bias_params == {"k": 2.0, "r0": 0.8, "mode": "harmonic"}
-
-    def test_stores_none_when_disabled(self, tmp_path: Path, monkeypatch) -> None:
-        """Regression coverage for a past bug where save_checkpoint gated
-        this on hasattr(self, 'folding_bias') -- always True since the
-        attribute exists whether or not bias is enabled, so the guard never
-        actually distinguished enabled from disabled. Checked here by
-        constructing a disabled runner and asserting the checkpoint really
-        does come back None, not by grepping source text."""
-        runner = _make_minimal_folding_runner(reference_pdb=None)
-        loaded = _save_and_reload(runner, tmp_path, monkeypatch, cycle=1)
-        assert loaded.folding_bias_params is None
-
-
-class TestBasinTrackerCheckpointRoundTrip:
-    def test_assignments_survive_round_trip_when_enabled(self, tmp_path: Path, monkeypatch) -> None:
-        runner = _make_minimal_folding_runner(reference_pdb=None, enable_basins=True, n_basins=3)
-        runner.basin_tracker.assignments = np.array([0, 2, 1], dtype=np.int32)
-        loaded = _save_and_reload(runner, tmp_path, monkeypatch, cycle=2)
-        np.testing.assert_array_equal(loaded.basin_assignments, [0, 2, 1])
-
-    def test_assignments_restored_into_a_fresh_runner(self, tmp_path: Path, monkeypatch) -> None:
-        """load_checkpoint must restore basin_tracker.assignments when enabled."""
-        runner_save = _make_minimal_folding_runner(reference_pdb=None, enable_basins=True, n_basins=2)
-        runner_save.basin_tracker.assignments = np.array([1, 0], dtype=np.int32)
+        runner_save = _make_minimal_folding_runner(reference_pdb=None)
+        runner_save.convergence_history = [0.4, 0.5]
         _save_checkpoint_with_random_coords(runner_save, tmp_path, monkeypatch, cycle=5)
+        old = load_checkpoint(str(tmp_path / "last.chk"))
+        old.update(
+            folding_bias_params={"k": 2.0, "r0": 0.8, "mode": "harmonic"},
+            basin_assignments=np.array([1], dtype=np.int32),
+            folding_events=[{"cycle": 4, "Q": 0.5}],
+        )
+        save_checkpoint(old, checkpoint_dir=str(tmp_path / "old"), filename="last.chk")
 
-        runner_load = _make_minimal_folding_runner(reference_pdb=None, enable_basins=True, n_basins=2)
-        runner_load.checkpoint_config.checkpoint_dir = str(tmp_path)
-        runner_load.load_checkpoint(str(tmp_path / "last.chk"))
-        np.testing.assert_array_equal(runner_load.basin_tracker.assignments, [1, 0])
+        runner_load = _make_minimal_folding_runner(reference_pdb=None)
+        state = runner_load.load_checkpoint(str(tmp_path / "old" / "last.chk"))
 
-    def test_stores_none_when_disabled(self, tmp_path: Path, monkeypatch) -> None:
-        """Save-side counterpart of the folding_bias disabled-guard regression
-        test above, for basin_tracker: a runner with basins disabled must
-        checkpoint basin_assignments=None, not crash on a hasattr guard that
-        can't tell disabled from enabled."""
-        runner = _make_minimal_folding_runner(reference_pdb=None)
-        loaded = _save_and_reload(runner, tmp_path, monkeypatch, cycle=1)
-        assert loaded.basin_assignments is None
-
-    def test_disabled_loader_ignores_a_checkpoints_basin_data(self, tmp_path: Path, monkeypatch) -> None:
-        """Load-side counterpart: a runner loading a checkpoint that *does*
-        carry basin_assignments (saved by a basins-enabled run) must not
-        crash when its own basin_tracker is None -- the restore is skipped,
-        not force-applied to a tracker that doesn't exist."""
-        runner_save = _make_minimal_folding_runner(reference_pdb=None, enable_basins=True, n_basins=2)
-        runner_save.basin_tracker.assignments = np.array([1, 0], dtype=np.int32)
-        _save_checkpoint_with_random_coords(runner_save, tmp_path, monkeypatch, cycle=5)
-
-        runner_load = _make_minimal_folding_runner(reference_pdb=None)  # basins disabled
-        runner_load.checkpoint_config.checkpoint_dir = str(tmp_path)
-        runner_load.load_checkpoint(str(tmp_path / "last.chk"))  # must not raise
-        assert runner_load.basin_tracker is None
+        assert state.cycle == 5
+        assert runner_load.convergence_history == [0.4, 0.5]
+        for name in ("folding_bias", "basin_tracker", "folding_events"):
+            assert not hasattr(runner_load, name)

@@ -16,7 +16,13 @@ from typing import TYPE_CHECKING, Sequence
 import numpy as np
 import mdtraj as md
 
-from pymcpu.config import ContactAtomMode, VALID_CONTACT_ATOM_MODES
+from pymcpu.config import (
+    DEFAULT_CONTACT_ATOM_MODE,
+    DEFAULT_CONTACT_CUTOFF,
+    DEFAULT_MIN_SEQ_SEP,
+    VALID_CONTACT_ATOM_MODES,
+    ContactAtomMode,
+)
 
 if TYPE_CHECKING:  # avoid importing the engine just to use this module
     from pymcpu.forcefields.base import BaseForceField
@@ -40,10 +46,12 @@ class NativeContactsCV:
     The *native contact set* can be defined in one of two ways:
 
     * **Derived** (default, ``native_contact_pairs=None``): pairs of residues
-      whose sequence separation is at least ``min_seq_sep`` and whose
-      reference contact-atom distance is below ``contact_cutoff`` (Å). Both
-      are user-defined; the C++ bias potential receives the same precomputed pair
-      list.
+      whose sequence separation is at least ``min_seq_sep`` (default 4) and
+      whose reference contact-atom distance is below ``contact_cutoff``
+      (default 6.0 Å). These defaults, with CA atoms, are the native-contact
+      definition everywhere in pyMCPU: the configs, the runners and the
+      sampling drivers. The C++ bias potential receives the same precomputed
+      pair list.
     * **Explicit**: pass ``native_contact_pairs`` — an ``(n_pairs, 2)``
       array-like of 0-based residue indices — to hand-specify the exact pair
       list instead. When given, it *replaces* the cutoff/``min_seq_sep``
@@ -105,15 +113,15 @@ class NativeContactsCV:
         self,
         ca_internal_idx: np.ndarray,
         ref_ca_xyz: np.ndarray,
-        contact_cutoff: float = 8.0,
-        min_seq_sep: int = 3,
+        contact_cutoff: float = DEFAULT_CONTACT_CUTOFF,
+        min_seq_sep: int = DEFAULT_MIN_SEQ_SEP,
         beta_c: float = 5.0,
         lam: float = 1.2,
         mode: str = "hard",
         q_cutoff: float | None = None,
         fixed_residue_mask: np.ndarray | None = None,
         energy_ignored_residue_mask: np.ndarray | None = None,
-        contact_atom_mode: str = "ca",
+        contact_atom_mode: str = DEFAULT_CONTACT_ATOM_MODE,
         native_contact_pairs: Sequence[Sequence[int]] | np.ndarray | None = None,
     ):
         self.contact_atom_mode = normalize_contact_atom_mode(contact_atom_mode)

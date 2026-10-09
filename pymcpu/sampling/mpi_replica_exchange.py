@@ -19,6 +19,7 @@ import numpy as np
 
 from pymcpu import mcpu_core
 from pymcpu.simulation import check_state_clash
+from pymcpu.config import DEFAULT_CONTACT_ATOM_MODE, DEFAULT_CONTACT_CUTOFF, DEFAULT_MIN_SEQ_SEP
 from pymcpu.checkpointing import (
     CHECKPOINT_FORMAT_VERSION,
     CheckpointConfig,
@@ -173,10 +174,10 @@ class MPIReplicaExchange:
         n_q_windows: int = 1,
         q_step: float = 0.1,
         k_bias: float = 0.0,
-        contact_cutoff: float = 6.0,
+        contact_cutoff: float = DEFAULT_CONTACT_CUTOFF,
         q_cutoff: float | None = None,
-        min_seq_sep: int = 4,
-        contact_atom_mode: str = "ca",
+        min_seq_sep: int = DEFAULT_MIN_SEQ_SEP,
+        contact_atom_mode: str = DEFAULT_CONTACT_ATOM_MODE,
         native_contact_pairs: list[list[int]] | None = None,
         log_interval: int = 100,
         output_prefix: str = "rex",
@@ -1239,8 +1240,12 @@ class MPIReplicaExchange:
 
         self._mc_replica_steps = int(mc_replica_steps)
 
+        # Checkpoints are written only with a checkpoint_dir and enabled=True.
+        # Every rank reads the same config, so all agree on this.
+        saving = bool(cfg.enabled and cfg.checkpoint_dir)
+
         # 1. makedirs (rank 0) + barrier
-        if self.rank == 0 and cfg.checkpoint_dir:
+        if self.rank == 0 and saving:
             Path(cfg.checkpoint_dir).mkdir(parents=True, exist_ok=True)
         self.comm.Barrier()
 
@@ -1451,7 +1456,7 @@ class MPIReplicaExchange:
                     if verbose and self.rank == 0:
                         print(f"Cycle {self._cycle}/{num_cycles} complete", flush=True)
 
-                    if self._cycle > 0 and self._cycle % interval == 0:
+                    if saving and self._cycle > 0 and self._cycle % interval == 0:
                         _flush_logs()
                         self._mpi_save_checkpoint(self._cycle, self.comm)
                         if self.rank == 0:
@@ -1462,9 +1467,10 @@ class MPIReplicaExchange:
                         for slot in self.replicas.values():
                             slot.simulation.flush_reporters()
                         _flush_logs()
-                        self._mpi_save_checkpoint(self._cycle, self.comm)
-                        if self.rank == 0:
-                            written_rex_stats = _dump_rex_stats()
+                        if saving:
+                            self._mpi_save_checkpoint(self._cycle, self.comm)
+                            if self.rank == 0:
+                                written_rex_stats = _dump_rex_stats()
                         break
         finally:
             if exchange_file is not None:

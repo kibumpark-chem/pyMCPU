@@ -74,7 +74,10 @@ a force field from `build_forcefield(spec)`.
 Built-in `type` values: `native_contacts_q`, `native_contacts_n`, `ca_rmsd`,
 `two_state_rmsd`, `two_state_delta` and `custom`. Several specs in one list
 give one CV whose values are concatenated, with its `ndim` and `labels`
-combined.
+combined. The two native-contact types take `reference_pdb` and, optionally,
+`contact_cutoff` (default 6 Å), `min_seq_sep` (default 4),
+`contact_atom_mode` (default `ca`) and `native_contact_pairs`, with the same
+defaults as everywhere else in pyMCPU.
 
 `custom` takes a dotted path to your own factory, so a framework-specific CV
 needs no change to pyMCPU:

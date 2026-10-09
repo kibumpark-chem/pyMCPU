@@ -21,12 +21,16 @@ __all__ = [
     "CheckpointConfig",
     "ConstraintsConfig",
     "EngineSpec",
+    "FoldingConfig",
     "IntegratorConfig",
     "OutputsConfig",
     "ReplicaExchangeConfig",
     "SimulationConfig",
-    # Enumerated value sets
+    # Enumerated value sets and shared defaults
     "ContactAtomMode",
+    "DEFAULT_CONTACT_ATOM_MODE",
+    "DEFAULT_CONTACT_CUTOFF",
+    "DEFAULT_MIN_SEQ_SEP",
     "LinkerEnergyMode",
     "Mode",
     "SidechainMoveMode",
@@ -44,6 +48,7 @@ __all__ = [
     "normalize_pivot_rama_probability",
     "normalize_pivot_rama_schedule",
     "normalize_sidechain_move_mode",
+    "resolve_k_bias",
     "validate_fixed_linker_disjoint",
     # Paths and scalar parsing
     "parse_float_list",
@@ -64,6 +69,32 @@ __all__ = [
 Mode = Literal["folding", "replica_exchange_2d"]
 ContactAtomMode = Literal["ca", "cb"]
 VALID_CONTACT_ATOM_MODES: tuple[str, ...] = ("ca", "cb")
+
+#: The default native-contact definition, the same for every entry point
+#: (YAML and JSON configs, the runners, ``FoldingRunner``, both replica
+#: exchange drivers, ``NativeContactsCV`` and ``build_cv``): a pair of
+#: residues at least ``DEFAULT_MIN_SEQ_SEP`` apart in sequence whose CA atoms
+#: are closer than ``DEFAULT_CONTACT_CUTOFF`` Angstrom in the reference.
+DEFAULT_CONTACT_CUTOFF: float = 6.0
+DEFAULT_MIN_SEQ_SEP: int = 4
+DEFAULT_CONTACT_ATOM_MODE: ContactAtomMode = "ca"
+
+# Umbrella strength a replica exchange config gets when it sets targets but no
+# k_bias. Without targets the default is 0: no umbrella.
+_DEFAULT_K_BIAS_WITH_TARGETS = 1.0
+
+
+def resolve_k_bias(k_bias: float | None, *, has_targets: bool) -> float:
+    """The umbrella strength on N for a run that leaves ``k_bias`` unset.
+
+    ``k_bias`` itself when given. Otherwise 1.0 when the run has umbrella
+    targets, and 0.0, no umbrella, when it has none: without targets the one
+    window sits at N = 0, so a default bias would pull every replica toward
+    unfolded structures.
+    """
+    if k_bias is not None:
+        return float(k_bias)
+    return _DEFAULT_K_BIAS_WITH_TARGETS if has_targets else 0.0
 
 
 def _normalize_contact_atom_mode_cfg(mode: str | None) -> ContactAtomMode:
@@ -211,34 +242,91 @@ class OutputsConfig:
 @dataclass
 class ReplicaExchangeConfig:
     temperatures: list[float] = field(default_factory=lambda: [0.5, 0.6])
-    native_contact_targets: list[float] | None = field(
-        default_factory=lambda: [0.0, 5.0, 10.0]
-    )
+    #: Umbrella centres in native contacts N. With neither these nor
+    #: ``q_targets`` there is one window and, by default, no umbrella.
+    native_contact_targets: list[float] | None = None
     q_targets: list[float] | None = None
-    k_native_contacts: float = 1.0
+    #: Umbrella strength on N. ``None`` (the default): 1.0 when targets are
+    #: set, 0.0 (no umbrella) when they are not; see :func:`resolve_k_bias`.
+    k_native_contacts: float | None = None
     k_bias: float | None = None  # alias for k_native_contacts
     cycles: int = 10
     steps_per_cycle: int = 100
     swap_interval: int | None = None
     backend: Literal["serial"] = "serial"
     log_interval: int = 100
-    contact_cutoff: float = 6.0
-    min_seq_sep: int = 4
-    contact_atom_mode: Literal["ca", "cb"] = "ca"
+    contact_cutoff: float = DEFAULT_CONTACT_CUTOFF
+    min_seq_sep: int = DEFAULT_MIN_SEQ_SEP
+    contact_atom_mode: Literal["ca", "cb"] = DEFAULT_CONTACT_ATOM_MODE
     native_contact_pairs: list[list[int]] | None = None
     exchange_log: Literal["none", "all"] = "none"
     state_log_interval: int = 0
     log_walker_in_data_csv: bool = True
 
+    def has_targets(self) -> bool:
+        """True when the config sets umbrella targets, in N or in Q."""
+        return self.native_contact_targets is not None or self.q_targets is not None
+
     def effective_k_bias(self) -> float:
-        if self.k_bias is not None:
-            return float(self.k_bias)
-        return float(self.k_native_contacts)
+        k = self.k_bias if self.k_bias is not None else self.k_native_contacts
+        return resolve_k_bias(k, has_targets=self.has_targets())
 
     def effective_mc_steps(self) -> int:
         if self.swap_interval is not None:
             return int(self.swap_interval)
         return int(self.steps_per_cycle)
+
+
+@dataclass
+class FoldingConfig:
+    """Settings only a folding run (mode ``"folding"``) reads.
+
+    A folding run is divided into cycles of ``steps_per_cycle`` MC steps;
+    ``checkpoint_interval`` counts them. ``None`` makes a cycle one
+    ``integrator.report_interval``.
+
+    ``q_threshold`` turns on an early stop: the run ends once Q, the fraction
+    of native contacts formed, has stayed at or above it for
+    ``convergence_window`` cycles in a row. ``None`` (the default) never stops
+    early. Q counts the native contacts of the config's ``reference_pdb`` (by
+    default its ``pdb``), defined by the last four fields, which have the
+    same meaning and defaults as in :class:`ReplicaExchangeConfig`.
+    """
+
+    steps_per_cycle: int | None = None
+    q_threshold: float | None = None
+    convergence_window: int = 10
+    contact_cutoff: float = DEFAULT_CONTACT_CUTOFF
+    min_seq_sep: int = DEFAULT_MIN_SEQ_SEP
+    contact_atom_mode: Literal["ca", "cb"] = DEFAULT_CONTACT_ATOM_MODE
+    native_contact_pairs: list[list[int]] | None = None
+
+    def __post_init__(self) -> None:
+        if self.steps_per_cycle is not None:
+            self.steps_per_cycle = _positive_int(self.steps_per_cycle, "steps_per_cycle")
+        if self.q_threshold is not None:
+            q = self.q_threshold
+            if isinstance(q, bool) or not (0.0 < float(q) <= 1.0):
+                raise ValueError(
+                    f"q_threshold is a fraction of native contacts, in (0, 1], got "
+                    f"{self.q_threshold!r}; leave it unset to run every step"
+                )
+            self.q_threshold = float(q)
+        self.convergence_window = _positive_int(self.convergence_window, "convergence_window")
+        self.contact_atom_mode = _normalize_contact_atom_mode_cfg(self.contact_atom_mode)
+
+
+def _positive_int(value: Any, name: str) -> int:
+    """``value`` as an int, refusing booleans, fractions and values below 1."""
+    ok = isinstance(value, (int, float)) and not isinstance(value, bool)
+    if ok:
+        try:
+            ok = value == int(value) and value >= 1
+        except (OverflowError, ValueError):  # inf, nan
+            ok = False
+    if not ok:
+        raise ValueError(f"{name} must be a positive whole number, got {value!r}")
+    return int(value)
 
 
 LinkerEnergyMode = Literal["ignore_all", "clash_only"]
@@ -356,6 +444,8 @@ class SimulationConfig:
     integrator: IntegratorConfig = field(default_factory=IntegratorConfig)
     outputs: OutputsConfig = field(default_factory=OutputsConfig)
     replica_exchange: ReplicaExchangeConfig | None = None
+    #: Read by mode "folding" only.
+    folding: FoldingConfig = field(default_factory=FoldingConfig)
     constraints: ConstraintsConfig = field(default_factory=ConstraintsConfig)
     checkpoint: CheckpointConfig = field(default_factory=CheckpointConfig)
 
@@ -566,6 +656,11 @@ def config_from_dict(data: Mapping[str, Any]) -> SimulationConfig:
 
     rex: ReplicaExchangeConfig | None = None
     if mode == "replica_exchange_2d":
+        if data.get("folding") is not None:
+            raise ValueError(
+                "The 'folding' block applies to mode 'folding' only; a "
+                "replica_exchange_2d config takes its settings in 'replica_exchange'"
+            )
         rex_raw = data.get("replica_exchange")
         if rex_raw is None:
             raise ValueError("replica_exchange_2d mode requires 'replica_exchange'")
@@ -574,10 +669,12 @@ def config_from_dict(data: Mapping[str, Any]) -> SimulationConfig:
         )
         if not rex.temperatures:
             raise ValueError("replica_exchange.temperatures must be non-empty")
-        if rex.native_contact_targets is None and rex.q_targets is None:
-            raise ValueError(
-                "Provide replica_exchange.native_contact_targets or q_targets"
-            )
+        _check_targets(
+            rex.native_contact_targets,
+            rex.q_targets,
+            n_name="replica_exchange.native_contact_targets",
+            q_name="replica_exchange.q_targets",
+        )
         if rex.backend != "serial":
             raise ValueError(
                 f"Only backend='serial' is supported for now (got {rex.backend!r})"
@@ -586,6 +683,7 @@ def config_from_dict(data: Mapping[str, Any]) -> SimulationConfig:
         rex = _merge_dataclass(
             ReplicaExchangeConfig, data["replica_exchange"], label="replica_exchange"
         )
+    folding = _merge_dataclass(FoldingConfig, data.get("folding"), label="folding")
 
     return SimulationConfig(
         mode=mode,
@@ -598,9 +696,28 @@ def config_from_dict(data: Mapping[str, Any]) -> SimulationConfig:
         integrator=integrator,
         outputs=outputs,
         replica_exchange=rex,
+        folding=folding,
         constraints=constraints,
         checkpoint=checkpoint,
     )
+
+
+def _check_targets(
+    n_targets: Sequence[float] | None,
+    q_targets: Sequence[float] | None,
+    *,
+    n_name: str,
+    q_name: str,
+) -> None:
+    """Refuse both kinds of umbrella target at once, and an empty list."""
+    if n_targets is not None and q_targets is not None:
+        raise ValueError(f"Provide either {n_name!r} or {q_name!r}, not both")
+    for name, values in ((n_name, n_targets), (q_name, q_targets)):
+        if values is not None and len(values) == 0:
+            raise ValueError(
+                f"{name!r} is empty; list at least one umbrella target, or leave "
+                "it out for one window with no umbrella"
+            )
 
 
 def load_config(path: str | Path) -> SimulationConfig:
@@ -713,6 +830,8 @@ _YAML_KEYS = frozenset({
     "seed", "mc_replica_steps", "steps", "num_cycles", "log_interval",
     "step_size_rad", "sidechain_move_mode", "pivot_rama_probability",
     "pivot_rama_schedule", "move_weights", "full_energy_every_steps",
+    # folding only: the early stop
+    "q_threshold", "convergence_window",
     # replica exchange
     "q_targets", "n_targets", "native_contact_targets", "k_bias",
     "k_native_contacts", "contact_cutoff", "min_seq_sep", "contact_atom_mode",
@@ -735,7 +854,7 @@ _RETIRED_YAML_KEYS = {
     "output_layout": "the output location comes from output_prefix and output_dir",
     "mode": (
         "a YAML config runs replica exchange when it lists more than one "
-        "temperature, and folding otherwise"
+        "temperature or sets targets, and folding otherwise"
     ),
 }
 
@@ -852,12 +971,14 @@ def load_yaml_config(path: str | Path) -> SimulationConfig:
     """Load a flat YAML config and map it to SimulationConfig.
 
     This accepts the flat schema used by pyMCPU production runs:
-        pdb, output_prefix, num_cycles, mc_replica_steps, seed,
+        pdb, output_prefix, num_cycles, mc_replica_steps, steps, seed,
         fixed_residue_indices, temp_min/temp_step/n_temps (or temperatures),
         n_targets/native_contact_targets or q_targets, k_bias, contact_cutoff,
-        min_seq_sep, checkpointing / checkpoint_dir, log_interval, …
+        min_seq_sep, checkpointing / checkpoint_dir, log_interval, ...
 
-    An unknown key raises ValueError (see :func:`check_yaml_keys`).
+    A config runs replica exchange when it lists more than one temperature or
+    sets targets, and folding otherwise; see :func:`yaml_dict_to_config`. An
+    unknown key raises ValueError (see :func:`check_yaml_keys`).
     """
     import yaml
 
@@ -870,10 +991,97 @@ def load_yaml_config(path: str | Path) -> SimulationConfig:
     return yaml_dict_to_config(data, source=str(p))
 
 
+# Cycle length of a run that does not set one, in MC steps.
+_DEFAULT_CYCLE_STEPS = 1000
+_DEFAULT_NUM_CYCLES = 10
+
+# Keys only a folding run reads.
+_YAML_FOLDING_ONLY_KEYS = ("q_threshold", "convergence_window")
+
+
+def _yaml_count(data: Mapping[str, Any], key: str) -> int | None:
+    value = data.get(key)
+    return None if value is None else _positive_int(value, key)
+
+
+def _folding_run_length(data: Mapping[str, Any]) -> tuple[int, int]:
+    """Total MC steps and cycle length of a folding YAML config.
+
+    ``steps`` is the total. The cycle length is ``mc_replica_steps`` when set,
+    else ``steps / num_cycles`` when both are set, else 1000 steps (or all of
+    ``steps``, if fewer). Without ``steps`` the total is
+    ``num_cycles x mc_replica_steps``, as in replica exchange.
+    """
+    steps = _yaml_count(data, "steps")
+    num_cycles = _yaml_count(data, "num_cycles")
+    per_cycle = _yaml_count(data, "mc_replica_steps")
+    if steps is None:
+        per_cycle = per_cycle or _DEFAULT_CYCLE_STEPS
+        return (num_cycles or _DEFAULT_NUM_CYCLES) * per_cycle, per_cycle
+    if per_cycle is None:
+        if num_cycles is None:
+            return steps, min(steps, _DEFAULT_CYCLE_STEPS)
+        if steps % num_cycles:
+            raise ValueError(
+                f"In a folding config (one temperature, no targets) steps is the "
+                f"total number of MC steps, split into num_cycles cycles, so it "
+                f"must be a multiple of num_cycles; got steps={steps}, "
+                f"num_cycles={num_cycles}"
+            )
+        return steps, steps // num_cycles
+    if num_cycles is not None and num_cycles * per_cycle != steps:
+        raise ValueError(
+            f"In a folding config (one temperature, no targets) steps is the "
+            f"total number of MC steps, so it must equal num_cycles x "
+            f"mc_replica_steps when all three are set; got steps={steps}, "
+            f"num_cycles={num_cycles}, mc_replica_steps={per_cycle} "
+            f"(= {num_cycles * per_cycle}). Set two of them."
+        )
+    return steps, min(per_cycle, steps)
+
+
+def _native_contacts_from_yaml(data: Mapping[str, Any]) -> dict[str, Any]:
+    """The native-contact definition of a YAML config, either mode."""
+    pairs_raw = data.get("native_contact_pairs")
+    pairs: list[list[int]] | None = None
+    if pairs_raw is not None:
+        pairs = []
+        for pair in pairs_raw:
+            pair_list = list(pair)
+            if len(pair_list) != 2:
+                raise ValueError(
+                    "native_contact_pairs entries must have exactly 2 "
+                    f"elements, got {pair!r}"
+                )
+            pairs.append([int(pair_list[0]), int(pair_list[1])])
+    return {
+        "contact_cutoff": float(data.get("contact_cutoff", DEFAULT_CONTACT_CUTOFF)),
+        "min_seq_sep": int(data.get("min_seq_sep", DEFAULT_MIN_SEQ_SEP)),
+        "contact_atom_mode": _normalize_contact_atom_mode_cfg(
+            data.get("contact_atom_mode", DEFAULT_CONTACT_ATOM_MODE)
+        ),
+        "native_contact_pairs": pairs,
+    }
+
+
 def yaml_dict_to_config(
     data: Mapping[str, Any], *, source: str = "the YAML config"
 ) -> SimulationConfig:
     """Convert a flat YAML dict into a SimulationConfig.
+
+    The config runs replica exchange (``replica_exchange_2d``) when it lists
+    more than one temperature or sets targets (``n_targets``,
+    ``native_contact_targets`` or ``q_targets``); one temperature with targets
+    is umbrella sampling at that temperature. Otherwise it runs folding.
+
+    Replica exchange runs ``num_cycles`` cycles of ``mc_replica_steps`` MC
+    steps (``steps`` is another name for ``mc_replica_steps`` there). In a
+    folding config ``steps`` is the total number of MC steps, and a cycle is
+    ``mc_replica_steps`` steps when that is set, ``steps / num_cycles`` when
+    those two are set, and otherwise 1000 steps (or all of ``steps``, if
+    fewer); a config that sets all three must have ``steps == num_cycles *
+    mc_replica_steps``. In both modes ``log_interval`` defaults to the cycle
+    length and ``checkpoint_interval`` counts cycles.
 
     ``source`` names the config in error messages, for example its path.
     """
@@ -883,12 +1091,30 @@ def yaml_dict_to_config(
         raise ValueError("YAML config requires 'pdb'")
 
     temperatures = _expand_temperatures(data)
-    mode: Mode = "replica_exchange_2d" if len(temperatures) > 1 else "folding"
+    q_targets = data.get("q_targets")
+    n_key = "n_targets" if data.get("n_targets") is not None else "native_contact_targets"
+    n_targets = data.get(n_key)
+    _check_targets(n_targets, q_targets, n_name=n_key, q_name="q_targets")
+    has_targets = q_targets is not None or n_targets is not None
+    mode: Mode = (
+        "replica_exchange_2d" if len(temperatures) > 1 or has_targets else "folding"
+    )
 
     seed = int(data.get("seed", 42))
-    mc_steps = int(data.get("mc_replica_steps", data.get("steps", 1000)))
-    num_cycles = int(data.get("num_cycles", 10))
-    log_interval = int(data.get("log_interval", mc_steps))
+    if mode == "folding":
+        total_steps, cycle_steps = _folding_run_length(data)
+    else:
+        folding_keys = [k for k in _YAML_FOLDING_ONLY_KEYS if k in data]
+        if folding_keys:
+            raise ValueError(
+                f"{', '.join(map(repr, folding_keys))} in {source} only applies to a "
+                "folding run (one temperature and no targets); replica exchange "
+                "always runs num_cycles cycles"
+            )
+        cycle_steps = int(data.get("mc_replica_steps", data.get("steps", _DEFAULT_CYCLE_STEPS)))
+        total_steps = cycle_steps
+        num_cycles = int(data.get("num_cycles", _DEFAULT_NUM_CYCLES))
+    log_interval = int(data.get("log_interval", cycle_steps))
     step_size_rad = float(data.get("step_size_rad", 0.1))
 
     output_prefix_raw = data.get("output_prefix", "./out/sim")
@@ -904,7 +1130,7 @@ def yaml_dict_to_config(
 
     integrator = IntegratorConfig(
         temperature=float(temperatures[0]),
-        steps=mc_steps * num_cycles if mode == "folding" else mc_steps,
+        steps=total_steps,
         seed=seed,
         report_interval=log_interval,
         step_size_rad=step_size_rad,
@@ -919,15 +1145,10 @@ def yaml_dict_to_config(
         full_energy_every_steps=data.get("full_energy_every_steps", 1_000_000),
     )
 
+    contacts = _native_contacts_from_yaml(data)
     rex: ReplicaExchangeConfig | None = None
+    folding = FoldingConfig()
     if mode == "replica_exchange_2d":
-        q_targets = data.get("q_targets")
-        n_targets = data.get("n_targets", data.get("native_contact_targets"))
-        if q_targets is not None and n_targets is not None:
-            raise ValueError(
-                "Provide either 'n_targets'/'native_contact_targets' or "
-                "'q_targets', not both"
-            )
         k_bias = None
         if "k_bias" in data:
             k_bias = float(data["k_bias"])
@@ -936,18 +1157,6 @@ def yaml_dict_to_config(
         ex_log = str(data.get("exchange_log", "none")).strip().lower()
         if ex_log not in ("none", "all"):
             raise ValueError("exchange_log must be 'none' or 'all'")
-        native_contact_pairs_raw = data.get("native_contact_pairs")
-        native_contact_pairs: list[list[int]] | None = None
-        if native_contact_pairs_raw is not None:
-            native_contact_pairs = []
-            for pair in native_contact_pairs_raw:
-                pair_list = list(pair)
-                if len(pair_list) != 2:
-                    raise ValueError(
-                        "native_contact_pairs entries must have exactly 2 "
-                        f"elements, got {pair!r}"
-                    )
-                native_contact_pairs.append([int(pair_list[0]), int(pair_list[1])])
         rex = ReplicaExchangeConfig(
             temperatures=temperatures,
             native_contact_targets=(
@@ -958,17 +1167,19 @@ def yaml_dict_to_config(
             ),
             k_bias=k_bias,
             cycles=num_cycles,
-            steps_per_cycle=mc_steps,
+            steps_per_cycle=cycle_steps,
             log_interval=log_interval,
-            contact_cutoff=float(data.get("contact_cutoff", 6.0)),
-            min_seq_sep=int(data.get("min_seq_sep", 4)),
-            contact_atom_mode=_normalize_contact_atom_mode_cfg(
-                data.get("contact_atom_mode", "ca")
-            ),
-            native_contact_pairs=native_contact_pairs,
             exchange_log=ex_log,  # type: ignore[arg-type]
             state_log_interval=int(data.get("state_log_interval", 0)),
             log_walker_in_data_csv=bool(data.get("log_walker_in_data_csv", True)),
+            **contacts,
+        )
+    else:
+        folding = FoldingConfig(
+            steps_per_cycle=cycle_steps,
+            q_threshold=data.get("q_threshold"),
+            convergence_window=data.get("convergence_window", 10),
+            **contacts,
         )
 
     fixed = data.get("fixed_residue_indices", data.get("fixed_residues", [])) or []
@@ -993,6 +1204,7 @@ def yaml_dict_to_config(
         integrator=integrator,
         outputs=outputs,
         replica_exchange=rex,
+        folding=folding,
         constraints=constraints,
         checkpoint=checkpoint,
     )

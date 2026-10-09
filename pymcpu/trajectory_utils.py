@@ -1,9 +1,8 @@
 """
 trajectory_utils.py
 Utilities for truncating and rejoining trajectory files on checkpoint resume.
-Supports XTC, CSV energy logs, per-cycle CSV logs, HDF5 (via h5py), and NPZ.
-DCD truncation is not yet implemented (see the warning in
-truncate_all_trajectories_on_resume()).
+Supports XTC, CSV energy logs, per-cycle CSV logs, HDF5 (via h5py), and NPZ,
+the formats pyMCPU writes.
 """
 
 from __future__ import annotations
@@ -377,12 +376,6 @@ def truncate_all_trajectories_on_resume(
 
         elif fname.endswith(".csv"):
             truncate_csv_to_row(full_path, last_row=n)
-
-        elif fname.endswith(".dcd"):
-            logger.warning(
-                f"[Trajectory] DCD truncation not yet implemented: {fname}. "
-                "Delete manually or implement truncate_dcd_to_frame()."
-            )
 
         elif fname.endswith(".h5") or fname.endswith(".hdf5"):
             if n <= 0:

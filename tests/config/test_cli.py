@@ -74,10 +74,11 @@ def test_validate_reports_a_missing_reference_pdb(
     assert "reference_pdb 'no_such_native.pdb': not found" in capsys.readouterr().err
 
 
-def test_validate_ignores_the_reference_pdb_of_a_folding_config(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_validate_checks_the_reference_pdb_of_a_folding_config(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    # A folding run never reads reference_pdb, so validate does not either.
+    # A folding run counts Q against reference_pdb (for its early stop and
+    # its checkpoints), so validate checks it there too.
     monkeypatch.chdir(REPO_ROOT)
     config = tmp_path / "folding.yaml"
     config.write_text(
@@ -85,7 +86,25 @@ def test_validate_ignores_the_reference_pdb_of_a_folding_config(
         "reference_pdb: no_such_native.pdb\n"
         "temperatures: [0.5]\n"
     )
+    assert main(["validate", str(config)]) == 1
+    assert "reference_pdb 'no_such_native.pdb': not found" in capsys.readouterr().err
+
+
+def test_validate_says_when_checkpointing_is_off(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.chdir(REPO_ROOT)
+    config = tmp_path / "off.yaml"
+    config.write_text(
+        "pdb: examples/data/1uao.pdb\n"
+        "temperatures: [0.5]\n"
+        "checkpointing:\n"
+        "  enabled: false\n"
+    )
     assert main(["validate", str(config)]) == 0
+    out = capsys.readouterr().out
+    assert "checkpointing off" in out
+    assert "checkpoint_dir=" not in out
 
 
 def test_validate_reports_a_pdb_that_is_a_directory(

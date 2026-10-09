@@ -3,9 +3,11 @@
 Covers ``FoldingCheckpointState`` construction and save/load round-trips,
 the checkpoint-related parameters on ``FoldingRunner``/``run_folding``, and
 ``FoldingRunner.run()``'s checkpoint/resume control flow: that a resumed run
-loads its checkpoint before reattaching trajectory reporters, that
-convergence triggers an emergency save, that a resumed run continues from
-the correct cycle, and that convergence history updates every cycle.
+loads its checkpoint before reattaching trajectory reporters, that the
+opt-in early stop (``q_threshold``) saves where it stops and reports the steps
+it ran, that a folded start runs every cycle by default, that a resumed run
+continues from the correct cycle, and that convergence history updates every
+cycle and survives a resume.
 
 There is no legacy-MCPU equivalent for any of this -- legacy MCPU has no
 checkpointing or resume feature -- so this is pure software-behavior
@@ -52,6 +54,7 @@ def _build_real_folding_runner(
     seed: int = 1,
     resume: bool | str = False,
     checkpoint_interval: int = 1,
+    **kwargs,
 ) -> FoldingRunner:
     """A real (non-mocked) FoldingRunner on the small chignolin structure.
 
@@ -70,6 +73,7 @@ def _build_real_folding_runner(
         resume=resume,
         checkpoint_interval=checkpoint_interval,
         verbose=False,
+        **kwargs,
     )
 
 
@@ -106,10 +110,7 @@ class TestFoldingCheckpointState:
         )
         assert state.native_contacts_fraction is None
         assert state.rmsd_to_native is None
-        assert state.folding_bias_params is None
-        assert state.basin_assignments is None
         assert state.convergence_history == []
-        assert state.folding_events == []
 
     def test_round_trip_preserves_base_re_fields(self, tmp_path: Path) -> None:
         coords = [np.random.rand(10, 3).astype(np.float32) for _ in range(4)]
@@ -147,12 +148,7 @@ class TestFoldingCheckpointState:
             integrator_rng_states=[""] * 4,
             seed=99,
             native_contacts_fraction=q_values,
-            folding_bias_params={"k": 2.0, "r0": 0.5, "mode": "harmonic"},
             convergence_history=[0.3, 0.4, 0.5, 0.6, 0.7],
-            folding_events=[
-                {"cycle": 50, "replica_id": 2, "Q": 0.92},
-                {"cycle": 75, "replica_id": 0, "Q": 0.88},
-            ],
         )
 
         save_checkpoint(state, checkpoint_dir=str(tmp_path), cycle=100)
@@ -160,10 +156,28 @@ class TestFoldingCheckpointState:
 
         assert loaded.checkpoint_type == "folding"
         np.testing.assert_array_almost_equal(loaded.native_contacts_fraction, q_values)
-        assert loaded.folding_bias_params == {"k": 2.0, "r0": 0.5, "mode": "harmonic"}
         assert loaded.convergence_history == [0.3, 0.4, 0.5, 0.6, 0.7]
-        assert len(loaded.folding_events) == 2
-        assert loaded.folding_events[0]["cycle"] == 50
+
+    def test_fields_of_removed_skeletons_are_dropped_on_load(self, tmp_path: Path) -> None:
+        """Checkpoints from before FoldingBias and BasinTracker were removed
+        carry folding_bias_params, basin_assignments and folding_events."""
+        state = FoldingCheckpointState(
+            cycle=3, global_step=30, replica_coords=[np.zeros((3, 5))], current_steps=[30],
+            convergence_history=[0.9, 0.95],
+        ).to_dict()
+        state.update(
+            folding_bias_params={"k": 2.0, "r0": 0.5, "mode": "harmonic"},
+            basin_assignments=np.array([0], dtype=np.int32),
+            folding_events=[{"cycle": 2, "Q": 0.95}],
+        )
+        save_checkpoint(state, checkpoint_dir=str(tmp_path), cycle=3)
+
+        loaded = FoldingCheckpointState.from_dict(load_checkpoint(str(tmp_path / "last.chk")))
+
+        assert loaded.cycle == 3
+        assert loaded.convergence_history == [0.9, 0.95]
+        assert not hasattr(loaded, "folding_bias_params")
+        assert not hasattr(loaded, "folding_events")
 
     def test_base_checkpoint_state_loads_without_folding_fields(self, tmp_path: Path) -> None:
         """A plain (non-folding) CheckpointState must still load cleanly
@@ -244,7 +258,7 @@ def test_run_loads_checkpoint_before_attaching_traj_reporters(chignolin_pdb_path
 
 
 def test_run_saves_checkpoint_on_convergence(chignolin_pdb_path: str, tmp_path: Path) -> None:
-    """Convergence must trigger an emergency save distinct from the regular
+    """The early stop must trigger a save distinct from the regular
     checkpoint-interval save (checkpoint_interval is set high enough here
     that only the convergence branch can be responsible for the save)."""
     ckpt_dir = tmp_path / "ckpt"
@@ -252,7 +266,8 @@ def test_run_saves_checkpoint_on_convergence(chignolin_pdb_path: str, tmp_path: 
     seed_runner.save_checkpoint(cycle=5)  # resume will start at cycle 6
 
     runner = _build_real_folding_runner(
-        chignolin_pdb_path, tmp_path / "out", ckpt_dir, seed=2, resume=True, checkpoint_interval=1000
+        chignolin_pdb_path, tmp_path / "out", ckpt_dir, seed=2, resume=True,
+        checkpoint_interval=1000, q_threshold=0.75,
     )
     runner._check_folding_convergence = lambda: True
     save_calls: list[int] = []
@@ -300,7 +315,8 @@ def test_convergence_checkpoint_file_exists_on_disk(chignolin_pdb_path: str, tmp
     seed_runner.save_checkpoint(cycle=5)  # resume will start at cycle 6
 
     runner = _build_real_folding_runner(
-        chignolin_pdb_path, tmp_path / "out", ckpt_dir, seed=2, resume=True, checkpoint_interval=1000
+        chignolin_pdb_path, tmp_path / "out", ckpt_dir, seed=2, resume=True,
+        checkpoint_interval=1000, q_threshold=0.75,
     )
     runner._check_folding_convergence = lambda: True
 
@@ -327,3 +343,67 @@ def test_run_updates_convergence_history_after_each_cycle(chignolin_pdb_path: st
 
     assert call_order == ["cycle", "update", "cycle", "update", "cycle", "update"]
     assert len(runner.convergence_history) == 3
+
+
+# ── The early stop is opt-in ────────────────────────────────────
+
+
+def test_a_folded_start_runs_every_cycle_by_default(chignolin_pdb_path: str, tmp_path: Path) -> None:
+    """Chignolin starts folded (Q = 1 against itself). The run used to stop
+    after 10 cycles whatever ``steps`` asked for."""
+    runner = _build_real_folding_runner(
+        chignolin_pdb_path, tmp_path / "out", tmp_path / "ckpt", checkpoint_interval=1000
+    )
+    assert runner.q_threshold is None
+
+    runner.run(steps=24)  # 12 cycles of 2 steps
+
+    assert runner.cycle == 12
+    assert runner.simulation.current_step == 24
+    assert min(runner.convergence_history) >= 0.75  # it would have stopped
+
+
+def test_the_early_stop_reports_the_steps_it_ran(
+    chignolin_pdb_path: str, tmp_path: Path, capsys
+) -> None:
+    runner = _build_real_folding_runner(
+        chignolin_pdb_path, tmp_path / "out", tmp_path / "ckpt",
+        checkpoint_interval=1000, q_threshold=0.75, convergence_window=3,
+    )
+    runner.verbose = True
+
+    runner.run(steps=24)
+
+    assert runner.cycle == 3
+    assert runner.simulation.current_step == 6
+    out = capsys.readouterr().out
+    assert "Stopped early after cycle 2: Q >= 0.75 for 3 cycles in a row" in out
+    assert "Ran 6 of 24 MC steps." in out
+    # it saves where it stops
+    assert (tmp_path / "ckpt" / checkpoint_cycle_filename(2)).is_file()
+
+
+def test_the_early_stop_is_logged_when_quiet(
+    chignolin_pdb_path: str, tmp_path: Path, caplog
+) -> None:
+    import logging
+
+    runner = _build_real_folding_runner(
+        chignolin_pdb_path, tmp_path / "out", tmp_path / "ckpt",
+        checkpoint_interval=1000, q_threshold=0.75, convergence_window=2,
+    )
+    with caplog.at_level(logging.INFO, logger="pymcpu.sampling.folding"):
+        runner.run(steps=10)
+    assert "Ran 4 of 10 MC steps." in caplog.text
+
+
+def test_a_resumed_run_restores_the_q_history(chignolin_pdb_path: str, tmp_path: Path) -> None:
+    ckpt_dir = tmp_path / "ckpt"
+    first = _build_real_folding_runner(chignolin_pdb_path, tmp_path / "out1", ckpt_dir)
+    first.run(n_cycles=3)
+
+    second = _build_real_folding_runner(chignolin_pdb_path, tmp_path / "out2", ckpt_dir, resume=True)
+    second.run(n_cycles=5)
+
+    assert second.convergence_history[:3] == first.convergence_history
+    assert len(second.convergence_history) == 5

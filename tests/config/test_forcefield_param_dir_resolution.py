@@ -93,6 +93,7 @@ def _patch_forcefield_loaders(monkeypatch, mcpu_ff, MCPUForceField, atom_types=N
         classmethod(lambda cls, p: MagicMock()),
     )
     monkeypatch.setattr(MCPUForceField, "_validate_topology", lambda self, top: None)
+    monkeypatch.setattr(MCPUForceField, "_check_structure", lambda self, traj: None)
     monkeypatch.setattr(
         MCPUForceField,
         "_order_atoms",

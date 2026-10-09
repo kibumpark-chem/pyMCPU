@@ -8,7 +8,14 @@ from typing import Any
 import numpy as np
 
 from pymcpu.checkpointing import CheckpointConfig
-from pymcpu.config import SimulationConfig, resolve_path
+from pymcpu.config import (
+    DEFAULT_CONTACT_ATOM_MODE,
+    DEFAULT_CONTACT_CUTOFF,
+    DEFAULT_MIN_SEQ_SEP,
+    SimulationConfig,
+    resolve_k_bias,
+    resolve_path,
+)
 from pymcpu.sampling.replica_exchange import ReplicaExchange, RunSummary
 
 
@@ -59,15 +66,37 @@ def run_folding(
     checkpoint_interval: int = 50,
     resume: str | Path | bool | None = None,
     keep_last_n: int | None = 3,
+    checkpoint_enabled: bool = True,
+    steps_per_cycle: int | None = None,
+    reference_pdb: str | Path | None = None,
+    contact_cutoff: float = DEFAULT_CONTACT_CUTOFF,
+    min_seq_sep: int = DEFAULT_MIN_SEQ_SEP,
+    contact_atom_mode: str = DEFAULT_CONTACT_ATOM_MODE,
+    native_contact_pairs: list[list[int]] | None = None,
+    q_threshold: float | None = None,
+    convergence_window: int = 10,
 ) -> Path:
-    """Run a single-temperature MC folding trajectory (OpenMM-style)."""
+    """Run a single-temperature MC folding trajectory (OpenMM-style).
+
+    ``steps`` is the total number of MC steps, run in cycles of
+    ``steps_per_cycle`` (default ``report_interval``); ``checkpoint_interval``
+    counts cycles. ``checkpoint_enabled=False`` writes no checkpoint. The run
+    stops early only when ``q_threshold`` is set; see
+    :class:`~pymcpu.sampling.FoldingRunner`, which also describes the
+    native-contact arguments.
+    """
     from pymcpu.sampling.folding import FoldingRunner
 
     pdb_path = Path(pdb)
     if not pdb_path.is_absolute():
         pdb_path = resolve_path(pdb_path)
+    ref = None
+    if reference_pdb is not None:
+        ref = Path(reference_pdb)
+        if not ref.is_absolute():
+            ref = resolve_path(ref)
 
-    if checkpoint_dir is not None:
+    if checkpoint_dir is not None and checkpoint_enabled:
         Path(checkpoint_dir).mkdir(parents=True, exist_ok=True)
 
     ckpt_cfg = CheckpointConfig(
@@ -75,6 +104,7 @@ def run_folding(
         checkpoint_interval=int(checkpoint_interval),
         resume=resume if resume is not None else False,
         keep_last_n=keep_last_n,
+        enabled=bool(checkpoint_enabled),
     )
     resume_path = ckpt_cfg.resolved_resume_path()
     ckpt_cfg.resume = True if resume_path else False
@@ -101,6 +131,14 @@ def run_folding(
         forcefield_options=forcefield_options,
         checkpoint_config=ckpt_cfg,
         verbose=verbose,
+        steps_per_cycle=steps_per_cycle,
+        reference_pdb=ref,
+        contact_cutoff_ang=float(contact_cutoff),
+        min_seq_sep=int(min_seq_sep),
+        contact_atom_mode=contact_atom_mode,
+        native_contact_pairs=native_contact_pairs,
+        q_threshold=q_threshold,
+        convergence_window=int(convergence_window),
     )
     return runner.run(
         steps=int(steps),
@@ -118,7 +156,7 @@ def run_replica_exchange_2d(
     temperatures: list[float] | np.ndarray,
     n_targets: list[float] | np.ndarray | None = None,
     q_targets: list[float] | np.ndarray | None = None,
-    k_bias: float = 1.0,
+    k_bias: float | None = None,
     cycles: int = 10,
     steps_per_cycle: int = 100,
     swap_interval: int | None = None,
@@ -126,9 +164,9 @@ def run_replica_exchange_2d(
     seed: int = 42,
     backend: str = "serial",
     log_interval: int = 100,
-    contact_cutoff: float = 6.0,
-    min_seq_sep: int = 4,
-    contact_atom_mode: str = "ca",
+    contact_cutoff: float = DEFAULT_CONTACT_CUTOFF,
+    min_seq_sep: int = DEFAULT_MIN_SEQ_SEP,
+    contact_atom_mode: str = DEFAULT_CONTACT_ATOM_MODE,
     native_contact_pairs: list[list[int]] | None = None,
     hdf5_path: str | Path | None = None,
     prefix: str = "rex",
@@ -144,6 +182,7 @@ def run_replica_exchange_2d(
     checkpoint_interval: int = 50,
     resume: str | Path | bool | None = None,
     keep_last_n: int | None = 3,
+    checkpoint_enabled: bool = True,
     exchange_log: str = "none",
     state_log_interval: int = 0,
     log_walker_in_data_csv: bool = True,
@@ -154,9 +193,15 @@ def run_replica_exchange_2d(
     pivot_rama_probability: float = 0.0,
     pivot_rama_schedule: dict[str, float] | None = None,
 ) -> RunSummary:
-    """Run 2D temperature × native-contact replica exchange (serial backend)."""
+    """Run 2D temperature × native-contact replica exchange (serial backend).
+
+    ``k_bias`` left as ``None`` is 1.0 with targets and 0.0 (no umbrella)
+    without; see :func:`pymcpu.config.resolve_k_bias`.
+    ``checkpoint_enabled=False`` writes no checkpoint.
+    """
     if backend != "serial":
         raise ValueError(f"Only backend='serial' is supported (got {backend!r})")
+    k_bias = resolve_k_bias(k_bias, has_targets=n_targets is not None or q_targets is not None)
 
     pdb_path = Path(pdb)
     if not pdb_path.is_absolute():
@@ -175,7 +220,7 @@ def run_replica_exchange_2d(
         if not analysis.is_absolute():
             analysis = out / analysis
 
-    if checkpoint_dir is not None:
+    if checkpoint_dir is not None and checkpoint_enabled:
         ckpt_path = Path(checkpoint_dir)
         ckpt_path.mkdir(parents=True, exist_ok=True)
 
@@ -184,6 +229,7 @@ def run_replica_exchange_2d(
         checkpoint_interval=int(checkpoint_interval),
         resume=resume if resume is not None else False,
         keep_last_n=keep_last_n,
+        enabled=bool(checkpoint_enabled),
     )
     resume_path = ckpt_cfg.resolved_resume_path()
 
@@ -195,7 +241,7 @@ def run_replica_exchange_2d(
         print(f"N targets: {None if n_targets is None else list(np.asarray(n_targets))}")
         print(f"Q targets: {None if q_targets is None else list(np.asarray(q_targets))}")
         print(f"k_bias={k_bias}  cycles={cycles}  mc_steps={mc_steps}")
-        if checkpoint_dir:
+        if checkpoint_dir and checkpoint_enabled:
             print(f"Checkpoint: dir={checkpoint_dir}  interval={checkpoint_interval}")
         if resume_path:
             print(f"Resuming from: {resume_path}")
@@ -259,16 +305,16 @@ def run_mpi_replica_exchange_2d(
     temperatures: list[float] | np.ndarray | None = None,
     n_targets: list[float] | np.ndarray | None = None,
     q_targets: list[float] | np.ndarray | None = None,
-    k_bias: float = 1.0,
+    k_bias: float | None = None,
     cycles: int = 10,
     steps_per_cycle: int = 100,
     swap_interval: int | None = None,
     output_dir: str | Path = "./out_rex",
     seed: int = 42,
     log_interval: int = 100,
-    contact_cutoff: float = 6.0,
-    min_seq_sep: int = 4,
-    contact_atom_mode: str = "ca",
+    contact_cutoff: float = DEFAULT_CONTACT_CUTOFF,
+    min_seq_sep: int = DEFAULT_MIN_SEQ_SEP,
+    contact_atom_mode: str = DEFAULT_CONTACT_ATOM_MODE,
     native_contact_pairs: list[list[int]] | None = None,
     hdf5_path: str | Path | None = None,
     prefix: str = "rex",
@@ -284,6 +330,7 @@ def run_mpi_replica_exchange_2d(
     checkpoint_interval: int = 50,
     resume: str | Path | bool | None = None,
     keep_last_n: int | None = 3,
+    checkpoint_enabled: bool = True,
     temp_min: float = 0.1,
     temp_step: float = 0.05,
     n_temps: int = 4,
@@ -301,10 +348,14 @@ def run_mpi_replica_exchange_2d(
 ) -> RunSummary | None:
     """Run 2D temperature × N umbrella replica exchange under MPI.
 
-    ``CheckpointConfig`` (all 7 fields) is built here and passed into
-    :class:`~pymcpu.sampling.mpi_replica_exchange.MPIReplicaExchange`.
+    The ``CheckpointConfig`` is built here and passed into
+    :class:`~pymcpu.sampling.mpi_replica_exchange.MPIReplicaExchange`;
+    ``checkpoint_enabled=False`` writes no checkpoint. ``k_bias`` left as
+    ``None`` is 1.0 with targets and 0.0 (no umbrella) without.
     """
     from pymcpu.sampling.mpi_replica_exchange import MPIReplicaExchange
+
+    k_bias = resolve_k_bias(k_bias, has_targets=n_targets is not None or q_targets is not None)
 
     pdb_path = Path(pdb)
     if not pdb_path.is_absolute():
@@ -327,7 +378,7 @@ def run_mpi_replica_exchange_2d(
         if not analysis.is_absolute():
             analysis = out / analysis
 
-    if checkpoint_dir is not None and rank == 0:
+    if checkpoint_dir is not None and checkpoint_enabled and rank == 0:
         Path(checkpoint_dir).mkdir(parents=True, exist_ok=True)
     comm.Barrier()
 
@@ -336,6 +387,7 @@ def run_mpi_replica_exchange_2d(
         checkpoint_interval=int(checkpoint_interval),
         resume=resume if resume is not None else False,
         keep_last_n=keep_last_n,
+        enabled=bool(checkpoint_enabled),
     )
     # Resolve resume to a concrete path/bool before constructing RE
     resume_path = ckpt_cfg.resolved_resume_path()
@@ -345,7 +397,7 @@ def run_mpi_replica_exchange_2d(
         print(f"PDB: {pdb_path}")
         print(f"Reference: {ref}")
         print(f"Force field: {forcefield}")
-        if checkpoint_dir:
+        if checkpoint_dir and checkpoint_enabled:
             print(f"Checkpoint: dir={checkpoint_dir}  interval={checkpoint_interval}")
         if resume_path:
             print(f"Resuming from: {resume_path}")
@@ -453,6 +505,15 @@ def run_from_config(
             checkpoint_interval=cfg.checkpoint.checkpoint_interval,
             resume=cfg.checkpoint.resume,
             keep_last_n=cfg.checkpoint.keep_last_n,
+            checkpoint_enabled=cfg.checkpoint.enabled,
+            steps_per_cycle=cfg.folding.steps_per_cycle,
+            reference_pdb=cfg.resolve_reference_pdb(),
+            contact_cutoff=cfg.folding.contact_cutoff,
+            min_seq_sep=cfg.folding.min_seq_sep,
+            contact_atom_mode=cfg.folding.contact_atom_mode,
+            native_contact_pairs=cfg.folding.native_contact_pairs,
+            q_threshold=cfg.folding.q_threshold,
+            convergence_window=cfg.folding.convergence_window,
         )
 
     if cfg.mode == "replica_exchange_2d":
@@ -489,6 +550,7 @@ def run_from_config(
             checkpoint_interval=cfg.checkpoint.checkpoint_interval,
             resume=cfg.checkpoint.resume,
             keep_last_n=cfg.checkpoint.keep_last_n,
+            checkpoint_enabled=cfg.checkpoint.enabled,
             exchange_log=rex.exchange_log,
             state_log_interval=rex.state_log_interval,
             log_walker_in_data_csv=rex.log_walker_in_data_csv,

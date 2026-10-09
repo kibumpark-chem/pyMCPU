@@ -127,33 +127,23 @@ class FoldingCheckpointState(CheckpointState):
     """
     Extends CheckpointState with folding-specific fields.
 
-    All folding fields are Optional so that:
-      - Old base CheckpointState pickles load without error.
-      - Fields not used by a particular folding setup are simply None.
-      - FoldingCheckpointState is a drop-in wherever CheckpointState
-        is expected (Liskov substitution).
-
-    Note: the current FoldingRunner is single-temperature MC (no Q/RMSD
-    tracking, funnel bias, basins, or convergence criteria yet). Those
-    optional fields are reserved for future folding analytics.
+    All folding fields are optional, so a base CheckpointState pickle loads
+    as one, and a FoldingCheckpointState works wherever a CheckpointState is
+    expected. Fields this class no longer has are dropped on load
+    (:meth:`CheckpointState.from_dict`): checkpoints written before the
+    folding bias and basin skeletons were removed carry
+    ``folding_bias_params``, ``basin_assignments`` and ``folding_events``.
     """
 
     # Identifies this as a folding checkpoint when loaded generically
     checkpoint_type: str = "folding"
 
-    # ── Folding progress (reserved; not computed by FoldingRunner yet) ──
+    # ── Folding progress at the save: Q and CA RMSD to the reference ────
     native_contacts_fraction: Any | None = None
     rmsd_to_native: Any | None = None
 
-    # ── Folding bias / funnel (reserved) ────────────────────────────────
-    folding_bias_params: dict[str, Any] | None = None
-
-    # ── Basin / cluster tracking (reserved) ─────────────────────────────
-    basin_assignments: Any | None = None
-
-    # ── Convergence history / event log (initialized empty on runner) ───
+    # ── Q after each cycle so far (FoldingRunner.convergence_history) ───
     convergence_history: list[Any] = field(default_factory=list)
-    folding_events: list[Any] = field(default_factory=list)
 
 
 def checkpoint_cycle_filename(cycle: int) -> str:

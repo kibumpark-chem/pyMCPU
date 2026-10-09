@@ -6,19 +6,6 @@ the cause, and what to do about it.
 Issues fixed before the first release are not listed here — see the
 [changelog](https://github.com/kibumpark-chem/pyMCPU/blob/main/CHANGELOG.md).
 
-## DCD trajectories are not truncated on resume
-
-**Symptom.** Resuming a run that wrote a DCD trajectory leaves duplicated
-frames: everything written after the last checkpoint but before the
-interruption appears twice.
-
-**Cause.** `truncate_all_trajectories_on_resume` handles XTC, CSV, HDF5 and
-NPZ. DCD is the one format with no implementation; it logs a warning and skips
-the file.
-
-**What to do.** Prefer XTC, which is also smaller. If you must resume a DCD
-run, delete the DCD before resuming and accept the gap.
-
 ## Linux x86-64 only, with an x86-64-v3 baseline
 
 **Symptom.** No wheel for your platform, or `Illegal instruction` on a CPU

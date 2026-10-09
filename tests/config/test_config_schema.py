@@ -77,3 +77,43 @@ class TestSchemaValidation:
                     "pdb": "examples/data/1uao.pdb",
                 }
             )
+
+
+class TestJsonUmbrellaAndFolding:
+    """A replica_exchange block without targets is plain temperature REMD (it
+    used to get three umbrella windows at N = 0, 5 and 10, with k = 1); the
+    ``folding`` block holds the folding-only settings."""
+
+    @staticmethod
+    def _rex(**block) -> dict:
+        return {"mode": "replica_exchange_2d", "pdb": "x.pdb",
+                "replica_exchange": {"temperatures": [0.5, 0.6], **block}}
+
+    def test_temperatures_only_has_no_targets_and_no_umbrella(self) -> None:
+        rex = config_from_dict(self._rex()).replica_exchange
+        assert rex.native_contact_targets is None and rex.q_targets is None
+        assert rex.effective_k_bias() == 0.0
+
+    def test_targets_without_k_keep_the_default(self) -> None:
+        assert config_from_dict(self._rex(q_targets=[0.5])).replica_exchange.effective_k_bias() == 1.0
+
+    def test_both_kinds_of_target_are_rejected(self) -> None:
+        with pytest.raises(ValueError, match="not both"):
+            config_from_dict(self._rex(native_contact_targets=[0], q_targets=[0.5]))
+
+    def test_folding_block(self) -> None:
+        cfg = config_from_dict(
+            {"mode": "folding", "pdb": "x.pdb",
+             "folding": {"steps_per_cycle": 50, "q_threshold": 0.9, "contact_cutoff": 7.0}}
+        )
+        assert (cfg.folding.steps_per_cycle, cfg.folding.q_threshold) == (50, 0.9)
+        assert (cfg.folding.contact_cutoff, cfg.folding.min_seq_sep) == (7.0, 4)
+
+    def test_folding_defaults(self) -> None:
+        folding = config_from_dict({"mode": "folding", "pdb": "x.pdb"}).folding
+        assert folding.steps_per_cycle is None  # one report_interval
+        assert folding.q_threshold is None  # no early stop
+
+    def test_folding_block_is_refused_in_replica_exchange(self) -> None:
+        with pytest.raises(ValueError, match="'folding' block applies to mode 'folding' only"):
+            config_from_dict({**self._rex(), "folding": {"q_threshold": 0.9}})

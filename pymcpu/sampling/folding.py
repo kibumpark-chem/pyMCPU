@@ -11,6 +11,7 @@ import mdtraj as md
 import numpy as np
 
 from pymcpu import mcpu_core
+from pymcpu.config import DEFAULT_CONTACT_ATOM_MODE, DEFAULT_CONTACT_CUTOFF, DEFAULT_MIN_SEQ_SEP
 from pymcpu.checkpointing import (
     CHECKPOINT_FORMAT_VERSION,
     CheckpointConfig,
@@ -35,7 +36,6 @@ from pymcpu.sampling.collective_variables import (
     reference_ca_from_pdb,
     reference_contact_from_pdb,
 )
-from pymcpu.sampling.folding_bias import BasinTracker, FoldingBias
 from pymcpu.sampling.replica_exchange import get_coords
 from pymcpu.sampling.replica_exchange_core import get_frame_offset
 from pymcpu.simulation import Simulation, check_state_clash
@@ -50,11 +50,21 @@ logger = logging.getLogger(__name__)
 class FoldingRunner:
     """Single-temperature MC folding, run in cycles, with checkpoints.
 
-    Each cycle is ``steps_per_cycle`` MC steps (by default ``report_interval``).
-    After each cycle, Q, the fraction of native contacts formed, is counted
-    against ``reference_pdb`` (by default the starting structure). The run
-    stops early once Q has stayed at or above ``q_threshold`` (default 0.75)
-    for ``convergence_window`` (default 10) cycles in a row.
+    Each cycle is ``steps_per_cycle`` MC steps (by default ``report_interval``);
+    ``checkpoint_interval`` counts cycles. After each cycle, Q, the fraction
+    of native contacts formed, is counted against ``reference_pdb`` (by
+    default the starting structure) and added to ``convergence_history``.
+    A native contact is a pair of residues at least ``min_seq_sep`` apart in
+    sequence whose contact atoms (``contact_atom_mode``) are closer than
+    ``contact_cutoff_ang`` in the reference, or one of
+    ``native_contact_pairs``; the defaults are those of
+    :class:`~pymcpu.sampling.NativeContactsCV`.
+
+    The run takes every step asked for unless ``q_threshold`` is set. Then it
+    stops early once Q has stayed at or above ``q_threshold`` for
+    ``convergence_window`` (default 10) cycles in a row, and reports how many
+    of the steps it ran.
+
     ``full_energy_every_steps`` sets the simulation's full energy recompute
     cadence (:attr:`pymcpu.Simulation.full_energy_every_steps`); a checkpoint
     save also recomputes.
@@ -86,18 +96,12 @@ class FoldingRunner:
         linker_residues: list[int] | None = None,
         linker_energy_mode: str = "ignore_all",
         reference_pdb: str | Path | None = None,
-        contact_cutoff_ang: float = 8.0,
-        min_seq_sep: int = 4,
-        contact_atom_mode: str = "ca",
+        contact_cutoff_ang: float = DEFAULT_CONTACT_CUTOFF,
+        min_seq_sep: int = DEFAULT_MIN_SEQ_SEP,
+        contact_atom_mode: str = DEFAULT_CONTACT_ATOM_MODE,
         native_contact_pairs: Sequence[Sequence[int]] | None = None,
-        q_threshold: float = 0.75,
+        q_threshold: float | None = None,
         convergence_window: int = 10,
-        enable_bias: bool = False,
-        bias_k: float = 0.0,
-        bias_r0: float = 0.0,
-        bias_mode: str = "none",
-        enable_basins: bool = False,
-        n_basins: int = 1,
         checkpoint_config: CheckpointConfig | None = None,
         checkpoint_dir: str | Path | None = None,
         checkpoint_interval: int | None = None,
@@ -115,8 +119,12 @@ class FoldingRunner:
         self.native_contact_pairs = (
             list(native_contact_pairs) if native_contact_pairs else None
         )
-        self.q_threshold = float(q_threshold)
+        self.q_threshold = None if q_threshold is None else float(q_threshold)
         self.convergence_window = int(convergence_window)
+        if self.convergence_window < 1:
+            raise ValueError(
+                f"convergence_window must be at least 1 cycle, got {convergence_window!r}"
+            )
         self._native_contacts: list[tuple[int, int]] | None = None
         self._q_cv: NativeContactsCV | None = None
         self._ca_internal_idx: np.ndarray | None = None
@@ -152,17 +160,6 @@ class FoldingRunner:
         validate_fixed_linker_disjoint(self.fixed_residues, self.linker_residues)
         self.verbose = bool(verbose)
 
-        self.folding_bias = (
-            FoldingBias(k=bias_k, r0=bias_r0, mode=bias_mode)
-            if enable_bias
-            else None
-        )
-        self.basin_tracker = (
-            BasinTracker(n_basins=n_basins, n_replicas=1)
-            if enable_basins
-            else None
-        )
-
         cfg = checkpoint_config or CheckpointConfig()
         if checkpoint_dir is not None:
             cfg.checkpoint_dir = str(checkpoint_dir)
@@ -187,9 +184,8 @@ class FoldingRunner:
         self._reporters_attached = False
         self.sample_writer = None
 
-        # Optional analytics hooks (empty until folding analysis is added)
+        # Q after each cycle; checkpointed, and read by the early stop.
         self.convergence_history: list[Any] = []
-        self.folding_events: list[Any] = []
 
         from pymcpu.config import check_move_weights
 
@@ -490,7 +486,12 @@ class FoldingRunner:
             return np.array([0.0])
 
     def _check_folding_convergence(self) -> bool:
-        """True when the last ``convergence_window`` Q values are all >= threshold."""
+        """True when the last ``convergence_window`` Q values are all >= threshold.
+
+        Always False without a ``q_threshold``: the early stop is off.
+        """
+        if self.q_threshold is None:
+            return False
         if len(self.convergence_history) < self.convergence_window:
             return False
         recent = self.convergence_history[-self.convergence_window :]
@@ -594,22 +595,6 @@ class FoldingRunner:
         q_values = self._compute_Q_values()
         rmsd_values = self._compute_rmsd_values()
 
-        bias_params = None
-        if self.folding_bias is not None:
-            try:
-                bias_params = self.folding_bias.get_params()
-            except Exception as e:
-                logger.warning("[Folding] get_params() failed: %s", e)
-
-        basin_assign = None
-        if self.basin_tracker is not None:
-            try:
-                basin_assign = self.basin_tracker.assignments.copy()
-            except Exception as e:
-                logger.warning(
-                    "[Folding] basin_tracker.assignments failed: %s", e
-                )
-
         coords = np.asarray(get_coords(self.simulation.context), dtype=np.float64)
         state = FoldingCheckpointState(
             cycle=int(cycle),
@@ -638,10 +623,7 @@ class FoldingRunner:
             traj_frame_indices=self._local_traj_frame_indices(),
             native_contacts_fraction=q_values,
             rmsd_to_native=rmsd_values,
-            folding_bias_params=bias_params,
-            basin_assignments=basin_assign,
             convergence_history=list(self.convergence_history),
-            folding_events=list(self.folding_events),
         )
 
         out_dir = self.checkpoint_config.checkpoint_dir
@@ -715,31 +697,12 @@ class FoldingRunner:
             for k, v in (state.traj_frame_indices or {}).items()
         }
 
-        # Folding-specific restores
-        if state.folding_bias_params is not None:
-            if self.folding_bias is not None:
-                try:
-                    self.folding_bias.set_params(state.folding_bias_params)
-                except Exception as e:
-                    logger.warning(
-                        "[Folding] Could not restore bias params: %s", e
-                    )
-
-        if state.basin_assignments is not None:
-            if self.basin_tracker is not None:
-                try:
-                    self.basin_tracker.assignments = (
-                        state.basin_assignments.copy()
-                    )
-                except Exception as e:
-                    logger.warning(
-                        "[Folding] Could not restore basin state: %s", e
-                    )
-
+        # Folding-specific restores. Checkpoints written before the folding
+        # bias and basin skeletons were removed also carry
+        # folding_bias_params, basin_assignments and folding_events;
+        # FoldingCheckpointState.from_dict drops them.
         if state.convergence_history:
             self.convergence_history = list(state.convergence_history)
-        if state.folding_events:
-            self.folding_events = list(state.folding_events)
 
         logger.info(
             "[Folding] Restored from cycle=%s step=%s type=%s",
@@ -762,9 +725,11 @@ class FoldingRunner:
         """
         Run folding MC in report-sized cycles with optional checkpoint/resume.
 
-        Provide either ``n_cycles`` or ``steps`` (converted to cycles using
-        ``steps_per_cycle``, defaulting to ``report_interval``). The run can
-        stop sooner, once Q converges; see the class description.
+        Provide either ``n_cycles`` or ``steps``, the total number of MC
+        steps (converted to cycles of ``steps_per_cycle``, defaulting to
+        ``report_interval``; the last cycle is shorter when ``steps`` is not a
+        multiple). With a ``q_threshold`` the run can stop sooner; see the
+        class description.
         """
         cfg = self.checkpoint_config
         if checkpoint_dir is not None:
@@ -791,7 +756,7 @@ class FoldingRunner:
 
         n_cycles = int(n_cycles)
 
-        if cfg.checkpoint_dir:
+        if cfg.checkpoint_dir and cfg.enabled:
             os.makedirs(cfg.checkpoint_dir, exist_ok=True)
 
         start_cycle = 0
@@ -847,13 +812,20 @@ class FoldingRunner:
                 if is_interval or is_last:
                     self.save_checkpoint(cycle)
 
-            # Convergence check — always emergency-save when True
-            converged = bool(self._check_folding_convergence())
-
-            if converged:
-                print(f"[Folding] Converged at cycle {cycle}")
+            # Early stop (only with a q_threshold); it saves where it stops.
+            if self._check_folding_convergence():
+                message = (
+                    f"[Folding] Stopped early after cycle {cycle}: Q >= "
+                    f"{self.q_threshold} for {self.convergence_window} cycles in a "
+                    f"row. Ran {int(self.simulation.current_step):,} of "
+                    f"{self._total_steps_target:,} MC steps."
+                )
+                if self.verbose:
+                    print(message)
+                else:
+                    logger.info(message)
                 if cfg.checkpoint_dir and cfg.enabled:
-                    self.save_checkpoint(cycle)  # emergency save on convergence
+                    self.save_checkpoint(cycle)
                 break
 
         try:

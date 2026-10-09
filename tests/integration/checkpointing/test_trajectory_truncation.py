@@ -430,3 +430,21 @@ def test_rex_sample_writer_n_frames_written() -> None:
     w.append(state_index=0, energy_unbiased=1.0, N=0.0, cycle=0, walker_id=0)
     assert w.n_frames_written() == 1
     assert w.n_samples_written == 1
+
+
+def test_a_dcd_name_is_an_unknown_format(tmp_path: Path, caplog) -> None:
+    """pyMCPU writes no DCD, so a ``.dcd`` entry gets the unknown-format
+    warning like any other name, and the file is left alone."""
+    import logging
+
+    from pymcpu.trajectory_utils import truncate_all_trajectories_on_resume
+
+    dcd = tmp_path / "old.dcd"
+    dcd.write_bytes(b"\x00" * 64)
+    with caplog.at_level(logging.WARNING, logger="pymcpu.trajectory_utils"):
+        truncate_all_trajectories_on_resume(
+            {"traj_frame_indices": {"old.dcd": 3}}, traj_dir=str(tmp_path), top_path=""
+        )
+    assert "Unknown format, skipping truncation: old.dcd" in caplog.text
+    assert "DCD" not in caplog.text
+    assert dcd.read_bytes() == b"\x00" * 64

@@ -192,7 +192,10 @@ def _child(task: dict[str, Any]) -> dict[str, Any]:
         from pymcpu.sampling.collective_variables import NativeContactsCV, build_ca_index
         ca = build_ca_index(ff)
         coords0 = np.asarray(ctx.get_state().coords, dtype=np.float64)
-        cv = NativeContactsCV(ca, coords0[:, ca].T.copy())
+        # Pinned rather than defaulted, so trees with different
+        # NativeContactsCV defaults compute the same Q (8 A and 3 were the
+        # defaults before 0.1.0 unified them at 6 A and 4).
+        cv = NativeContactsCV(ca, coords0[:, ca].T.copy(), contact_cutoff=8.0, min_seq_sep=3)
         every = int(task["sample_every"])
         # production recomputes the full energy every 1-10 exchanges of 10k steps
         sim.full_energy_every_steps = int(task.get("recompute_every", 50_000))
