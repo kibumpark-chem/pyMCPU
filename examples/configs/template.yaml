@@ -42,7 +42,7 @@ num_cycles: 10                        # int | number of exchange cycles  # defau
 mc_replica_steps: 10                  # int | MC steps per replica per cycle  # default: 1000
 seed: 0                               # int | random seed for reproducibility  # default: 42
 # step_size_rad: 0.1                  # float | pivot move width in radians  # default: 0.1
-# kic_step_size_rad: 0.1              # float | KIC driver width in radians  # default: 0.1
+# kic_step_size_rad: 0.5236           # float | KIC driver width in radians  # default: pi/6 (30 deg)
 
 # ── Folding only (1 temperature, no targets) ──────────────────
 # steps: 1000000                      # int | TOTAL MC steps, in cycles of mc_replica_steps

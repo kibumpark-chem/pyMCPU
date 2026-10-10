@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import difflib
 import json
+import math
 import warnings
 from dataclasses import dataclass, field, fields
 from pathlib import Path
@@ -127,9 +128,13 @@ def normalize_sidechain_move_mode(mode: str | None) -> SidechainMoveMode:
 
 #: Width (Gaussian std-dev, radians) of the KIC driver, the torsion that moves
 #: one end of the three-residue window before the closure. ``step_size_rad``
-#: sets the pivot only. 0.1 rad is the width the driver shared with the pivot
-#: before it had its own; the engine's ``Integrator`` has the same default.
-DEFAULT_KIC_STEP_SIZE_RAD = 0.1
+#: sets the pivot only. The default, pi/6 (30 deg), is also the engine's
+#: ``Integrator`` default. In a study of driver widths, 5.7 deg (0.1 rad) or
+#: less never moved the psi of CLN025's proline out of its basin (KIC turns a
+#: proline's psi only as a driver; a window holding the proline would change
+#: its phi), while 20 to 120 deg sampled the same equilibrium about equally
+#: fast. Legacy MCPU's reference configs use 60 deg.
+DEFAULT_KIC_STEP_SIZE_RAD = math.pi / 6
 
 
 def normalize_kic_step_size_rad(sigma: float | None) -> float:

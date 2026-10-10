@@ -134,8 +134,18 @@ pytestmark = pytest.mark.slow
 # step 3 on the two runs draw different moves. ACCEPT is 264 again by
 # coincidence. Captured with GCC 15 by re-running the recipe above via
 # `run_hotpath`.
-BASELINE_ACCEPT = 264
-BASELINE_E_HBOND = -179.62722607272156
+#
+# ELEVENTH capture, 2026-10-10, after the KIC driver's default width went
+# from 0.1 rad to pi/6; run_hotpath leaves the KIC width at the default. The
+# previous values, ACCEPT 264 and E_HBOND -179.62722607272156, still come out
+# of the parent engine. Replaying both engines one step at a time, the
+# coordinates are identical through warmup step 22 (the KIC proposals at
+# steps 1, 3, 6, 10 and 15 are rejected or skipped in both); step 23 is a KIC
+# move that the parent engine accepts and this one rejects, and the runs
+# separate from there. Captured with GCC 15 by re-running the recipe above
+# via `run_hotpath`.
+BASELINE_ACCEPT = 254
+BASELINE_E_HBOND = -179.71418313259161
 
 # See tests/physics/test_hbond_delta_hotpath.py's DETERMINISM_ATOL for why
 # this is an empirical repeatability allowance, not a physics constant.

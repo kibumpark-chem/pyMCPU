@@ -14,7 +14,7 @@ or rejects, and feeds the attached :doc:`reporters <reporters>`.
 
 .. py:currentmodule:: pymcpu
 
-.. py:class:: Integrator(temperature, step_size_rad=0.1, sidechain_step_size_rad=-1.0, kic_step_size_rad=0.1)
+.. py:class:: Integrator(temperature, step_size_rad=0.1, sidechain_step_size_rad=-1.0, kic_step_size_rad=math.pi / 6)
 
    :param temperature: reduced temperature of this replica. Required:
       there is no default. Fixed for the object's lifetime -- there is no
@@ -31,9 +31,11 @@ or rejects, and feeds the attached :doc:`reporters <reporters>`.
       torsion turn that moves one end of the KIC window before the window
       is closed again (see :doc:`../physics_notes/kic_jacobian`). Must be
       positive and finite; anything else raises ``ValueError``. The
-      default, 0.1, is the width the driver shared with the pivot before
-      it had its own; it may change once the driver width has been
-      studied.
+      default is π/6 (30°). KIC can turn a proline's ψ only as the
+      driver (a window never holds a proline), and in a study of driver
+      widths, 5.7° (0.1 rad) or less never moved the ψ of CLN025's
+      proline out of its basin, while 20° to 120° all sampled the same
+      equilibrium, about equally fast.
 
    All four arguments accept keywords.
 

@@ -100,8 +100,13 @@ by group number). The per-term values are weighted by default; pass
 Acceptance rates are the first thing to check on any Monte Carlo run. For
 ``pivot``, a very low rate means ``step_size_rad`` is too large for the
 temperature, and a very high rate means the moves are too small to explore;
-``kic_step_size_rad`` plays the same part for ``kic``. The ``rotamer`` move
-draws whole rotamers from a library and uses neither:
+``kic_step_size_rad`` (default π/6, 30°) plays the same part for ``kic``,
+except that a KIC acceptance of a few percent is expected at the default
+width, and narrowing the driver to raise the rate can stop KIC from
+exploring: in a study of driver widths, 0.1 rad (5.7°) or less never moved
+the ψ of CLN025's proline out of its basin, while 20° to 120° sampled the
+same equilibrium. The ``rotamer`` move draws whole rotamers from a library
+and uses neither:
 
 .. code-block:: python
 

@@ -2,9 +2,10 @@
 
 The KIC driver used to draw its angle from the pivot's distribution, so
 ``step_size_rad`` set both. ``kic_step_size_rad`` now sets the driver and
-``step_size_rad`` the pivot only. The default, 0.1 rad, is the width the two
-shared before. Every entry point takes it: the Python classes, YAML and JSON
-configs, ``EngineSpec`` and the engine session built from it.
+``step_size_rad`` the pivot only. The default is pi/6 (30 deg): at 0.1 rad,
+the width the two shared before, KIC never moved the psi of CLN025's proline
+out of its basin. Every entry point takes it: the Python classes, YAML and
+JSON configs, ``EngineSpec`` and the engine session built from it.
 """
 from __future__ import annotations
 
@@ -29,7 +30,7 @@ _PDB = str(default_example_pdb())
 
 
 def test_the_default_is_the_engines() -> None:
-    assert DEFAULT_KIC_STEP_SIZE_RAD == pytest.approx(0.1)
+    assert DEFAULT_KIC_STEP_SIZE_RAD == math.pi / 6
     assert mcpu_core.Integrator(0.6).kic_step_size_rad() == pytest.approx(DEFAULT_KIC_STEP_SIZE_RAD)
     assert IntegratorConfig().kic_step_size_rad == DEFAULT_KIC_STEP_SIZE_RAD
     assert normalize_move_settings()["kic_step_size_rad"] == DEFAULT_KIC_STEP_SIZE_RAD

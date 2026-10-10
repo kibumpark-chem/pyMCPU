@@ -12,6 +12,7 @@
 #include "ProposalPatch.h"
 #include "pymcpu/State.h"
 #include "pymcpu/reporters/Reporter.h"
+#include "pymcpu/utils/numbers_compat.h"
 
 namespace mcpu {
     class System;
@@ -114,9 +115,13 @@ public:
                           float sidechain_step_size_rad = -1.0f,
                           float kic_step_size_rad = kDefaultKicStepSizeRad);
 
-    /// Default KIC driver width in radians: 0.1, the width the driver shared
-    /// with the pivot before it had its own.
-    static constexpr float kDefaultKicStepSizeRad = 0.1f;
+    /// Default KIC driver width in radians: pi/6 (30 deg). In a study of driver
+    /// widths, 5.7 deg (0.1 rad) or less never moved the psi of CLN025's proline
+    /// out of its basin: KIC turns a proline's psi only as a driver (a window
+    /// holding it would change its phi), and the 0.1 rad pivot does not carry
+    /// it over the barrier either. 20 to 120 deg sampled the same equilibrium,
+    /// about equally fast. Legacy MCPU's reference configs use 60 deg.
+    static constexpr float kDefaultKicStepSizeRad = static_cast<float>(PI / 6.0);
 
     /// Effective continuous-sidechain chi amplitude in radians (never negative:
     /// resolves the "same as backbone" sentinel to the actual value in use).

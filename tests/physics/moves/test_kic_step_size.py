@@ -21,7 +21,7 @@ KIC_ONLY = (0.0, 1.0, 0.0)
 PIVOT_ONLY = (1.0, 0.0, 0.0)
 
 
-def _run(weights: tuple[float, float, float], **widths: float) -> tuple[np.ndarray, tuple]:
+def _run(weights: tuple[float, float, float], steps: int = 1500, **widths: float) -> tuple[np.ndarray, tuple]:
     traj = md.load(str(default_example_pdb()))
     heavy = traj.atom_slice(traj.topology.select("not element H"))
     ff = MCPUForceField(heavy)
@@ -31,13 +31,14 @@ def _run(weights: tuple[float, float, float], **widths: float) -> tuple[np.ndarr
     integ = mcpu_core.Integrator(temperature=0.6, **widths)
     integ.set_seed(31)
     integ.set_move_weights(*weights)
-    integ.run(ctx, 1500)
+    integ.run(ctx, steps)
     return np.array(ctx.coords), integ.move_counts()
 
 
 def test_a_kic_run_does_not_depend_on_the_pivot_width() -> None:
-    narrow, counts = _run(KIC_ONLY, step_size_rad=0.05)
-    wide, _ = _run(KIC_ONLY, step_size_rad=0.3)
+    # At the default driver width (pi/6) about 3% of KIC moves are accepted.
+    narrow, counts = _run(KIC_ONLY, steps=3000, step_size_rad=0.05)
+    wide, _ = _run(KIC_ONLY, steps=3000, step_size_rad=0.3)
     assert counts["kic"][0] > 50  # enough accepted KIC moves to tell
     np.testing.assert_array_equal(narrow, wide)
 

@@ -18,10 +18,13 @@ structure's values; only its six φ and ψ torsions change.
    C(r+2) with the window's bond lengths and angles. Closures are the real
    roots of a degree-16 polynomial (Coutsias et al. 2004), so there are at
    most 16. Call their number n_old.
-3. Rotate the driver by a Gaussian angle of width `kic_step_size_rad` (0.1
-   rad by default; `step_size_rad` sets the pivot only). This moves one end
+3. Rotate the driver by a Gaussian angle of width `kic_step_size_rad` (π/6,
+   30°, by default; `step_size_rad` sets the pivot only). This moves one end
    of the window: CA(r+2) and C(r+2) for a φ driver, N(r) and CA(r) for a ψ
-   driver.
+   driver. The width matters for prolines: KIC turns a proline's ψ only as
+   the driver of the window after it, and in a study of driver widths, 5.7°
+   or less never moved the ψ of CLN025's proline out of its basin, while
+   20° to 120° all sampled the same equilibrium.
 4. Find every closure for the new end, n_new of them, and pick one uniformly
    at random.
 5. Accept or reject with w = (J_new / J_old) × (n_new / n_old); see

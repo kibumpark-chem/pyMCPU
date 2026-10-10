@@ -276,17 +276,28 @@ def test_p_zero_is_bit_identical_to_genuine_legacy_code() -> None:
     pinned numbers no longer tie this test to the pre-feature engine, the
     no-extra-draw property is now also checked directly: at p = 1e-30 the
     coin is drawn on every pivot step but never picks the Ramachandran move,
-    so that run must differ from the p = 0 run."""
+    so that run must differ from the p = 0 run.
+
+    RE-CAPTURED 2026-10-10 after the KIC driver's default width went from
+    0.1 rad to pi/6. That changes KIC proposals only, and the parent engine
+    still gives sum 77 and the head [0, 0, 0, 1, 0, 0, 1, 0, 0, 0, 1, 0, 0,
+    0, 0, 0, 1, 0, 0, 1]. Replayed one step at a time, the coordinates stay
+    identical through step 15: the KIC proposals at steps 5, 6 and 12 are
+    rejected in both engines, at steps 5 and 12 for different reasons (a
+    clash in one engine and not in the other), and from step 13 on the runs
+    draw different moves. Step 16, a KIC move in the parent engine, is an
+    accepted rotamer move here."""
     ctx, _ = build_raw_context(virtual_amide_h=True)
     integ = mcpu_core.Integrator(temperature=300.0, step_size_rad=0.1)
     integ.set_pivot_rama_probability(0.0)
     integ.set_seed(99)
     integ.run(ctx, 300)
 
-    legacy_accept_bits_head = [0, 0, 0, 1, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0, 0, 1]
+    legacy_accept_bits_head = [0, 0, 0, 1, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0]
     # 92 before the KIC fix, 79 before the rotation fix, 81 before the
-    # chain-end pivots and sidechain sites
-    legacy_accept_bits_sum = 77
+    # chain-end pivots and sidechain sites, 77 before the KIC driver's
+    # default width became pi/6
+    legacy_accept_bits_sum = 82
 
     bits = list(integ.last_accept_bits())
     assert bits[:20] == legacy_accept_bits_head

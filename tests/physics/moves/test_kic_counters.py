@@ -103,11 +103,14 @@ def test_kic_counters_stay_low_during_normal_run() -> None:
     # two closure roots merge; a large rate indicates real corruption.
     assert rates["kic_presolve_zero"] < 1e-2, rates
 
-    # Reverse check: measured at 0.13-0.40 % of KIC proposals in 200k-5M step
-    # runs, from the start structure. A large rate means the current windows no
-    # longer match the start-structure targets, i.e. the geometry has drifted
-    # (or the run was started from a drifted structure).
-    assert rates["kic_reverse_missing"] < 1e-2, rates
+    # Reverse check: at the default driver width (pi/6), 0.49 % of KIC
+    # proposals in a 200k-step run from the start structure; over 20 seeds of
+    # this 10k-step run, 0.34 % on average and at most 0.99 % (this seed:
+    # 0.97 %). A wider driver raises the rate: 0.26 % at 0.1 rad in the same
+    # 200k steps. A large rate means the current windows no longer match the
+    # start-structure targets, i.e. the geometry has drifted (or the run was
+    # started from a drifted structure).
+    assert rates["kic_reverse_missing"] < 2e-2, rates
 
     # Near-singular Jacobians can occur at rare backbone geometries. A rate
     # above 0.1% would indicate a systematic problem.
