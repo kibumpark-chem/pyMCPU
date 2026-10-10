@@ -1,25 +1,19 @@
-"""SoA (structure-of-arrays) coordinate storage regression: determinism and
-physics unchanged.
+"""Same-seed determinism of the MC hot path, and a frozen baseline.
 
-All three tests here are self-vs-self: same-seed determinism, the internal
-``verify_physics_consistency`` checker, and a frozen regression baseline of
-pyMCPU's *own* output (not a legacy MCPU comparison, despite the baseline
-history below referencing legacy hbonds.h parity work as the reason the
-physics changed). The Python-exposed ``state.coords`` API roundtrip is a
-pure software-contract check with no physics content, so it lives separately
-in ``tests/config/test_coords_api.py``.
+Both tests here are self-vs-self: two same-seed runs must make the same
+accept decisions, report the same neighbour-search counters and agree on
+both energies to ``DETERMINISM_ATOL`` (which covers the SoA coordinate
+storage, the Mu and H-bond delta paths and the reused proposal), and a
+frozen regression baseline of pyMCPU's *own* output (not a legacy MCPU
+comparison, despite the baseline history below referencing legacy hbonds.h
+parity work as the reason the physics changed). Delta energies are checked
+against a full recompute in ``test_energy_consistency.py``.
 """
 
 from __future__ import annotations
 
 import pytest
 
-from pymcpu import mcpu_core
-from tests.fixtures.context_builders import (
-    ATOL,
-    build_test_context,
-    require_safe_math_for_accept_determinism,
-)
 from tests.physics.helpers.hotpath_runs import run_hotpath
 
 pytestmark = pytest.mark.slow
@@ -147,8 +141,11 @@ pytestmark = pytest.mark.slow
 BASELINE_ACCEPT = 254
 BASELINE_E_HBOND = -179.71418313259161
 
-# See tests/physics/test_hbond_delta_hotpath.py's DETERMINISM_ATOL for why
-# this is an empirical repeatability allowance, not a physics constant.
+# Repeatability allowance for two back-to-back identical-seed runs -- not a
+# physics constant. Chosen empirically: tight enough that a real
+# nondeterminism regression (e.g. an uninitialized read, an iteration-order
+# dependency) still fails, loose enough to absorb this hardware's benign
+# floating-point associativity noise across repeated runs.
 DETERMINISM_ATOL = 1e-5
 
 # Looser than DETERMINISM_ATOL: this compares against a baseline frozen at an
@@ -168,29 +165,17 @@ BASELINE_ATOL = 1e-4
 
 
 def test_soa_coords_deterministic_repeat() -> None:
-    require_safe_math_for_accept_determinism()
-    a = run_hotpath(seed=42, steps=150, warmup=0, step_size_rad=0.1)
-    b = run_hotpath(seed=42, steps=150, warmup=0, step_size_rad=0.1)
+    steps = 150
+    a = run_hotpath(seed=42, steps=steps, warmup=0, step_size_rad=0.1)
+    b = run_hotpath(seed=42, steps=steps, warmup=0, step_size_rad=0.1)
+    assert len(a.bits) == steps
     assert a.bits == b.bits
-    assert a.accept == b.accept
     assert a.energy == pytest.approx(b.energy, abs=DETERMINISM_ATOL)
     assert a.e_hbond == pytest.approx(b.e_hbond, abs=DETERMINISM_ATOL)
-    assert a.proxy_stat("mu_num_pair_distance_checks") == b.proxy_stat(
-        "mu_num_pair_distance_checks"
-    )
-    assert a.proxy_stat("mu_num_pairs_within_rcut") == b.proxy_stat(
-        "mu_num_pairs_within_rcut"
-    )
-
-
-def test_soa_actin_verify() -> None:
-    ctx, _ = build_test_context(with_qbias=False)
-    integ = mcpu_core.Integrator(temperature=300.0, step_size_rad=0.05)
-    integ.verify_physics_consistency(ctx, num_steps=30, atol=ATOL)
+    assert a.proxy == b.proxy
 
 
 def test_soa_baseline_accept_and_hbond_energy() -> None:
-    require_safe_math_for_accept_determinism()
     r = run_hotpath(seed=42, steps=1000, warmup=100, step_size_rad=0.1)
     assert r.accept == BASELINE_ACCEPT
     assert r.e_hbond == pytest.approx(BASELINE_E_HBOND, abs=BASELINE_ATOL)

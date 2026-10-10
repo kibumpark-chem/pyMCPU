@@ -74,15 +74,6 @@ def test_the_right_atom_count_still_loads(sim) -> None:
     assert np.allclose(simulation.context.coords, moved)
 
 
-def test_debug_force_pivot_reports_the_moved_atoms(sim) -> None:
-    simulation, _ = sim
-    integrator = simulation.integrator
-    assert integrator.debug_force_pivot(simulation.context, 5, True)
-    moved = list(integrator.last_moved_indices())
-    assert moved and len(set(moved)) == len(moved)
-    assert np.isfinite(integrator.last_delta_energy())
-
-
 # ----------------------------------------------------------- restore paths
 
 
@@ -203,11 +194,3 @@ def test_engine_session_rejects_a_restart_state_of_the_wrong_size(
     np.savez(npz, coords=_with_extra_column(coords))
     with pytest.raises(ValueError, match="atoms, but the system has"):
         session.set_coords(session.coords_from_auxref(str(npz)))
-
-
-def test_resume_paths_reject_before_touching_the_system(sim) -> None:
-    """The shared check runs on the stored coordinates alone."""
-    simulation, coords = sim
-    n = simulation.system.get_num_atoms()
-    assert checkpoint_layout_error([coords], n) is None
-    assert LAYOUT_ERROR in checkpoint_layout_error([_with_extra_column(coords)], n)

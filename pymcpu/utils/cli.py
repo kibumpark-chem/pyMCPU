@@ -20,10 +20,10 @@ def add_checkpoint_args(
 ) -> argparse._ArgumentGroup:
     """Add the shared ``--checkpoint-*`` / ``--resume`` group.
 
-    Identical across every pyMCPU CLI entry point (scripts/run_mcpu_folding.py,
-    scripts/run_mcpu_replica_exchange.py, examples/openmm_style/*.py,
-    ``mcpu run``); factored out so the flags/help text can't
-    silently drift between scripts.
+    Identical across every pyMCPU CLI entry point
+    (scripts/run_mcpu_replica_exchange.py, examples/openmm_style/run_folding.py
+    and run_replica_exchange_2d.py, ``mcpu run``); factored out so the
+    flags/help text can't silently drift between scripts.
 
     Pass ``None`` for a default to mean "not set on the CLI, defer to whatever
     CheckpointConfig/YAML already supplies" -- this is what

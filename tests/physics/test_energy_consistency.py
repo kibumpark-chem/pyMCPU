@@ -1,24 +1,23 @@
 """Full-forcefield internal energy-consistency checks.
 
-Every assertion here compares the engine against itself -- cached vs.
-recomputed total energy, per-energy-group sums vs. the whole, and the C++
-``PhysicsVerifier`` self-check -- there is no legacy MCPU comparison in this
-file. Legacy-reference comparisons live under ``tests/legacy_parity/``.
+Incremental energy changes vs. a from-scratch recompute (the C++
+``PhysicsVerifier`` self-check), and per-energy-group sums vs. the whole,
+with sanity bounds on the folded reference structure (every group finite,
+Mu below the clash sentinel, total negative). There is no legacy MCPU
+comparison in this file; legacy-reference comparisons live under
+``tests/legacy_parity/``.
 """
 
 from __future__ import annotations
 
 from enum import IntEnum
 
+import numpy as np
 import pytest
 
 from pymcpu import mcpu_core
 from tests.fixtures.context_builders import ATOL
-
-# Running total vs a full recompute (see test_accepted_move_energy_drift).
-RUNNING_ATOL = 1e-6
-
-pytestmark = pytest.mark.slow
+from tests.physics.helpers.constants import MU_CLASH_SENTINEL
 
 
 class EnergyGroup(IntEnum):
@@ -35,40 +34,50 @@ class EnergyGroup(IntEnum):
 
 
 def test_mc_energy_consistency(chignolin_context) -> None:
-    """``verify_mc_energy_consistency`` drives 20 random MC move proposals
-    and, for every energy group present, asserts the incremental delta-energy
-    (``Potential::calculateEnergyChange``) matches a direct recomputation
-    (``e_new - e_old`` from ``Potential::calculateEnergy``) within ``atol`` --
-    i.e. the delta-energy hotpaths agree with a from-scratch recompute for
-    both accepted and rejected proposals, not just the committed trajectory
-    (see ``PhysicsVerifier::verify_potential_delta`` /
+    """``verify_mc_energy_consistency`` draws MC move proposals from the
+    native state and, for every energy group present, asserts the
+    incremental delta-energy (``Potential::calculateEnergyChange``) matches
+    a direct recomputation (``e_new - e_old`` from
+    ``Potential::calculateEnergy``) within ``atol`` (see
+    ``PhysicsVerifier::verify_potential_delta`` /
     ``MCIntegrator::verify_physics_consistency``).
+
+    This checks the default move mix, the rotamer-library sidechain move
+    included, and it is the default suite's full-forcefield delta check, so
+    it is not marked slow (about 4 s plus the context build). The proposals
+    are seeded and many: against a delta bug that fires only on some
+    residues, 10, 20 and 30 random proposals missed it in 8, 5 and 3 of 20
+    seeds, and 100 or more caught it in all 20.
     """
     integrator = mcpu_core.Integrator(temperature=300.0, step_size_rad=0.1)
+    integrator.set_seed(2026)
     mcpu_core.PhysicsVerifier.verify_mc_energy_consistency(
-        integrator, chignolin_context, num_steps=20, atol=ATOL
+        integrator, chignolin_context, num_steps=500, atol=ATOL
     )
 
 
-def test_accepted_move_energy_drift(chignolin_context) -> None:
-    """After accepted moves, the ``current_energy`` cached incrementally on
-    ``State`` must not drift from a from-scratch total-energy recompute."""
+@pytest.mark.slow
+def test_mc_energy_consistency_with_qbias(chignolin_with_qbias) -> None:
+    """The same check with the native-contacts bias (group 6) attached."""
+    context, _forcefield = chignolin_with_qbias
     integrator = mcpu_core.Integrator(temperature=300.0, step_size_rad=0.1)
-    integrator.run(chignolin_context, num_steps=10)
-    e_cached = chignolin_context.get_state().current_energy
-    e_recalc = chignolin_context.calculate_total_energy(-1)
-    # Energy sums are double, so the running total matches a recompute to
-    # rounding; 1e-6 leaves room for FMA contraction differing between the
-    # delta and full paths. The shared ATOL (1e-3) is for other comparisons.
-    assert e_cached == pytest.approx(e_recalc, abs=RUNNING_ATOL)
+    integrator.set_seed(2026)
+    integrator.verify_physics_consistency(context, num_steps=100, atol=ATOL)
 
 
+@pytest.mark.slow
 def test_per_group_sum_equals_total(chignolin_context) -> None:
-    """The five per-energy-group energies must sum to the same total the
-    engine reports for group -1 (all potentials) -- i.e. the total-energy path
-    isn't silently double-counting or dropping a energy group."""
-    group_energies = [
-        chignolin_context.calculate_total_energy(group) for group in EnergyGroup
-    ]
+    """The five per-energy-group energies are finite and sum to the total
+    the engine reports for group -1 (all potentials) -- the total-energy
+    path isn't silently double-counting or dropping an energy group. The
+    folded reference structure is not in a steric clash and has a
+    net-favourable (negative) total energy."""
+    group_energies = {
+        group: chignolin_context.calculate_total_energy(group) for group in EnergyGroup
+    }
     total = chignolin_context.calculate_total_energy(-1)
-    assert sum(group_energies) == pytest.approx(total, abs=ATOL)
+    for group, energy in group_energies.items():
+        assert np.isfinite(energy), f"{group.name} energy is not finite"
+    assert group_energies[EnergyGroup.MU_CONTACT] < MU_CLASH_SENTINEL
+    assert total < 0.0
+    assert sum(group_energies.values()) == pytest.approx(total, abs=ATOL)

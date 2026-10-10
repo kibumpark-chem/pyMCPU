@@ -25,8 +25,10 @@ Calls to anything else (``std::vector`` growth, libm) are listed with
 
 Exit status: 0 when every hot function was found and is clean, 1 on a
 violation, 2 when the library or a hot function cannot be found. Needs
-binutils (``nm``, ``objdump``) and a build that keeps its symbol table
-(the default build does not strip the extension).
+binutils (``nm``, ``objdump``) and a build that keeps its symbol table.
+pybind11 strips a Release extension when it links it, so configure the
+Release build with ``-DCMAKE_STRIP=/bin/true``. RelWithDebInfo keeps the
+symbols but builds without LTO, so it is not the binary that ships.
 """
 from __future__ import annotations
 

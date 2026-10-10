@@ -13,19 +13,11 @@ Both are things the engine used to do quietly, and quietly is the problem:
 
 from __future__ import annotations
 
-import sys
-from pathlib import Path
-
 import numpy as np
 import pytest
 
-HELPERS = Path(__file__).resolve().parents[1] / "helpers"
-if str(HELPERS) not in sys.path:
-    sys.path.insert(0, str(HELPERS))
-
-from minimal_system_builders import setup_minimal_bb_system  # noqa: E402
-
-from pymcpu import mcpu_core  # noqa: E402
+from pymcpu import mcpu_core
+from tests.physics.helpers.minimal_system_builders import setup_minimal_bb_system
 
 
 def _backbone_only(n_res=8):

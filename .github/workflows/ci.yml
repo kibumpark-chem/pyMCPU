@@ -197,8 +197,9 @@ jobs:
   # MuPotential.cpp and the scalar Sturm sign counts in SturmSolver.h -- were
   # never compiled or run in CI. One Python version is enough: those branches
   # are selected by the ISA, not by the interpreter. The test list is the code
-  # they serve: the Mu neighbour walk and its deltas, and every move (KIC's
-  # root finder included).
+  # they serve: the Mu neighbour walk and its deltas, and the moves (KIC's
+  # root finder included). It runs the default selection, so tests marked
+  # slow in these files are skipped here too.
   # ---------------------------------------------------------------------
   scalar-fallbacks:
     name: build + test (MCPU_ARCH=v2, no AVX2)
@@ -234,10 +235,9 @@ jobs:
         run: >-
           python -m pytest -q
           tests/physics/test_mu_pair_walk.py
-          tests/physics/test_mu_delta_hotpath.py
           tests/physics/test_mu_grid_membership.py
           tests/physics/test_grid_overflow.py
-          tests/physics/test_potential_delta_consistency.py
+          tests/physics/test_energy_consistency.py
           tests/physics/forcefield/test_mu_*.py
           tests/physics/moves
 

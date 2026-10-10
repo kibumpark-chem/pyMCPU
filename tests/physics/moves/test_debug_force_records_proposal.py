@@ -62,6 +62,7 @@ def test_a_forced_move_replaces_the_previous_record(sim, hook: str) -> None:
     moved = list(integ.last_moved_indices())
     assert integ.last_move_kind() == kind
     assert moved and moved != before
+    assert len(set(moved)) == len(moved)
     assert math.isfinite(integ.last_delta_energy())
     assert math.isfinite(integ.last_log_jacobian_weight())
     if kind == "Sidechain":

@@ -14,7 +14,7 @@ from __future__ import annotations
 import pytest
 
 from pymcpu import mcpu_core
-from tests.fixtures.context_builders import ATOL, build_raw_context
+from tests.fixtures.context_builders import build_raw_context
 
 pytestmark = pytest.mark.slow
 
@@ -39,12 +39,6 @@ def _multi_chi_residue(ctx) -> int:
         if system.get_torsions_per_residue()[r] >= 2 and not system.is_proline(r):
             return r
     pytest.skip("test PDB has no multi-chi residue")
-
-
-def test_rotamer_counters_exist_and_start_at_zero() -> None:
-    integ = mcpu_core.Integrator(temperature=0.6, step_size_rad=0.1)
-    assert integ.get_rotamer_attempted() == 0
-    assert integ.get_rotamer_accepted() == 0
 
 
 def test_move_stats_includes_rotamer_counters() -> None:
@@ -131,20 +125,6 @@ def test_rotamer_run_only_moves_sidechain_atoms() -> None:
 
     assert n_sidechain_steps > 0, "no Sidechain-slot steps occurred"
     assert integ.move_stats()["num_propose_rotamer"] > 0
-
-
-def test_rotamer_move_physics_consistency(chignolin_context) -> None:
-    """Incremental ΔE must match a full recompute for every energy group,
-    exactly mirroring test_energy_conservation.py's coverage of the
-    continuous move -- confirms the rotamer move's ProposalPatch bookkeeping
-    (moved atoms, distorted residues, log_jacobian_weight) is correct enough
-    that the energy machinery it shares with every other move still agrees
-    with a from-scratch recomputation."""
-    integrator = mcpu_core.Integrator(temperature=300.0, step_size_rad=0.1)
-    integrator.set_sidechain_move_mode("rotamer_library")
-    mcpu_core.PhysicsVerifier.verify_mc_energy_consistency(
-        integrator, chignolin_context, num_steps=10, atol=ATOL
-    )
 
 
 def test_default_mode_matches_explicit_rotamer_library() -> None:

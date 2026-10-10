@@ -23,7 +23,9 @@ from pymcpu.config import (
     config_from_dict,
     yaml_dict_to_config,
 )
-from pymcpu.runners import run_replica_exchange_2d
+from pymcpu.runners import run_folding, run_mpi_replica_exchange_2d, run_replica_exchange_2d
+from pymcpu.sampling.folding import FoldingRunner
+from pymcpu.sampling.mpi_replica_exchange import MPIReplicaExchange
 from pymcpu.sampling.replica_exchange import ReplicaExchange
 
 
@@ -43,17 +45,31 @@ def test_config_checkpoint_config_is_the_runtime_type() -> None:
 
 
 def test_checkpoint_kwargs_reach_runner_init_and_run() -> None:
-    """Regression: checkpoint args must not be dropped between the runner
-    function and ``ReplicaExchange.__init__``/``.run()``."""
-    sig_runner = inspect.signature(run_replica_exchange_2d)
-    sig_init = inspect.signature(ReplicaExchange.__init__)
-    sig_run = inspect.signature(ReplicaExchange.run)
-    for name in ("checkpoint_dir", "checkpoint_interval", "resume"):
-        assert name in sig_runner.parameters
-    for name in ("checkpoint_dir", "checkpoint_interval"):
-        assert name in sig_init.parameters
-    for name in ("checkpoint_dir", "checkpoint_interval", "resume"):
-        assert name in sig_run.parameters
+    """Regression: no runner function or class may drop or rename a
+    checkpoint keyword. Callers pass them by name
+    (examples/openmm_style/run_folding.py does), so a rename breaks them
+    even when every call inside pymcpu is renamed with it."""
+    run_kwargs = {"checkpoint_dir", "checkpoint_interval", "keep_last_n", "resume"}
+    init_kwargs = {"checkpoint_config", "checkpoint_dir", "checkpoint_interval", "keep_last_n"}
+    # FoldingRunner and MPIReplicaExchange also take resume when built;
+    # ReplicaExchange takes it in run() only.
+    entry_points = {
+        run_folding: run_kwargs,
+        run_replica_exchange_2d: run_kwargs,
+        run_mpi_replica_exchange_2d: run_kwargs,
+        FoldingRunner.__init__: init_kwargs | {"resume"},
+        FoldingRunner.run: run_kwargs,
+        ReplicaExchange.__init__: init_kwargs,
+        ReplicaExchange.run: run_kwargs,
+        MPIReplicaExchange.__init__: init_kwargs | {"resume"},
+        MPIReplicaExchange.run: run_kwargs,
+    }
+    missing = {}
+    for func, wanted in entry_points.items():
+        lost = wanted - set(inspect.signature(func).parameters)
+        if lost:
+            missing[func.__qualname__] = sorted(lost)
+    assert not missing
 
 
 # The checkpoint upload (cloud_sync / cloud_bucket / cloud_sync_cmd) was

@@ -3,9 +3,9 @@ form of the per-group delta check.
 
 It verifies an invariant the incremental path can genuinely violate, which is
 why it is worth pinning. ``verify_potential_delta`` (the scalar form) is
-already covered by ``test_potential_delta_consistency.py``; this pins that the
-"all" form agrees with it for every added energy group, so the two cannot
-drift.
+called directly by many tests (the ``forcefield/test_mu_*`` files among
+them); this pins that the "all" form agrees with it for every added energy
+group, so the two cannot drift.
 """
 
 from __future__ import annotations
@@ -19,8 +19,7 @@ from tests.physics.helpers.minimal_system_builders import setup_minimal_bb_syste
 
 
 def _bb_proposal(context, n_res: int, n_atoms: int):
-    """A single-residue backbone torsion perturbation, as used by
-    ``test_potential_delta_consistency.py``."""
+    """A single-residue backbone torsion perturbation."""
     coords = np.zeros((3, n_atoms), dtype=np.float32)
     context.set_positions(coords)
 
@@ -41,7 +40,7 @@ def test_verify_all_potential_deltas_covers_every_added_group() -> None:
     n_res, n_atoms = 4, 16
     system, context = setup_minimal_bb_system(n_res, n_atoms)
 
-    # Two groups so the "all" form has something to iterate over.
+    # One potential (group 2) so the "all" form has something to iterate over.
     bb_triplet = mcpu_core.TripletPotential([0.0] * (n_res * 1296))
     bb_triplet.set_energy_group(2)
     system.add_potential(bb_triplet)

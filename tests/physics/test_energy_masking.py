@@ -9,7 +9,9 @@ energy evaluation without removing them from the system. Covers:
 - Mode ``clash_only``: delta steric clash remains active; contact/other
   terms are masked. Full Mu energy is contact-only (legacy CLASH_WEIGHT=0)
   -- no 99999 penalty.
-- MC integration: simulation doesn't crash with a mask active.
+
+That the running energy stays exact while a mask is set, changed and
+cleared between runs is checked in ``test_energy_definition_resync.py``.
 """
 
 from __future__ import annotations
@@ -68,21 +70,6 @@ class TestEnergyMaskAPI:
         n_res = sys.get_num_residues()
         with pytest.raises(Exception):
             sys.set_energy_ignored_residues([n_res + 10], "ignore_all")
-
-    def test_energy_evaluates_without_crash(self) -> None:
-        """Energy evaluation works with mask active."""
-        ctx, _ = build_test_context(with_qbias=False)
-        sys = ctx.get_system()
-        sys.set_energy_ignored_residues([0, 1, 2, 3, 4], "ignore_all")
-        e = ctx.calculate_total_energy(-1)
-        assert np.isfinite(e)
-
-    def test_energy_evaluates_clash_only_mode(self) -> None:
-        ctx, _ = build_test_context(with_qbias=False)
-        sys = ctx.get_system()
-        sys.set_energy_ignored_residues([0, 1, 2, 3, 4], "clash_only")
-        e = ctx.calculate_total_energy(-1)
-        assert np.isfinite(e)
 
 
 # ---------------------------------------------------------------------------
@@ -254,28 +241,3 @@ class TestClashOnlyMode:
         # Should still be finite (full energy is contact-only).
         assert np.isfinite(e_mu_masked)
         assert e_mu_masked < MU_CLASH_SAFETY_MARGIN
-
-
-# ---------------------------------------------------------------------------
-# 4. MC integration test: simulation doesn't crash with mask active
-# ---------------------------------------------------------------------------
-class TestMCIntegration:
-    def test_mc_steps_with_ignore_all(self) -> None:
-        """Run MC steps with ignore_all mask active - no crash."""
-        ctx, _ = build_test_context(with_qbias=False)
-        sys = ctx.get_system()
-        sys.set_energy_ignored_residues(list(range(0, 5)), "ignore_all")
-
-        integrator = mcpu_core.Integrator(300.0, 0.1)
-        integrator.set_seed(42)
-        integrator.run(ctx, 50)
-
-    def test_mc_steps_with_clash_only(self) -> None:
-        """Run MC steps with clash_only mask active - no crash."""
-        ctx, _ = build_test_context(with_qbias=False)
-        sys = ctx.get_system()
-        sys.set_energy_ignored_residues(list(range(0, 5)), "clash_only")
-
-        integrator = mcpu_core.Integrator(300.0, 0.1)
-        integrator.set_seed(42)
-        integrator.run(ctx, 50)

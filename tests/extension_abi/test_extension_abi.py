@@ -1,10 +1,9 @@
 """Build / ABI smoke tests for the compiled ``mcpu_core`` extension.
 
-Pure import- and attribute-surface checks -- these confirm the compiled
-binary matches the Python-side API the rest of the suite depends on, not any
-physics behavior. Functional round-trip behavior of the RNG-state API (which
-underpins the accept-bit determinism guarantees other physics tests rely on)
-lives in ``tests/physics/test_rng_state.py`` instead.
+Attribute-surface and freshness checks -- these confirm the compiled binary
+matches the Python-side API the rest of the suite depends on, not any
+physics behavior. Functional behavior (the RNG-state round trip, for one)
+is tested under ``tests/physics/``.
 
 These tests exist to make a stale build fail *here*, loudly and once, rather
 than as dozens of ``AttributeError``s scattered across the physics suite. A
@@ -26,29 +25,6 @@ _SURFACE_FILE = Path(__file__).with_name("abi_surface.txt")
 # translation units and headers: the parameter data under src/pymcpu/parameters
 # is not compiled in, so touching it must not trip the freshness check.
 _SOURCE_GLOBS = ("src/**/*.cpp", "src/**/*.c", "include/**/*.h")
-
-
-def test_mcpu_core_importable() -> None:
-    from pymcpu import mcpu_core
-
-    assert mcpu_core is not None
-
-
-def test_integrator_exposes_rng_state_api() -> None:
-    """``get_rng_state``/``set_rng_state`` must be present on ``Integrator``
-    -- their absence means the extension binary is stale relative to the
-    Python source (these were added alongside the mid-run reseed fix that
-    ``tests/physics/test_coords_soa.py``'s baseline history documents)."""
-    from pymcpu import mcpu_core
-
-    integrator = mcpu_core.Integrator(0.5, 0.1)
-    integrator.set_seed(42)
-    assert hasattr(integrator, "get_rng_state"), (
-        "Rebuild required: mcpu_core missing get_rng_state"
-    )
-    assert hasattr(integrator, "set_rng_state"), (
-        "Rebuild required: mcpu_core missing set_rng_state"
-    )
 
 
 def _expected_surface() -> list[str]:

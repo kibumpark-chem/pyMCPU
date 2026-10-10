@@ -19,7 +19,7 @@ from __future__ import annotations
 import pytest
 
 from pymcpu import mcpu_core
-from tests.fixtures.context_builders import ATOL, build_raw_context
+from tests.fixtures.context_builders import build_raw_context
 
 pytestmark = pytest.mark.slow
 
@@ -82,17 +82,4 @@ def test_continuous_move_perturbs_multiple_chi_angles_in_one_step() -> None:
     assert found_multi_chi_change, (
         "no accepted Sidechain-slot step changed 2+ chi angles for any "
         "multi-chi residue over 1500 steps"
-    )
-
-
-def test_continuous_move_physics_consistency(chignolin_context) -> None:
-    """Incremental ΔE must match a full recompute for every energy group with
-    the rewritten multi-chi cascade -- mirrors
-    test_energy_conservation.py's coverage, pinned explicitly to
-    "continuous" since that file's own (mode-agnostic) test now exercises
-    whatever sidechain_move_mode defaults to (rotamer_library)."""
-    integrator = mcpu_core.Integrator(temperature=300.0, step_size_rad=0.1)
-    integrator.set_sidechain_move_mode("continuous")
-    mcpu_core.PhysicsVerifier.verify_mc_energy_consistency(
-        integrator, chignolin_context, num_steps=10, atol=ATOL
     )

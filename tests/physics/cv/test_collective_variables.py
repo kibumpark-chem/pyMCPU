@@ -9,7 +9,7 @@ rather than ``tests/legacy_parity/``. The config-dispatch/error-handling half
 of the original combined file (``build_cv`` spec parsing, unknown-type
 and mismatched-reference errors) is pure software plumbing with no physics
 content and lives separately in
-``tests/integration/we/test_pcoord_factory.py``.
+``tests/integration/sampling/test_cv_factory.py``.
 """
 
 from __future__ import annotations

@@ -67,8 +67,8 @@ class ParityTolerance(Enum):
 
 
 _ATOL = {
-    # BITWISE is deliberately absent: it is not an atol comparison at all.
-    # Putting a number here would silently turn it back into one.
+    # BITWISE is absent: assert_legacy_parity compares its float32 bits and
+    # returns before it reads this table.
     ParityTolerance.EXACT: 1e-4,
     ParityTolerance.FLOAT32_ACCUMULATION: 1e-2,
     ParityTolerance.BINNING_EDGE: 5e-2,

@@ -76,12 +76,12 @@ the 164-417 residue structures the tolerances were validated on.
 
 ## Tests
 
-The default suite excludes slow, network, MPI and example tiers. Before
-opening a PR, run the slow tier too — it contains the physics goldens:
+The default suite excludes the slow tier. Before opening a PR, run the slow
+tier too — it contains the physics goldens:
 
 ```bash
 python -m pytest -q                                              # fast
-python -m pytest -o addopts="" -m "not network and not mpi and not mpi_integration" -q
+python -m pytest -o addopts="" -m "not mpi_integration" -q       # fast + slow
 ```
 
 `Integrator.verify_physics_consistency(context, num_steps, atol)` runs MC

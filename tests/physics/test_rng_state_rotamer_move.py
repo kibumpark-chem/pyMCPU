@@ -1,6 +1,6 @@
 """RNG checkpoint/restore round trip through a real rotamer-mode run.
 
-``test_rng_state.py``'s plain round trip never constructs a second
+A plain RNG-state round trip never constructs a second
 cache-bearing ``std::normal_distribution`` (it only ever touches ``rng``
 directly), so it can't catch a forgotten ``unit_normal_dist_.reset()`` in
 ``get_rng_state()``/``set_rng_state()`` -- the rotamer-library sidechain
