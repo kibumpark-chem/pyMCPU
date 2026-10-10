@@ -247,7 +247,10 @@ def test_the_drift_budget_rebuilds_the_list_in_time(capfd) -> None:
     carried distance by 2.1e-4 A and the 0.05 A band is used up after about
     230 accepted pivots. Pivot-only, with nothing resetting the running
     energy: it must still equal the full energy, and the list must have been
-    rebuilt on schedule, never for a move that cannot use it."""
+    rebuilt on schedule, never for a move that cannot use it. The
+    trajectory, and with it the accepted count, differs between builds:
+    15,000 steps accept 2,979 to 3,414 pivots over seeds 1-16 on x86-64-v2
+    and v3 builds with GCC 13 and 15."""
     traj = md.load(str(resolve_test_pdb()))
     heavy = traj.atom_slice(traj.topology.select("not element H"))
     ff = MCPUForceField(heavy)
@@ -260,7 +263,7 @@ def test_the_drift_budget_rebuilds_the_list_in_time(capfd) -> None:
     integ.set_move_weights(1.0, 0.0, 0.0)
     mu = ctx.mu_potential
     rebuilds_before = mu.contact_list_rebuilds
-    for chunk in range(100):
+    for chunk in range(150):
         integ.run(ctx, 100, chunk * 100)
         running = float(ctx.get_state().current_energy)
         full = float(ctx.energy_breakdown(True)["weighted_total"])
