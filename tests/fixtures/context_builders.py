@@ -39,15 +39,6 @@ FALLBACK_PDBS = (REPO_ROOT / "examples" / "chignolin" / "input_pdb" / "1uao.pdb"
 ATOL = 1e-3
 
 
-def require_safe_math_for_accept_determinism() -> None:
-    """No-op under this project's SAFE-math-only build configuration (kept
-    as a call site marker: tests that assert bit-identical accept-bit
-    streams call this first, documenting that the assertion assumes
-    SAFE-math, in case a future build ever offers an unsafe-math mode where
-    it wouldn't hold)."""
-    return
-
-
 def resolve_test_pdb() -> Path:
     if TEST_PDB.exists():
         return TEST_PDB

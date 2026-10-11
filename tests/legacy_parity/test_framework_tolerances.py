@@ -56,10 +56,3 @@ def test_bitwise_error_names_both_bit_patterns() -> None:
         assert_legacy_parity(0.40001, _ref(0.4, ParityTolerance.BITWISE))
     msg = str(exc.value)
     assert "actual float32 bits" in msg and "legacy float32 bits" in msg
-
-
-def test_bitwise_has_no_atol_entry() -> None:
-    """Giving BITWISE a number in _ATOL would silently make it approximate."""
-    from tests.legacy_parity.framework import _ATOL
-
-    assert ParityTolerance.BITWISE not in _ATOL

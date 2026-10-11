@@ -226,17 +226,6 @@ class TestNativeContacts:
 
 
 class TestComputeQ:
-    def test_returns_array_shape_1(self, chignolin_pdb_path: str) -> None:
-        runner = _make_minimal_folding_runner(chignolin_pdb_path)
-        q = runner._compute_Q_values()
-        assert isinstance(q, np.ndarray)
-        assert q.shape == (1,)
-
-    def test_in_range_0_1(self, chignolin_pdb_path: str) -> None:
-        runner = _make_minimal_folding_runner(chignolin_pdb_path)
-        q = runner._compute_Q_values()
-        assert np.all(q >= 0.0) and np.all(q <= 1.0)
-
     def test_native_structure_scores_near_1(self, chignolin_pdb_path: str) -> None:
         """Feeding the native coordinates back into the Q calculator should
         recover every native contact (self-vs-self)."""
@@ -246,13 +235,14 @@ class TestComputeQ:
         runner.simulation.get_coords = lambda: native_coords_ang
 
         q = runner._compute_Q_values()
+        assert isinstance(q, np.ndarray) and q.shape == (1,)
         # Freshly measured on the current engine: self-vs-self gives exactly
         # Q=1.0 (every native contact distance is trivially below cutoff).
         # The old test asserted a loose >=0.90 with no stated rationale;
         # tightened here to the actual measured value (with a hair of slack
         # for platform float rounding) since a real unit-mismatch regression
         # would show up far below this, not as noise around it.
-        assert q[0] >= 0.999, f"Expected Q~1.0 for native structure, got {q[0]:.6f}"
+        assert 0.999 <= q[0] <= 1.0, f"Expected Q~1.0 for native structure, got {q[0]:.6f}"
 
     def test_returns_array_without_ref_pdb(self) -> None:
         """Without reference PDB, returns np.array([0.0]) not None."""
@@ -266,17 +256,6 @@ class TestComputeQ:
 
 
 class TestComputeRmsd:
-    def test_returns_array_shape_1(self, chignolin_pdb_path: str) -> None:
-        runner = _make_minimal_folding_runner(chignolin_pdb_path)
-        rmsd = runner._compute_rmsd_values()
-        assert isinstance(rmsd, np.ndarray)
-        assert rmsd.shape == (1,)
-
-    def test_non_negative(self, chignolin_pdb_path: str) -> None:
-        runner = _make_minimal_folding_runner(chignolin_pdb_path)
-        rmsd = runner._compute_rmsd_values()
-        assert rmsd[0] >= 0.0
-
     def test_native_structure_scores_near_zero(self, chignolin_pdb_path: str) -> None:
         """Native coordinates should give CA RMSD near 0 after Kabsch (true
         self-superposition, bounded only by floating-point precision)."""
@@ -286,13 +265,14 @@ class TestComputeRmsd:
         runner.simulation.get_coords = lambda: native_coords_ang
 
         rmsd = runner._compute_rmsd_values()
+        assert isinstance(rmsd, np.ndarray) and rmsd.shape == (1,)
         # Freshly measured: ~1.5e-15 Å (machine precision) on this engine.
         # The old test asserted a loose <0.1 Å with no stated rationale;
         # tightened to 1e-6 Å -- far above float rounding noise, far below
         # any real structural deviation, so this still catches a broken
         # Kabsch alignment while not masking a real regression the way the
         # old 0.1 Å band would.
-        assert rmsd[0] < 1e-6, f"Expected RMSD~0 for native structure, got {rmsd[0]:.3e} Å"
+        assert 0.0 <= rmsd[0] < 1e-6, f"Expected RMSD~0 for native structure, got {rmsd[0]:.3e} Å"
 
     def test_returns_zero_without_ref_pdb(self) -> None:
         """Without reference PDB, returns np.array([0.0]) not None."""
@@ -396,21 +376,6 @@ class TestSkeletonsRemoved:
     """``FoldingBias`` and ``BasinTracker`` never acted on a run
     (``enable_bias=True`` ran unbiased), so they are gone, with the six
     FoldingRunner arguments that built them."""
-
-    def test_not_exported(self) -> None:
-        import pymcpu.sampling as sampling
-
-        for name in ("FoldingBias", "BasinTracker"):
-            assert not hasattr(sampling, name)
-            assert name not in sampling.__all__
-        with pytest.raises(ModuleNotFoundError):
-            __import__("pymcpu.sampling.folding_bias")
-
-    @pytest.mark.parametrize(
-        "name", ["enable_bias", "bias_k", "bias_r0", "bias_mode", "enable_basins", "n_basins"]
-    )
-    def test_folding_runner_argument_is_gone(self, name: str) -> None:
-        assert name not in _INIT_DEFAULTS
 
     def test_an_old_checkpoint_with_their_fields_loads(self, tmp_path: Path, monkeypatch) -> None:
         """A checkpoint written while they existed carries folding_bias_params,

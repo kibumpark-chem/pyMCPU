@@ -1,15 +1,14 @@
 """Tests for ``pymcpu.params``'s parameter-directory resolution logic:
 ``ensure_params``, ``get_cache_dir``.
 
-A local stub params tree is built per-test and env vars are used to force each
-resolution branch (``MCPU_PARAMS_DIR`` override, cache-dir override, in-wheel
-archive, nothing-available failure, incomplete directory failure).
+Env vars and monkeypatches force each resolution branch here: the cache-dir
+override, the in-wheel archive and the nothing-available failure. The
+``MCPU_PARAMS_DIR`` override and the incomplete-directory failure are checked
+in ``test_params_manifest_single_source.py``, on a tree built from the
+registry.
 
-The required filename list is READ FROM the registry via
-``pymcpu.params.required_files()`` rather than mirrored by hand. The previous
-hand-copied tuple had already drifted -- it omitted
-``mcpu_params/hbond_seq_dep.bin``, which the force field requires -- so the
-stub described a "complete" tree that the real loader would reject.
+The required filename list is read from the registry via
+``pymcpu.params.required_files()`` rather than mirrored by hand.
 """
 
 from __future__ import annotations
@@ -20,37 +19,8 @@ import pytest
 
 from pymcpu.params import ParamsError, ensure_params, get_cache_dir, required_files
 
-_SC_TRIPLET = "mcpu_params/sidechain_triplet_potentials.bin"
 # Registry-derived, so this can never disagree with what the loader demands.
 _REQUIRED_PARAM_FILES = tuple(required_files("mcpu08").values())
-
-# A couple of files need content that parses; the rest only need to exist.
-_STUB_CONTENT = {
-    "constants/atom_types.csv": b"residue,atom,type,radius\n",
-    "constants/standard_amino_acids.json": b"{}",
-}
-
-
-def _stub_params_tree(root: Path, *, with_sc: bool = True) -> None:
-    """Build a minimal on-disk tree satisfying ``_looks_like_params_root``.
-
-    ``with_sc=False`` deliberately omits the large SC-triplet table to produce
-    an *incomplete* tree for the failure-path tests.
-    """
-    for rel in _REQUIRED_PARAM_FILES:
-        if not with_sc and rel == _SC_TRIPLET:
-            continue
-        dst = root / rel
-        dst.parent.mkdir(parents=True, exist_ok=True)
-        dst.write_bytes(_STUB_CONTENT.get(rel, b"x"))
-
-
-def test_mcpu_params_dir_override(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    _stub_params_tree(tmp_path)
-    monkeypatch.setenv("MCPU_PARAMS_DIR", str(tmp_path))
-    root = ensure_params("mcpu08")
-    assert root == tmp_path.resolve()  # MCPU_PARAMS_DIR is used as-is (resolution step 1)
-    assert (root / "constants" / "atom_types.csv").is_file()
 
 
 def test_mcpu_cache_dir_override(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -101,12 +71,3 @@ def test_fails_clearly_when_nothing_is_available(
     msg = str(excinfo.value)
     assert "MCPU_PARAMS_DIR" in msg  # _complete_error's boilerplate lists this as an option
     assert "materialize-params" in msg
-
-
-def test_incomplete_params_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    (tmp_path / "constants").mkdir()  # present but empty -- missing all required files
-    monkeypatch.setenv("MCPU_PARAMS_DIR", str(tmp_path))
-    with pytest.raises(ParamsError) as excinfo:
-        ensure_params("mcpu08")
-    msg = str(excinfo.value)
-    assert "Missing" in msg or "incomplete" in msg.lower()

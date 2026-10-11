@@ -27,7 +27,7 @@ from pymcpu.config import (  # noqa: E402
 )
 
 
-def _remd_config(tmp_path: Path, integrator: IntegratorConfig) -> SimulationConfig:
+def _remd_config(tmp_path: Path, integrator: IntegratorConfig, **rex) -> SimulationConfig:
     return SimulationConfig(
         mode="replica_exchange_2d",
         pdb=str(runners.default_example_pdb()),
@@ -39,6 +39,7 @@ def _remd_config(tmp_path: Path, integrator: IntegratorConfig) -> SimulationConf
             cycles=2,
             steps_per_cycle=10,
             log_interval=10,
+            **rex,
         ),
         checkpoint=CheckpointConfig(checkpoint_dir=str(tmp_path / "checkpoints")),
     )
@@ -112,8 +113,12 @@ def test_every_move_setting_is_forwarded(tmp_path: Path, monkeypatch, mpi: bool)
         comm = None
     integrator = IntegratorConfig(**_SETTINGS)
 
+    pairs = [[0, 5], [1, 6]]
+
     with pytest.raises(_Stop):
-        runners.run_from_config(_remd_config(tmp_path, integrator), comm=comm, verbose=False)
+        runners.run_from_config(
+            _remd_config(tmp_path, integrator, native_contact_pairs=pairs), comm=comm, verbose=False
+        )
 
     assert seen["step_size_rad"] == pytest.approx(0.07)
     assert seen["kic_step_size_rad"] == pytest.approx(0.3)
@@ -121,3 +126,5 @@ def test_every_move_setting_is_forwarded(tmp_path: Path, monkeypatch, mpi: bool)
     assert seen["sidechain_move_mode"] == "continuous"
     assert seen["pivot_rama_probability"] == pytest.approx(0.4)
     assert seen["pivot_rama_schedule"] == _SETTINGS["pivot_rama_schedule"]
+    # Not a move setting, but it reaches the driver the same way.
+    assert seen["native_contact_pairs"] == pairs

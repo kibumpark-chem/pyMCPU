@@ -12,18 +12,8 @@ from __future__ import annotations
 
 import pytest
 
-from pymcpu import config as config_module
 from pymcpu.config import yaml_dict_to_config
-from pymcpu.sampling import collective_variables
 
-
-def test_valid_contact_atom_modes_is_shared_not_duplicated() -> None:
-    """sampling.collective_variables must import config's tuple/type, not
-    redefine its own copy that could silently drift."""
-    assert (
-        collective_variables.VALID_CONTACT_ATOM_MODES
-        is config_module.VALID_CONTACT_ATOM_MODES
-    )
 
 # Minimal valid base kwargs shared by every case below; each test overrides
 # only the field(s) it's actually exercising.

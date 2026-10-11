@@ -1,7 +1,7 @@
 """Exact-formula unit tests for the two knowledge-based triplet potentials
 (backbone ``TripletPotential`` and sidechain ``SidechainTripletPotential``).
 
-Unlike the finite/sanity checks in ``test_energy_terms_smoke.py``, these
+Unlike the finite/sanity checks in ``test_energy_consistency.py``, these
 pin an exact expected energy computed by hand from known input parameters
 on a hand-built minimal system with all torsions forced into bin 0 -- so
 they're precise numeric tests, not smoke tests (hence the separate file;

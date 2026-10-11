@@ -1,16 +1,9 @@
-"""Shared fixed-seed Integrator run harness for the delta-energy hotpath
-regression tests (mu, hbond, proposal-pooling, SoA-coords).
+"""Fixed-seed ``Integrator`` run harness for ``test_coords_soa.py``.
 
-Each of those test files exercises the same underlying operation: build a
-context, run ``Integrator`` for N steps under a fixed seed, and read back the
-accept-bit stream plus whichever ``neighbor_proxy_stats()`` counters that
-hotpath cares about. Before this module existed, each file reimplemented this
-loop by hand with slightly different local variable names and dict-key
-strings -- a real source of copy-paste drift flagged by the test survey.
-``run_hotpath`` factors the common part; callers still choose their own
-seed/steps and read whichever proxy-stat keys are relevant to them via
-``HotpathRun.proxy_stat`` (a strict lookup -- see its docstring for why that
-matters over a bare ``dict.get``).
+``run_hotpath`` builds a context, runs the ``Integrator`` for N steps under a
+fixed seed, and reads back the accept-bit stream, the energies and the
+``neighbor_proxy_stats()`` counters, for same-seed determinism checks and the
+frozen baseline.
 """
 
 from __future__ import annotations
@@ -31,17 +24,6 @@ class HotpathRun:
     energy: float
     e_hbond: float
     proxy: dict[str, object]
-
-    def proxy_stat(self, key: str) -> int:
-        """Strict lookup into ``neighbor_proxy_stats()``.
-
-        Deliberately raises ``KeyError`` on a typo'd key instead of the
-        ``proxy.get(key, 0)`` pattern the old hotpath files used -- with a
-        silent-zero default, a typo in one of the two runs being compared
-        would degrade the assertion to "0 == 0", which always passes and
-        checks nothing.
-        """
-        return int(self.proxy[key])
 
 
 def run_hotpath(

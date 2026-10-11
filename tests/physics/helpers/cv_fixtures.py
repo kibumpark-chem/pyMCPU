@@ -1,6 +1,6 @@
 """Chignolin ``MCPUForceField`` + native-coordinate builder shared by the
-collective-variable tests in ``tests/physics/cv/`` and the progress-
-coordinate factory tests in ``tests/integration/we/`` -- both need the same
+collective-variable tests in ``tests/physics/cv/`` and the CV factory
+tests in ``tests/integration/sampling/`` -- both need the same
 "load chignolin, strip hydrogens, build a real C++ forcefield" setup, so it
 lives here once instead of being copy-pasted into each test module.
 """

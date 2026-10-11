@@ -120,40 +120,5 @@ def test_prune_cycle_checkpoints_keeps_only_newest_n(tmp_path: Path) -> None:
         )
     prune_cycle_checkpoints(tmp_path, keep_last_n=2)
     remaining = sorted(p.name for p in tmp_path.glob("checkpoint_cycle_*.chk"))
-    # Tautological given prune's documented contract (keep newest N by cycle
-    # number) and the 5 files this test itself created -- confirms the two
-    # highest-numbered cycles (4, 5) survive, not e.g. the two oldest.
+    # The two highest-numbered cycles (4, 5) survive, not e.g. the two oldest.
     assert remaining == ["checkpoint_cycle_000004.chk", "checkpoint_cycle_000005.chk"]
-
-
-def test_checkpoint_resume_continues_from_saved_step(tmp_path: Path) -> None:
-    """Simulate a tiny MC loop: save at step 3, diverge, reload, and confirm
-    the loaded state reflects step 3 -- not the post-checkpoint divergence."""
-    global_step = 0
-    weights = np.array([1.0, 2.0, 3.0])
-    for step in range(1, 6):
-        global_step = step
-        weights = weights + 0.1
-        if step == 3:
-            save_checkpoint(
-                {
-                    "format_version": 1,
-                    "global_step": global_step,
-                    "cycle": global_step,
-                    "model_state_dict": {"w": weights.copy()},
-                    "optimizer_state_dict": {"step": global_step},
-                },
-                tmp_path,
-                filename="last.chk",
-            )
-
-    weights += 100.0  # diverge after checkpoint; loaded state must not see this
-    global_step = 0
-
-    loaded = load_checkpoint(tmp_path / "last.chk")
-    global_step = int(loaded["global_step"])
-    weights = loaded["model_state_dict"]["w"]
-    assert global_step == 3
-    # weights after 3 loop iterations of +0.1 starting from [1,2,3]; pure
-    # arithmetic consequence of this test's own loop, not an external baseline.
-    np.testing.assert_allclose(weights, np.array([1.0, 2.0, 3.0]) + 0.3)

@@ -85,9 +85,11 @@ Changelog = "https://github.com/kibumpark-chem/pyMCPU/blob/main/CHANGELOG.md"
 dev = [
     "pytest>=7",
     "ruff>=0.4",
+    "scipy>=1.7",
 ]
 test = [
     "pytest>=7",
+    "scipy>=1.7",
 ]
 training = [
     "scipy>=1.7",
@@ -221,12 +223,9 @@ MCPU_JCC_PAD = { env = "MCPU_JCC_PAD", default = "AUTO" }
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-q -m 'not slow and not network and not mpi and not examples'"
+addopts = "-q -m 'not slow'"
 markers = [
     "slow: actin / full-physics tests (not in default suite)",
-    "network: requires network download",
-    "mpi: requires working MPI / libmpi",
-    "examples: example-script smokes",
     "integration: multi-module integration",
     "mpi_integration: requires mpirun (cluster)",
 ]
@@ -235,8 +234,8 @@ markers = [
 line-length = 100
 target-version = "py39"
 # Notebooks are scratch/exploration artifacts, not lint-worthy deliverable
-# code; scripts/archive holds frozen historical scripts.
-extend-exclude = ["*.ipynb", "scripts/archive"]
+# code.
+extend-exclude = ["*.ipynb"]
 
 [tool.ruff.lint]
 # FA keeps `requires-python = ">=3.9"` honest. `target-version = "py39"` above
@@ -252,9 +251,6 @@ extend-select = ["FA"]
 ignore = ["E741"]
 
 [tool.ruff.lint.per-file-ignores]
-# Standalone scripts need `sys.path.insert(...)` (or a path constant) ahead
-# of importing `pymcpu` when run directly, not via the installed package.
-"scripts/*.py" = ["E402"]
 # `pytestmark = pytest.mark.slow` before imports, or path-setup-before-import,
 # is an established convention across this test suite.
 "tests/**/*.py" = ["E402"]

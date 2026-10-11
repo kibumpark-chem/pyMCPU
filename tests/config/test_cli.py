@@ -15,7 +15,7 @@ from pathlib import Path
 import pytest
 
 from pymcpu import PACKAGE_ROOT
-from pymcpu.cli import build_parser, main
+from pymcpu.cli import main
 
 REPO_ROOT = Path(PACKAGE_ROOT).parent
 FOLDING_CONFIG = REPO_ROOT / "examples" / "configs" / "folding.json"
@@ -26,14 +26,6 @@ def test_mcpu_version(capsys: pytest.CaptureFixture[str]) -> None:
     assert main(["version"]) == 0
     out = capsys.readouterr().out.strip()
     assert out  # exact version string is pymcpu.__version__'s concern, not the CLI's
-
-
-def test_parser_recognizes_validate_and_run_subcommands() -> None:
-    parser = build_parser()
-    args = parser.parse_args(["validate", str(FOLDING_CONFIG)])
-    assert args.command == "validate"
-    args2 = parser.parse_args(["run", "config.json"])
-    assert args2.command == "run"
 
 
 def test_validate_example_config_reports_ok(

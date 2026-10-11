@@ -3,10 +3,6 @@
 Several suites need an engine built from a real small protein and differ
 only in a field or two. Factoring construction here means a future required
 ``EngineSpec`` field is added in one place rather than in six.
-
-This replaces the ``we_config_factory`` fixture that used to live under
-``tests/integration/we/``: the engine is core now, so its fixture is too,
-and the core suite no longer needs the WESTPA config type to exercise it.
 """
 
 from __future__ import annotations

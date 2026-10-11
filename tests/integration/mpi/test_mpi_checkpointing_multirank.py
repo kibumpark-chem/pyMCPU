@@ -1,14 +1,13 @@
 """Real multi-rank MPI checkpointing tests: require ``mpirun -n 2``.
 
 Split out of ``test_mpi_checkpointing.py`` so the fast mock-comm unit tests
-can run under plain ``pytest`` while these -- the only tests in the suite
-that actually need a working ``libmpi`` and 2 live ranks -- stay clearly
-marked and easy to run in isolation::
+can run under plain ``pytest`` while these, which need a working ``libmpi``
+and two live ranks, stay easy to run in isolation::
 
     mpirun -n 2 pytest tests/integration/mpi/test_mpi_checkpointing_multirank.py -v
 
-Under plain single-process pytest (no mpirun) every test here skips via the
-``comm.Get_size() < 2`` guard.
+Every test runs one replica per rank on two temperatures, so each one skips
+unless it runs on exactly two ranks (plain pytest included).
 """
 
 from __future__ import annotations
@@ -40,6 +39,18 @@ def _make_two_temp_mpi_re(comm, pdb_path, checkpoint_config, output_dir, **kwarg
     )
 
 
+def _two_rank_comm():
+    """``MPI.COMM_WORLD`` under ``mpirun -n 2``; skips the test otherwise."""
+    try:
+        from mpi4py import MPI
+    except Exception:
+        pytest.skip("mpi4py/libmpi not available")
+    comm = MPI.COMM_WORLD
+    if comm.Get_size() != 2:
+        pytest.skip("Needs mpirun -n 2 (one replica per rank)")
+    return comm
+
+
 @pytest.mark.mpi_integration
 def test_only_rank0_creates_checkpoint_file(broadcast_tmp_path, minimal_pdb_path):
     """
@@ -50,17 +61,10 @@ def test_only_rank0_creates_checkpoint_file(broadcast_tmp_path, minimal_pdb_path
     Run with: mpirun -n 2 pytest tests/integration/mpi/test_mpi_checkpointing_multirank.py
                       -v -k test_only_rank0_creates_checkpoint_file
     """
-    try:
-        from mpi4py import MPI
-    except Exception:
-        pytest.skip("mpi4py/libmpi not available")
-
     from pymcpu.checkpointing import CheckpointConfig
 
-    comm = MPI.COMM_WORLD
+    comm = _two_rank_comm()
     rank = comm.Get_rank()
-    if comm.Get_size() < 2:
-        pytest.skip("Need mpirun -n 2 for this test")
 
     chk_dir = str(broadcast_tmp_path / "checkpoints")
     out_dir = broadcast_tmp_path / "out_rank0_chk"
@@ -106,17 +110,10 @@ def test_all_ranks_start_from_same_cycle_after_resume(broadcast_tmp_path, minima
     Run with: mpirun -n 2 pytest tests/integration/mpi/test_mpi_checkpointing_multirank.py
                       -v -k test_all_ranks_start_from_same_cycle
     """
-    try:
-        from mpi4py import MPI
-    except Exception:
-        pytest.skip("mpi4py/libmpi not available")
-
     from pymcpu.checkpointing import CheckpointConfig
 
-    comm = MPI.COMM_WORLD
+    comm = _two_rank_comm()
     rank = comm.Get_rank()
-    if comm.Get_size() < 2:
-        pytest.skip("Need mpirun -n 2 for this test")
 
     chk_dir = str(broadcast_tmp_path / "checkpoints_resume")
     out_dir = broadcast_tmp_path / "out_resume"
@@ -205,14 +202,7 @@ def test_resumed_run_matches_uninterrupted_across_ranks(
     Run with: mpirun -n 2 pytest tests/integration/mpi/test_mpi_checkpointing_multirank.py
                       -v -k test_resumed_run_matches_uninterrupted_across_ranks
     """
-    try:
-        from mpi4py import MPI
-    except Exception:
-        pytest.skip("mpi4py/libmpi not available")
-
-    comm = MPI.COMM_WORLD
-    if comm.Get_size() != 2:
-        pytest.skip("Needs mpirun -n 2 (one replica per rank)")
+    comm = _two_rank_comm()
 
     straight = _run_stages(comm, minimal_pdb_path, broadcast_tmp_path / "straight", [12])
     resumed = _run_stages(

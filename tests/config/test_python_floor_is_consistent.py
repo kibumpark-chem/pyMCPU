@@ -75,34 +75,6 @@ def test_every_tracked_module_parses_under_the_declared_floor() -> None:
 
 _FLOOR_CLAIM = re.compile(r"Python (\d+)\.(\d+) or newer")
 
-# A claim is about something OTHER than pyMCPU if its paragraph says so.
-_SCOPED = ("extra", "pymcpu-westpa", "separate package")
-
-
-def unscoped_floor_claims(text: str) -> set[tuple[int, int]]:
-    """Floor claims in ``text`` that are about **pyMCPU itself**.
-
-    A claim scoped to an optional extra or a separate companion package is
-    excluded, because those legitimately can require more than pyMCPU does:
-    ``pymcpu-westpa`` needs 3.10, since westpa 2022.15 declares
-    ``requires-python >=3.10``, while pyMCPU still supports 3.9. Saying so
-    is accurate and useful, and is not the mistake this guard exists for --
-    which is a doc turning 3.9 users away by overstating what pyMCPU needs.
-
-    Scope is decided per PARAGRAPH, not per line. A per-line rule was the
-    first attempt and it was wrong: prose wraps wherever it happens to
-    wrap, so whether the guard fired depended on which line the phrase
-    landed on rather than on what the sentence said. That is a coin flip
-    dressed up as a check.
-    """
-    claims: set[tuple[int, int]] = set()
-    for para in re.split(r"\n\s*\n", text):
-        if any(marker in para.lower() for marker in _SCOPED):
-            continue
-        for m in _FLOOR_CLAIM.finditer(para):
-            claims.add((int(m.group(1)), int(m.group(2))))
-    return claims
-
 
 @pytest.mark.parametrize(
     "relpath",
@@ -114,42 +86,10 @@ def test_user_facing_docs_do_not_claim_a_higher_floor(relpath: str) -> None:
     if not path.exists():
         pytest.skip(f"{relpath} not present")
     major, minor = _declared_floor()
-    claims = unscoped_floor_claims(path.read_text(encoding="utf-8"))
+    text = path.read_text(encoding="utf-8")
+    claims = {(int(a), int(b)) for a, b in _FLOOR_CLAIM.findall(text)}
     too_high = {c for c in claims if c > (major, minor)}
     assert not too_high, (
         f"{relpath} claims a floor of {sorted(too_high)} but requires-python "
-        f"is >={major}.{minor}. If the claim is about an optional extra "
-        f"rather than about pyMCPU, say so on the same line."
+        f"is >={major}.{minor}."
     )
-
-
-def test_an_unscoped_over_claim_is_still_caught() -> None:
-    """The exemption above must not be a hole.
-
-    Written because the exemption exists to let a true statement about the
-    ``pymcpu-westpa`` package through, and an exemption added to unblock
-    something is exactly the kind that quietly stops the guard working.
-    """
-    assert unscoped_floor_claims("pyMCPU needs Python 3.11 or newer.") == {(3, 11)}
-    assert unscoped_floor_claims("Install it; Python 3.12 or newer.") == {(3, 12)}
-
-
-def test_a_claim_scoped_to_a_companion_package_is_allowed() -> None:
-    assert unscoped_floor_claims(
-        "The ``westpa`` extra requires Python 3.10 or newer."
-    ) == set()
-    assert unscoped_floor_claims(
-        "WESTPA support is a separate package, not an extra:\n"
-        "pip install pymcpu-westpa. It requires Python 3.10 or newer."
-    ) == set()
-
-
-def test_scoping_does_not_leak_between_paragraphs() -> None:
-    """The important half: one exempt paragraph must not excuse the rest of
-    the document. A whole-text keyword search would have passed this."""
-    text = (
-        "The ``westpa`` extra requires Python 3.10 or newer.\n"
-        "\n"
-        "pyMCPU requires Python 3.13 or newer.\n"
-    )
-    assert unscoped_floor_claims(text) == {(3, 13)}

@@ -12,7 +12,8 @@ being forgotten).
 
 ``rotamer_library`` is the default (matches ``MCIntegrator``'s C++ default
 and ``FoldingRunner``/``EngineSpec``'s Python defaults) -- ``continuous`` is
-the explicitly-opt-in alternative.
+the explicitly-opt-in alternative, and the round-trip uses it: a loader
+that ignored the key would still hand back the default.
 """
 
 from __future__ import annotations
@@ -44,18 +45,6 @@ def test_sidechain_move_mode_defaults_to_rotamer_library_yaml() -> None:
 
 def test_sidechain_move_mode_defaults_to_rotamer_library_json() -> None:
     cfg = config_from_dict(dict(_BASE_JSON))
-    assert cfg.integrator.sidechain_move_mode == "rotamer_library"
-
-
-def test_sidechain_move_mode_rotamer_library_roundtrips_yaml() -> None:
-    cfg = yaml_dict_to_config({**_BASE_YAML, "sidechain_move_mode": "rotamer_library"})
-    assert cfg.integrator.sidechain_move_mode == "rotamer_library"
-
-
-def test_sidechain_move_mode_rotamer_library_roundtrips_json() -> None:
-    cfg = config_from_dict(
-        {**_BASE_JSON, "integrator": {"sidechain_move_mode": "rotamer_library"}}
-    )
     assert cfg.integrator.sidechain_move_mode == "rotamer_library"
 
 

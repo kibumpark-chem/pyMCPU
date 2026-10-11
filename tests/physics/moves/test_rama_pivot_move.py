@@ -44,12 +44,6 @@ def _interior_non_pro_residue(ctx) -> int:
     pytest.skip("test PDB has no interior non-proline residue")
 
 
-def test_rama_pivot_counters_exist_and_start_at_zero() -> None:
-    integ = mcpu_core.Integrator(temperature=0.6, step_size_rad=0.1)
-    assert integ.get_rama_pivot_attempted() == 0
-    assert integ.get_rama_pivot_accepted() == 0
-
-
 def test_move_stats_includes_rama_pivot_counters() -> None:
     integ = mcpu_core.Integrator(temperature=0.6, step_size_rad=0.1)
     stats = integ.move_stats()

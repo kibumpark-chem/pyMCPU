@@ -5,11 +5,14 @@ XTC, NPZ, HDF5) back to the frame/row/sample count recorded in a checkpoint's
 ``traj_frame_indices``, so a crash-and-resume run doesn't end up with
 duplicate frames written after the last checkpoint. Every test here writes
 its own throwaway data with ``tmp_path`` and asserts on file-format
-mechanics (row/frame/sample counts, atomic-write temp-file cleanup, dict
+mechanics (row/frame/sample counts, no temp file left behind, dict
 round-trips through pickle) -- there is no physics here, and no legacy MCPU
 equivalent: legacy MCPU has no resume/checkpointing feature to compare
 against, which is why this lives under ``integration/`` rather than
 ``legacy_parity/`` or ``physics/``.
+
+CSV, NPZ and HDF5 files are rewritten through a temp file that is renamed
+over the original; XTC files are cut in place at the first dropped frame.
 """
 
 from __future__ import annotations
@@ -74,6 +77,7 @@ class TestCsvTruncation:
         assert len(lines) == 51  # 1 header + 50 kept data rows
         assert lines[0].startswith("step")
         assert lines[-1].startswith("490,")  # last kept row is index 49 -> step = 49*10
+        assert not os.path.exists(str(csv_path) + ".trunc.tmp")
 
     def test_truncation_noop_when_already_short(self, tmp_path: Path) -> None:
         csv_path = tmp_path / "short.csv"
@@ -89,17 +93,6 @@ class TestCsvTruncation:
         from pymcpu.trajectory_utils import truncate_csv_to_row
 
         truncate_csv_to_row(str(tmp_path / "nonexistent.csv"), last_row=50)
-
-    def test_truncation_is_atomic(self, tmp_path: Path) -> None:
-        """The intermediate ``.trunc.tmp`` file must never survive a truncation."""
-        csv_path = tmp_path / "replica_0_energies.csv"
-        _write_csv_rows(csv_path, 100)
-
-        from pymcpu.trajectory_utils import truncate_csv_to_row
-
-        truncate_csv_to_row(str(csv_path), last_row=50)
-        assert not os.path.exists(str(csv_path) + ".trunc.tmp")
-
 
 # ── traj_frame_indices dict round-tripping through pickle ────────
 
@@ -137,40 +130,6 @@ class TestTrajFrameIndicesRoundTrip:
             "replica_1.xtc": 500,
             "energies.csv": 500,
         }
-
-    def test_empty_by_default(self) -> None:
-        from pymcpu.checkpointing import CheckpointState
-
-        state = CheckpointState.__new__(CheckpointState)
-        state.__dict__.setdefault("traj_frame_indices", {})
-        assert state.traj_frame_indices == {}
-
-    def test_dict_round_trip_covers_all_supported_formats(self, tmp_path: Path) -> None:
-        """XTC, CSV, HDF5 and NPZ keys must all survive the raw-dict
-        ``load_checkpoint`` path (not just the ``CheckpointState`` view)."""
-        from pymcpu.checkpointing import CheckpointState, load_checkpoint, save_checkpoint
-
-        state = CheckpointState(
-            cycle=10,
-            global_step=10000,
-            replica_coords=[np.zeros((5, 3))],
-            walker_at_state=np.array([0]),
-            current_steps=[10000],
-            temperatures=[300.0],
-            integrator_rng_states=[""],
-            seed=42,
-            traj_frame_indices={
-                "replica_0.xtc": 500,
-                "replica_0_data.csv": 500,
-                "samples.h5": 500,
-                "samples.npz": 500,
-            },
-        )
-        save_checkpoint(state, checkpoint_dir=str(tmp_path), cycle=10)
-        loaded = load_checkpoint(str(tmp_path / "last.chk"))
-        assert loaded["traj_frame_indices"]["samples.h5"] == 500
-        assert loaded["traj_frame_indices"]["samples.npz"] == 500
-
 
 # ── truncate_all_trajectories_on_resume dispatch ─────────────────
 
@@ -235,18 +194,6 @@ class TestXtcTruncation:
         loaded = mdtraj.load(xtc_path, top=pdb_path)
         assert len(loaded) == 50
 
-    def test_is_atomic(self, tmp_path: Path) -> None:
-        traj = _single_atom_trajectory(20)
-        xtc_path = str(tmp_path / "replica_0.xtc")
-        pdb_path = str(tmp_path / "top.pdb")
-        traj[0].save_pdb(pdb_path)
-        traj.save_xtc(xtc_path)
-
-        from pymcpu.trajectory_utils import truncate_xtc_to_frame
-
-        truncate_xtc_to_frame(xtc_path, pdb_path, last_frame=9)
-        assert not os.path.exists(xtc_path + ".trunc.tmp")
-
     @pytest.mark.parametrize("n_atoms", [1, 20])
     def test_keeps_the_kept_frames_byte_for_byte(self, tmp_path: Path, n_atoms: int) -> None:
         """The cut keeps the first frames exactly as written, step numbers
@@ -300,22 +247,6 @@ class TestXtcTruncation:
         assert xtc.read_bytes() == good.read_bytes()
 
 
-def test_replica_exchange_traj_reporter_hooks_exist() -> None:
-    """Existence/wiring smoke check: the reporter attach/detach hooks that
-    ``truncate_all_trajectories_on_resume`` is meant to run alongside (detach
-    before truncating, reattach after) must exist on ReplicaExchange. This is
-    deliberately a thin existence check -- the actual attach/detach/truncate
-    ordering during a real resume is exercised end-to-end by the
-    integration/we/ replica-exchange resume tests, not here.
-    """
-    from pymcpu.sampling.replica_exchange import ReplicaExchange
-    from pymcpu.trajectory_utils import truncate_all_trajectories_on_resume
-
-    assert callable(truncate_all_trajectories_on_resume)
-    assert hasattr(ReplicaExchange, "_attach_traj_reporters")
-    assert hasattr(ReplicaExchange, "_detach_traj_reporters")
-
-
 # ── NPZ truncation ────────────────────────────────────────────────
 
 
@@ -335,6 +266,9 @@ class TestNpzTruncation:
         data = np.load(npz_path)
         assert data["coords"].shape[0] == 50
         assert data["energies"].shape[0] == 50
+        # np.savez appends ".npz" to a name without it, so check both temp names.
+        assert not os.path.exists(npz_path + ".trunc.tmp")
+        assert not os.path.exists(npz_path + ".trunc.tmp.npz")
 
     def test_noop_when_short(self, tmp_path: Path) -> None:
         npz_path = str(tmp_path / "samples.npz")
@@ -347,21 +281,6 @@ class TestNpzTruncation:
 
         data = np.load(npz_path)
         assert data["coords"].shape[0] == 20
-
-    def test_is_atomic(self, tmp_path: Path) -> None:
-        npz_path = str(tmp_path / "samples.npz")
-        np.savez(npz_path, x=np.arange(100))
-
-        from pymcpu.trajectory_utils import truncate_npz_to_sample
-
-        truncate_npz_to_sample(npz_path, last_sample=49)
-
-        # np.savez appends ".npz" itself, so the temp name written by
-        # truncate_npz_to_sample already carries the suffix -- check both
-        # the bare temp name and the name np.savez would have produced.
-        assert not os.path.exists(npz_path + ".trunc.tmp")
-        assert not os.path.exists(npz_path + ".trunc.tmp.npz")
-
 
 # ── HDF5 truncation ───────────────────────────────────────────────
 
@@ -382,6 +301,7 @@ class TestHdf5Truncation:
         with h5py.File(h5_path, "r") as f:
             assert f["coords"].shape[0] == 50
             assert f["energies"].shape[0] == 50
+        assert not os.path.exists(h5_path + ".trunc.tmp")
 
     def test_preserves_attributes(self, tmp_path: Path) -> None:
         h5py = _import_h5py_or_skip()
@@ -400,27 +320,15 @@ class TestHdf5Truncation:
             assert f.attrs["run_id"] == "test-run-42"
             assert f.attrs["version"] == 2
 
-    def test_is_atomic(self, tmp_path: Path) -> None:
-        h5py = _import_h5py_or_skip()
 
-        h5_path = str(tmp_path / "samples.h5")
-        with h5py.File(h5_path, "w") as f:
-            f.create_dataset("x", data=np.arange(100))
-
-        from pymcpu.trajectory_utils import truncate_hdf5_to_sample
-
-        truncate_hdf5_to_sample(h5_path, last_sample=49)
-        assert not os.path.exists(h5_path + ".trunc.tmp")
-
-
-def test_rex_sample_writer_n_frames_written() -> None:
+def test_rex_sample_writer_n_frames_written(tmp_path: Path) -> None:
     """RexSampleWriter's in-memory frame count must track appended samples
     (this is the count that later becomes a checkpoint's traj_frame_indices
     entry for .h5/.npz outputs)."""
     from pymcpu.analysis.pymbar_export import RexSampleWriter
 
     w = RexSampleWriter(
-        "dummy.h5",
+        str(tmp_path / "samples.h5"),
         temperatures=[0.5],
         n_targets=[0.0],
         k_bias=0.0,

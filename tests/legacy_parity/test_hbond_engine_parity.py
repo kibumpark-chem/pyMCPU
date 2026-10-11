@@ -1,10 +1,6 @@
 """End-to-end H-bond legacy parity through the *compiled* engine
 (``pymcpu.mcpu_core``).
 
-A stale or ABI-mismatched compiled extension (e.g. missing a method added
-later in the same source tree) produces a clean, explicit skip here rather
-than an opaque ``AttributeError``.
-
 This is a plain numeric assertion, not an ``xfail``: it fails outright if
 the compiled engine's H-bond energy drifts from the legacy target, so
 update the target here once a verified fix lands rather than letting this
@@ -17,7 +13,6 @@ from pathlib import Path
 
 import mdtraj as md
 import numpy as np
-import pytest
 
 from tests.legacy_parity.framework import LegacyReference, ParityTolerance, assert_legacy_parity
 from tests.legacy_parity.helpers.legacy_hbond_oracle import HBOND_WEIGHT
@@ -50,15 +45,8 @@ def _measure_engine_hbond_energy(pdb_path: Path) -> float:
 def test_engine_matches_legacy_log() -> None:
     """The compiled engine's group-4 energy on acta.pdb must match the same
     legacy-log-derived reference as the oracle's full-parity stage."""
-    try:
-        e_hbond = _measure_engine_hbond_energy(ACTA_PDB)
-    except AttributeError as exc:
-        pytest.skip(
-            "compiled pymcpu.mcpu_core extension is missing an API this "
-            f"test needs (stale build vs. current source tree?): {exc}"
-        )
     assert_legacy_parity(
-        e_hbond,
+        _measure_engine_hbond_energy(ACTA_PDB),
         LegacyReference(
             value=LEGACY_HBOND_LOG_WEIGHTED,
             source=(

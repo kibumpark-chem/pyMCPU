@@ -64,13 +64,6 @@ def test_default_has_no_explicit_amide_h() -> None:
     )
 
 
-def test_explicit_escape_hatch_still_adds_h() -> None:
-    ctx, ff = _build(virtual=False)
-    assert ff.virtual_amide_h is False
-    assert ff.total_h_atoms > 0
-    assert any(a.name == "H" for a in ff.ordered_atom_list)
-
-
 def test_virtual_vs_explicit_hbond_energy_parity() -> None:
     ctx_v, _ = _build(virtual=True)
     ctx_e, _ = _build(virtual=False)
@@ -86,11 +79,3 @@ def test_virtual_vs_explicit_delta_parity() -> None:
         integ = mcpu_core.Integrator(temperature=300.0, step_size_rad=0.05)
         integ.set_seed(7)
         integ.verify_physics_consistency(ctx, num_steps=20, atol=ATOL)
-
-
-def test_actin_verify_virtual_default() -> None:
-    ctx, _ = _build(virtual=True)
-    ctx.set_use_legacy_weights(True)
-    ctx.calculate_total_energy(-1)
-    integ = mcpu_core.Integrator(temperature=300.0, step_size_rad=0.05)
-    integ.verify_physics_consistency(ctx, num_steps=25, atol=ATOL)

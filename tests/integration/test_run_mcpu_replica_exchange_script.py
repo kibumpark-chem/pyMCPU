@@ -51,6 +51,7 @@ def _write_config(tmp_path: Path, **overrides) -> Path:
             "log_interval": 5,
         },
         "outputs": {"output_dir": str(tmp_path / "out"), "prefix": "rex"},
+        "checkpoint": {"checkpoint_dir": str(tmp_path / "checkpoints")},
     }
     cfg.update(overrides)
     path = tmp_path / "config.json"
@@ -140,18 +141,8 @@ def test_config_path_keeps_the_config_checkpoint_settings_without_flags(
     assert (checkpoint.checkpoint_interval, checkpoint.keep_last_n) == (7, 2)
 
 
-@pytest.mark.parametrize(
-    "argv",
-    [
-        [],
-        ["--pdb", str(EXAMPLE_PDB), "--temp-min", "0.4", "--n-temps", "2"],
-    ],
-    ids=["no-config", "old-flags"],
-)
-def test_requires_a_config_file(
-    script: ModuleType, monkeypatch: pytest.MonkeyPatch, argv: list[str]
-) -> None:
-    monkeypatch.setattr(sys, "argv", ["run_mcpu_replica_exchange.py", *argv])
+def test_requires_a_config_file(script: ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(sys, "argv", ["run_mcpu_replica_exchange.py"])
     with pytest.raises(SystemExit) as exit_info:
         script.parse_args()
     assert exit_info.value.code == 2
@@ -202,15 +193,11 @@ def test_config_path_smoke_run_mpi_with_mock_comm(
     config path, using a mock single-rank comm (no real mpirun required) --
     this is the actual production invocation shape
     (``--mpi -c <yaml>``, per submission.sh)."""
-    import pymcpu.sampling.mpi_replica_exchange as mpi_re_module
+    from tests.integration.mpi.test_mpi_checkpointing import (
+        _ensure_mpi_module_for_construction,
+    )
 
-    if mpi_re_module.MPI is None:  # pragma: no cover - only when libmpi is missing
-        fake_mpi = MagicMock()
-        fake_mpi.TAG_UB = 32767
-        fake_mpi.LOR = object()
-        monkeypatch.setattr(mpi_re_module, "MPI", fake_mpi)
-        monkeypatch.setattr(mpi_re_module, "_require_mpi", lambda: fake_mpi)
-
+    _ensure_mpi_module_for_construction(monkeypatch)
     config_path = _write_config(tmp_path)
     monkeypatch.setattr(
         sys, "argv", ["run_mcpu_replica_exchange.py", "--mpi", "-c", str(config_path)]

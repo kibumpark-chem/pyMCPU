@@ -10,10 +10,7 @@ healthy. The ensemble is simply one walker counted N times, and only the
 statistics show it.
 
 So this lives in ``tests/physics/`` and not with any one framework's tests:
-it guards a core promise that core's public API now makes. The last test
-here deliberately demonstrates the wrong design producing identical
-children, which is the clearest evidence in the repo for why the seeding
-scheme exists.
+it guards a core promise that core's public API now makes.
 
 See ``tests/physics/test_engine_determinism.py`` for the bare-engine
 determinism guarantees this relies on.
@@ -37,26 +34,6 @@ def spec(engine_spec_factory) -> EngineSpec:
     return engine_spec_factory()
 
 
-def test_siblings_with_same_parent_diverge(spec: EngineSpec) -> None:
-    parent_coords = EngineSession(spec).coords_from_auxref(spec.pdb)
-
-    seed_a = derive_seed(_BASE_SEED, 5, 10)
-    seed_b = derive_seed(_BASE_SEED, 5, 11)
-    assert seed_a != seed_b  # distinct stream index must derive distinct seeds
-
-    eng_a = EngineSession(spec)
-    eng_a.set_coords(parent_coords)
-    eng_a.set_seed(seed_a)
-    eng_a.step(300)
-
-    eng_b = EngineSession(spec)
-    eng_b.set_coords(parent_coords)
-    eng_b.set_seed(seed_b)
-    eng_b.step(300)
-
-    assert not np.array_equal(eng_a.coords(), eng_b.coords())
-
-
 def test_many_siblings_are_pairwise_distinct(spec: EngineSpec) -> None:
     """A split into N > 2 children must not just avoid *one* collision --
     check several siblings pairwise."""
@@ -76,27 +53,3 @@ def test_many_siblings_are_pairwise_distinct(spec: EngineSpec) -> None:
                 f"siblings {i} and {j} produced identical trajectories "
                 "-- this is exactly the silent-clone failure mode this test guards against"
             )
-
-
-def test_inheriting_parent_rng_state_would_have_cloned(spec: EngineSpec) -> None:
-    """Demonstrates *why* the design derives a fresh seed instead of
-    restoring the parent's saved RNG stream: doing the latter (the naive,
-    wrong design) does produce bitwise-identical children, which is exactly
-    the bug this project's seeding design avoids in production."""
-    eng_parent = EngineSession(spec)
-    eng_parent.set_seed(1)
-    eng_parent.step(300)
-    parent_coords = eng_parent.coords()
-    parent_rng = eng_parent.get_rng_state()
-
-    eng_child_a = EngineSession(spec)
-    eng_child_a.set_coords(parent_coords)
-    eng_child_a.restore_rng_state(parent_rng)
-    eng_child_a.step(200)
-
-    eng_child_b = EngineSession(spec)
-    eng_child_b.set_coords(parent_coords)
-    eng_child_b.restore_rng_state(parent_rng)  # naive: same RNG state as sibling A
-    eng_child_b.step(200)
-
-    assert np.array_equal(eng_child_a.coords(), eng_child_b.coords())
