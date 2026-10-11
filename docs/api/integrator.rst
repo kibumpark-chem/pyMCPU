@@ -14,20 +14,30 @@ or rejects, and feeds the attached :doc:`reporters <reporters>`.
 
 .. py:currentmodule:: pymcpu
 
-.. py:class:: Integrator(temperature, step_size_rad=0.1, sidechain_step_size_rad=-1.0)
+.. py:class:: Integrator(temperature, step_size_rad=0.1, sidechain_step_size_rad=-1.0, kic_step_size_rad=math.pi / 6)
 
    :param temperature: reduced temperature of this replica. Required:
       there is no default. Fixed for the object's lifetime -- there is no
       ``set_temperature``, and replica exchange swaps coordinates between
       fixed-temperature replicas rather than changing a replica's
       temperature.
-   :param step_size_rad: backbone torsion step amplitude in radians.
+   :param step_size_rad: width in radians (Gaussian standard deviation)
+      of the pivot move's torsion change.
    :param sidechain_step_size_rad: chi step amplitude in radians for
       the continuous sidechain mode. A negative value means "same as
-      backbone", which :py:meth:`Integrator.sidechain_step_size_rad`
+      ``step_size_rad``", which :py:meth:`Integrator.sidechain_step_size_rad`
       then resolves to the actual number in use.
+   :param kic_step_size_rad: width in radians of the KIC driver, the
+      torsion turn that moves one end of the KIC window before the window
+      is closed again (see :doc:`../physics_notes/kic_jacobian`). Must be
+      positive and finite; anything else raises ``ValueError``. The
+      default is π/6 (30°). KIC can turn a proline's ψ only as the
+      driver (a window never holds a proline), and in a study of driver
+      widths, 5.7° (0.1 rad) or less never moved the ψ of CLN025's
+      proline out of its basin, while 20° to 120° all sampled the same
+      equilibrium, about equally fast.
 
-   All three arguments accept keywords.
+   All four arguments accept keywords.
 
    .. code-block:: python
 
@@ -65,6 +75,18 @@ loop closure). :py:meth:`Integrator.set_move_weights` sets how often
 each slot is chosen; the remaining knobs select the algorithm used
 *inside* a slot and none of them adds a fourth move kind.
 
+Pivot and sidechain moves draw their site uniformly from the sites they
+can change, so no step is spent on a site where the move would do nothing,
+and the draw is the same in every state. A pivot draws one of the chain's
+2N - 2 backbone torsions: ψ of the first residue, φ and ψ of each inner
+residue, and φ of the last residue, redrawing a proline's φ. A sidechain
+move draws a residue with χ angles other than a proline (in
+``'rotamer_library'`` mode, one whose type has rotamer rows). Both redraw a
+site that would move a fixed residue (see
+:py:meth:`Integrator.set_fixed_residues`). KIC draws a window as described
+below, and not every draw can produce a move (see the note under
+:py:meth:`Integrator.set_move_weights`).
+
 .. py:method:: Integrator.set_move_weights(pivot, kic, sidechain) -> None
 
    Relative probabilities of the three slots, normalized internally --
@@ -78,13 +100,12 @@ each slot is chosen; the remaining knobs select the algorithm used
    weights are, so the stream does not shift.
 
    .. warning::
-      Pass ``sidechain=0.0`` for a force field whose residues have no
-      chi angles -- a backbone-only one, for instance. Otherwise every
-      sidechain proposal returns without proposing anything, and that
-      share of the run is spent producing nothing. Rather than let that
-      happen quietly, :py:meth:`Integrator.run` raises when the
-      sidechain weight is positive and no residue in the system has a
-      chi angle.
+      Pass ``sidechain=0.0`` for a chain with no residue a sidechain move
+      can change: a backbone-only force field, or a chain of glycines,
+      alanines and prolines. Otherwise that share of the run would be
+      spent producing nothing, so :py:meth:`Integrator.run` raises
+      ``ValueError`` when the sidechain weight is positive and the system
+      has no such residue.
 
    Note that KIC needs a residue index in ``[1, n_residues - 4]``, so on
    a short chain a large KIC weight buys less than it looks like: the
@@ -125,7 +146,16 @@ each slot is chosen; the remaining knobs select the algorithm used
 
 .. py:method:: Integrator.backbone_step_size_rad() -> float
 
-   The backbone torsion amplitude given to the constructor.
+   The pivot width, ``step_size_rad``, given to the constructor.
+
+.. py:method:: Integrator.set_kic_step_size_rad(sigma_rad) -> None
+
+   Set the KIC driver width in radians. Must be positive and finite;
+   anything else raises ``ValueError``. ``step_size_rad`` is not affected.
+
+.. py:method:: Integrator.kic_step_size_rad() -> float
+
+   The KIC driver width in use.
 
 .. py:method:: Integrator.set_pivot_rama_probability(p) -> None
 
@@ -266,7 +296,9 @@ totals in a resumed energy CSV continue rather than restarting at 0.
    * - ``num_pivot_resample_pro_phi()``
      - Pivot phi draws resampled because of proline
    * - ``num_sc_resample_pro()``
-     - Sidechain draws resampled because of proline
+     - ``debug_force_sc`` and ``debug_force_rotamer`` calls refused
+       because the residue is a proline. A run never draws a proline
+       sidechain, so a run leaves it at 0.
 
 .. py:method:: Integrator.move_counts(include_unused=False) -> dict
 
@@ -382,7 +414,9 @@ move mix, so a run that uses them is not a valid sample:
 ``verify_physics_consistency(context, num_steps, atol=0.001)``.
 
 A ``debug_force_*`` hook never commits its move, and, like ``run()``,
-refuses a fixed residue (counting it in ``get_fixed_rejected()``). When it returns
+refuses a fixed residue (counting it in ``get_fixed_rejected()``).
+``debug_force_pivot`` takes the torsions a pivot draws, from ψ of residue
+0 to φ of residue N - 1, and returns ``False`` for any other. When it returns
 ``True``, ``last_move_kind()``, ``last_move_is_rigid()``,
 ``last_moved_indices()``, ``last_delta_energy()`` and
 ``last_log_jacobian_weight()`` describe the move it proposed.

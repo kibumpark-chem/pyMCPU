@@ -159,13 +159,16 @@ def test_accepted_moves_keep_backbone_geometry(virtual_amide_h):
 
 def test_kic_keeps_the_bonds_it_carries():
     """Every heavy-atom bond length stays at its start value over 200k KIC-only
-    steps (about 19k accepted moves).
+    steps (about 17k accepted moves).
 
     KIC moves a window residue's dependent atoms (O, the sidechain, H) rigidly
     with its backbone frame. With that frame maths in float32 the carried bonds
     drifted steadily, not as a random walk: sidechain bonds grew by up to 1e-3 A
     and C=O changed by up to 6e-4 A here. Done in double and rounded once, they
-    move by about 2e-5 A, the same float noise as every other atom."""
+    move by about 2e-5 A, the same float noise as every other atom.
+
+    The driver width stays at 0.1 rad, where the drift was measured; the
+    default (pi/6) accepts about a third as many moves in the same steps."""
     traj = md.load(str(default_example_pdb()))
     heavy = traj.atom_slice(traj.topology.select("not element H"))
     heavy.topology.create_standard_bonds()
@@ -181,7 +184,7 @@ def test_kic_keeps_the_bonds_it_carries():
         X = np.asarray(coords, dtype=np.float64)
         return np.linalg.norm(X[:, bonds[:, 0]] - X[:, bonds[:, 1]], axis=0)
 
-    integrator = mcpu_core.Integrator(temperature=0.6)
+    integrator = mcpu_core.Integrator(temperature=0.6, kic_step_size_rad=0.1)
     integrator.set_seed(1)
     integrator.set_move_weights(0.0, 1.0, 0.0)
     integrator.run(context, 200_000)
@@ -291,7 +294,9 @@ def test_incremental_energy_matches_full_recompute_after_kic():
     energy, _ = full(coords)
     accepted = integrator.get_bb_accepted() + integrator.get_kic_accepted()
     worst_de, worst_cache, n_kic = 0.0, 0.0, 0
-    for step in range(3000):
+    # 8000 steps: at the default driver width (pi/6) they accept 282 KIC moves;
+    # 3000 steps accepted 207 at 0.1 rad but only 52 at pi/6.
+    for step in range(8000):
         kic_before = integrator.get_kic_accepted()
         integrator.run(context, 1, step)
         now = integrator.get_bb_accepted() + integrator.get_kic_accepted()

@@ -57,12 +57,14 @@ def test_mode_step_size_and_rama_schedule_reach_every_replica(
         chignolin_pdb_path,
         monkeypatch,
         step_size_rad=0.05,
+        kic_step_size_rad=0.25,
         sidechain_move_mode="continuous",
         pivot_rama_schedule={"t_low": 0.5, "t_high": 0.6, "p_min": 0.2, "p_max": 0.8},
     )
     for replica in rex.replicas:
         integrator = replica.simulation.integrator
         assert integrator.backbone_step_size_rad() == pytest.approx(0.05)
+        assert integrator.kic_step_size_rad() == pytest.approx(0.25)
         # The schedule is evaluated against each replica's own temperature.
         expected_p = 0.2 if replica.temperature <= 0.5 else 0.8
         assert integrator.pivot_rama_probability() == pytest.approx(expected_p)
@@ -84,4 +86,37 @@ def test_defaults_match_a_bare_integrator(tmp_path, chignolin_pdb_path, monkeypa
         assert integrator.move_weights() == bare.move_weights()
         assert integrator.backbone_step_size_rad() == bare.backbone_step_size_rad()
         assert integrator.sidechain_step_size_rad() == bare.sidechain_step_size_rad()
+        assert integrator.kic_step_size_rad() == bare.kic_step_size_rad()
         assert integrator.pivot_rama_probability() == bare.pivot_rama_probability()
+
+
+def test_the_mpi_driver_builds_its_replicas_with_the_widths(
+    tmp_path, chignolin_pdb_path, monkeypatch, mock_comm_rank0
+) -> None:
+    """MPIReplicaExchange hands both widths to every replica it builds (one
+    mock rank owns both slots)."""
+    from pymcpu.sampling.mpi_replica_exchange import MPIReplicaExchange
+    from tests.integration.mpi.test_mpi_checkpointing import (
+        _ensure_mpi_module_for_construction,
+    )
+
+    _ensure_mpi_module_for_construction(monkeypatch)
+    monkeypatch.chdir(tmp_path)
+    rex = MPIReplicaExchange(
+        mock_comm_rank0,
+        str(chignolin_pdb_path),
+        temperatures=_TEMPERATURES,
+        n_targets=[0.0],
+        k_bias=0.0,
+        log_interval=5,
+        output_prefix="rex",
+        output_dir=str(tmp_path / "out"),
+        seed=0,
+        step_size_rad=0.05,
+        kic_step_size_rad=0.25,
+    )
+    assert sorted(rex.replicas) == [0, 1]
+    for replica in rex.replicas.values():
+        integrator = replica.simulation.integrator
+        assert integrator.backbone_step_size_rad() == pytest.approx(0.05)
+        assert integrator.kic_step_size_rad() == pytest.approx(0.25)

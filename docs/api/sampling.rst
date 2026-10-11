@@ -69,12 +69,9 @@ configuration workflow.
 Single-temperature folding
 --------------------------
 
-.. important::
-   From a folded start, a ``FoldingRunner`` stops after 10 cycles, whatever
-   ``steps`` asked for; the early stop is described below. Pass
-   ``q_threshold=1.1`` to always run the full length. ``mcpu run`` runs a
-   folding config (a YAML config with one temperature) through
-   ``FoldingRunner`` and cannot change this yet.
+``mcpu run`` runs a folding config (a YAML config with one temperature and
+no targets) through ``FoldingRunner``; :doc:`../cli` lists its keys, among
+them the optional early stop.
 
 .. autoclass:: pymcpu.sampling.FoldingRunner
    :members:
@@ -144,5 +141,3 @@ change without notice:
   ``build_contact_atom_index``, ``reference_ca_from_pdb``,
   ``reference_contact_from_pdb``.
 * MPI rank assignment: ``partition_replicas``.
-* ``FoldingBias`` and ``BasinTracker`` are skeletons: the bias applies
-  no energy and the tracker assigns every replica to basin 0.

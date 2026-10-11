@@ -89,7 +89,7 @@ def test_moves_carry_oxt_with_the_carbonyl(chignolin, weights, accepted) -> None
     integ = mcpu_core.Integrator(temperature=0.6, step_size_rad=0.1)
     integ.set_seed(5)
     integ.set_move_weights(*weights)
-    integ.run(ctx, 3000, 0)
+    integ.run(ctx, 6000, 0)
     assert getattr(integ, accepted)() > 100
 
     assert np.abs(dists(ctx.coords) - before).max() < 1e-3

@@ -20,6 +20,7 @@
 #include "pymcpu/forces/mcpu/common/TripletPotential.h"
 #include "pymcpu/forces/mcpu/common/SideChainTripletPotential.h"
 #include "pymcpu/forces/mcpu/common/HydrogenBondPotential.h"
+#include "pymcpu/utils/hydrogen_bond_utils.h"
 #include "pymcpu/forces/mcpu/common/AromaticPotential.h"
 #include "pymcpu/forces/bias/QBiasPotential.h"
 
@@ -570,11 +571,18 @@ PYBIND11_MODULE(mcpu_core, m) {
         "Where a protein unfolds depends on the protein; chignolin melts at\n"
         "about 0.65 to 0.7.\n\n"
         "Call set_seed(): the same seed, input and build reproduce a run exactly.")
-        .def(py::init<double, float, float>(), py::arg("temperature"),
+        .def(py::init<double, float, float, float>(), py::arg("temperature"),
              py::arg("step_size_rad") = 0.1f,
              // Negative = "same as step_size_rad", so omitting it reproduces the
              // pre-knob single-amplitude behavior exactly.
-             py::arg("sidechain_step_size_rad") = -1.0f)
+             py::arg("sidechain_step_size_rad") = -1.0f,
+             py::arg("kic_step_size_rad") = mcpu::MCIntegrator::kDefaultKicStepSizeRad)
+        .def("set_kic_step_size_rad", &mcpu::MCIntegrator::set_kic_step_size_rad,
+             py::arg("sigma_rad"),
+             "KIC driver width in radians (positive): the Gaussian std-dev of the "
+             "torsion that moves one end of the KIC window before the closure. "
+             "step_size_rad sets the pivot only.")
+        .def("kic_step_size_rad", &mcpu::MCIntegrator::kic_step_size_rad)
         .def("set_sidechain_step_size_rad", &mcpu::MCIntegrator::set_sidechain_step_size_rad,
              py::arg("sigma_rad"),
              "Continuous-sidechain chi amplitude in radians; negative restores "
@@ -1045,6 +1053,12 @@ PYBIND11_MODULE(mcpu_core, m) {
         py::arg("xyz"), py::arg("cell"), py::arg("query_radius"), py::arg("lo"),
         py::arg("hi"), py::arg("max_cells"), py::arg("probes"), py::arg("walk"),
         py::arg("radius") = 0.f);
+
+    // Test hook: the H-bond angle bin (0..8) of a cosine, as the H-bond term
+    // computes it (HydrogenBondUtils::angle_bin_from_cos).
+    m.def("_hbond_angle_bin",
+        [](float c) { return HydrogenBondUtils::angle_bin_from_cos(c); },
+        py::arg("cos_angle"));
 
 
     py::class_<PotentialDeltaCheck>(m, "PotentialDeltaCheck")

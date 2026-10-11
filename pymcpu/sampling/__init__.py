@@ -27,7 +27,6 @@ from pymcpu.sampling.collective_variables import (
     reference_contact_from_pdb,
 )
 from pymcpu.sampling.folding import FoldingRunner
-from pymcpu.sampling.folding_bias import BasinTracker, FoldingBias
 from pymcpu.sampling.replica_exchange import (
     ExchangeRecord,
     Replica,
@@ -50,14 +49,12 @@ except Exception:  # pragma: no cover — ImportError or missing libmpi at runti
     partition_replicas = None
 
 __all__ = [
-    "BasinTracker",
     "CARMSDCV",
     "CaRmsd",
     "CollectiveVariable",
     "CompositeCV",
     "EngineSession",
     "ExchangeRecord",
-    "FoldingBias",
     "FoldingRunner",
     "MPIReplicaExchange",
     "NativeContactsCV",

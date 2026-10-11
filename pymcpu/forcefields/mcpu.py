@@ -39,6 +39,17 @@ logger = logging.getLogger(__name__)
 _MU_LAMBDA_DEFAULT = 1.8
 _MU_ALPHA_DEFAULT  = 0.75
 _DEFAULT_PARAM_SET = "mcpu08"
+# A C(i)-N(i+1) distance above this (nm) is a chain break; a peptide bond is
+# about 0.133 nm.
+_MAX_PEPTIDE_BOND_NM = 0.2
+# Problems listed in one structure error before the rest are counted.
+_MAX_LISTED_PROBLEMS = 10
+
+
+def _listed(problems: list[str]) -> str:
+    shown = "; ".join(problems[:_MAX_LISTED_PROBLEMS])
+    extra = len(problems) - _MAX_LISTED_PROBLEMS
+    return shown + (f"; and {extra} more" if extra > 0 else "")
 
 @dataclass
 class MCPUAtom:
@@ -70,7 +81,8 @@ class MCPUForceField(BaseForceField):
              virtual_amide_h: bool = True,
              compute_dssp: bool = False,
              dssp_coil_state: str = "C",
-             allow_provisional_rama: bool = False) -> None:
+             allow_provisional_rama: bool = False,
+             allow_chain_breaks: bool = False) -> None:
         """
         Load the parameters, check the structure and lay out its atoms.
 
@@ -104,6 +116,19 @@ class MCPUForceField(BaseForceField):
             If True, permit loading rama-mixture categories marked
             ``"provisional"`` in ``rama_mixture.json`` (default False:
             raises rather than silently using an unvalidated fit).
+        allow_chain_breaks
+            The structure must be one continuous chain. By default a
+            structure with several chains, or with a break in its chain (the
+            residue numbering jumps, or the C of one residue is more than
+            2 Å from the N of the next), raises ``ValueError``. If True, the
+            pieces are joined as if they were bonded, which the engine then
+            simulates as one chain.
+
+        Raises
+        ------
+        ValueError
+            For a residue MCPU has no parameters for, a missing heavy atom
+            (named with its residue), or a chain break, as above.
         """
         if param_dir is None:
             try:
@@ -116,6 +141,7 @@ class MCPUForceField(BaseForceField):
         self.compute_dssp = bool(compute_dssp)
         self.dssp_coil_state = dssp_coil_state
         self.allow_provisional_rama = bool(allow_provisional_rama)
+        self.allow_chain_breaks = bool(allow_chain_breaks)
         self._load_parameters()
         #: The topology the engine actually simulates, here the input's.
         #: Callers read this rather than the input's, so they can write
@@ -123,6 +149,7 @@ class MCPUForceField(BaseForceField):
         self.output_topology = trajectory.topology
         self._canonicalize_residue_names(trajectory.topology)
         self._validate_topology(trajectory.topology)
+        self._check_structure(trajectory)
         self.secondary_structure = self._compute_secondary_structure(trajectory)
         self._order_atoms(trajectory.topology)
         self.coords = self._infer_hydrogens(trajectory)
@@ -238,6 +265,72 @@ class MCPUForceField(BaseForceField):
             "resolved before building the system."
             + ("" if not hints else " " + " ".join(hints))
         )
+
+    def _check_structure(self, trajectory: md.Trajectory) -> None:
+        """Raise if a heavy atom is missing or the chain is not one piece.
+
+        Without this, a missing side-chain atom ended in a bare ``KeyError``
+        naming only the atom, and several chains, or a chain with missing
+        residues, were simulated as one chain bonded across the gaps.
+        """
+        topology = trajectory.topology
+        several = topology.n_chains > 1
+
+        def label(residue: md.core.topology.Residue) -> str:
+            text = f"{residue.name} {residue.resSeq}"
+            if several:
+                chain_id = getattr(residue.chain, "chain_id", None)
+                text += f" of chain {chain_id or residue.chain.index}"
+            return text
+
+        missing = []
+        for residue in topology.residues:
+            present = {atom.name for atom in residue.atoms}
+            absent = [
+                name for name in self.ff_template[residue.name]["atoms"]
+                if name not in present
+            ]
+            if absent:
+                missing.append(f"{label(residue)} lacks {', '.join(absent)}")
+        if missing:
+            raise ValueError(
+                f"Heavy atoms are missing from {len(missing)} residue(s): "
+                f"{_listed(missing)}. MCPUForceField needs every heavy atom; "
+                "rebuild the missing ones first, for example with PDBFixer."
+            )
+
+        if self.allow_chain_breaks:
+            return
+        breaks = []
+        if several:
+            breaks.append(f"it has {topology.n_chains} chains")
+        xyz = trajectory.xyz[0]
+        for chain in topology.chains:
+            residues = list(chain.residues)
+            for prev, nxt in zip(residues, residues[1:]):
+                if nxt.resSeq - prev.resSeq not in (0, 1):
+                    breaks.append(
+                        f"the residue numbering jumps from {label(prev)} to {label(nxt)}"
+                    )
+                    continue
+                c_atom = next(a.index for a in prev.atoms if a.name == "C")
+                n_atom = next(a.index for a in nxt.atoms if a.name == "N")
+                distance = float(np.linalg.norm(xyz[c_atom] - xyz[n_atom]))
+                if distance > _MAX_PEPTIDE_BOND_NM:
+                    breaks.append(
+                        f"C of {label(prev)} is {distance * 10.0:.1f} Å from N of "
+                        f"{label(nxt)}"
+                    )
+        if breaks:
+            raise ValueError(
+                "MCPUForceField simulates one continuous chain, and this structure "
+                f"is not one: {_listed(breaks)}. The engine would join the pieces "
+                "as if they were bonded. Keep one chain (for example, add "
+                "'and chainid 0' to the atom selection) and model any missing "
+                "residues first, or pass allow_chain_breaks=True to join them "
+                "anyway (in a YAML config, forcefield_options: "
+                "{allow_chain_breaks: true})."
+            )
 
     def _load_parameters(self) -> None:
         root = Path(self.param_dir)
@@ -641,6 +734,17 @@ class MCPUForceField(BaseForceField):
                 )
             )
     
+    @property
+    def sidechain_move_residues(self) -> list[int]:
+        """Residues a sidechain move can act on: those with chi angles, except
+        proline, whose ring the moves leave alone. The engine draws its
+        sidechain moves from these."""
+        return [
+            r
+            for r, rows in enumerate(self.chi_atom_indices)
+            if rows and rows[0][0] >= 0 and not self.is_proline[r]
+        ]
+
     @property
     def inverse_mapping(self) -> list[int]:
         """

@@ -167,3 +167,19 @@ def test_wheel_top_level_is_only_the_package(built_wheel: Path) -> None:
     unexpected = tops - {"pymcpu", "pymcpu-0.1.0.dist-info"}
     unexpected = {t for t in unexpected if not t.endswith(".dist-info")}
     assert not unexpected, f"unexpected top-level entries in wheel: {sorted(unexpected)}"
+
+
+def test_wheel_records_its_cpu_baseline(built_wheel: Path) -> None:
+    """pymcpu/_build_arch.py names the baseline the extension was built for;
+    the import checks the CPU against it before loading the extension (see
+    pymcpu._cpu_check). The published wheels are built for x86-64-v3."""
+    import os
+    import re
+
+    with zipfile.ZipFile(built_wheel) as archive:
+        source = archive.read("pymcpu/_build_arch.py").decode()
+    tier = re.search(r'^TIER = "([^"]*)"', source, re.MULTILINE)
+    assert tier, source
+    assert tier.group(1) in ("v2", "v3", "v4", "none")
+    if not os.environ.get("MCPU_ARCH"):
+        assert tier.group(1) == "v3"

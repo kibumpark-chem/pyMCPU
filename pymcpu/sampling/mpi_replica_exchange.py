@@ -19,6 +19,12 @@ import numpy as np
 
 from pymcpu import mcpu_core
 from pymcpu.simulation import check_state_clash
+from pymcpu.config import (
+    DEFAULT_CONTACT_ATOM_MODE,
+    DEFAULT_CONTACT_CUTOFF,
+    DEFAULT_KIC_STEP_SIZE_RAD,
+    DEFAULT_MIN_SEQ_SEP,
+)
 from pymcpu.checkpointing import (
     CHECKPOINT_FORMAT_VERSION,
     CheckpointConfig,
@@ -149,7 +155,7 @@ class MPIReplicaExchange:
         MPI communicator (typically ``MPI.COMM_WORLD``).
     pdb_path : str
         Input structure path.
-    step_size_rad, move_weights, sidechain_move_mode, pivot_rama_probability, pivot_rama_schedule
+    step_size_rad, kic_step_size_rad, move_weights, sidechain_move_mode, pivot_rama_probability, pivot_rama_schedule
         Move settings for every replica, as in
         :class:`~pymcpu.sampling.ReplicaExchange`.
     full_energy_every_steps : int
@@ -173,10 +179,10 @@ class MPIReplicaExchange:
         n_q_windows: int = 1,
         q_step: float = 0.1,
         k_bias: float = 0.0,
-        contact_cutoff: float = 6.0,
+        contact_cutoff: float = DEFAULT_CONTACT_CUTOFF,
         q_cutoff: float | None = None,
-        min_seq_sep: int = 4,
-        contact_atom_mode: str = "ca",
+        min_seq_sep: int = DEFAULT_MIN_SEQ_SEP,
+        contact_atom_mode: str = DEFAULT_CONTACT_ATOM_MODE,
         native_contact_pairs: list[list[int]] | None = None,
         log_interval: int = 100,
         output_prefix: str = "rex",
@@ -188,6 +194,7 @@ class MPIReplicaExchange:
         sidechain_move_mode: str = "rotamer_library",
         pivot_rama_probability: float = 0.0,
         pivot_rama_schedule: dict[str, float] | None = None,
+        kic_step_size_rad: float = DEFAULT_KIC_STEP_SIZE_RAD,
         fixed_residues: list[int] | None = None,
         linker_residues: list[int] | None = None,
         linker_energy_mode: str = "ignore_all",
@@ -238,6 +245,7 @@ class MPIReplicaExchange:
             sidechain_move_mode=sidechain_move_mode,
             pivot_rama_probability=pivot_rama_probability,
             pivot_rama_schedule=pivot_rama_schedule,
+            kic_step_size_rad=kic_step_size_rad,
         )
         self._cycle = 0
         self._exchange_tag = 0
@@ -1120,10 +1128,16 @@ class MPIReplicaExchange:
         owner_j = int(self.owner_rank[j])
 
         if owner_i == owner_j:
-            if self.rank == owner_i:
-                return self._attempt_local_exchange(i, j, dim=dim)
+            # Every rank meets one Barrier per attempt, as after a cross-rank
+            # exchange. If the owner skipped it, the other ranks' Barrier met
+            # the owner's next collective instead, and the run deadlocked
+            # once a rank owned two neighbouring slots.
+            record = (
+                self._attempt_local_exchange(i, j, dim=dim)
+                if self.rank == owner_i else None
+            )
             self.comm.Barrier()
-            return None
+            return record
 
         return self._attempt_mpi_exchange(
             i, j, owner_i, owner_j, dim=dim
@@ -1233,8 +1247,12 @@ class MPIReplicaExchange:
 
         self._mc_replica_steps = int(mc_replica_steps)
 
+        # Checkpoints are written only with a checkpoint_dir and enabled=True.
+        # Every rank reads the same config, so all agree on this.
+        saving = bool(cfg.enabled and cfg.checkpoint_dir)
+
         # 1. makedirs (rank 0) + barrier
-        if self.rank == 0 and cfg.checkpoint_dir:
+        if self.rank == 0 and saving:
             Path(cfg.checkpoint_dir).mkdir(parents=True, exist_ok=True)
         self.comm.Barrier()
 
@@ -1445,7 +1463,7 @@ class MPIReplicaExchange:
                     if verbose and self.rank == 0:
                         print(f"Cycle {self._cycle}/{num_cycles} complete", flush=True)
 
-                    if self._cycle > 0 and self._cycle % interval == 0:
+                    if saving and self._cycle > 0 and self._cycle % interval == 0:
                         _flush_logs()
                         self._mpi_save_checkpoint(self._cycle, self.comm)
                         if self.rank == 0:
@@ -1456,9 +1474,10 @@ class MPIReplicaExchange:
                         for slot in self.replicas.values():
                             slot.simulation.flush_reporters()
                         _flush_logs()
-                        self._mpi_save_checkpoint(self._cycle, self.comm)
-                        if self.rank == 0:
-                            written_rex_stats = _dump_rex_stats()
+                        if saving:
+                            self._mpi_save_checkpoint(self._cycle, self.comm)
+                            if self.rank == 0:
+                                written_rex_stats = _dump_rex_stats()
                         break
         finally:
             if exchange_file is not None:

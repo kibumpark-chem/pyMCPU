@@ -132,9 +132,14 @@ def test_a_far_input_runs_near_the_origin(offset, capped: bool) -> None:
 
 def test_kic_works_far_from_the_origin() -> None:
     """Chignolin 4000 A out. Kept there, KIC's reversibility check fails
-    about 2000 times in 20k steps and only ~10 KIC moves are accepted
-    (1 failure and ~430 accepts at the origin); in the engine frame it runs as
-    it does at the origin."""
+    about 2000 times in 20k steps and only ~2 KIC moves are accepted
+    (no failures and ~140 accepts at the origin); in the engine frame it runs
+    as it does at the origin.
+
+    RE-MEASURED 2026-10-10 when the KIC driver's default width went from
+    0.1 rad to pi/6: at 0.1 rad the same runs gave ~2200 failures and ~8
+    accepts kept far, 1 failure and ~440 accepts at the origin, and the
+    accept threshold below was 300."""
     ff, top, coords = _chignolin_at(4000.0)
 
     def run(**kwargs):
@@ -146,7 +151,7 @@ def test_kic_works_far_from_the_origin() -> None:
 
     shifted = run()
     assert shifted["kic_reverse_missing"] <= 10
-    assert shifted["num_accept_kic"] >= 300
+    assert shifted["num_accept_kic"] >= 75
     kept = run(frame_offset=(0.0, 0.0, 0.0))
     assert kept["kic_reverse_missing"] >= 500
 

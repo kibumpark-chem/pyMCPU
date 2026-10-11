@@ -11,9 +11,10 @@ launch command. To set up replica exchange in Python instead, see
 
 ## The replica grid
 
-A YAML config runs replica exchange when it lists more than one temperature.
-With a single temperature it runs folding instead, and any targets are
-ignored.
+A YAML config runs replica exchange when it lists more than one temperature
+or sets targets. One temperature with targets is umbrella sampling at that
+temperature, with swaps between neighbouring windows. One temperature and no
+targets runs folding instead; see [`mcpu run`](cli.rst).
 
 ```text
 n_replicas = number of temperatures × number of windows
@@ -26,14 +27,14 @@ n_replicas = number of temperatures × number of windows
   native contacts (N = Q × the number of native contacts). Set one of the
   two, not both. `k_bias` (default 1.0) is the strength of the harmonic
   umbrella on N.
-- **No targets:** there is one window, centred at N = 0, and its umbrella
-  still applies with `k_bias`, which pulls every replica toward unfolded
-  structures. For plain temperature REMD, set `k_bias: 0`.
+- **No targets:** one window, and `k_bias` defaults to 0, so there is no
+  umbrella: plain temperature REMD.
 
 Native contacts are the residue pairs, at least `min_seq_sep` (default 4)
 apart in sequence, whose contact atoms (`contact_atom_mode`, default `ca`)
 lie within `contact_cutoff` (default 6 Å) of each other in `reference_pdb`
-(default: the starting `pdb`).
+(default: the starting `pdb`). Folding runs and the Python API count native
+contacts with the same defaults.
 
 For example, 11 temperatures and 4 Q targets give 44 replicas. A small
 config with 4 × 3 = 12 replicas:

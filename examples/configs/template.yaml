@@ -13,9 +13,10 @@ pdb: examples/data/1uao.pdb          # REQUIRED | path to input PDB (heavy atoms
 # param_dir: null                     # explicit parameter directory (overrides param_set resolution)
 
 # ── Simulation mode ───────────────────────────────────────────
-# Inferred from temperature list:
-#   1 temperature  → folding (q_targets / n_targets are ignored)
-#   >1 temperature → replica_exchange_2d
+# Inferred from the temperatures and targets:
+#   >1 temperature, or any q_targets / n_targets → replica_exchange_2d
+#      (1 temperature with targets: umbrella sampling at that temperature)
+#   1 temperature and no targets                 → folding
 
 # ── Temperature ladder ────────────────────────────────────────
 # Option A: explicit list
@@ -26,12 +27,12 @@ temp_step: 0.05                       # reduced units | spacing between temperat
 n_temps: 11                           # int | number of temperatures  # default: 1
 
 # ── Native contacts / umbrella ────────────────────────────────
-# One window per target. With no targets there is one window at N0 = 0 that
-# k_bias still applies to; set k_bias: 0 for plain temperature REMD.
+# One window per target. With no targets there is one window and, unless
+# k_bias is set, no umbrella: plain temperature REMD.
 # q_targets: fraction-based umbrella centers (converted to N0 = Q * n_contacts)
 q_targets: [0.20, 0.40, 0.60, 0.80]  # list[float] | fraction Q umbrella centers
 # n_targets: [0, 5, 10]               # list[float] | umbrella centers in contacts N (instead of q_targets)
-k_bias: 200                           # float | harmonic umbrella strength on N  # default: 1.0
+k_bias: 200                           # float | harmonic umbrella strength on N  # default: 1.0 with targets, 0 without
 contact_atom_mode: ca                 # ca | cb (cb = CB–CB; GLY / missing CB → backbone CA)  # default: ca
 contact_cutoff: 6.0                   # Angstrom | reference contact-atom distance cutoff (tunable; CB often larger)  # default: 6.0
 min_seq_sep: 7                        # int | minimum sequence separation for contact pairs  # default: 4
@@ -40,7 +41,16 @@ min_seq_sep: 7                        # int | minimum sequence separation for co
 num_cycles: 10                        # int | number of exchange cycles  # default: 10
 mc_replica_steps: 10                  # int | MC steps per replica per cycle  # default: 1000
 seed: 0                               # int | random seed for reproducibility  # default: 42
-# step_size_rad: 0.1                  # float | MC move step size in radians  # default: 0.1
+# step_size_rad: 0.1                  # float | pivot move width in radians  # default: 0.1
+# kic_step_size_rad: 0.5236           # float | KIC driver width in radians  # default: pi/6 (30 deg)
+
+# ── Folding only (1 temperature, no targets) ──────────────────
+# steps: 1000000                      # int | TOTAL MC steps, in cycles of mc_replica_steps
+#                                     #   (default 1000, or all of steps if fewer); with
+#                                     #   num_cycles instead, steps / num_cycles per cycle
+#                                     #   (replica exchange reads steps as mc_replica_steps)
+# q_threshold: 0.75                   # float | stop early once Q >= this ...  # default: unset (never)
+# convergence_window: 10              # int | ... for this many cycles in a row  # default: 10
 
 # ── Constraints ───────────────────────────────────────────────
 # Engine-internal residue indices (0-based) to hold fixed during MC.
@@ -51,7 +61,7 @@ seed: 0                               # int | random seed for reproducibility  #
 
 # ── Output ────────────────────────────────────────────────────
 output_prefix: ./out/rex              # str | prefix for output files (directory + name)  # default: ./out/sim
-log_interval: 30                      # int | steps between stdout/reporter writes  # default: mc_replica_steps
+log_interval: 30                      # int | steps between stdout/reporter writes  # default: one cycle
 # hdf5: rex_samples.h5                # str | HDF5/NPZ analysis output  # default: null
 exchange_log: none                    # none | all — per-attempt exchange.csv (default: none)
 state_log_interval: 0                 # int | write state.csv every N cycles (0 = off)

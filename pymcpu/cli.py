@@ -38,8 +38,7 @@ def _cmd_validate(args: argparse.Namespace) -> int:
         apply_checkpoint_args(cfg.checkpoint, args)
         pdb = cfg.resolve_pdb()
         structures = [("pdb", cfg.pdb, pdb)]
-        # Only replica exchange reads the reference structure.
-        if cfg.mode == "replica_exchange_2d" and cfg.reference_pdb:
+        if cfg.reference_pdb:
             structures.append(("reference_pdb", cfg.reference_pdb, cfg.resolve_reference_pdb()))
     except Exception as exc:
         # ValueError and OSError messages are written for users; for any other
@@ -62,9 +61,11 @@ def _cmd_validate(args: argparse.Namespace) -> int:
         print(f"config validation failed: {key} {given!r}: {problem}", file=sys.stderr)
         return 1
     print(f"OK  mode={cfg.mode}  pdb={pdb}")
-    if cfg.checkpoint.checkpoint_dir:
+    if cfg.checkpoint.checkpoint_dir and cfg.checkpoint.enabled:
         print(f"    checkpoint_dir={cfg.checkpoint.checkpoint_dir}")
         print(f"    checkpoint_interval={cfg.checkpoint.checkpoint_interval}")
+    else:
+        print("    checkpointing off")
     return 0
 
 

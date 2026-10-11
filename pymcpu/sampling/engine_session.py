@@ -138,6 +138,7 @@ class EngineSession:
                 sidechain_move_mode=self.spec.sidechain_move_mode,
                 pivot_rama_probability=self.spec.pivot_rama_probability,
                 pivot_rama_schedule=self.spec.pivot_rama_schedule,
+                kic_step_size_rad=self.spec.kic_step_size_rad,
             )
             if self.spec.fixed_residues:
                 integrator.set_fixed_residues(list(self.spec.fixed_residues), system.get_num_residues())

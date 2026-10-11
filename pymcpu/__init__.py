@@ -43,6 +43,12 @@ def _load_mcpu_core():
     # Python sources stay in the repo; ``__path__`` must include that directory.
     # A bare PYTHONPATH=repo import (without a matching build) fails with a
     # misleading "circular import" ImportError from CPython.
+    #
+    # First make sure this CPU can run it: an extension built for x86-64-v3 would
+    # otherwise stop Python with an illegal instruction on an older CPU.
+    from ._cpu_check import check_cpu_baseline
+
+    check_cpu_baseline()
     try:
         from . import mcpu_core as _core  # noqa: F401
 

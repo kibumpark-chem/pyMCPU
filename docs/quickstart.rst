@@ -98,10 +98,15 @@ by group number). The per-term values are weighted by default; pass
        print(f"{name:20} {value:12.4f}")
 
 Acceptance rates are the first thing to check on any Monte Carlo run. For
-``pivot`` and ``kic``, a very low rate means ``step_size_rad`` is too large for
-the temperature, and a very high rate means the moves are too small to
-explore. The ``rotamer`` move draws whole rotamers from a library and does not
-use ``step_size_rad``:
+``pivot``, a very low rate means ``step_size_rad`` is too large for the
+temperature, and a very high rate means the moves are too small to explore;
+``kic_step_size_rad`` (default π/6, 30°) plays the same part for ``kic``,
+except that a KIC acceptance of a few percent is expected at the default
+width, and narrowing the driver to raise the rate can stop KIC from
+exploring: in a study of driver widths, 0.1 rad (5.7°) or less never moved
+the ψ of CLN025's proline out of its basin, while 20° to 120° sampled the
+same equilibrium. The ``rotamer`` move draws whole rotamers from a library
+and uses neither:
 
 .. code-block:: python
 
@@ -147,16 +152,18 @@ that names the residues; remove them by name, for example by adding
 ``and not resname NA CL LIG`` to the selection.
 
 The structure must be **one continuous chain** of at least three residues,
-with **every heavy atom present**. The force field does not check either:
+with **every heavy atom present**. ``MCPUForceField`` raises a ``ValueError``
+otherwise:
 
-* A file with several chains, or a chain with missing residues, builds and
-  runs without any warning, but the engine joins the pieces as if they were
-  bonded. Keep one chain (for example, add ``and chainid 0`` to the
-  selection) and model any missing residues first.
-* A residue with missing side-chain atoms, common in crystal structures,
-  fails with a bare ``KeyError`` that names only the atom
-  (``KeyError: 'OE2'``). Rebuild missing atoms first, for example with
-  PDBFixer.
+* For a file with several chains, or a chain with missing residues, which it
+  finds by a jump in the residue numbering or by a C atom more than 2 Å from
+  the next residue's N. Keep one chain (for example, add ``and chainid 0`` to
+  the selection) and model any missing residues first. To simulate the pieces
+  joined as if they were bonded anyway, pass ``allow_chain_breaks=True``
+  (in a YAML config, ``forcefield_options: {allow_chain_breaks: true}``).
+* For a residue with missing heavy atoms, common in crystal structures; the
+  message names each residue and atom. Rebuild missing atoms first, for
+  example with PDBFixer.
 
 Avoid ``select("protein")`` here: mdtraj does not count some
 protonation-variant names (``ASH``, for example) as protein, so that selection

@@ -11,23 +11,27 @@ level; a JSON config takes them in a `checkpoint` block:
 
 ```yaml
 checkpointing:
+  enabled: true                 # false: write no checkpoint at all
   checkpoint_dir: checkpoints   # where the files go
   checkpoint_interval: 50       # save every 50 cycles
   keep_last_n: 3                # numbered checkpoints to keep
   resume: false                 # true to continue from the last checkpoint
 ```
 
-A cycle is one round of MC steps and swaps in replica exchange, and one report
-interval in a folding run (`log_interval` in YAML, `report_interval` in JSON).
-To turn checkpointing off, set `checkpoint_dir: null`; `enabled: false` is
-accepted but has no effect under `mcpu run`. The `mcpu run` options
-`--checkpoint-dir`, `--checkpoint-interval`, `--keep-last-n` and `--resume`
-override these settings; see [Command-line interface](cli.rst).
+A cycle is one round of MC steps and swaps in replica exchange. In a folding
+run it is a block of MC steps: 1000 by default in a YAML config, and one
+`report_interval` in a JSON config; [`mcpu run`](cli.rst) says how to change
+it. To turn checkpointing off, set `enabled: false` or `checkpoint_dir: null`:
+the run then writes no checkpoint, and no checkpoint directory. The `mcpu run`
+options `--checkpoint-dir`, `--checkpoint-interval`, `--keep-last-n` and
+`--resume` override these settings, except that a run with `enabled: false`
+writes no checkpoint whatever they say; see [Command-line interface](cli.rst).
 
 ## When a run saves
 
 - Every `checkpoint_interval` cycles.
 - At the end of the run, except under MPI, where only the interval applies.
+  A folding run that stops early (`q_threshold`) saves where it stops.
 - Replica exchange also saves when it receives SIGTERM or SIGINT, as from
   `scancel`, a job time limit or Ctrl-C: it finishes the current cycle, saves
   and stops. A folding run does not, and resumes from its last regular save.

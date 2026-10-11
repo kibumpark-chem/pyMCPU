@@ -18,6 +18,12 @@ from pymcpu.trajectory_utils import (
   truncate_all_trajectories_on_resume,
   truncate_csv_to_cycle,
 )
+from pymcpu.config import (
+    DEFAULT_CONTACT_ATOM_MODE,
+    DEFAULT_CONTACT_CUTOFF,
+    DEFAULT_KIC_STEP_SIZE_RAD,
+    DEFAULT_MIN_SEQ_SEP,
+)
 from pymcpu.checkpointing import (
     CHECKPOINT_FORMAT_VERSION,
     CheckpointConfig,
@@ -104,7 +110,9 @@ class ReplicaExchange:
     seed : int
         RNG seed for exchange attempts.
     step_size_rad : float
-        Monte Carlo step size for every replica, in radians.
+        Width of every replica's pivot move, in radians.
+    kic_step_size_rad : float
+        Width of every replica's KIC driver, in radians.
     move_weights, sidechain_move_mode, pivot_rama_probability, pivot_rama_schedule
         Move settings for every replica, with the same meaning and defaults as
         in :class:`~pymcpu.sampling.FoldingRunner`. A schedule sets each
@@ -130,10 +138,10 @@ class ReplicaExchange:
       n_q_windows: int = 1,
       q_step: float = 0.1,
       k_bias: float = 0.0,
-      contact_cutoff: float = 6.0,
+      contact_cutoff: float = DEFAULT_CONTACT_CUTOFF,
       q_cutoff: float | None = None,
-      min_seq_sep: int = 4,
-      contact_atom_mode: str = "ca",
+      min_seq_sep: int = DEFAULT_MIN_SEQ_SEP,
+      contact_atom_mode: str = DEFAULT_CONTACT_ATOM_MODE,
       native_contact_pairs: Sequence[Sequence[int]] | np.ndarray | None = None,
       log_interval: int = 100,
       output_prefix: str = "rex",
@@ -145,6 +153,7 @@ class ReplicaExchange:
       sidechain_move_mode: str = "rotamer_library",
       pivot_rama_probability: float = 0.0,
       pivot_rama_schedule: dict[str, float] | None = None,
+      kic_step_size_rad: float = DEFAULT_KIC_STEP_SIZE_RAD,
       fixed_residues: list[int] | None = None,
       linker_residues: list[int] | None = None,
       linker_energy_mode: str = "ignore_all",
@@ -190,6 +199,7 @@ class ReplicaExchange:
         sidechain_move_mode=sidechain_move_mode,
         pivot_rama_probability=pivot_rama_probability,
         pivot_rama_schedule=pivot_rama_schedule,
+        kic_step_size_rad=kic_step_size_rad,
       )
       ex_mode = str(exchange_log or "none").strip().lower()
       if ex_mode not in ("none", "all"):
@@ -212,7 +222,7 @@ class ReplicaExchange:
         checkpoint_interval=self.checkpoint_interval,
         keep_last_n=keep_last_n if keep_last_n is not None else 3,
       )
-      if self.checkpoint_dir is not None:
+      if self._saves_checkpoints():
         self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
       self.rng = np.random.default_rng(seed)
 
@@ -274,6 +284,11 @@ class ReplicaExchange:
       self.top_path = trajectory_topology_path(
         self.forcefield, pdb_path, self.reference_pdb, f"{self.output_prefix}_topology.pdb")
       self.traj_dir = str(Path(self.output_prefix).parent)
+
+    def _saves_checkpoints(self) -> bool:
+      """True when the run writes checkpoints: it has a ``checkpoint_dir``
+      and its ``checkpoint_config`` is not ``enabled=False``."""
+      return self.checkpoint_dir is not None and bool(self.checkpoint_config.enabled)
 
     @property
     def n_temps(self) -> int:
@@ -600,7 +615,8 @@ class ReplicaExchange:
     ) -> RunSummary:
       if checkpoint_dir is not None:
         self.checkpoint_dir = Path(checkpoint_dir)
-        self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
+        if self._saves_checkpoints():
+          self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
       if checkpoint_interval is not None:
         self.checkpoint_interval = max(1, int(checkpoint_interval))
       if keep_last_n is not None:
@@ -798,7 +814,7 @@ class ReplicaExchange:
               print(f"Cycle {self._cycle}/{num_cycles} complete")
 
             # Save after cycle N when interval divides N (and always on interrupt).
-            if self.checkpoint_dir is not None and self._cycle > 0:
+            if self._saves_checkpoints() and self._cycle > 0:
               if self._cycle % self.checkpoint_interval == 0:
                 ckpt_path = _save_checkpoint()
                 written_rex_stats = _dump_rex_stats()
@@ -808,7 +824,7 @@ class ReplicaExchange:
             if shutdown.requested:
               for rep in self.replicas:
                 rep.simulation.flush_reporters()
-              if self.checkpoint_dir is not None:
+              if self._saves_checkpoints():
                 ckpt_path = _save_checkpoint()
                 written_rex_stats = _dump_rex_stats()
                 if verbose:
@@ -821,7 +837,7 @@ class ReplicaExchange:
               break
 
           # Final checkpoint at end of successful (or empty) run when enabled.
-          if self.checkpoint_dir is not None and (
+          if self._saves_checkpoints() and (
             cycles_completed_this_run > 0 or resume is not None
           ):
             ckpt_path = _save_checkpoint()

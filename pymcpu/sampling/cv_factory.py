@@ -30,6 +30,7 @@ from typing import Any, Protocol, Sequence, runtime_checkable
 
 import numpy as np
 
+from pymcpu.config import DEFAULT_CONTACT_ATOM_MODE, DEFAULT_CONTACT_CUTOFF, DEFAULT_MIN_SEQ_SEP
 from pymcpu.sampling.collective_variables import (
     CARMSDCV,
     NativeContactsCV,
@@ -201,15 +202,15 @@ def _build_one(spec: dict, forcefield: Any) -> Any:
     if kind == "custom":
         return custom_cv_from_spec(spec)
 
-    contact_atom_mode = spec.get("contact_atom_mode", "ca")
+    contact_atom_mode = spec.get("contact_atom_mode", DEFAULT_CONTACT_ATOM_MODE)
 
     if kind in ("native_contacts_q", "native_contacts_n"):
         ca_idx, ref_ca = _ca_index_and_ref(forcefield, spec["reference_pdb"], contact_atom_mode)
         cv = NativeContactsCV(
             ca_internal_idx=ca_idx,
             ref_ca_xyz=ref_ca,
-            contact_cutoff=float(spec.get("contact_cutoff", 8.0)),
-            min_seq_sep=int(spec.get("min_seq_sep", 4)),
+            contact_cutoff=float(spec.get("contact_cutoff", DEFAULT_CONTACT_CUTOFF)),
+            min_seq_sep=int(spec.get("min_seq_sep", DEFAULT_MIN_SEQ_SEP)),
             mode="hard",
             contact_atom_mode=contact_atom_mode,
             native_contact_pairs=spec.get("native_contact_pairs"),

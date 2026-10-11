@@ -19,9 +19,9 @@ legacy impossible (and silently mismatched: the published 4.3 runs used
 small on chi).
 
 ``sidechain_step_size_rad`` splits them. It defaults to "same as backbone", so
-omitting it reproduces the previous single-amplitude behavior. The pivot and
-KIC driver deliberately keep sharing ``step_size_rad``, because legacy's single
-``MakeMove(STEP_SIZE, ...)`` covers every backbone move too.
+omitting it reproduces the previous single-amplitude behavior. The KIC driver
+has its own width, ``kic_step_size_rad``, so ``step_size_rad`` sets the pivot
+only.
 
 Internal-consistency test: every assertion compares pyMCPU against its own
 behavior at a different setting. No legacy binary, log, or hardcoded legacy

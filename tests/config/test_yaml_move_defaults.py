@@ -29,6 +29,7 @@ def test_yaml_move_defaults_match_a_bare_integrator(temperatures: list[float]) -
     assert cfg.integrator.sidechain_move_mode == bare.sidechain_move_mode()
     assert cfg.integrator.move_weights == pytest.approx(bare.move_weights())
     assert cfg.integrator.step_size_rad == pytest.approx(bare.backbone_step_size_rad())
+    assert cfg.integrator.kic_step_size_rad == pytest.approx(bare.kic_step_size_rad())
 
     assert EngineSpec.from_simulation_config(cfg).pivot_rama_probability == 0.0
 

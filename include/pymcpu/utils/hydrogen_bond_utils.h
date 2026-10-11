@@ -199,11 +199,21 @@ namespace HydrogenBondUtils {
     /// orientation by acos instead of by the sign of its cosine.
     inline constexpr float kCacaSignBand = 1e-4f;
 
-    /// int(angle / HBOND_BIN_SIZE) for angle = acos(c), without the acos when c is
-    /// clear of every bin edge. Away from an edge the bin follows from comparing c
-    /// with cos(k * 20 deg); within 1e-4 of one (where acos rounding could decide
-    /// the bin) it falls back to the acos, so the result is always identical to
-    /// int(std::acos(c) / HBOND_BIN_SIZE).
+    /// Bins per angle: 0 to 180 deg in 20 deg steps.
+    inline constexpr int kAngleBins = 9;
+
+    /// int(angle / HBOND_BIN_SIZE) for angle = acos(c), clamped to the last bin,
+    /// without the acos when c is clear of every bin edge. Away from an edge the
+    /// bin follows from comparing c with cos(k * 20 deg); within 1e-4 of one
+    /// (where acos rounding could decide the bin) it falls back to the acos, so
+    /// the result is always identical to
+    /// min(int(std::acos(c) / HBOND_BIN_SIZE), kAngleBins - 1).
+    ///
+    /// The clamp matters at 180 deg: in float, acos(-1) / HBOND_BIN_SIZE is
+    /// 9.000001, and bin 9 would read the first bin of the next table entry (or
+    /// past the end of the table). A cosine of exactly -1 comes from two normals
+    /// or bisectors antiparallel to within about 0.02 deg. A NaN cosine fails
+    /// every comparison, so it lands in bin 0 and never reaches the acos.
     inline int angle_bin_from_cos(float c) {
         int bin = 0;
         bool near_edge = false;
@@ -211,8 +221,8 @@ namespace HydrogenBondUtils {
             bin += (c < e) ? 1 : 0;
             near_edge |= std::abs(c - e) < kBinEdgeBand;
         }
-        if (near_edge) return int(std::acos(c) / HBOND_BIN_SIZE);
-        return bin;
+        if (near_edge) bin = int(std::acos(std::clamp(c, -1.0f, 1.0f)) / HBOND_BIN_SIZE);
+        return std::clamp(bin, 0, kAngleBins - 1);
     }
 
     /// With `cosines`, also stores the quantities it decides by: [0] the

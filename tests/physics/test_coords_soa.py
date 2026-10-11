@@ -122,8 +122,30 @@ pytestmark = pytest.mark.slow
 # A GCC 8.5 build gave ACCEPT 271 and E_HBOND -180.06430053710938 here until
 # the rotation fix of 2026-10-02 (rigid rotations done in double and rounded
 # once), and gives exactly these values since.
-BASELINE_ACCEPT = 264
-BASELINE_E_HBOND = -177.14263916015625
+#
+# TENTH capture, 2026-10-09, after pivots gained the chain-end torsions and
+# sidechain steps lost the residues without chi angles: a pivot draws one of
+# the chain's 2N-2 backbone torsions with one draw instead of two, and a
+# sidechain step draws only residues it can move, so the run reads different
+# random numbers. The previous values, ACCEPT 264 and E_HBOND
+# -177.14263916015625, still come out of the parent engine. Replaying both
+# engines one step at a time, warmup steps 1 and 2 (a KIC move and a
+# sidechain step, both rejected) leave the coordinates identical, and from
+# step 3 on the two runs draw different moves. ACCEPT is 264 again by
+# coincidence. Captured with GCC 15 by re-running the recipe above via
+# `run_hotpath`.
+#
+# ELEVENTH capture, 2026-10-10, after the KIC driver's default width went
+# from 0.1 rad to pi/6; run_hotpath leaves the KIC width at the default. The
+# previous values, ACCEPT 264 and E_HBOND -179.62722607272156, still come out
+# of the parent engine. Replaying both engines one step at a time, the
+# coordinates are identical through warmup step 22 (the KIC proposals at
+# steps 1, 3, 6, 10 and 15 are rejected or skipped in both); step 23 is a KIC
+# move that the parent engine accepts and this one rejects, and the runs
+# separate from there. Captured with GCC 15 by re-running the recipe above
+# via `run_hotpath`.
+BASELINE_ACCEPT = 254
+BASELINE_E_HBOND = -179.71418313259161
 
 # See tests/physics/test_hbond_delta_hotpath.py's DETERMINISM_ATOL for why
 # this is an empirical repeatability allowance, not a physics constant.
