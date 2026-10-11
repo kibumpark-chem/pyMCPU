@@ -38,6 +38,9 @@ contact_cutoff: 6.0                   # Angstrom | reference contact-atom distan
 min_seq_sep: 7                        # int | minimum sequence separation for contact pairs  # default: 4
 
 # ── Monte Carlo parameters ────────────────────────────────────
+# Replica exchange: each replica runs num_cycles × mc_replica_steps MC steps.
+# A replica exchange config that writes `steps` instead of mc_replica_steps
+# means steps PER CYCLE, not the total (mc_replica_steps wins if both are set).
 num_cycles: 10                        # int | number of exchange cycles  # default: 10
 mc_replica_steps: 10                  # int | MC steps per replica per cycle  # default: 1000
 seed: 0                               # int | random seed for reproducibility  # default: 42
@@ -45,10 +48,11 @@ seed: 0                               # int | random seed for reproducibility  #
 # kic_step_size_rad: 0.5236           # float | KIC driver width in radians  # default: pi/6 (30 deg)
 
 # ── Folding only (1 temperature, no targets) ──────────────────
+# In a folding config `steps` is the TOTAL number of MC steps (in replica
+# exchange it is per cycle, see above).
 # steps: 1000000                      # int | TOTAL MC steps, in cycles of mc_replica_steps
 #                                     #   (default 1000, or all of steps if fewer); with
 #                                     #   num_cycles instead, steps / num_cycles per cycle
-#                                     #   (replica exchange reads steps as mc_replica_steps)
 # q_threshold: 0.75                   # float | stop early once Q >= this ...  # default: unset (never)
 # convergence_window: 10              # int | ... for this many cycles in a row  # default: 10
 

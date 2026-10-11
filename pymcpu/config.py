@@ -1,4 +1,4 @@
-"""JSON simulation config schema (stdlib dataclasses; pydantic optional)."""
+"""JSON and YAML simulation config schema (stdlib dataclasses)."""
 
 from __future__ import annotations
 

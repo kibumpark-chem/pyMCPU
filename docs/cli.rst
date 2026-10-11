@@ -86,7 +86,19 @@ from a source checkout (see :doc:`running_remd`):
 
 A YAML config runs replica exchange when it lists more than one temperature
 or sets umbrella targets (see :doc:`running_remd`). Otherwise it runs folding:
-one trajectory at its one temperature. In a folding config:
+one trajectory at its one temperature.
+
+.. important::
+
+   ``steps`` counts differently in the two modes. In a **folding** config it
+   is the **total** number of MC steps. In a **replica exchange** config it is
+   the number of steps **per cycle** for each replica, another name for
+   ``mc_replica_steps`` (which wins when both are set), and each replica runs
+   ``num_cycles`` × ``mc_replica_steps`` steps in all. Adding temperatures or
+   targets to a folding config keeps its ``steps`` line but makes it a
+   per-cycle count.
+
+In a folding config:
 
 * ``steps`` is the total number of MC steps. The run is divided into cycles,
   the unit ``checkpoint_interval`` counts: 1000 steps each, or all of
@@ -97,8 +109,6 @@ one trajectory at its one temperature. In a folding config:
   ``mc_replica_steps``.
   Without ``steps``, the run is ``num_cycles`` (default 10) cycles of
   ``mc_replica_steps`` (default 1000) steps, as in replica exchange.
-  (In a replica exchange config, ``steps`` is read as ``mc_replica_steps``,
-  the steps per cycle, when that key is not set.)
   ``log_interval`` defaults to one cycle. The trajectory
   (``<output_prefix>.xtc``) and ``<output_prefix>_data.csv`` record every
   ``log_interval`` steps from the start, so steps after the last multiple of

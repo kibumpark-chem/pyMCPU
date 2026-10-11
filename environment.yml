@@ -1,9 +1,9 @@
 name: mcpu
 channels:
   - conda-forge
-  - defaults
+  - nodefaults
 dependencies:
-  - python>=3.11
+  - python>=3.12
   # Toolchain + C++ RUNTIME. libstdcxx-ng is not optional: the extension is
   # built against the compiler's libstdc++ and needs those symbol versions at
   # import time. conda's python has RPATH $ORIGIN/../lib, so the libstdc++ in
@@ -12,7 +12,7 @@ dependencies:
   # LD_LIBRARY_PATH cannot (DT_RPATH wins over it).
   # Do NOT "solve" this with -static-libstdc++: that duplicates the C++ runtime
   # alongside numpy/mdtraj's dynamic one and silently breaks iostream-based
-  # RNG-state serialisation and the CSV reporter. See
+  # RNG-state serialisation and the CSV reporter.
   - gxx_linux-64
   - libstdcxx-ng
   - cmake>=3.15

@@ -5,19 +5,20 @@ Installation
 
    pip install pymcpu
 
-or
-
-.. code-block:: bash
-
-   conda install -c conda-forge pymcpu
-
 Requirements
 ------------
 
 * Linux x86-64
-* Python 3.9 or newer
+* Python 3.12 or newer
 * A CPU with AVX2 and FMA (Intel Haswell or AMD Zen, or newer). This is the
-  baseline the published package is built for; see `CPU baseline`_ to change it.
+  baseline the published package is built for. On an older CPU,
+  ``import pymcpu`` stops with an ``ImportError`` that names the missing
+  instructions; build from source for such a CPU (see `CPU baseline`_).
+* About 0.7 GB of disk for the parameter tables. The package carries them
+  compressed (about 2 MB) and unpacks them into ``~/.cache/pymcpu`` the
+  first time a force field is built, which takes a few seconds; later runs
+  reuse them. Set ``MCPU_CACHE_DIR`` to unpack them somewhere else (see
+  `MCPU parameter lookup`_).
 
 MPI (optional)
 --------------

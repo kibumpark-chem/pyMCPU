@@ -84,7 +84,7 @@ MCPU_FP_CONTRACT=off pip install --no-build-isolation -e .
 ```
 
 Under `off`, GCC 8.5 and GCC 12.2 produce bit-identical trajectories on all
-four verification cases (not yet checked for GCC 15). It costs roughly 3% throughput.
+four verification cases (not yet checked for GCC 15). It makes runs 14-15% slower.
 `mcpu_core.build_info()["fp"]["fp_contract"]` reports which setting a build
 used, so a result can always be attributed.
 

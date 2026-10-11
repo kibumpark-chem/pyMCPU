@@ -14,13 +14,13 @@ source:
 
 build:
   number: 0
-  skip: true  # [not linux]
+  # pyproject.toml requires Python >=3.12, so pip refuses older variants.
+  skip: true  # [not linux or py<312]
   script: {{ PYTHON }} -m pip install . -vv --no-deps --no-build-isolation
   script_env:
-    # The ISA baseline. A conda-forge package must run on any x86-64 machine
-    # in its platform family, so do NOT inherit the repo default of
-    # skylake-avx512 -- that SIGILLs on AMD Zen 1-3 and on Intel consumer
-    # parts from the 12th generation onward. x86-64-v3 is AVX2 + FMA.
+    # The ISA baseline, the same as the repo default and the PyPI wheels:
+    # x86-64-v3 is AVX2 + FMA. Set here so the package's baseline is visible
+    # in the recipe.
     - MCPU_ARCH=x86-64-v3
     # Refuse to reach for the network, which this build cannot do anyway.
     # Turns a missing dependency into a clear configure error instead of a
@@ -54,7 +54,7 @@ requirements:
     # dependency with no ABI coupling, and pin_compatible('numpy') would be
     # wrong.
   run:
-    - python >=3.9
+    - python >=3.12
     # All five hard runtime dependencies from pyproject.toml. pandas and
     # mdtraj are both imported at `import pymcpu` time, so omitting either
     # yields a package that installs and then cannot be imported.
@@ -88,8 +88,10 @@ test:
 
 about:
   home: https://github.com/kibumpark-chem/pyMCPU
-  license: MIT
-  license_file: LICENSE
+  license: MIT AND BSD-2-Clause AND BSD-3-Clause AND MPL-2.0 AND LGPL-2.1-or-later AND Graphics-Gems
+  license_file:
+    - LICENSE
+    - THIRD_PARTY_NOTICES
   summary: Monte Carlo protein folding engine with a fast C++ core and Python API
   description: |
     pyMCPU runs Monte Carlo protein folding and unfolding with knowledge-based
@@ -100,7 +102,7 @@ about:
     torsion, directional hydrogen bonding, and aromatic stacking -- drive
     Metropolis sampling with pivot, continuous sidechain, rotamer-library and
     kinematic-closure loop moves, plus temperature and umbrella replica
-    exchange and WESTPA weighted-ensemble support via the separate pymcpu-westpa package.
+    exchange, in one process or over MPI.
 
     Energies are unitless sums of table entries and temperature is a
     dimensionless reduced parameter; there is no Boltzmann constant in the

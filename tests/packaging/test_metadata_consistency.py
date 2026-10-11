@@ -73,8 +73,14 @@ def test_license_is_declared() -> None:
     expression = md.get("License-Expression")
     legacy = md.get("License")
     assert expression or legacy, "neither License-Expression nor License is set"
+    # The notices carry the licences of the code compiled into the extension.
+    assert {"LICENSE", "THIRD_PARTY_NOTICES"} <= set(md.get_all("License-File") or [])
     if expression:
-        assert expression.strip() == "MIT"
+        # pyMCPU's own code is MIT; the rest is compiled into the extension.
+        assert expression.strip() == (
+            "MIT AND BSD-2-Clause AND BSD-3-Clause AND MPL-2.0 AND LGPL-2.1-or-later"
+            " AND Graphics-Gems"
+        )
         assert not [
             c for c in md.get_all("Classifier") or [] if c.startswith("License ::")
         ], (
@@ -83,10 +89,21 @@ def test_license_is_declared() -> None:
         )
 
 
+def test_citation_and_badge_do_not_say_plain_mit() -> None:
+    """Only pyMCPU's own code is MIT; the package is the expression above.
+
+    CFF reads a list of licences as alternatives (OR), so CITATION.cff has no
+    ``license`` key, and the README badge must not say plain MIT.
+    """
+    import yaml
+
+    assert "license" not in yaml.safe_load((REPO / "CITATION.cff").read_text())
+    assert "badge/License-MIT-" not in (REPO / "README.md").read_text()
+
 def test_project_urls_are_present() -> None:
     urls = metadata("pymcpu").get_all("Project-URL") or []
     labels = {u.split(",", 1)[0].strip() for u in urls}
-    missing = {"Homepage", "Documentation", "Repository", "Issues"} - labels
+    missing = {"Homepage", "Documentation", "Source", "Issues", "Changelog"} - labels
     assert not missing, f"missing Project-URL entries: {sorted(missing)}"
 
 

@@ -1,3 +1,29 @@
+// Sturm-sequence root finder for the loop-closure polynomial: a modified C++
+// port of the sturm.h of
+//
+//   Tripeptide loop closure, Copyright (C) 2003-2005 Chaok Seok, Evangelos
+//   Coutsias, Matthew Jacobson and Ken Dill; C translation by Jae Shick Yang,
+//
+// which is Chaok Seok's 2003 modification of D. G. Hook and P. R. McAree,
+// "Using Sturm Sequences to Bracket Real Roots of Polynomial Equations",
+// Graphics Gems (Academic Press, 1990). The Graphics Gems code may be used in
+// any program and comes with no warranty (its terms are in THIRD_PARTY_NOTICES,
+// section 4).
+//
+// Modified by Kibum Park in 2026 (the C++ port first appears in his development
+// repository on 2026-05-30; changes continue through 2026-10): translated from C
+// to C++ and adapted to pyMCPU's KIC move, with each root that the Sturm counts
+// isolate finished by Newton's method inside its bracket instead of by regula
+// falsi, and with the counts, and up to four roots at a time, run in AVX2 vector
+// lanes.
+//
+// Like the original, and unlike the rest of pyMCPU (MIT), this file is free
+// software under the GNU Lesser General Public License, version 2.1 or (at your
+// option) any later version, and comes WITHOUT ANY WARRANTY. THIRD_PARTY_NOTICES,
+// section 4, has the licence text and says where the original lives.
+//
+// SPDX-License-Identifier: LGPL-2.1-or-later AND Graphics-Gems
+
 #pragma once
 #include <Eigen/Dense>
 #include <vector>

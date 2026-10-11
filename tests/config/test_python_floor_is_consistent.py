@@ -1,18 +1,13 @@
-"""The declared Python floor must be real, and stated once.
+"""The declared Python floor must be real, and stated the same everywhere.
 
-``requires-python = ">=3.9"`` is a promise. Three things can break it
+``requires-python = ">=3.12"`` is a promise. Two things can break it
 silently:
 
-1. Someone bumps the floor in one file and not the five others that state it.
-2. Someone writes 3.10+ syntax. ``target-version`` in the ruff config catches
-   this, so this module just asserts the two numbers agree.
-3. Someone writes a runtime-evaluated PEP 604 union (``x: int | None`` in a
-   module without ``from __future__ import annotations``). That is valid 3.9
-   *syntax* that raises ``TypeError`` on 3.9 at import, so neither the parser
-   nor ``target-version`` sees it -- ruff's FA102 does, and it is enabled.
-
-This module covers (1) and the agreement half of (2). It deliberately does not
-re-implement (3).
+1. Someone bumps the floor in one file and not in the others that state it:
+   the ruff ``target-version``, the conda recipe, and the "Python X.Y or
+   newer" lines of the README and the installation docs.
+2. Someone writes syntax newer than the floor. ``target-version`` in the ruff
+   config catches this, so this module just asserts the two numbers agree.
 """
 
 from __future__ import annotations
@@ -39,21 +34,17 @@ def test_ruff_target_version_matches_requires_python() -> None:
     assert match, "ruff target-version is not set; the floor is unenforced"
     assert (int(match.group(1)), int(match.group(2))) == (major, minor), (
         f"ruff target-version is py{match.group(1)}{match.group(2)} but "
-        f"requires-python is >={major}.{minor} -- ruff would accept syntax the "
-        f"declared floor cannot run"
+        f"requires-python is >={major}.{minor}"
     )
 
 
-def test_ruff_enables_the_future_annotations_check() -> None:
-    """FA is the only guard against a runtime-evaluated PEP 604 union."""
-    lint = PYPROJECT.split("[tool.ruff.lint]", 1)
-    assert len(lint) == 2, "no [tool.ruff.lint] section"
-    section = lint[1].split("\n[", 1)[0]
-    assert re.search(r'"FA', section), (
-        "ruff does not select FA; a PEP 604 union without "
-        "`from __future__ import annotations` would pass lint and then fail at "
-        "import on the declared floor"
-    )
+def test_conda_recipe_states_the_same_floor() -> None:
+    recipe = REPO / "conda-recipe" / "meta.yaml"
+    if not recipe.exists():
+        pytest.skip("no conda recipe in this tree")
+    floors = re.findall(r"^\s*- python >=(\d+)\.(\d+)", recipe.read_text(), re.M)
+    assert floors, "conda-recipe/meta.yaml states no python floor"
+    assert {(int(a), int(b)) for a, b in floors} == {_declared_floor()}
 
 
 def test_every_tracked_module_parses_under_the_declared_floor() -> None:
@@ -80,16 +71,13 @@ _FLOOR_CLAIM = re.compile(r"Python (\d+)\.(\d+) or newer")
     "relpath",
     ["docs/installation.rst", "README.md"],
 )
-def test_user_facing_docs_do_not_claim_a_higher_floor(relpath: str) -> None:
-    """A doc promising 3.11 while the package accepts 3.9 turns people away."""
+def test_user_facing_docs_state_the_declared_floor(relpath: str) -> None:
+    """A higher claim turns people away; a lower one fails their install."""
     path = REPO / relpath
     if not path.exists():
         pytest.skip(f"{relpath} not present")
-    major, minor = _declared_floor()
-    text = path.read_text(encoding="utf-8")
-    claims = {(int(a), int(b)) for a, b in _FLOOR_CLAIM.findall(text)}
-    too_high = {c for c in claims if c > (major, minor)}
-    assert not too_high, (
-        f"{relpath} claims a floor of {sorted(too_high)} but requires-python "
-        f"is >={major}.{minor}."
+    claims = {(int(a), int(b)) for a, b in _FLOOR_CLAIM.findall(path.read_text("utf-8"))}
+    assert claims == {_declared_floor()}, (
+        f"{relpath} states the floor as {sorted(claims)}; requires-python is "
+        f">={'.'.join(map(str, _declared_floor()))}"
     )

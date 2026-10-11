@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from importlib.resources import files
 from pathlib import Path
 from typing import Any
 
@@ -32,12 +33,7 @@ def default_example_pdb() -> Path:
     ``pymcpu/data/1uao.pdb`` ships in the wheel, so this works for a plain
     ``pip install pymcpu`` from any working directory.
     """
-    try:
-        from importlib.resources import files as _files
-    except ImportError:  # Python 3.8 and older; requires-python is >=3.9
-        from importlib_resources import files as _files  # type: ignore[import-not-found]
-
-    return Path(str(_files("pymcpu.data").joinpath("1uao.pdb")))
+    return Path(str(files("pymcpu.data").joinpath("1uao.pdb")))
 
 
 def run_folding(
