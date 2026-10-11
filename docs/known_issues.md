@@ -3,8 +3,8 @@
 Current, verified limitations of pyMCPU 0.1.0. Each entry states the symptom,
 the cause, and what to do about it.
 
-Issues fixed before the first release are not listed here — see the
-[changelog](https://github.com/kibumpark-chem/pyMCPU/blob/main/CHANGELOG.md).
+The [changelog](https://github.com/kibumpark-chem/pyMCPU/blob/main/CHANGELOG.md)
+lists how pyMCPU differs from legacy MCPU, including the legacy bugs it fixes.
 
 ## Linux x86-64 only, with an x86-64-v3 baseline
 
