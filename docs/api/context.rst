@@ -132,10 +132,10 @@ origin, a whole number of Ångström close to the middle of that axis, at most
 twice its smallest ``|coordinate|``; an axis the structure straddles is not
 shifted. For ``float32`` input that shift is exact: every distance between
 atoms is unchanged bit for bit, and so is every energy term computed from
-distances (Mu, the torsion terms, KORP, the CA guard, the native-contact
-bias). The virtual amide hydrogens and aromatic ring centres are built from
-absolute positions; they round more finely in the engine frame, so a pair
-sitting exactly on a cutoff or bin edge can score differently.
+distances (Mu, the torsion terms, the native-contact bias). The virtual
+amide hydrogens and aromatic ring centres are built from absolute
+positions; they round more finely in the engine frame, so a pair sitting
+exactly on a cutoff or bin edge can score differently.
 :py:attr:`Context.coords`, trajectory files and checkpoints are written back
 in the caller's frame by adding the offset in ``float64``.
 
@@ -340,7 +340,7 @@ Backend introspection
 These report which neighbour-search backend was selected. They are
 useful in bug reports and for confirming that no fallback path is in
 play; nothing about the physics depends on them. When no potential reads
-the neighbour grids (KORP), they are not built and both names are
+the neighbour grids, they are not built and both names are
 ``off_no_reader``.
 
 .. py:method:: Context.mu_backend_name() -> str

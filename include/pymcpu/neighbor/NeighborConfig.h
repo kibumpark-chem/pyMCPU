@@ -22,12 +22,11 @@ struct NeighborConfig {
     /// distances, up to rounding. Rounding adds up over carries, so Mu
     /// re-decides the carried pairs on its contact list, which holds every pair
     /// near its contact or hard-core cutoff (every carried pair within its
-    /// cutoff when the list is not exact; see MuPotential), and the KORP
-    /// CA-CA guard holds carried pairs to its state floor (see
-    /// kStateClashBufferA). The H-bond term likewise keeps the energy of a
-    /// donor-acceptor pair whose backbone geometry (residues r-1 to r+1 on both
-    /// sides) moved as one body and carries its ledger entry (see
-    /// HBondPotential). False evaluates them all exactly, as a reference.
+    /// cutoff when the list is not exact; see MuPotential). The H-bond term
+    /// likewise keeps the energy of a donor-acceptor pair whose backbone
+    /// geometry (residues r-1 to r+1 on both sides) moved as one body and
+    /// carries its ledger entry (see HBondPotential). False evaluates them all
+    /// exactly, as a reference.
     bool skip_rigid_mm = true;
 
     /// Minimum moved-atom count for the clash-first pass (MuPotential). Below

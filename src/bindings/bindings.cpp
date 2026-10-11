@@ -20,9 +20,6 @@
 #include "pymcpu/forces/mcpu/common/TripletPotential.h"
 #include "pymcpu/forces/mcpu/common/SideChainTripletPotential.h"
 #include "pymcpu/forces/mcpu/common/HydrogenBondPotential.h"
-#include "pymcpu/forces/korp/common/OrientationalPairMap.h"
-#include "pymcpu/forces/korp/common/OrientationalPairPotential.h"
-#include "pymcpu/forces/korp/common/CalphaExcludedVolumePotential.h"
 #include "pymcpu/forces/mcpu/common/AromaticPotential.h"
 #include "pymcpu/forces/bias/QBiasPotential.h"
 
@@ -467,11 +464,11 @@ PYBIND11_MODULE(mcpu_core, m) {
         .def("set_skip_rigid_mm", &Context::set_skip_rigid_mm, py::arg("on"),
              "Skip re-measuring the pairs a rigid pivot carries (both atoms "
              "moved): their distances change only by rounding, so Mu re-decides "
-             "just the carried pairs on its contact list and the KORP CA-CA "
-             "guard skips them. The H-bond term also keeps the energy of a "
-             "donor-acceptor pair whose backbone geometry (residues r-1 to r+1 "
-             "on both sides) moved as one body, and carries its ledger entry. "
-             "Default True; False evaluates them all exactly, as a reference.")
+             "just the carried pairs on its contact list. The H-bond term also "
+             "keeps the energy of a donor-acceptor pair whose backbone geometry "
+             "(residues r-1 to r+1 on both sides) moved as one body, and carries "
+             "its ledger entry. Default True; False evaluates them all exactly, "
+             "as a reference.")
         .def("skip_rigid_mm", &Context::skip_rigid_mm)
         .def("set_clash_first_min_moved", &Context::set_clash_first_min_moved,
              "Minimum moved-atom count for the Mu clash-first pass (default 50). "
@@ -1262,146 +1259,4 @@ PYBIND11_MODULE(mcpu_core, m) {
         .def(py::init<std::vector<int>, std::vector<int>, float>(),
              py::arg("ca_atom_i"), py::arg("ca_atom_j"), py::arg("q_cutoff"))
         .def("num_pairs", &forces::QBiasPotential::numPairs);
-
-    // ---- KORP lineage -----------------------------------------------------
-    py::class_<forces::OrientationalPairMap,
-               std::shared_ptr<forces::OrientationalPairMap>>(
-            m, "OrientationalPairMap",
-            "Engine-side view of a KORP 6D energy map.\n\n"
-            "Built by pymcpu.forcefields.builders.korp_builder from a map that\n"
-            "pymcpu.forcefields.korp_map has already parsed and validated. The\n"
-            "energy table is referenced in place, not copied, so it stays\n"
-            "wherever load_korp_map put it: by default a private copy on 2 MiB\n"
-            "pages (fastest), or with mmap=True a numpy memmap shared through\n"
-            "the OS page cache by every rank on a node. The array is kept alive\n"
-            "for as long as the C++ map exists -- including after this Python\n"
-            "object is gone, since every potential built from it holds the map\n"
-            "by shared_ptr.")
-        .def(py::init([](float cutoff, float min_r, int nslices,
-                         std::vector<float> br,
-                         std::vector<int> shell_ncells,
-                         std::vector<int> shell_nchi,
-                         std::vector<float> shell_dchi,
-                         std::vector<std::int64_t> shell_offset,
-                         std::vector<int> ring_offset,
-                         std::vector<float> ring_theta,
-                         std::vector<float> ring_dpsi,
-                         std::vector<int> ring_ncells,
-                         std::vector<int> ring_first_cell,
-                         std::vector<int> smapping,
-                         std::vector<float> fmapping,
-                         py::array_t<float, py::array::c_style> table) {
-                 // Not forcecast: a table of the wrong dtype or layout must be
-                 // an error here, because forcing it would build a temporary
-                 // and leave this object pointing at freed memory.
-                 std::vector<std::int8_t> smap;
-                 smap.reserve(smapping.size());
-                 for (int v : smapping) smap.push_back(static_cast<std::int8_t>(v));
-                 auto* raw = new forces::OrientationalPairMap(
-                     cutoff, min_r, nslices, std::move(br),
-                     std::move(shell_ncells), std::move(shell_nchi),
-                     std::move(shell_dchi), std::move(shell_offset),
-                     std::move(ring_offset), std::move(ring_theta),
-                     std::move(ring_dpsi), std::move(ring_ncells),
-                     std::move(ring_first_cell), std::move(smap),
-                     std::move(fmapping),
-                     table.data(), static_cast<std::size_t>(table.size()));
-                 // The map holds a raw pointer into `table`. Its lifetime must
-                 // follow the C++ object, not this Python wrapper: potentials
-                 // own the map through a shared_ptr and outlive the wrapper
-                 // (KORPForceField keeps only its latest map, so rebuilding a
-                 // system drops the previous wrapper). py::keep_alive tied the
-                 // array to the wrapper and left a use-after-free whenever the
-                 // array had no other owner -- e.g. a table swapped in for one
-                 // system. The deleter now owns one reference instead.
-                 PyObject* keep = table.ptr();
-                 Py_INCREF(keep);
-                 return std::shared_ptr<forces::OrientationalPairMap>(
-                     raw, [keep](forces::OrientationalPairMap* p) {
-                         delete p;
-                         if (Py_IsInitialized()) {
-                             py::gil_scoped_acquire gil;
-                             Py_DECREF(keep);
-                         }
-                     });
-             }),
-             py::arg("cutoff"), py::arg("min_r"), py::arg("nslices"),
-             py::arg("br"), py::arg("shell_ncells"), py::arg("shell_nchi"),
-             py::arg("shell_dchi"), py::arg("shell_offset"),
-             py::arg("ring_offset"), py::arg("ring_theta"), py::arg("ring_dpsi"),
-             py::arg("ring_ncells"), py::arg("ring_first_cell"),
-             py::arg("smapping"), py::arg("fmapping"), py::arg("table"))
-        .def_property_readonly("cutoff", &forces::OrientationalPairMap::cutoff)
-        .def_property_readonly("min_r", &forces::OrientationalPairMap::min_r)
-        .def_property_readonly("num_shells", &forces::OrientationalPairMap::num_shells)
-        .def_property_readonly("num_slices", &forces::OrientationalPairMap::num_slices)
-        .def("slice_for_separation",
-             &forces::OrientationalPairMap::slice_for_separation,
-             py::arg("separation"));
-
-    py::class_<forces::OrientationalPairPotential, Potential,
-               std::shared_ptr<forces::OrientationalPairPotential>>(
-            m, "OrientationalPairPotential",
-            "KORP's 6D orientation-dependent residue-pair energy (energy\n"
-            "group 7, default outer weight 1.0).\n\n"
-            "One frame per residue from its own N, CA and C; the pair\n"
-            "coordinate is CA-CA. No sidechain atom is read, which is what\n"
-            "makes this usable as a backbone-only force field.\n\n"
-            "korp_type indexes KORP's own residue ordering (alphabetical by\n"
-            "ONE-letter code), which is not pyMCPU's AMINO_INDEX ordering.\n"
-            "seq_number must be PDB residue numbers: KORP takes sequence\n"
-            "separation from those rather than from array position.")
-        .def(py::init([](std::shared_ptr<forces::OrientationalPairMap> map,
-                         std::vector<int> n_atom,
-                         std::vector<int> ca_atom,
-                         std::vector<int> c_atom,
-                         std::vector<int> korp_type,
-                         std::vector<int> seq_number,
-                         std::vector<int> chain_id) {
-                 std::vector<std::uint8_t> types, chains;
-                 types.reserve(korp_type.size());
-                 for (int v : korp_type) types.push_back(static_cast<std::uint8_t>(v));
-                 chains.reserve(chain_id.size());
-                 for (int v : chain_id) chains.push_back(static_cast<std::uint8_t>(v));
-                 return std::make_shared<forces::OrientationalPairPotential>(
-                     std::move(map), std::move(n_atom), std::move(ca_atom),
-                     std::move(c_atom), std::move(types), std::move(seq_number),
-                     std::move(chains));
-             }),
-             py::arg("map"), py::arg("n_atom"), py::arg("ca_atom"),
-             py::arg("c_atom"), py::arg("korp_type"), py::arg("seq_number"),
-             py::arg("chain_id"))
-        .def_property_readonly("num_residues",
-                               &forces::OrientationalPairPotential::num_residues)
-        .def_property_readonly("cutoff_angstrom",
-                               &forces::OrientationalPairPotential::cutoff_angstrom);
-
-    py::class_<forces::CalphaExcludedVolumePotential, Potential,
-               std::shared_ptr<forces::CalphaExcludedVolumePotential>>(
-            m, "CalphaExcludedVolumePotential",
-            "CA-CA excluded-volume filter for the KORP force field (energy\n"
-            "group 8).\n\n"
-            "KORP carries no hard-core repulsion, so on its own it lets a\n"
-            "chain pass through itself during MC. This term contributes\n"
-            "exactly zero to every accepted state and returns the clash\n"
-            "sentinel otherwise, so it filters without shifting the ensemble.")
-        .def(py::init([](std::vector<int> ca_atom,
-                         std::vector<int> seq_number,
-                         std::vector<int> chain_id,
-                         int min_separation, float min_distance) {
-                 std::vector<std::uint8_t> chains;
-                 chains.reserve(chain_id.size());
-                 for (int v : chain_id) chains.push_back(static_cast<std::uint8_t>(v));
-                 return std::make_shared<forces::CalphaExcludedVolumePotential>(
-                     std::move(ca_atom), std::move(seq_number), std::move(chains),
-                     min_separation, min_distance);
-             }),
-             py::arg("ca_atom"), py::arg("seq_number"), py::arg("chain_id"),
-             py::arg("min_separation") = 3, py::arg("min_distance") = 3.2f)
-        .def_property_readonly("num_residues",
-                               &forces::CalphaExcludedVolumePotential::num_residues)
-        .def_property_readonly("min_distance",
-                               &forces::CalphaExcludedVolumePotential::min_distance)
-        .def_property_readonly("min_separation",
-                               &forces::CalphaExcludedVolumePotential::min_separation);
 }

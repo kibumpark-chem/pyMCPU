@@ -7,8 +7,8 @@
 /// Desync is prevented by construction: potentials never insert/remove/update grids.
 /// Only rebuild_from_accepted_state() and commit_accepted_move() mutate indices.
 /// The grids exist only while something reads them: a potential whose
-/// readsNeighborGrids() is true, or a registered subset grid. Otherwise (KORP)
-/// they stay empty and off, which every query treats as its exact fallback.
+/// readsNeighborGrids() is true, or a registered subset grid. Otherwise they
+/// stay empty and off, which every query treats as its exact fallback.
 #include <Eigen/Dense>
 #include <algorithm>
 #include <cassert>

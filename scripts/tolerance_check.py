@@ -15,12 +15,13 @@ Build A is the reference (normally current main), build B the candidate.
 Every case runs in a fresh child interpreter, exactly as arch_parity_dump
 does, so the only variable is the binary that ``--import-root`` selects.
 
-The four checks
----------------
+The three checks
+----------------
 1. ``static``   Per-group energies (``energy_breakdown``, unweighted and
    weighted, plus the totals) on fixed structures: chignolin, actin, every
-   ``--pdb`` structure, actin with an energy mask, and KORP on actin. Pass: ``|a-b| <= max(rtol*max(|a|,|b|), atol)`` with
-   rtol=1e-5 and atol=1e-4 energy units.
+   ``--pdb`` structure, and actin with an energy mask. Pass:
+   ``|a-b| <= max(rtol*max(|a|,|b|), atol)`` with rtol=1e-5 and atol=1e-4
+   energy units.
 
    Why atol=1e-4: the per-term relative test is meaningless for a term near
    zero (the clash group is exactly 0, aromatic and some torsion groups are
@@ -38,17 +39,16 @@ The four checks
    A-vs-B one).
 
    Energy sums and the running total are double, so a correct build stays
-   within about 1e-10 of a full recompute (actin: 3e-11 after 1e7 steps;
-   KORP: exactly 0) and passes either criterion with room to spare. The
+   within about 1e-10 of a full recompute (actin: 3e-11 after 1e7 steps)
+   and passes either criterion with room to spare. The
    1e-5*|E| allowance is for reference builds from before that change,
    which accumulated in float32 and random-walked past a flat 1e-3 (actin
-   8.1e-3 after 1M steps, KORP actin 9.8e-3 after 20k), still below 1e-5
-   relative. A delta-path bug is systematic and grows linearly instead --
+   8.1e-3 after 1M steps), still below 1e-5 relative. A delta-path bug is systematic and grows linearly instead --
    see the validation notes for what it looks like.
    ``--running-rtol 0`` restores the flat absolute criterion.
    Cases: the ``--proteins`` structures (default chignolin and actin) with
-   the default move mix, actin under an energy mask
-   (masked runs bypass the contact list), and KORP on actin.
+   the default move mix, and actin under an energy mask (masked runs
+   bypass the contact list).
 
 3. ``sampling`` Several independent seeds per build; per seed the mean
    energy, the native-contact fraction Q (``NativeContactsCV``, CA contacts
@@ -65,12 +65,6 @@ The four checks
    still relaxing from the start structure, hence the higher z there. The effect size is reported as the
    difference in units of the observable's per-sample standard deviation.
 
-4. ``korp``     The compiled KORP term against the reference ``korpe``
-   energies shipped with the map bundle (``$KORP_MAP_PATH``, default
-   ``~/.cache/pymcpu/korp/Korp6Dv1/korp6Dv1.bin``): each build within 1e-6
-   relative (the repo's test tolerance; main currently sits at ~4e-8), and
-   the two builds within the static criterion. Skipped with a note when the
-   map is absent.
 
 Structures
 ----------
@@ -118,22 +112,13 @@ from pathlib import Path
 from typing import Any
 
 MARKER = "@@TOLERANCE_JSON@@"
-DEFAULT_KORP_MAP = Path.home() / ".cache/pymcpu/korp/Korp6Dv1/korp6Dv1.bin"
-
-KORP_REFERENCE = {  # korpe_gcc --only_score, see tests/physics/forces/test_korp_reference_parity.py
-    "CASP12DCsel20/T0860D1.pdb": -3693.586739,
-    "CASP12DCsel20/T0860D1_s026m1.pdb": -1004.099531,
-    "CASP12DCsel20/T0860D1_s119m1.pdb": -2444.948077,
-    "rcd6/1CEO.pdb": -11463.957486,
-}
-KORP_GROUP = 7
 MOVE_KINDS = ("pivot", "kic", "sc", "rotamer", "rama_pivot")
 
 MODES = {
-    #            running steps, korp running steps, sampling steps/seed, seeds, sample_every
-    "quick": dict(running_steps=50_000, korp_running_steps=5_000,
+    #            running steps, sampling steps/seed, seeds, sample_every
+    "quick": dict(running_steps=50_000,
                   sampling_steps=150_000, seeds=8, sample_every=1_000, z=3.5),
-    "full": dict(running_steps=200_000, korp_running_steps=20_000,
+    "full": dict(running_steps=200_000,
                  sampling_steps=2_000_000, seeds=8, sample_every=1_000, z=3.0),
 }
 
@@ -149,32 +134,20 @@ def _build_sim(task: dict[str, Any]):
 
     import pymcpu as mc
     from pymcpu import mcpu_core
+    from pymcpu.forcefields.mcpu import MCPUForceField
 
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         traj = md.load(task["pdb"])
     heavy = traj.atom_slice(traj.topology.select("not element H"))
-    korp = task.get("ff", "mcpu08") == "korp"
-    if korp:
-        from pymcpu.forcefields.korp import KORPForceField
-        ff = KORPForceField(heavy)
-        system = ff.create_system(heavy.topology)
-        top = ff.output_topology
-    else:
-        from pymcpu.forcefields.mcpu import MCPUForceField
-        ff = MCPUForceField(heavy, param_set="mcpu08")
-        system = ff.create_system(heavy.topology)
-        top = heavy.topology
+    ff = MCPUForceField(heavy, param_set="mcpu08")
+    system = ff.create_system(heavy.topology)
     if task.get("mask"):
         system.set_energy_ignored_residues(list(range(int(task["mask"]))), "ignore_all")
-    integ = mcpu_core.Integrator(temperature=float(task.get("T", 0.6)),
-                                 step_size_rad=0.05 if korp else 0.1)
+    integ = mcpu_core.Integrator(temperature=float(task.get("T", 0.6)), step_size_rad=0.1)
     integ.set_seed(int(task.get("seed", 1)))
-    sim = mc.Simulation(top, system, integ)
+    sim = mc.Simulation(heavy.topology, system, integ)
     sim.context.set_positions((ff.coords[0] * 10.0).T.astype(np.float32))
-    if korp:
-        ff.apply_energy_weights(sim.context)
-        integ.set_move_weights(0.5, 0.5, 0.0)
     return ff, system, integ, sim
 
 
@@ -200,7 +173,7 @@ def _child(task: dict[str, Any]) -> dict[str, Any]:
     out: dict[str, Any] = {"so": mcpu_core.__file__, "n_atoms": int(system.get_num_atoms()),
                            "n_residues": int(system.get_num_residues())}
     kind = task["kind"]
-    if kind in ("static", "korp"):
+    if kind == "static":
         out.update(_breakdown(ctx))
     elif kind == "running":
         sim.full_energy_every_steps = 10**9    # never recompute inside the run
@@ -246,7 +219,7 @@ def _child(task: dict[str, Any]) -> dict[str, Any]:
 # --------------------------------------------------------------------------
 # parent side: environment, scheduling
 # --------------------------------------------------------------------------
-def _child_env(import_root: str, params_dir: str | None, korp_map: Path | None) -> dict[str, str]:
+def _child_env(import_root: str, params_dir: str | None) -> dict[str, str]:
     """Same isolation as arch_parity_dump._child_env: no MCPU_* knobs, one
     parameter directory for both builds, single-threaded BLAS."""
     env = {k: v for k, v in os.environ.items() if not k.startswith("MCPU_")}
@@ -260,8 +233,6 @@ def _child_env(import_root: str, params_dir: str | None, korp_map: Path | None) 
     env["PYTHONNOUSERSITE"] = "1"
     deps = [p for p in sys.path if p.endswith("site-packages")]
     env["PYTHONPATH"] = os.pathsep.join([import_root, *deps])
-    if korp_map is not None:
-        env["KORP_MAP_PATH"] = str(korp_map)
     return env
 
 
@@ -269,7 +240,7 @@ def _resolve_params_dir(import_root: str) -> str | None:
     proc = subprocess.run(
         [sys.executable, "-c",
          "from pymcpu.params import ensure_params; print(ensure_params('mcpu08'))"],
-        capture_output=True, text=True, env=_child_env(import_root, None, None), check=False)
+        capture_output=True, text=True, env=_child_env(import_root, None), check=False)
     return proc.stdout.strip().splitlines()[-1] if proc.returncode == 0 and proc.stdout.strip() else None
 
 
@@ -312,13 +283,13 @@ def _run_tasks(jobs: list[tuple[str, dict[str, Any]]], envs: dict[str, dict[str,
         finally:
             free.put(cpu)
 
-    cost = {"sampling": 3, "running": 2, "static": 1, "korp": 1}
+    cost = {"sampling": 3, "running": 2, "static": 1}
     order = sorted(jobs, key=lambda j: -cost[j[1]["kind"]] * j[1].get("steps", 1))
     with ThreadPoolExecutor(max_workers=len(cpus)) as pool:
         return list(pool.map(one, order))
 
 
-def _plan(args, korp_map: Path | None) -> dict[str, list[dict[str, Any]]]:
+def _plan(args) -> dict[str, list[dict[str, Any]]]:
     """Tasks per build. 'A' and 'B' differ only in sampling seeds."""
     root_a = Path(args.import_root[0])
     actin = root_a / "examples/actin/input_pdb/acta.pdb"
@@ -335,22 +306,17 @@ def _plan(args, korp_map: Path | None) -> dict[str, list[dict[str, Any]]]:
     dyn = {k: structures[k] for k in args.proteins.split(",")}
 
     sel = set(args.only.split(","))
-    static, running, sampling, korp = [], [], [], []
+    static, running, sampling = [], [], []
     if "static" in sel:
         for name, pdb in structures.items():
             static.append(dict(kind="static", label=name, pdb=str(pdb)))
         static.append(dict(kind="static", label="actin+mask30", pdb=str(actin), mask=30))
-        if korp_map:
-            static.append(dict(kind="static", label="actin/korp", pdb=str(actin), ff="korp"))
     if "running" in sel:
         for name, pdb in dyn.items():
             running.append(dict(kind="running", label=name, pdb=str(pdb), seed=11,
                                 steps=args.running_steps))
         running.append(dict(kind="running", label="actin+mask30", pdb=str(actin), seed=11,
                             mask=30, steps=args.running_steps))
-        if korp_map:
-            running.append(dict(kind="running", label="actin/korp", pdb=str(actin), ff="korp",
-                                seed=11, steps=args.korp_running_steps))
     if "sampling" in sel:
         for name, pdb in dyn.items():
             for i in range(args.seeds):
@@ -358,12 +324,7 @@ def _plan(args, korp_map: Path | None) -> dict[str, list[dict[str, Any]]]:
                                      pdb=str(pdb), seed=101 + i, steps=args.sampling_steps,
                                      sample_every=args.sample_every, T=args.temperature,
                                      recompute_every=args.recompute_every))
-    if "korp" in sel and korp_map:
-        for rel in KORP_REFERENCE:
-            p = korp_map.parent / rel
-            if p.exists():
-                korp.append(dict(kind="korp", label=rel, pdb=str(p), ff="korp"))
-    a = static + running + sampling + korp
+    a = static + running + sampling
     b = [dict(t, seed=t["seed"] + args.seed_offset) if t["kind"] == "sampling" else dict(t)
          for t in a]
     return {"A": a, "B": b}
@@ -463,14 +424,6 @@ def compare(recs: list[dict[str, Any]], args) -> Report:
                         f"|running-full|={d:.2e} (tol {tol:.1e}, rel {d / abs(r['full']):.1e}) "
                         f"after {r['steps']} steps "
                         f"(E={r['full']:.3f}, {1e6 * r['mc_seconds'] / r['steps']:.1f} us/step)")
-        elif kind == "korp":
-            exp = KORP_REFERENCE[label]
-            for build, r in (("A", ra), ("B", rb)):
-                e = r["unweighted"].get(str(KORP_GROUP), float("nan"))
-                rel = abs(e - exp) / abs(exp)
-                rep.add("korp", f"{label} [{build}]", rel <= args.korp_rtol,
-                        f"{e:.6f} vs korpe {exp:.6f}, rel {rel:.1e}")
-            _cmp_energies(rep, "korp", f"{label} A-vs-B", ra, rb, args.rtol, args.atol)
     # sampling: aggregate seeds per protein
     groups = sorted({r["task"]["group"] for r in recs if r["task"]["kind"] == "sampling"})
     for g in groups:
@@ -514,14 +467,13 @@ def main() -> int:
     p.add_argument("--import-root", action="append", required=True,
                    help="build tree to import pymcpu from; give twice: reference A, candidate B")
     p.add_argument("--mode", choices=sorted(MODES), default="quick")
-    p.add_argument("--only", default="static,running,sampling,korp",
+    p.add_argument("--only", default="static,running,sampling",
                    help="comma list of checks to run")
     p.add_argument("--proteins", default="chignolin,actin",
                    help="labels of the structures for the running and sampling checks")
     p.add_argument("--pdb", action="append", default=[], metavar="PATH",
                    help="extra structure (repeatable); its file stem is its label")
-    p.add_argument("--korp-map", default=os.environ.get("KORP_MAP_PATH", str(DEFAULT_KORP_MAP)))
-    for k in ("running_steps", "korp_running_steps", "sampling_steps", "seeds", "sample_every"):  # noqa
+    for k in ("running_steps", "sampling_steps", "seeds", "sample_every"):
         p.add_argument("--" + k.replace("_", "-"), type=int, default=None)
     p.add_argument("--recompute-every", type=int, default=50_000,
                    help="sampling: steps between full recomputes (production: 10k-100k)")
@@ -535,7 +487,6 @@ def main() -> int:
     p.add_argument("--running-rtol", type=float, default=1e-5,
                    help="running check: relative allowance (0 = absolute 1e-3 only; "
                         "current main needs it, see module docstring)")
-    p.add_argument("--korp-rtol", type=float, default=1e-6)
     p.add_argument("--z", type=float, default=None,
                    help="sampling threshold in combined SEs (quick 3.5, full 3.0)")
     p.add_argument("--cpus", default=None, help="CPU list for children, e.g. 24-29")
@@ -549,16 +500,12 @@ def main() -> int:
         if getattr(args, k) is None:
             setattr(args, k, v)
 
-    korp_map = Path(args.korp_map).expanduser()
-    if not korp_map.is_file():
-        print(f"NOTE: no KORP map at {korp_map}; KORP cases skipped")
-        korp_map = None
     params_dir = _resolve_params_dir(args.import_root[0])
-    envs = {b: _child_env(r, params_dir, korp_map) for b, r in zip("AB", args.import_root)}
-    plan = _plan(args, korp_map)
+    envs = {b: _child_env(r, params_dir) for b, r in zip("AB", args.import_root)}
+    plan = _plan(args)
     cpus = _parse_cpus(args.cpus)
     config = {k: getattr(args, k) for k in ("mode", "only", "proteins", "running_steps",
-              "korp_running_steps", "sampling_steps", "seeds", "sample_every",
+              "sampling_steps", "seeds", "sample_every",
               "recompute_every", "temperature", "seed_offset")}
     config_hash = hashlib.sha256(json.dumps(config, sort_keys=True).encode()).hexdigest()[:12]
 
@@ -582,7 +529,7 @@ def main() -> int:
         print("  NOTE: A and B loaded the same binary (self-test)")
     rep = compare(recs, args)
     width = max(len(c) for _, c, _, _ in rep.rows) if rep.rows else 10
-    for check in ("static", "running", "sampling", "korp"):
+    for check in ("static", "running", "sampling"):
         for c, case, ok, detail in rep.rows:
             if c == check:
                 print(f"{'PASS' if ok else 'FAIL'}  {c:8s} {case:{width}s}  {detail}")

@@ -42,8 +42,7 @@ EnergyReporter
      :py:meth:`System.energy_terms() <pymcpu.mcpu_core.System.energy_terms>`
      -- ``mu``, ``backbone_torsion``, ``sidechain_torsion``,
      ``hydrogen_bond`` and ``aromatic`` for MCPU (plus
-     ``native_contacts_bias`` under replica exchange), ``korp_6d`` and
-     ``calpha_excluded_volume`` for KORP;
+     ``native_contacts_bias`` under replica exchange);
    * ``<kind>_accepted`` and ``<kind>_attempted`` for each move kind the
      move weights and sidechain mode can propose, as in
      :py:meth:`Integrator.move_counts() <pymcpu.mcpu_core.Integrator.move_counts>`

@@ -3,12 +3,11 @@
 It is written when the first run() starts. In append mode an existing header
 must match, and any mismatch raises before a single move is made -- the
 failure the old fixed header allowed was columns silently shifting under a
-resumed run, or a KORP run writing six always-zero MCPU columns.
+resumed run.
 """
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 import numpy as np
@@ -197,28 +196,3 @@ def test_remd_replicas_share_one_header_under_a_rama_schedule(
     headers = {_lines(f)[0] for f in out.glob("rex_*_data.csv")}
     # REMD attaches the umbrella bias, so its term gets a column too.
     assert headers == {MCPU_HEADER.replace(",aromatic,", ",aromatic,native_contacts_bias,")}
-
-
-@pytest.mark.skipif(
-    not os.environ.get("KORP_MAP_PATH"),
-    reason="set KORP_MAP_PATH to the korp6Dv1.bin energy map",
-)
-def test_korp_header(tmp_path: Path) -> None:
-    from pymcpu.forcefields.korp import KORPForceField
-
-    traj = md.load(str(default_example_pdb()))
-    ff = KORPForceField(traj, map_path=os.environ["KORP_MAP_PATH"])
-    system = ff.create_system(traj.topology)
-    integrator = mcpu_core.Integrator(temperature=0.6, step_size_rad=0.05)
-    integrator.set_move_weights(0.5, 0.5, 0.0)
-    sim = mc.Simulation(ff.output_topology, system, integrator)
-    sim.context.set_positions((ff.coords[0] * 10.0).T.astype(np.float32))
-    ff.apply_energy_weights(sim.context)
-    path = tmp_path / "korp.csv"
-    sim.add_energy_reporter(str(path), interval=10)
-    sim.step(10)
-    assert _lines(path)[0] == (
-        "step,total,korp_6d,calpha_excluded_volume,"
-        "pivot_accepted,pivot_attempted,rama_pivot_accepted,rama_pivot_attempted,"
-        "kic_accepted,kic_attempted,walker_id"
-    )

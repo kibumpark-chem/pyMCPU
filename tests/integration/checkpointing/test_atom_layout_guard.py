@@ -9,7 +9,6 @@ checks the count, and each restore path names the checkpoint in its error.
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 import numpy as np
@@ -204,23 +203,6 @@ def test_engine_session_rejects_a_restart_state_of_the_wrong_size(
     np.savez(npz, coords=_with_extra_column(coords))
     with pytest.raises(ValueError, match="atoms, but the system has"):
         session.set_coords(session.coords_from_auxref(str(npz)))
-
-
-@pytest.mark.skipif(not os.environ.get("KORP_MAP_PATH"), reason="set KORP_MAP_PATH")
-def test_a_korp_session_starts_from_a_pdb(engine_spec_factory) -> None:
-    """The .pdb starting state is built with the session's own force field.
-    It used to always build MCPU, whose all-atom layout a backbone-only KORP
-    system cannot take."""
-    from pymcpu.sampling import EngineSession
-
-    spec = engine_spec_factory(
-        forcefield="korp",
-        forcefield_options={"map_path": os.environ["KORP_MAP_PATH"]},
-        move_weights=(0.5, 0.5, 0.0),
-    )
-    session = EngineSession(spec)
-    session.set_coords(session.coords_from_auxref(spec.pdb))
-    assert session.coords().shape[1] == session._ensure_sim().system.get_num_atoms()
 
 
 def test_resume_paths_reject_before_touching_the_system(sim) -> None:

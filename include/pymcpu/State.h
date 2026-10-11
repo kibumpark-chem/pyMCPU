@@ -10,7 +10,6 @@
 #include "pymcpu/utils/CoordsSoA.h"
 #include "pymcpu/utils/CoordView.h"
 #include "pymcpu/neighbor/PairLedger.h"
-#include "pymcpu/forces/korp/common/KorpStateCache.h"
 #include "pymcpu/forces/mcpu/common/HBondStateCache.h"
 
 namespace mcpu {
@@ -83,10 +82,6 @@ public:
     /// Hard-Q native pair cache (accepted state). Empty on proposal buffers.
     std::vector<uint8_t> q_pair_cache;
 
-    /// KORP frames and pair energies of this state (see KorpStateCache.h).
-    /// Dropped on copy, and by anything that replaces the coordinates.
-    mutable forces::KorpStateCache korp_cache;
-
     /// Nonzero H-bond pair energies of this state (see HBondStateCache.h).
     /// Dropped on copy, and by anything that replaces the coordinates.
     mutable forces::HBondStateCache hbond_cache;
@@ -95,7 +90,6 @@ public:
     /// when coordinates change outside an accepted move.
     void invalidate_coordinate_caches() const {
         mu_contact_invalidate();
-        korp_cache.invalidate();
         hbond_cache.invalidate();
     }
 
@@ -146,7 +140,6 @@ public:
         backbone_torsions = src.backbone_torsions;
         sidechain_torsions = src.sidechain_torsions;
         current_energy = src.current_energy;
-        korp_cache.invalidate();
         hbond_cache.invalidate();
     }
 

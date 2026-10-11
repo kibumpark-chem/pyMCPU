@@ -135,10 +135,10 @@ def check_move_weights(
     """Refuse sidechain moves on a force field that has no sidechains.
 
     The engine refuses them too, but only when it first steps -- after a
-    replica-exchange run has opened its output files. KORP is backbone-only,
-    so a config that selects it must set the sidechain weight to zero; it is
-    not zeroed silently, because that would change the pivot/KIC mix the
-    config asked for.
+    replica-exchange run has opened its output files. A system without
+    sidechain atoms (an all-glycine chain, say) needs a sidechain weight of
+    zero; it is not zeroed silently, because that would change the pivot/KIC
+    mix the config asked for.
     """
     weights = normalize_move_weights(move_weights)
     if weights[2] > 0.0 and int(getattr(forcefield, "total_sc_atoms", 1)) == 0:
@@ -342,14 +342,12 @@ class SimulationConfig:
     pdb: str
     param_set: str = "mcpu08"
     param_dir: str | None = None
-    #: Which force field to build: "mcpu08" (all-atom, the default and what
-    #: every existing config means) or "korp" (backbone-only). See
-    #: pymcpu.forcefields.available_forcefields().
+    #: Which force field to build: "mcpu08" (all-atom MCPU, the default; alias
+    #: "mcpu"). See pymcpu.forcefields.available_forcefields().
     forcefield: str = "mcpu08"
-    #: Constructor arguments for that force field. The two take different
-    #: arguments -- MCPU a parameter set, KORP an energy map -- so they are
-    #: passed through rather than flattened into one schema that would be
-    #: half-irrelevant whichever you pick. Unknown keys raise at build time.
+    #: Constructor arguments for that force field, passed through rather than
+    #: flattened into one schema shared by every force field. Unknown keys
+    #: raise at build time.
     forcefield_options: dict[str, Any] = field(default_factory=dict)
     reference_pdb: str | None = None
     #: Accepted and not used: a run uses MPI when it is launched that way
@@ -404,14 +402,12 @@ class EngineSpec:
     cv: tuple[dict, ...] = ()
     param_set: str = "mcpu08"
     param_dir: str | None = None
-    #: Which force field to build: "mcpu08" (all-atom, the default and what
-    #: every existing config means) or "korp" (backbone-only). See
-    #: pymcpu.forcefields.available_forcefields().
+    #: Which force field to build: "mcpu08" (all-atom MCPU, the default; alias
+    #: "mcpu"). See pymcpu.forcefields.available_forcefields().
     forcefield: str = "mcpu08"
-    #: Constructor arguments for that force field. The two take different
-    #: arguments -- MCPU a parameter set, KORP an energy map -- so they are
-    #: passed through rather than flattened into one schema that would be
-    #: half-irrelevant whichever you pick. Unknown keys raise at build time.
+    #: Constructor arguments for that force field, passed through rather than
+    #: flattened into one schema shared by every force field. Unknown keys
+    #: raise at build time.
     forcefield_options: dict[str, Any] = field(default_factory=dict)
 
     compute_dssp: bool = False

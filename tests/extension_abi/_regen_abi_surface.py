@@ -27,8 +27,6 @@ CLASSES = [
     "NativeContactsBiasPotential", "EnergyReporter", "SimulationReporter",
     "XtcReporter", "Reporter", "RamaMixtureLibrary", "RotamerLibrary",
     "EnergyWeights", "BlockIndices",
-    "OrientationalPairMap", "OrientationalPairPotential",
-    "CalphaExcludedVolumePotential",
 ]
 
 HEADER = [

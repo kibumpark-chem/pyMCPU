@@ -8,8 +8,7 @@ this fix they did not:
   N-CA-C wrong by up to ~40 degrees. Nothing checked them, and each move took its
   targets from the current coordinates, so every bad closure became the next
   move's target. N-CA-C random-walked without bound.
-* KIC changed proline phi. Under ``KORPForceField`` the pivot did too, because
-  it never told the System which residues are prolines.
+* KIC changed proline phi.
 * N-terminal psi pivots swung the carbonyl O(r) out of the peptide plane.
 * KIC's Jacobian depended on how the molecule sat in the lab frame.
 * KIC left stale cached backbone torsions on neighbouring residues, so the
@@ -19,13 +18,10 @@ this fix they did not:
   every accepted move.
 
 Each test below fails on the unfixed engine. All run on chignolin (10 residues,
-PRO at index 3) and take seconds; the KORP one needs ``KORP_MAP_PATH``, like the
-other KORP tests.
+PRO at index 3) and take seconds.
 """
 
 from __future__ import annotations
-
-import os
 
 import mdtraj as md
 import numpy as np
@@ -404,46 +400,3 @@ def test_kic_refuses_a_system_without_start_targets():
         system.set_kic_reference(coords[:, :-1])
     system.set_kic_reference(coords)
     assert system.has_kic_reference()
-
-
-def test_korp_flags_prolines_so_moves_keep_their_phi():
-    """``KORPForceField.create_system`` never called ``set_is_proline``, so every
-    ``System.is_proline`` was False under KORP and neither KIC's proline skip nor
-    the pivot's proline resample could fire: on chignolin, 10k KIC moves turned
-    proline phi by 47 deg and 10k pivots by 5.6 deg."""
-    if not os.environ.get("KORP_MAP_PATH"):
-        pytest.skip("set KORP_MAP_PATH to the korp6Dv1.bin energy map")
-    from pymcpu.forcefields.korp import KORPForceField
-
-    traj = md.load(str(default_example_pdb()))
-    forcefield = KORPForceField(traj)
-    system = forcefield.create_system(traj.topology)
-    flags = [system.is_proline(r) for r in range(system.get_num_residues())]
-    assert flags == [name == "PRO" for name in forcefield.res_names]
-    assert flags[PRO]
-
-    context = mcpu_core.Context(system)
-    start = (forcefield.coords[0] * 10.0).T.astype(np.float32)
-    context.set_positions(start)
-    forcefield.apply_energy_weights(context)
-    context.calculate_total_energy(-1)
-    idx = _atoms(system)
-
-    def pro_phi(coords):
-        X = np.asarray(coords, dtype=np.float64).T
-        return float(_dihedral(X[idx["C"][PRO - 1]], X[idx["N"][PRO]],
-                               X[idx["CA"][PRO]], X[idx["C"][PRO]]))
-
-    phi0 = pro_phi(start)
-    integrator = _integrator((0.5, 0.5, 0.0))
-    worst = 0.0
-    for _ in range(10):
-        integrator.run(context, 500)
-        d = abs(pro_phi(context.coords) - phi0)
-        worst = max(worst, min(d, 360.0 - d))
-
-    # Passenger rotations re-round the proline's atoms in float32 (~1e-4 deg).
-    assert worst < 1e-3, f"proline phi moved by {worst:.4f} deg under KORP"
-    assert integrator.get_kic_accepted() > 50 and integrator.get_bb_accepted() > 50
-    assert integrator.get_kic_proline_skipped() > 0
-    assert integrator.num_pivot_resample_pro_phi() > 0

@@ -38,7 +38,7 @@ def _backbone_only(n_res=8):
         coords[0, 3 * r:3 * r + 3] = [base, base + 1.2, base + 2.4]
         coords[0, 3 * n_res + r] = base + 2.9
     # A hand-built System must supply KIC's start-structure closure targets
-    # itself; MCPUForceField / KORPForceField.create_system do it for you.
+    # itself; MCPUForceField.create_system does it for you.
     system.set_kic_reference(coords)
     context.set_positions(coords)
     return system, context

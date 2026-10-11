@@ -98,41 +98,13 @@ to unpack them at the same moment into your shared home directory:
 
 See :doc:`running_remd` for how processes are assigned to replicas.
 
-.. _korp-map:
-
-KORP energy map
----------------
-
-The MCPU force field needs no download. :class:`~pymcpu.KORPForceField`
-needs one extra file, the KORP 6D energy map ``korp6Dv1.bin``. It is 316 MiB,
-too large to ship with the package, so you download it once:
-
-1. Download ``Korp6Dv1.txz`` from https://chaconlab.org/modeling/korp. The
-   site asks you to accept its license first.
-2. Unpack it and tell pyMCPU where the map is:
-
-   .. code-block:: bash
-
-      tar xJf Korp6Dv1.txz
-      export KORP_MAP_PATH=$PWD/Korp6Dv1/korp6Dv1.bin
-
-Put the ``export`` line in your shell profile or job script so it is always
-set. Two alternatives work as well: pass the path directly with
-``KORPForceField(traj, map_path=...)``, or place the file at
-``~/.cache/pymcpu/korp/Korp6Dv1/korp6Dv1.bin`` where it is found
-automatically. If you set ``MCPU_CACHE_DIR``, that location moves with it,
-to ``$MCPU_CACHE_DIR/korp/Korp6Dv1/korp6Dv1.bin``.
-
-If you publish results that use KORP, please cite López-Blanco & Chacón,
-*Bioinformatics* 35(17):3013–3019 (2019).
-
 Building from source
 --------------------
 
 You need a C++20 compiler, CMake 3.15 or newer, and pybind11 2.12 or newer.
 GCC 15 is the default compiler and the one the published wheels are built
 with. GCC 8.5 is the oldest that builds and passes the tests, but its builds
-run about 3-15% slower (about 10% on pivot moves and 14% with KORP), and
+run about 3-10% slower (about 10% on pivot moves), and
 CMake warns when it finds a GCC older than 15. Eigen 3.4 is downloaded
 automatically if it is not found. ``environment.yml`` provides all of these.
 

@@ -9,8 +9,7 @@ energies live in :doc:`Context <context>`, never here.
 You normally do not build a ``System`` yourself.
 ``MCPUForceField.create_system(topology)`` builds one from an MDTraj
 topology: it sizes the object, fills the tables below from the parameter
-files, and registers the five mcpu08 potentials
-(``KORPForceField.create_system`` does the same for KORP).
+files, and registers the five mcpu08 potentials.
 
 .. note::
    Methods whose signature ends in ``, /`` take positional arguments only.
@@ -188,11 +187,10 @@ files, and registers the five mcpu08 potentials
       once, in double precision, from ``start_coords``: a
       ``(3, n_atoms)`` float32 array in Angstrom, in build order -- the
       same array the context is positioned with.
-      ``MCPUForceField.create_system`` and ``KORPForceField.create_system``
-      call this for you. A ``System`` built by hand must call it before a
-      run that uses KIC moves; KIC raises ``RuntimeError`` otherwise,
-      rather than measure the targets from whatever the chain looks like
-      at the time. Only internal coordinates are stored, so
+      ``MCPUForceField.create_system`` calls this for you. A ``System``
+      built by hand must call it before a run that uses KIC moves; KIC
+      raises ``RuntimeError`` otherwise, rather than measure the targets
+      from whatever the chain looks like at the time. Only internal coordinates are stored, so
       ``Context.set_positions`` (a replica swap, a checkpoint restore)
       can never change them. Raises ``ValueError`` for the wrong shape,
       and ``RuntimeError`` if called before ``set_block_indices`` or
@@ -238,13 +236,10 @@ files, and registers the five mcpu08 potentials
       test but drops the contact and directional terms. Any other value
       raises ``ValueError``.
 
-      Both force fields honour the mask, in the incremental energy and the
-      full recompute alike. With ``mcpu08``, Mu applies the mode pair by
-      pair and the H-bond, aromatic, triplet and sidechain-triplet terms
-      drop the masked residues in either mode. With ``korp``, the KORP pair
-      energy drops every pair with a masked residue in either mode, and the
-      CA excluded-volume guard skips masked residues under ``'ignore_all'``
-      and keeps testing them under ``'clash_only'``.
+      The mask applies to the incremental energy and the full recompute
+      alike. With ``mcpu08``, Mu applies the mode pair by pair and the
+      H-bond, aromatic, triplet and sidechain-triplet terms drop the masked
+      residues in either mode.
 
    .. py:method:: clear_energy_ignored_residues() -> None
 

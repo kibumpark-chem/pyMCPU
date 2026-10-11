@@ -75,9 +75,9 @@ def build_forcefield(spec: EngineSpec) -> tuple[BaseForceField, md.Topology]:
     for a ``Context``. Analysis tools typically fall in that category.
 
     Returns the force field and the topology the engine actually simulates,
-    which is *not* necessarily the input's: ``KORPForceField`` drops
-    sidechains, so trajectories written from it must be read back against
-    the returned topology.
+    which is *not* necessarily the input's (MCPU drops hydrogens), so
+    trajectories written from it must be read back against the returned
+    topology.
     """
     forcefield = _load_spec_forcefield(spec, spec.pdb)
     return forcefield, forcefield.output_topology
@@ -271,8 +271,8 @@ class EngineSession:
                 coords = coords.T
         elif suffix == ".pdb":
             # The session's own force field, so the coordinates come out in
-            # its layout (KORP keeps only the backbone). DSSP is skipped: this
-            # throwaway force field is used only for its coordinates.
+            # its layout. DSSP is skipped: this throwaway force field is used
+            # only for its coordinates.
             local_ff = _load_spec_forcefield(self.spec, path, compute_dssp=False)
             coords = (local_ff.coords[0] * 10.0).T.astype(np.float32)
         else:

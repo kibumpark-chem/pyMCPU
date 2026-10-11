@@ -418,7 +418,7 @@ def build_system_and_cv(
     shared by the serial and MPI engines.
 
     Returns ``(system, forcefield, topology, coords_angstroms, q_cv)``, where
-    ``topology`` is the one the engine simulates (backbone-only for KORP).
+    ``topology`` is the one the engine simulates.
     """
     from pymcpu.config import apply_linker_energy_mask, check_move_weights
 
