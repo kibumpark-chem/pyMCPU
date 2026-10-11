@@ -66,3 +66,14 @@ def test_a_changelog_without_the_version_heading_is_refused(check_release, tmp_p
     assert check_release.problems(root, None) == [
         "CHANGELOG.md has no '## [0.1.0] - YYYY-MM-DD' heading"
     ]
+
+
+def test_a_changelog_with_an_empty_speed_table_is_refused(check_release, tmp_path):
+    root = _tree(tmp_path)
+    changelog = root / "CHANGELOG.md"
+    changelog.write_text(changelog.read_text()
+                         + "\n| Protein | Speedup |\n|---|---:|\n<!-- BENCH 4.6.2 -->\n")
+    assert check_release.problems(root, "v0.1.0") == [
+        "CHANGELOG.md still has a '<!-- BENCH' placeholder; fill in the speed table"
+    ]
+    assert check_release.main(["--root", str(root), "--tag", "v0.1.0"]) == 1

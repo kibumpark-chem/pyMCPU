@@ -9,7 +9,8 @@ It checks that
 
 * the tag is ``v<version>``, where ``<version>`` is ``pymcpu.__version__``
   (read from pymcpu/__init__.py, so nothing has to be built or imported);
-* CHANGELOG.md has a ``## [<version>] - YYYY-MM-DD`` heading;
+* CHANGELOG.md has a ``## [<version>] - YYYY-MM-DD`` heading and no
+  ``<!-- BENCH`` placeholder, the line where a speed table's rows go;
 * CITATION.cff has ``version: <version>`` and a ``date-released``;
 * both dates are real dates, not the ``YYYY-MM-DD`` placeholder, and the same.
 
@@ -66,6 +67,9 @@ def problems(root: Path, tag: str | None) -> list[str]:
     elif not _is_date(changelog_date):
         found.append(f"CHANGELOG.md gives {version} the date {changelog_date!r}; "
                      f"set the release date")
+    if "<!-- BENCH" in changelog:
+        found.append("CHANGELOG.md still has a '<!-- BENCH' placeholder; "
+                     "fill in the speed table")
 
     citation = (root / "CITATION.cff").read_text(encoding="utf-8")
     cff_version = _cff_value(citation, "version")

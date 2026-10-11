@@ -112,7 +112,7 @@ heavy = traj.atom_slice(traj.topology.select("not element H"))
 forcefield = MCPUForceField(heavy, param_set="mcpu08")
 system = forcefield.create_system(heavy.topology)
 
-# Temperature is a DIMENSIONLESS reduced parameter (~0.3 cold .. 0.6 hot)
+# Temperature is reduced (dimensionless); chignolin melts at about 0.75 to 0.8
 integrator = mc.Integrator(temperature=0.6, step_size_rad=0.1)
 integrator.set_seed(42)
 

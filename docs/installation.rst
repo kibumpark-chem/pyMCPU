@@ -215,21 +215,11 @@ CMake build directory (configure a fresh one).
 If a node has no ``/opt/rh/gcc-toolset-15``, use the conda environment
 instead. A plain module GCC 14 or newer (``module load gcc``) builds an
 extension that fails at import under a stock Miniforge or Mambaforge Python
-(``CXXABI_1.3.15 not found``, see above). If you must use one, link the C++
-runtime statically. On FASRC, with ``gcc/15.2.0-fasrc01``:
-
-.. code-block:: bash
-
-   module load gcc/15.2.0-fasrc01
-   unset CXX
-   STATIC="-static-libstdc++ -static-libgcc"
-   pip install --no-build-isolation -e . \
-       -Ccmake.define.CMAKE_CXX_COMPILER=$(which g++) \
-       -Ccmake.define.CMAKE_SHARED_LINKER_FLAGS="$STATIC" \
-       -Ccmake.define.CMAKE_MODULE_LINKER_FLAGS="$STATIC"
-
-Such a build uses the system assembler (binutils 2.30 on RHEL 8), which
-cannot pad branches, so it may run somewhat slower than the toolset build.
+(``CXXABI_1.3.15 not found``, see above). Do not get around that by linking
+the C++ runtime statically (``-static-libstdc++``). The extension then
+carries a second copy of the runtime next to the one numpy and mdtraj load,
+and if either was imported before pymcpu, it crashes as soon as it saves the
+random-number state or writes an energy report.
 
 MCPU parameter lookup
 ---------------------

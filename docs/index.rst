@@ -10,7 +10,7 @@ simple, composable Python interface.
 .. note::
    **Temperature** in pyMCPU is a dimensionless reduced
    parameter, not in physical units. Where a protein unfolds
-   depends on the protein; chignolin melts at about 0.65 to 0.7.
+   depends on the protein; chignolin melts at about 0.75 to 0.8.
    **Energy** values are unitless sums of knowledge-based
    potential table entries.
 

@@ -99,19 +99,18 @@ pytestmark = pytest.mark.slow
 # from both the pre- and post-Phase-6 extensions. It is a stable property of
 # the current engine, not an artifact of one build.
 #
-# NINTH capture, 2026-09-28, after the KIC loop-closure fix (CHANGELOG
-# [Unreleased] -> Fixed). KIC now takes its closure targets from the start
-# structure, back-substitutes without poles, rounds its anchors to float,
-# skips prolines and irreversible windows and uses an orientation-free
-# Jacobian, and N-terminal psi pivots no longer swing O(r), so every
-# trajectory that runs these moves changes. The previous values, ACCEPT 258
-# and E_HBOND -176.66957092285156, still come out of the unfixed engine (GCC
-# 14.2, same recipe). Replaying both engines one step at a time, the
-# coordinates are bit-identical through warmup step 3; step 4 is an accepted
-# KIC move that moves the same 16 atoms in both, and 11 of them land up to
-# 7.6e-6 A apart (float32 rounding of the new closure arithmetic), after which
-# the runs separate chaotically. Captured by re-running the recipe above via
-# `run_hotpath` on the fixed engine.
+# NINTH capture, 2026-09-28, after the KIC loop-closure fix. KIC now takes its
+# closure targets from the start structure, back-substitutes without poles,
+# rounds its anchors to float, skips prolines and irreversible windows and
+# uses an orientation-free Jacobian, and N-terminal psi pivots no longer swing
+# O(r), so every trajectory that runs these moves changes. The previous
+# values, ACCEPT 258 and E_HBOND -176.66957092285156, still come out of the
+# unfixed engine (GCC 14.2, same recipe). Replaying both engines one step at a
+# time, the coordinates are bit-identical through warmup step 3; step 4 is an
+# accepted KIC move that moves the same 16 atoms in both, and 11 of them land
+# up to 7.6e-6 A apart (float32 rounding of the new closure arithmetic), after
+# which the runs separate chaotically. Captured by re-running the recipe above
+# via `run_hotpath` on the fixed engine.
 #
 # A GCC 8.5 build gave ACCEPT 271 and E_HBOND -180.06430053710938 here until
 # the rotation fix of 2026-10-02 (rigid rotations done in double and rounded

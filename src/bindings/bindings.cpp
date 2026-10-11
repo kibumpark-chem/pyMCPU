@@ -569,7 +569,7 @@ PYBIND11_MODULE(mcpu_core, m) {
         "sidechain, rotamer-library and kinematic-closure loop moves.\n\n"
         "temperature is required: a DIMENSIONLESS reduced parameter, not Kelvin.\n"
         "Where a protein unfolds depends on the protein; chignolin melts at\n"
-        "about 0.65 to 0.7.\n\n"
+        "about 0.75 to 0.8.\n\n"
         "Call set_seed(): the same seed, input and build reproduce a run exactly.")
         .def(py::init<double, float, float, float>(), py::arg("temperature"),
              py::arg("step_size_rad") = 0.1f,

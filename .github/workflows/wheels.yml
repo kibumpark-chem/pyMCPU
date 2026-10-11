@@ -149,8 +149,9 @@ jobs:
 
   # Refuses to publish unless the tag is v<pymcpu.__version__> and
   # CHANGELOG.md and CITATION.cff name that version with a real release date
-  # (the release checklist in CONTRIBUTING.md sets it). It runs beside the
-  # builds, so a mistake shows in seconds rather than after them.
+  # (the release checklist in CONTRIBUTING.md sets it), and CHANGELOG.md has
+  # no '<!-- BENCH' placeholder left. It runs beside the builds, so a mistake
+  # shows in seconds rather than after them.
   check_release:
     name: tag, CHANGELOG.md and CITATION.cff agree
     if: github.event_name == 'push' || inputs.publish_target == 'testpypi'

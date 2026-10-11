@@ -186,8 +186,9 @@ For each release:
 
 1. Set the release date, the same day in both places: the
    `## [X.Y.Z] - YYYY-MM-DD` heading in `CHANGELOG.md` and `date-released` in
-   `CITATION.cff`. Check that `pymcpu/__init__.py`, `CITATION.cff` and
-   `conda-recipe/meta.yaml` all say X.Y.Z, then run
+   `CITATION.cff`. Replace any `<!-- BENCH` line in `CHANGELOG.md` with the
+   benchmark rows it stands for. Check that `pymcpu/__init__.py`,
+   `CITATION.cff` and `conda-recipe/meta.yaml` all say X.Y.Z, then run
    `python scripts/check_release.py --tag vX.Y.Z`; it must print
    "ready to publish".
 2. Merge to `main`.
@@ -199,7 +200,7 @@ For each release:
 4. Tag and push: `git tag vX.Y.Z && git push origin vX.Y.Z`. The Wheels
    workflow builds and checks the wheels and publishes them to PyPI. It
    refuses to publish unless the tag, `CHANGELOG.md` and `CITATION.cff` agree
-   (`scripts/check_release.py`).
+   and no placeholder is left (`scripts/check_release.py`).
 5. Create the GitHub release from the tag, with the `CHANGELOG.md` entry as
    its notes. Zenodo archives the release; after the first one, add its
    concept DOI to `CITATION.cff`.
