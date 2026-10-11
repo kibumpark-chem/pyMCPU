@@ -5,19 +5,20 @@ Installation
 
    pip install pymcpu
 
-or
-
-.. code-block:: bash
-
-   conda install -c conda-forge pymcpu
-
 Requirements
 ------------
 
 * Linux x86-64
-* Python 3.9 or newer
+* Python 3.12 or newer
 * A CPU with AVX2 and FMA (Intel Haswell or AMD Zen, or newer). This is the
-  baseline the published package is built for; see `CPU baseline`_ to change it.
+  baseline the published package is built for. On an older CPU,
+  ``import pymcpu`` stops with an ``ImportError`` that names the missing
+  instructions; build from source for such a CPU (see `CPU baseline`_).
+* About 0.7 GB of disk for the parameter tables. The package carries them
+  compressed (about 2 MB) and unpacks them into ``~/.cache/pymcpu`` the
+  first time a force field is built, which takes a few seconds; later runs
+  reuse them. Set ``MCPU_CACHE_DIR`` to unpack them somewhere else (see
+  `MCPU parameter lookup`_).
 
 MPI (optional)
 --------------
@@ -214,21 +215,11 @@ CMake build directory (configure a fresh one).
 If a node has no ``/opt/rh/gcc-toolset-15``, use the conda environment
 instead. A plain module GCC 14 or newer (``module load gcc``) builds an
 extension that fails at import under a stock Miniforge or Mambaforge Python
-(``CXXABI_1.3.15 not found``, see above). If you must use one, link the C++
-runtime statically. On FASRC, with ``gcc/15.2.0-fasrc01``:
-
-.. code-block:: bash
-
-   module load gcc/15.2.0-fasrc01
-   unset CXX
-   STATIC="-static-libstdc++ -static-libgcc"
-   pip install --no-build-isolation -e . \
-       -Ccmake.define.CMAKE_CXX_COMPILER=$(which g++) \
-       -Ccmake.define.CMAKE_SHARED_LINKER_FLAGS="$STATIC" \
-       -Ccmake.define.CMAKE_MODULE_LINKER_FLAGS="$STATIC"
-
-Such a build uses the system assembler (binutils 2.30 on RHEL 8), which
-cannot pad branches, so it may run somewhat slower than the toolset build.
+(``CXXABI_1.3.15 not found``, see above). Do not get around that by linking
+the C++ runtime statically (``-static-libstdc++``). The extension then
+carries a second copy of the runtime next to the one numpy and mdtraj load,
+and if either was imported before pymcpu, it crashes as soon as it saves the
+random-number state or writes an energy report.
 
 MCPU parameter lookup
 ---------------------

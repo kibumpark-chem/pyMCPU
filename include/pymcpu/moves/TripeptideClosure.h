@@ -1,3 +1,21 @@
+// Tripeptide loop closure for the KIC move: a modified C++ port of
+//
+//   Tripeptide loop closure, Copyright (C) 2003-2005 Chaok Seok, Evangelos
+//   Coutsias, Matthew Jacobson and Ken Dill; C translation by Jae Shick Yang.
+//
+// Modified by Kibum Park in 2026 (the C++ port first appears in his development
+// repository on 2026-05-30; changes continue through 2026-10): translated from C
+// to C++ and adapted to pyMCPU's KIC move, with the closure's routines and state
+// gathered in a solver class with fixed-size solutions, an N-CA-C closure check
+// and the Jacobian for the acceptance ratio.
+//
+// Like the original, and unlike the rest of pyMCPU (MIT), this file is free
+// software under the GNU Lesser General Public License, version 2.1 or (at your
+// option) any later version, and comes WITHOUT ANY WARRANTY. THIRD_PARTY_NOTICES,
+// section 4, has the licence text and says where the original lives.
+//
+// SPDX-License-Identifier: LGPL-2.1-or-later
+
 #pragma once
 #include <Eigen/Dense>
 #include <unsupported/Eigen/Polynomials>

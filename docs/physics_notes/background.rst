@@ -95,8 +95,11 @@ Temperature
 
 Temperature is a dimensionless reduced parameter, as in legacy MCPU, not a
 temperature in Kelvin. Where a protein unfolds depends on the protein:
-chignolin melts at about 0.65 to 0.7 (see
-:doc:`/tutorials/02_replica_exchange`).
+with mcpu08, chignolin melts at about 0.75 to 0.8. Replica-exchange runs of
+20,000 cycles put the midpoint at 0.76 to 0.79, both where Q crosses 0.5 and
+at the heat-capacity peak. Short runs that start from the native structure
+put it lower, near 0.7, because they have not yet found a lower-energy
+hairpin close to the native one (see :doc:`/tutorials/02_replica_exchange`).
 
 References
 ----------

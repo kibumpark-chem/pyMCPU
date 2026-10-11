@@ -8,7 +8,7 @@ or rejects, and feeds the attached :doc:`reporters <reporters>`.
 .. note::
    ``temperature`` is a dimensionless reduced parameter, not a physical
    temperature unit. Where a protein unfolds depends on the protein;
-   chignolin melts at about 0.65 to 0.7. Energies are unitless
+   chignolin melts at about 0.75 to 0.8. Energies are unitless
    knowledge-based table sums, so there is no kT and no Boltzmann constant
    in the acceptance test -- see :doc:`../physics_notes/mc_acceptance`.
 
@@ -33,9 +33,10 @@ or rejects, and feeds the attached :doc:`reporters <reporters>`.
       positive and finite; anything else raises ``ValueError``. The
       default is π/6 (30°). KIC can turn a proline's ψ only as the
       driver (a window never holds a proline), and in a study of driver
-      widths, 5.7° (0.1 rad) or less never moved the ψ of CLN025's
-      proline out of its basin, while 20° to 120° all sampled the same
-      equilibrium, about equally fast.
+      widths, 20° to 120° all sampled the same equilibrium, about equally
+      fast, while 10° hardly moved the ψ of CLN025's proline and 5.7°
+      (0.1 rad) or less never moved it out of its basin. Keep the width at
+      20° or more.
 
    All four arguments accept keywords.
 

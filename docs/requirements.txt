@@ -1,5 +1,4 @@
 # Documentation build dependencies for Sphinx / Read the Docs.
-# Keep in sync with [project.optional-dependencies].docs in pyproject.toml.
 # docs/conf.py mocks pymcpu.mcpu_core (unconditionally), so none of this
 # needs the compiled extension.
 

@@ -11,6 +11,11 @@ name: CI
 #
 # The `clean-checkout-imports` job below exists specifically so that class of
 # error cannot recur.
+#
+# Every job runs on ubuntu-24.04, not ubuntu-latest. GitHub moves
+# ubuntu-latest to Ubuntu 26.04 from 2026-10-19, which would silently turn the
+# GCC 13 test jobs -- the older-compiler coverage next to the shipping GCC 15 --
+# into GCC 15 jobs.
 
 on:
   push:
@@ -29,12 +34,12 @@ jobs:
   # ---------------------------------------------------------------------
   clean-checkout-imports:
     name: clean checkout imports
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.12"
 
       - name: Fail if a tracked module imports an untracked file
         run: |
@@ -86,21 +91,19 @@ jobs:
 
   # ---------------------------------------------------------------------
   # Build the extension and run the suite. This is what lint.yml never did.
-  # ubuntu-latest builds with GCC 13, so this job is also the check that a
+  # ubuntu-24.04 builds with GCC 13, so this job is also the check that a
   # compiler older than the shipping one (GCC 15, see `gcc15` below) still
   # builds and passes.
   # ---------------------------------------------------------------------
   test:
     name: build + test (py${{ matrix.python-version }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
-        # Floor and ceiling of `requires-python = ">=3.9"`, plus one in the
-        # middle. Building the C++20 extension for all five is slow and the
-        # marginal coverage is small; cibuildwheel covers every version at
-        # release time in wheels.yml.
-        python-version: ["3.9", "3.11", "3.13"]
+        # The three versions wheels.yml builds wheels for (not 3.15 yet, see
+        # there).
+        python-version: ["3.12", "3.13", "3.14"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -138,7 +141,7 @@ jobs:
           )
           assert info["fp"]["fast_math"] is False
           assert info["arch"]["tier"], "no CPU baseline recorded"
-          # ubuntu-latest: GCC 13 + binutils 2.42, so AUTO must resolve to on.
+          # ubuntu-24.04: GCC 13 + binutils 2.42, so AUTO must resolve to on.
           assert info["build"]["jcc_pad"] is True, info["build"]["jcc_pad_reason"]
           PY
 
@@ -154,14 +157,14 @@ jobs:
   # ---------------------------------------------------------------------
   gcc15:
     name: build + test (gcc-toolset-15, manylinux_2_28)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     container: quay.io/pypa/manylinux_2_28_x86_64
     defaults:
       run:
         # `source` below needs bash; a container job defaults to sh.
         shell: bash
     env:
-      PY: /opt/python/cp311-cp311/bin/python
+      PY: /opt/python/cp312-cp312/bin/python
     steps:
       - uses: actions/checkout@v4
 
@@ -203,12 +206,12 @@ jobs:
   # ---------------------------------------------------------------------
   scalar-fallbacks:
     name: build + test (MCPU_ARCH=v2, no AVX2)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.12"
 
       - name: Install for the x86-64-v2 baseline
         # pyproject.toml maps the MCPU_ARCH environment variable onto the
@@ -247,15 +250,15 @@ jobs:
   # ---------------------------------------------------------------------
   docs:
     name: docs (sphinx -W)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.12"
       - name: Install pandoc
         # nbsphinx converts docs/tutorials/01_single_trajectory.ipynb by
-        # shelling out to pandoc. The ubuntu-latest image has shipped it, but
+        # shelling out to pandoc. The runner image has shipped it, but
         # an undeclared dependency on a runner-image tool is exactly the kind
         # of silent assumption that breaks on an image refresh -- and RTD needs
         # it declared anyway (.readthedocs.yaml build.apt_packages).
@@ -277,12 +280,12 @@ jobs:
   # ---------------------------------------------------------------------
   sdist:
     name: sdist builds and installs
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.12"
       - run: python -m pip install --upgrade pip build
       - run: python -m build --sdist
       - name: Install from the sdist alone

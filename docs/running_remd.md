@@ -49,7 +49,14 @@ mc_replica_steps: 1000    # MC steps per replica per cycle
 output_prefix: out/run1
 ```
 
-`examples/configs/template.yaml` shows the common keys with their defaults.
+Each replica runs `num_cycles` × `mc_replica_steps` MC steps, here 1,000,000.
+`steps` is not a total here: in a replica exchange config it is another name
+for `mc_replica_steps`, the steps per cycle, and `mc_replica_steps` wins when
+both are set. Only a folding config reads `steps` as the total (see
+[Command line](cli.rst)).
+
+[`examples/configs/template.yaml`](https://github.com/kibumpark-chem/pyMCPU/blob/main/examples/configs/template.yaml)
+shows the common keys with their defaults.
 
 ## Force field
 

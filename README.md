@@ -2,7 +2,7 @@
 
 [![PyPI](https://img.shields.io/pypi/v/pymcpu.svg)](https://pypi.org/project/pymcpu/)
 [![Python](https://img.shields.io/pypi/pyversions/pymcpu.svg)](https://pypi.org/project/pymcpu/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://github.com/kibumpark-chem/pyMCPU/blob/main/LICENSE)
+[![License: MIT + third-party](https://img.shields.io/badge/License-MIT%20%2B%20third--party-blue.svg)](https://github.com/kibumpark-chem/pyMCPU#license)
 [![Docs](https://readthedocs.org/projects/pymcpu/badge/?version=latest)](https://pymcpu.readthedocs.io)
 [![Lint](https://github.com/kibumpark-chem/pyMCPU/actions/workflows/lint.yml/badge.svg)](https://github.com/kibumpark-chem/pyMCPU/actions/workflows/lint.yml)
 
@@ -14,14 +14,10 @@ The force field, **MCPU**, is all-atom: five energy terms
 hydrogen bonding, aromatic stacking) read from potentials fitted to the PDB.
 Sampling uses Metropolis Monte Carlo with pivot, continuous sidechain,
 rotamer-library and kinematic-closure loop moves, plus temperature/umbrella
-replica exchange and WESTPA weighted-ensemble support.
+replica exchange in one process or over MPI.
 
-mcpu26 is planned for 0.2.0; KORP may return then if its licence is cleared.
-
-**Platform:** Linux x86-64. The published wheel targets the `x86-64-v3`
-baseline — AVX2, FMA and BMI2, so Intel Haswell (2013) and AMD Zen (2017) and
-newer. See [Building from source](#building-from-source) to target an older or
-a newer CPU.
+This release ships the `mcpu08` force field (legacy MCPU's energy function
+and tables); a second force field, `mcpu26`, is planned for 0.2.0.
 
 Full documentation: **<https://pymcpu.readthedocs.io>**
 
@@ -31,21 +27,28 @@ Full documentation: **<https://pymcpu.readthedocs.io>**
 pip install pymcpu
 ```
 
-or
+- **Linux x86-64 and Python 3.12 or newer.** Wheels are published for
+  CPython 3.12, 3.13 and 3.14.
+- **A CPU with AVX2.** The wheels are built for the `x86-64-v3` baseline
+  (AVX2, FMA and BMI2): Intel Haswell (2013), AMD Zen (2017) and newer. On an
+  older CPU, `import pymcpu` stops with an `ImportError` that names the
+  missing instructions, instead of crashing with "Illegal instruction".
+  [Build from source](https://github.com/kibumpark-chem/pyMCPU#building-from-source)
+  with `MCPU_ARCH=v2` for such a CPU.
+- **About 0.7 GB of disk for the parameters.** The fitted potentials ship
+  inside the package as a 2 MB archive, so nothing is downloaded. The first
+  run unpacks them into `~/.cache/pymcpu` (about 0.7 GB), and later runs reuse
+  them. To keep them somewhere else, set `MCPU_CACHE_DIR` before the first
+  run:
 
-```bash
-conda install -c conda-forge pymcpu
-```
+  ```bash
+  export MCPU_CACHE_DIR=/scratch/$USER/pymcpu-cache
+  ```
 
-The fitted potentials ship inside the package, so this works offline with no
-extra download and no environment variables.
-
-Optional extras: `analysis` (HDF5 output), `mpi` (MPI replica exchange),
-`westpa` (weighted ensemble), `training` (refitting potentials), `docs`, `dev`.
-
-```bash
-pip install "pymcpu[analysis,mpi]"
-```
+MPI replica exchange also needs mpi4py, built for the MPI library that your
+`mpirun` comes from. `pip install "pymcpu[mpi]"` adds mpi4py from PyPI; the
+[installation guide](https://pymcpu.readthedocs.io/en/latest/installation.html#mpi-optional)
+shows how to make it match your MPI.
 
 ### Building from source
 
@@ -60,11 +63,12 @@ python scripts/install_check.py
 `--no-build-isolation` is required: the build uses the `pybind11` and `numpy`
 already present in the environment.
 
-To target a different CPU baseline — a machine without AVX-512, or `native` for
-the machine you will actually run on:
+`MCPU_ARCH` sets the CPU baseline: `v3` (the default, as in the wheels), `v2`
+for a CPU without AVX2, `v4` for AVX-512, or `native` for the machine you build
+on:
 
 ```bash
-MCPU_ARCH=x86-64-v3 pip install --no-build-isolation -e .
+MCPU_ARCH=v2 pip install --no-build-isolation -e .
 ```
 
 **One toolchain rule, and it is the only one that matters:** the `libstdc++`
@@ -108,7 +112,7 @@ heavy = traj.atom_slice(traj.topology.select("not element H"))
 forcefield = MCPUForceField(heavy, param_set="mcpu08")
 system = forcefield.create_system(heavy.topology)
 
-# Temperature is a DIMENSIONLESS reduced parameter (~0.3 cold .. 0.6 hot)
+# Temperature is reduced (dimensionless); chignolin melts at about 0.75 to 0.8
 integrator = mc.Integrator(temperature=0.6, step_size_rad=0.1)
 integrator.set_seed(42)
 
@@ -155,16 +159,40 @@ weight, but the effective multiplier applied to the raw H-bond energy is
 
 ## Examples
 
-```bash
-# OpenMM-style Python API
-python examples/openmm_style/run_example.py
-python examples/openmm_style/run_folding.py --steps 1000 --output-dir ./out_folding
+A folding run from Python, on the chignolin structure that ships with the
+package:
 
-# YAML input
-mcpu run examples/configs/template.yaml
+```python
+from pymcpu.runners import default_example_pdb, run_folding
+
+run_folding(pdb=default_example_pdb(), temperature=0.6, steps=20_000,
+            output_dir="out_folding")
 ```
 
-Replica exchange, weighted ensemble and production MPI runs are covered in the
+The same run from a YAML config, with the `mcpu` command:
+
+```bash
+python -c "import shutil, pymcpu.runners as r; shutil.copy(r.default_example_pdb(), '1uao.pdb')"
+cat > fold.yaml <<'EOF'
+pdb: 1uao.pdb
+temperatures: [0.6]     # one temperature and no umbrella targets: folding
+steps: 20000            # total MC steps (in replica exchange, steps per cycle)
+output_prefix: out/fold
+EOF
+mcpu validate fold.yaml
+mcpu run fold.yaml
+```
+
+The repository has more examples; clone it to run them:
+
+```bash
+git clone https://github.com/kibumpark-chem/pyMCPU.git && cd pyMCPU
+python examples/openmm_style/run_example.py
+python examples/openmm_style/run_folding.py --steps 1000 --output-dir ./out_folding
+mcpu run examples/configs/template.yaml   # 2D replica exchange, 44 replicas
+```
+
+Replica exchange, production MPI runs and checkpointing are covered in the
 documentation:
 [running REMD](https://pymcpu.readthedocs.io/en/latest/running_remd.html) ·
 [Integrating pyMCPU](https://pymcpu.readthedocs.io/en/latest/integrating_pymcpu.html) ·
@@ -204,16 +232,21 @@ mpirun -n 32 python my_remd_run.py
 
 ## Development
 
+From a clone of the repository:
+
 ```bash
 python -m pytest -q          # test suite
 ruff check .                 # lint
 bash scripts/dev_install.sh  # clean rebuild + verify + test
 ```
 
+See [CONTRIBUTING.md](https://github.com/kibumpark-chem/pyMCPU/blob/main/CONTRIBUTING.md).
+
 ## Citation
 
-If you use pyMCPU in published work, please cite it. `CITATION.cff` is included
-in the repository; the BibTeX form is:
+If you use pyMCPU in published work, please cite it.
+[`CITATION.cff`](https://github.com/kibumpark-chem/pyMCPU/blob/main/CITATION.cff)
+is included in the repository; the BibTeX form is:
 
 ```bibtex
 @software{pymcpu,
@@ -225,6 +258,27 @@ in the repository; the BibTeX form is:
 }
 ```
 
+The rotamer moves use the backbone-independent rotamer library (2002) of
+Roland L. Dunbrack, Jr., Fox Chase Cancer Center. The 2002 file states no
+licence. pyMCPU redistributes it following, as a guide, the terms the Dunbrack
+lab gives for its 2010 backbone-dependent library:
+[CC BY 4.0](https://creativecommons.org/licenses/by/4.0/legalcode), which asks
+that the source be acknowledged (see
+[THIRD_PARTY_NOTICES](https://github.com/kibumpark-chem/pyMCPU/blob/main/THIRD_PARTY_NOTICES)).
+Please cite R. L. Dunbrack Jr. and F. E. Cohen, "Bayesian statistical analysis
+of protein side-chain rotamer preferences", *Protein Science* **6**, 1661–1681
+(1997), <https://doi.org/10.1002/pro.5560060807>.
+
 ## License
 
-MIT — see [LICENSE](https://github.com/kibumpark-chem/pyMCPU/blob/main/LICENSE).
+pyMCPU's own code is MIT-licensed — see
+[LICENSE](https://github.com/kibumpark-chem/pyMCPU/blob/main/LICENSE). The
+compiled extension also contains code from xdrfile (BSD-2-Clause), pybind11
+(BSD-3-Clause) and Eigen (MPL-2.0), and the KIC move's loop closure, a
+modified port of the tripeptide loop closure code of Seok, Coutsias, Jacobson
+and Dill (LGPL-2.1-or-later, with Graphics-Gems for its Sturm solver). The
+package as a whole is therefore under `MIT AND BSD-2-Clause AND BSD-3-Clause
+AND MPL-2.0 AND LGPL-2.1-or-later AND Graphics-Gems`.
+Their licences, the terms of the bundled rotamer library and the credit to
+legacy MCPU are in
+[THIRD_PARTY_NOTICES](https://github.com/kibumpark-chem/pyMCPU/blob/main/THIRD_PARTY_NOTICES).

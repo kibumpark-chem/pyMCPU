@@ -32,19 +32,23 @@ concurrency:
   group: wheels-${{ github.ref }}
   cancel-in-progress: true
 
+# Every job runs on ubuntu-24.04, like ci.yml: ubuntu-latest becomes Ubuntu
+# 26.04 from 2026-10-19, and a release build should not change under us.
 jobs:
   build_wheels:
     name: ${{ matrix.python }} manylinux x86_64
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
-        python: ["cp39", "cp310", "cp311", "cp312", "cp313"]
+        # Not cp315 yet: mdtraj, a hard dependency, publishes no CPython 3.15
+        # wheels.
+        python: ["cp312", "cp313", "cp314"]
     steps:
       - uses: actions/checkout@v4
 
       - name: Build wheels
-        uses: pypa/cibuildwheel@v2.21.3
+        uses: pypa/cibuildwheel@v4.2.1
         env:
           CIBW_BUILD: "${{ matrix.python }}-manylinux_x86_64"
           CIBW_ARCHS_LINUX: x86_64
@@ -99,12 +103,12 @@ jobs:
 
   build_sdist:
     name: sdist
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.12"
       - run: python -m pip install --upgrade pip build
       - run: python -m build --sdist
       - uses: actions/upload-artifact@v4
@@ -115,7 +119,7 @@ jobs:
   check_tags:
     name: every wheel is manylinux-tagged
     needs: [build_wheels, build_sdist]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/download-artifact@v4
         with:
@@ -143,6 +147,26 @@ jobs:
           print(f"\n{len(good)} manylinux wheel(s)")
           PY
 
+  # Refuses to publish unless the tag is v<pymcpu.__version__> and
+  # CHANGELOG.md and CITATION.cff name that version with a real release date
+  # (the release checklist in CONTRIBUTING.md sets it), and CHANGELOG.md has
+  # no '<!-- BENCH' placeholder left. It runs beside the builds, so a mistake
+  # shows in seconds rather than after them.
+  check_release:
+    name: tag, CHANGELOG.md and CITATION.cff agree
+    if: github.event_name == 'push' || inputs.publish_target == 'testpypi'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check
+        # The TestPyPI dry run starts from a branch, so it has no tag to check.
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = push ]; then
+            python3 scripts/check_release.py --tag "$GITHUB_REF_NAME"
+          else
+            python3 scripts/check_release.py
+          fi
+
   # A manual dry run against a REAL index. PyPI filenames are immutable -- a
   # bad upload can be yanked but never replaced -- so the release checklist
   # asks for a TestPyPI rehearsal first. This job never runs on a tag; it is
@@ -151,9 +175,9 @@ jobs:
   # owner/repo/workflow and environment name `testpypi`.
   publish_testpypi:
     name: publish to TestPyPI (manual dry run)
-    needs: [check_tags]
+    needs: [check_tags, check_release]
     if: github.event_name == 'workflow_dispatch' && inputs.publish_target == 'testpypi'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     environment: testpypi
     permissions:
       id-token: write
@@ -168,14 +192,14 @@ jobs:
 
   publish:
     name: publish to PyPI
-    needs: [check_tags]
+    needs: [check_tags, check_release]
     # `github.event_name == 'push'` is load-bearing: the Actions "Run workflow"
     # dropdown lists tags as well as branches, so a workflow_dispatch selected
     # against v0.1.0 -- the natural way to re-run a failed tag build -- would
     # otherwise satisfy the ref test and upload to real PyPI, whatever
     # publish_target says (that input gates only the TestPyPI job).
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     environment: pypi
     permissions:
       id-token: write   # trusted publishing; no API token stored in the repo

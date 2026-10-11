@@ -3,8 +3,8 @@
 Current, verified limitations of pyMCPU 0.1.0. Each entry states the symptom,
 the cause, and what to do about it.
 
-Issues fixed before the first release are not listed here — see the
-[changelog](https://github.com/kibumpark-chem/pyMCPU/blob/main/CHANGELOG.md).
+The [changelog](https://github.com/kibumpark-chem/pyMCPU/blob/main/CHANGELOG.md)
+lists how pyMCPU differs from legacy MCPU, including the legacy bugs it fixes.
 
 ## Linux x86-64 only, with an x86-64-v3 baseline
 
@@ -84,7 +84,7 @@ MCPU_FP_CONTRACT=off pip install --no-build-isolation -e .
 ```
 
 Under `off`, GCC 8.5 and GCC 12.2 produce bit-identical trajectories on all
-four verification cases (not yet checked for GCC 15). It costs roughly 3% throughput.
+four verification cases (not yet checked for GCC 15). It makes runs 14-15% slower.
 `mcpu_core.build_info()["fp"]["fp_contract"]` reports which setting a build
 used, so a result can always be attributed.
 

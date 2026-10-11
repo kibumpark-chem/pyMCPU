@@ -12,10 +12,9 @@
 
 pyMCPU's `HBondPotential` (`src/pymcpu/forces/mcpu/common/HydrogenBondPotential.cpp`,
 `include/pymcpu/utils/hydrogen_bond_utils.h`) is a from-scratch C++ rewrite of legacy
-MCPU's `HydrogenBonds()`/`FoldHydrogenBonds()`
-(`dbfold_actin/MCPU/src_mpi_umbrella/hbonds.h`). This document records the exact
-atom/gate/formula mapping between the two, and the ablation ladder used to verify
-the rewrite bug-for-bug against the legacy reference on
+MCPU's `HydrogenBonds()`/`FoldHydrogenBonds()` (in `hbonds.h`). This document
+records the exact atom/gate/formula mapping between the two, and the ablation ladder
+used to verify the rewrite bug-for-bug against the legacy reference on
 `examples/actin/input_pdb/acta.pdb`.
 
 An independent NumPy oracle transliterating `hbonds.h` directly from the legacy

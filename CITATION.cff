@@ -8,8 +8,12 @@ authors:
     email: kibum_park@fas.harvard.edu
     affiliation: "Shakhnovich Laboratory, Harvard University"
 version: 0.1.0
-date-released: "2026-09-16"
-license: MIT
+# Set to the release day as the last step before tagging (CONTRIBUTING.md,
+# "Making a release"); wheels.yml refuses to publish while this placeholder
+# is here.
+date-released: "YYYY-MM-DD"
+# No `license` key: CFF reads a list of licences as alternatives (OR), but the
+# package is MIT AND five third-party licences (README, "License").
 repository-code: "https://github.com/kibumpark-chem/pyMCPU"
 url: "https://pymcpu.readthedocs.io"
 keywords:
@@ -18,7 +22,8 @@ keywords:
   - molecular-simulation
   - knowledge-based-potentials
   - computational-biophysics
-# NOTE: no `doi:` yet. The Zenodo deposition has to exist before the first
-# tag, otherwise the first archived DOI belongs to 0.1.1 rather than to the
-# release people will actually cite. Add the concept DOI here as part of the
-# tagging step, not after it.
+# NOTE: no `doi:` yet. Zenodo mints DOIs only when a GitHub release is
+# published, so the concept DOI exists only after the first GitHub release.
+# Switch the repository on in Zenodo before creating that release (otherwise
+# the first archived DOI belongs to 0.1.1, not to the release people will
+# cite), then add the concept DOI here.

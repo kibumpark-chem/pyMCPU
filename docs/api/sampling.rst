@@ -11,17 +11,17 @@ Three drivers are provided: :class:`~pymcpu.sampling.FoldingRunner` for
 a single-temperature run, :class:`~pymcpu.sampling.ReplicaExchange` for
 in-process replica exchange, and
 :class:`~pymcpu.sampling.MPIReplicaExchange` for the same algorithm
-spread over MPI ranks. All three build the mcpu08 force field
-(:class:`~pymcpu.MCPUForceField`), the :doc:`System <system>` and one
-:doc:`Integrator <integrator>` per replica internally, so a run is
-configured entirely through constructor keywords. The force field is
-always mcpu08: a config's ``forcefield:`` does not change that yet, and the
-replica-exchange drivers take no parameter-set argument.
+spread over MPI ranks. All three build the force field, the
+:doc:`System <system>` and one :doc:`Integrator <integrator>` per replica
+internally, so a run is configured entirely through constructor keywords.
+Each takes ``forcefield``, ``param_set`` and ``param_dir``, like a config;
+the default, and the only force field pyMCPU ships, is mcpu08
+(:class:`~pymcpu.MCPUForceField`).
 
 .. note::
    Temperature is a dimensionless reduced parameter, not a physical
    temperature. Where a protein unfolds depends on the protein; chignolin
-   melts at about 0.65 to 0.7. Energies are unitless sums of
+   melts at about 0.75 to 0.8. Energies are unitless sums of
    knowledge-based potential table entries.
 
 Replica exchange

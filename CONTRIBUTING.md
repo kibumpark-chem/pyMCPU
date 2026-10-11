@@ -13,11 +13,11 @@ python -m pytest -q                    # the default suite
 ruff check .
 ```
 
-The build needs a C++20 compiler and CMake. GCC 15 is the default (on RHEL 8,
-`source /opt/rh/gcc-toolset-15/enable` first); GCC 8.5 is the oldest supported
-and builds about 3-10% slower code. Eigen is
-fetched automatically if it is not installed. `pip install -e .` rebuilds the
-extension when C++ sources change.
+The build needs Python 3.12 or newer, a C++20 compiler and CMake. GCC 15 is
+the default (on RHEL 8, `source /opt/rh/gcc-toolset-15/enable` first); GCC 8.5
+is the oldest supported and builds about 3-10% slower code. Eigen is fetched
+automatically if it is not installed. After changing C++ sources, run
+`pip install -e .` again to rebuild the extension.
 
 ## The one rule that matters most
 
@@ -82,6 +82,7 @@ tier too — it contains the physics goldens:
 ```bash
 python -m pytest -q                                              # fast
 python -m pytest -o addopts="" -m "not mpi_integration" -q       # fast + slow
+mpirun -n 2 python -m pytest -q tests/integration/mpi            # MPI, needs mpi4py
 ```
 
 `Integrator.verify_physics_consistency(context, num_steps, atol)` runs MC
@@ -118,10 +119,12 @@ A new term must:
 4. Stay below the clash sentinel. `MuPotential` returns `99999.0f` for a
    hard-core overlap and anything `>= 49999.5` is read as a clash, so a large
    but finite energy must stay under that.
-5. Claim an energy group in `include/pymcpu/EnergyWeights.h`. Groups 1–5 are
-   taken; **group 4 is silently multiplied by 2.0** (the legacy `RDTHREE_CON`),
-   so do not reuse it. Groups 8–15 work and are weighted correctly but are
-   **silently untimed** — `Context::energy_delta_ns_` is `[8]`.
+5. Claim an energy group in `include/pymcpu/EnergyWeights.h`. Groups 1–6 are
+   taken (6 is `native_contacts_bias`, the umbrella on the native-contact
+   count), and **group 4 is silently multiplied by 2.0** (the legacy
+   `RDTHREE_CON`), so do not reuse it. Group 7 is free. Groups 8–15 work and
+   are weighted correctly but are **silently untimed** —
+   `Context::energy_delta_ns_` is `[8]`.
 6. Add a pybind11 class in `src/bindings/bindings.cpp` (unavoidable today) and
    a builder under `pymcpu/forcefields/builders/`.
 
@@ -132,7 +135,7 @@ CMake needs no edit — the source glob uses `CONFIGURE_DEPENDS`.
 | variable | meaning |
 |---|---|
 | `MCPU_ARCH` | CPU baseline: `v2`, `v3` (default), `v4`, `native`, `none`, or a raw `-march` value |
-| `MCPU_FP_CONTRACT` | `off` makes results reproducible across compiler versions, at ~3% throughput |
+| `MCPU_FP_CONTRACT` | `off` makes results reproducible across compiler versions; runs are 14-15% slower |
 | `MCPU_PARAMS_DIR` | use a parameter directory directly |
 
 `mcpu_core.build_info()` reports what a build **actually did** — resolved
@@ -162,6 +165,45 @@ not validate code blocks.
   than "parity oracle exit 0, slow tier green, bench unchanged within noise".
 - If you found something surprising, write it down in the PR description —
   measurements and refuted hypotheses are as useful as the change itself.
+
+## Making a release
+
+Once, before the first release:
+
+- On [pypi.org](https://pypi.org/manage/account/publishing/) and on
+  [test.pypi.org](https://test.pypi.org/manage/account/publishing/), add a
+  pending trusted publisher for the project `pymcpu`: owner
+  `kibumpark-chem`, repository `pyMCPU`, workflow `wheels.yml`, environment
+  `pypi` on pypi.org and `testpypi` on test.pypi.org.
+- On GitHub, create the environments `pypi` and `testpypi` (Settings >
+  Environments), so that you can protect them before the first publish, for
+  example by making `pypi` wait for your approval.
+- Switch the repository on in
+  [Zenodo](https://zenodo.org/account/settings/github/), which then archives
+  each GitHub release and gives it a DOI.
+
+For each release:
+
+1. Set the release date, the same day in both places: the
+   `## [X.Y.Z] - YYYY-MM-DD` heading in `CHANGELOG.md` and `date-released` in
+   `CITATION.cff`. Replace any `<!-- BENCH` line in `CHANGELOG.md` with the
+   benchmark rows it stands for. Check that `pymcpu/__init__.py`,
+   `CITATION.cff` and `conda-recipe/meta.yaml` all say X.Y.Z, then run
+   `python scripts/check_release.py --tag vX.Y.Z`; it must print
+   "ready to publish".
+2. Merge to `main`.
+3. Dry run on TestPyPI: Actions > Wheels > Run workflow on `main`, with
+   `publish_target` set to `testpypi`. Then install it in a fresh venv and
+   import it:
+   `pip install --index-url https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple/ pymcpu==X.Y.Z`.
+   TestPyPI, like PyPI, takes each version only once.
+4. Tag and push: `git tag vX.Y.Z && git push origin vX.Y.Z`. The Wheels
+   workflow builds and checks the wheels and publishes them to PyPI. It
+   refuses to publish unless the tag, `CHANGELOG.md` and `CITATION.cff` agree
+   and no placeholder is left (`scripts/check_release.py`).
+5. Create the GitHub release from the tag, with the `CHANGELOG.md` entry as
+   its notes. Zenodo archives the release; after the first one, add its
+   concept DOI to `CITATION.cff`.
 
 ## Reporting bugs
 
