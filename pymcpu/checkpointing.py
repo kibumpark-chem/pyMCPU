@@ -76,6 +76,10 @@ class CheckpointState:
     #: checkpoints written before it was recorded; those runs could only
     #: build mcpu08, so that is what an empty value means on resume.
     forcefield: str = ""
+    #: The force field's hydrogen-bond sheet factor (``hbond_beta_favor``);
+    #: None for a force field without one, and in checkpoints written before
+    #: it was recorded, whose builds all used legacy MCPU's 3.0.
+    hbond_beta_favor: float | None = None
     temperatures: Any = None
     n_targets: Any = None
     k_bias: float = 0.0
@@ -432,6 +436,33 @@ def checkpoint_forcefield_error(
         f"{label} was written by a {saved_name!r} run, but this run builds "
         f"forcefield {current!r}; resume it with the force field it was "
         "started with, or start a new run without resume"
+    )
+
+
+def checkpoint_beta_favor_error(
+    saved: float | None, current: float | None, source: Any = None
+) -> str | None:
+    """Why a checkpoint written with hydrogen-bond sheet factor ``saved``
+    cannot resume a run whose force field uses ``current``, or None.
+
+    ``current`` is None for a force field without the factor, which is not
+    checked. A checkpoint without one (``saved`` None) was written by a build
+    that used legacy MCPU's 3.0. Checked after the atom layout, since a
+    checkpoint that fails both cannot be resumed with any factor.
+    """
+    if current is None:
+        return None
+    # Compared and printed as the engine's float32, so the value printed in
+    # the advice resumes the run.
+    saved_factor = np.float32(3.0 if saved is None else saved)
+    current_factor = np.float32(current)
+    if saved_factor == current_factor:
+        return None
+    label = f"checkpoint {source}" if source else "the checkpoint"
+    return (
+        f"{label} was written with hbond_beta_favor {saved_factor!s}, but this "
+        f"run uses {current_factor!s}; resume it with forcefield_options: "
+        f"{{hbond_beta_favor: {saved_factor!s}}}, or start a new run without resume"
     )
 
 

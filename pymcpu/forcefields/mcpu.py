@@ -13,6 +13,7 @@ triplet, hydrogen-bond, and aromatic potentials).
 from __future__ import annotations
 
 import json
+import numbers
 import numpy as np
 import mdtraj as md
 from dataclasses import dataclass
@@ -44,12 +45,24 @@ _DEFAULT_PARAM_SET = "mcpu08"
 _MAX_PEPTIDE_BOND_NM = 0.2
 # Problems listed in one structure error before the rest are counted.
 _MAX_LISTED_PROBLEMS = 10
+_FLOAT32_MAX = float(np.finfo(np.float32).max)
 
 
 def _listed(problems: list[str]) -> str:
     shown = "; ".join(problems[:_MAX_LISTED_PROBLEMS])
     extra = len(problems) - _MAX_LISTED_PROBLEMS
     return shown + (f"; and {extra} more" if extra > 0 else "")
+
+
+def _hbond_beta_favor(value: object) -> float:
+    """``hbond_beta_favor`` as a float, or ValueError unless it is a real
+    number that stays finite and above 0 in the engine's float32."""
+    if isinstance(value, numbers.Real) and not isinstance(value, bool):
+        factor = float(value)
+        if factor <= _FLOAT32_MAX and np.float32(factor) > 0.0:
+            return factor
+    raise ValueError(f"hbond_beta_favor must be a finite number above 0, got {value!r}")
+
 
 @dataclass
 class MCPUAtom:
@@ -82,7 +95,8 @@ class MCPUForceField(BaseForceField):
              compute_dssp: bool = False,
              dssp_coil_state: str = "C",
              allow_provisional_rama: bool = False,
-             allow_chain_breaks: bool = False) -> None:
+             allow_chain_breaks: bool = False,
+             hbond_beta_favor: float = 2.0) -> None:
         """
         Load the parameters, check the structure and lay out its atoms.
 
@@ -123,13 +137,19 @@ class MCPUForceField(BaseForceField):
             2 Å from the N of the next), raises ``ValueError``. If True, the
             pieces are joined as if they were bonded, which the engine then
             simulates as one chain.
+        hbond_beta_favor
+            Factor on every hydrogen bond between residues more than four
+            apart (default 2.0). Legacy MCPU compiled 3.0 (``beta_favor`` in
+            its ``define.h``); pass 3.0 to score hydrogen bonds as it did.
 
         Raises
         ------
         ValueError
             For a residue MCPU has no parameters for, a missing heavy atom
-            (named with its residue), or a chain break, as above.
+            (named with its residue), a chain break, as above, or an
+            ``hbond_beta_favor`` that is not a finite number above 0.
         """
+        self.hbond_beta_favor = _hbond_beta_favor(hbond_beta_favor)
         if param_dir is None:
             try:
                 param_dir = ensure_params(param_set)
@@ -639,6 +659,7 @@ class MCPUForceField(BaseForceField):
         hbond_potential = HydrogenBondBuilder.build(
             raw_params=self.hbond,
             seq_dep_params=self.hbond_seq_dep,
+            beta_favor=self.hbond_beta_favor,
         )
         hbond_potential.set_energy_group(4)
         hbond_potential.set_name("hydrogen_bond")

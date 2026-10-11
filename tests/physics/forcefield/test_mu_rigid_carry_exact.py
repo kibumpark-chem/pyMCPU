@@ -249,7 +249,7 @@ def test_the_drift_budget_rebuilds_the_list_in_time(capfd) -> None:
     energy: it must still equal the full energy, and the list must have been
     rebuilt on schedule, never for a move that cannot use it. The
     trajectory, and with it the accepted count, differs between builds:
-    15,000 steps accept 2,979 to 3,414 pivots over seeds 1-16 on x86-64-v2
+    15,000 steps accept 3,005 to 3,675 pivots over seeds 1-16 on x86-64-v2
     and v3 builds with GCC 13 and 15."""
     traj = md.load(str(resolve_test_pdb()))
     heavy = traj.atom_slice(traj.topology.select("not element H"))

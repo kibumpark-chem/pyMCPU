@@ -11,6 +11,8 @@
 #include <array>
 #include <cmath>
 #include <limits>
+#include <stdexcept>
+#include <string>
 #if defined(__AVX2__)
 #include <immintrin.h>
 #include "pymcpu/utils/pair_r2.h"
@@ -211,8 +213,15 @@ inline bool load_donor_h(
 
 }  // namespace
 
-HBondPotential::HBondPotential(std::vector<float> loaded_params, std::vector<float> seq_dep_params)
-    : params(std::move(loaded_params)), seq_dep_params(std::move(seq_dep_params)) {}
+HBondPotential::HBondPotential(std::vector<float> loaded_params, std::vector<float> seq_dep_params,
+                               float beta_favor)
+    : params(std::move(loaded_params)), seq_dep_params(std::move(seq_dep_params)),
+      beta_favor_(beta_favor) {
+    if (!std::isfinite(beta_favor_) || beta_favor_ <= 0.0f) {
+        throw std::invalid_argument("HBondPotential: beta_favor must be a finite number above 0, got " +
+                                    std::to_string(beta_favor_));
+    }
+}
 
 float HBondPotential::evaluate_directional(int r_don, int r_acc, const State& state, const System& sys) const {
     return evaluate_<false>(r_don, r_acc, state, sys, nullptr);
@@ -265,12 +274,11 @@ float HBondPotential::evaluate_(int r_don, int r_acc, const State& state, const 
     HydrogenBondUtils::hydrogen_bond_indices(donor, acceptor, indices, kSlack ? cosines : nullptr);
     if constexpr (kSlack) s.add_bins(donor, acceptor, cosines);
     float e = get(indices[0], indices[1], indices[2], indices[3], indices[4], indices[5], indices[6]);
-    // legacy hbonds.h: `e += [beta_favor *] seq_hb[helix_sheet][aa_don][aa_acc] * hbond_E[...]`.
-    // indices[0] (helix_sheet) is 0 only for res_idx_diff==4; beta_favor applies to
-    // every res_idx_diff>4 pair regardless of parallel/antiparallel (indices[0] 1 or 2).
+    // legacy hbonds.h: `e += [beta_favor *] seq_hb[helix_sheet][aa_don][aa_acc] * hbond_E[...]`,
+    // with beta_favor for res_dif > 4, parallel or antiparallel (indices[0] 1 or 2).
     e *= seq_dep_factor(indices[0], sys.amino_index(r_don), sys.amino_index(r_acc));
-    if (indices[0] != 0) {
-        e *= BETA_FAVOR;
+    if (std::abs(r_don - r_acc) > 4) {
+        e *= beta_favor_;
     }
     return done(e);
 }

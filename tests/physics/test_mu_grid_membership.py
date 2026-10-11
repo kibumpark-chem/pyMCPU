@@ -62,11 +62,13 @@ def test_a_mask_changed_between_runs_keeps_the_running_energy_exact() -> None:
     clash that the running energy never does (calculate_total_energy does
     not resync a clashing state), so that case is not compared; these
     settings leave none. They include the KIC driver width: at the default
-    (pi/6) this seed leaves an overlap after the first masked run."""
+    (pi/6) this seed leaves an overlap after the first masked run. So does
+    seed 7, used until 2026-10-11, since the hydrogen-bond sheet factor's
+    default went from 3 to 2."""
     ctx = _context()
     full = _grid_atoms(ctx)
     integ = mcpu_core.Integrator(temperature=0.6, step_size_rad=0.2, kic_step_size_rad=0.1)
-    integ.set_seed(7)
+    integ.set_seed(2)
     system = ctx.get_system()
     compared = []
     for chunk, mask in enumerate([MASKED, None, MASKED]):

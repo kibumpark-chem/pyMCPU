@@ -31,7 +31,7 @@ AMINO_INDEX = {name: i for i, name in enumerate(AMINO_ORDER)}
 HBOND_WEIGHT = 1.35
 CUT_SECSTR = 4
 RDTHREE_CON = 2.0
-BETA_FAVOR = 3.0
+BETA_FAVOR = 3.0  # mcpu08 defaults to 2.0; parity tests build with hbond_beta_favor=BETA_FAVOR
 HB_CUTOFF = 2.5
 HB_INNER = 2.5  # == HB_CUTOFF, so the HB_PENALTY branch is unreachable
 HB_PENALTY = 1.0

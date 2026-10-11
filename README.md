@@ -17,7 +17,8 @@ rotamer-library and kinematic-closure loop moves, plus temperature/umbrella
 replica exchange in one process or over MPI.
 
 This release ships the `mcpu08` force field (legacy MCPU's energy function
-and tables); a second force field, `mcpu26`, is planned for 0.2.0.
+and tables, with one default changed; see Physics defaults below); a second
+force field, `mcpu26`, is planned for 0.2.0.
 
 Full documentation: **<https://pymcpu.readthedocs.io>**
 
@@ -112,7 +113,7 @@ heavy = traj.atom_slice(traj.topology.select("not element H"))
 forcefield = MCPUForceField(heavy, param_set="mcpu08")
 system = forcefield.create_system(heavy.topology)
 
-# Temperature is reduced (dimensionless); chignolin melts at about 0.75 to 0.8
+# Temperature is reduced (dimensionless); chignolin melts at about 0.6
 integrator = mc.Integrator(temperature=0.6, step_size_rad=0.1)
 integrator.set_seed(42)
 
@@ -142,9 +143,11 @@ Energies are **unitless**: sums of knowledge-based table entries scaled by a
 dimensionless per-group weight. There is no Boltzmann constant, no Kelvin and
 no kT conversion anywhere in the engine.
 
-The hydrogen-bond row is the one subtlety — 1.35 is the configured group
+The hydrogen-bond row needs two notes. 1.35 is the configured group
 weight, but the effective multiplier applied to the raw H-bond energy is
-**2.7** (`1.35 × RDTHREE_CON`, with `RDTHREE_CON = 2.0`).
+**2.7** (`1.35 × RDTHREE_CON`, with `RDTHREE_CON = 2.0`). And a bond between
+residues more than four apart, as in a β-sheet, is also multiplied by the
+sheet factor `hbond_beta_favor`: 2 by default, where legacy MCPU used 3.
 
 `energy_breakdown()` returns both raw and weighted values.
 
@@ -153,6 +156,7 @@ weight, but the effective multiplier applied to the raw H-bond energy is
 | Setting | Default |
 |---|---|
 | Legacy outer energy weights | on |
+| H-bond sheet factor (`hbond_beta_favor`) | 2.0 (legacy MCPU: 3.0) |
 | Virtual amide H (H-bond-only hydrogens) | on |
 | Periodic boundary conditions | none (open boundary) |
 | Floating-point math | IEEE-ish release FP, no fast-math |

@@ -10,6 +10,7 @@ checks the count, and each restore path names the checkpoint in its error.
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -151,6 +152,7 @@ def _bare_mpi_rex(system, checkpoint_dir: Path):
     rex.checkpoint_config = CheckpointConfig(checkpoint_dir=str(checkpoint_dir))
     rex.system = system
     rex.forcefield_name = "mcpu08"
+    rex.forcefield = SimpleNamespace(hbond_beta_favor=2.0)
     rex.local_replica_indices = []
     rex.replicas = {}
     return rex
@@ -176,7 +178,8 @@ def test_mpi_resume_decides_on_rank_0_and_every_rank_raises(sim, tmp_path: Path)
 def test_mpi_resume_of_a_matching_checkpoint_gets_past_the_check(sim, tmp_path: Path) -> None:
     simulation, coords = sim
     save_checkpoint(
-        {"replica_coords": [coords], "walker_at_state": [0], "cycle": 3}, tmp_path, filename="last.chk"
+        {"replica_coords": [coords], "walker_at_state": [0], "cycle": 3, "hbond_beta_favor": 2.0},
+        tmp_path, filename="last.chk",
     )
     rex = _bare_mpi_rex(simulation.system, tmp_path)
     state = rex._mpi_load_checkpoint(_OneRankComm(rank=0))

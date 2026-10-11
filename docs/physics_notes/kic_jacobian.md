@@ -22,9 +22,10 @@ structure's values; only its six φ and ψ torsions change.
    30°, by default; `step_size_rad` sets the pivot only). This moves one end
    of the window: CA(r+2) and C(r+2) for a φ driver, N(r) and CA(r) for a ψ
    driver. The width matters for prolines: KIC turns a proline's ψ only as
-   the driver of the window after it, and in a study of driver widths, 5.7°
-   or less never moved the ψ of CLN025's proline out of its basin, while
-   20° to 120° all sampled the same equilibrium.
+   the driver of the window after it, and in a study of driver widths (run
+   at legacy's sheet factor, 3), 5.7° or less never moved the ψ of CLN025's
+   proline out of its basin, while 20° to 120° all sampled the same
+   equilibrium.
 4. Find every closure for the new end, n_new of them, and pick one uniformly
    at random.
 5. Accept or reject with w = (J_new / J_old) × (n_new / n_old); see

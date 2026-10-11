@@ -10,8 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 First public release. pyMCPU reimplements MCPU, the Shakhnovich lab's Monte
 Carlo protein folding program, as a C++ engine with a Python API. It ships
 one force field, `mcpu08`: legacy MCPU's energy function and parameter
-tables. The KORP force field is not included, and the `mcpu26` force field
-is planned for 0.2.0. pyMCPU needs Linux on x86-64 and Python 3.12 or newer.
+tables, with a smaller hydrogen-bond sheet factor by default (see Sheet
+factor below). The KORP force field is not included, and the `mcpu26` force
+field is planned for 0.2.0. pyMCPU needs Linux on x86-64 and Python 3.12 or
+newer.
 As this is the first release, this entry lists how pyMCPU differs from
 legacy MCPU, the C program on the lab's
 [MCPU page](https://shakhnovich.faculty.chemistry.harvard.edu/software/monte-carlo-protein-unfolding-mcpu),
@@ -24,7 +26,8 @@ in its version with umbrella sampling, run with its reference configuration
   contacts (Mu, `p178_conrange4_potential_0.995054`) × 0.4, backbone torsions
   × 1.35, sidechain torsions × 2.5, backbone hydrogen bonds × 2.7
   (`HBOND_WEIGHT` 1.35 × `RDTHREE_CON` 2.0, sequence-dependent as with
-  `SEQ_DEP_HB 1`), and PHE/TRP ring stacking within 7 Å × 5.0
+  `SEQ_DEP_HB 1`; only the factor on bonds more than four residues apart
+  differs, see Changed), and PHE/TRP ring stacking within 7 Å × 5.0
   (`aromatic_noTYR.energy`).
 - **Atoms and contacts.** The same atom types and radii. Two atoms are in
   contact within 1.35 (r_i + r_j) and clash under 0.75 (r_i + r_j)
@@ -48,6 +51,17 @@ in its version with umbrella sampling, run with its reference configuration
 
 ### Changed from legacy MCPU
 
+- **Sheet factor.** A hydrogen bond between residues more than four apart is
+  multiplied by 2 by default; legacy compiled `beta_favor` 3 into its binary
+  (`define.h`). Bonds four apart are not scaled in either. On the native
+  structures this raises the hydrogen-bond energy, and so the total, by 0.39
+  on CLN025, 28.1 on 1igd and 23.7 on actin (1.3 %, 8.2 % and 4.3 % of the
+  total). β-hairpins are less stable: chignolin (1UAO) melts at about 0.6
+  instead of 0.75 to 0.8 (midpoints from 20,000-cycle replica exchange).
+  The factor is a force-field option: `forcefield_options:
+  {hbond_beta_favor: 3.0}` in a config, or
+  `MCPUForceField(hbond_beta_favor=3.0)`, restores legacy's. Checkpoints
+  record it, and a run resumed with another factor stops with an error.
 - **One step is one move.** A legacy MC step was one backbone move plus
   `SIDECHAIN_MOVES` sidechain moves, two moves in the reference configs, so
   double `MC_STEPS`, `MC_REPLICA_STEPS` and print intervals when porting. In
@@ -68,10 +82,10 @@ in its version with umbrella sampling, run with its reference configuration
   `MC_STEP_SIZE` with 2° after reading the config. `kic_step_size_rad` sets
   the width of the KIC driver, default π/6 (30°), and can be tuned; legacy
   drew `YANG_SCALE` × 2°, 60° in the reference configs. In a study of
-  driver widths, 20° to 120° sampled the same equilibrium about equally
-  fast, while 10° hardly moved the ψ of CLN025's proline and 5.7° (0.1 rad)
-  or less never moved it out of its basin, so keep the width at 20° or
-  more.
+  driver widths (run at legacy's sheet factor, 3), 20° to 120° sampled the
+  same equilibrium about equally fast, while 10° hardly moved the ψ of
+  CLN025's proline and 5.7° (0.1 rad) or less never moved it out of its
+  basin, so keep the width at 20° or more.
 - **Sidechain moves.** The rotamer move, the default, picks a library row by
   its probability, as legacy did with `USE_ROT_PROB 1` (the reference
   configs used 0, a uniform pick), and is corrected for its proposal (see
@@ -213,12 +227,13 @@ in its version with umbrella sampling, run with its reference configuration
 
 - **Energies.** On the native structures of chignolin, 1igd, barnase and
   actin, pyMCPU's total energies are within 0.24 (under 0.1 %) of legacy's
-  (legacy run with `READ_POTENTIAL 1` and corrected `.sctorsion` files).
+  (legacy run with `READ_POTENTIAL 1` and corrected `.sctorsion` files;
+  pyMCPU with legacy's sheet factor, `hbond_beta_favor` 3).
   Four terms agree within 0.02 (weighted). The contact term differs by up to
   0.23, for reasons not yet pinned down; the contact table itself equals
   legacy's to float32 rounding (largest difference 3e-8). A test checks
-  actin's hydrogen-bond energy, −172.961, against legacy's logged −128.12 ×
-  1.35.
+  actin's hydrogen-bond energy at sheet factor 3, −172.961, against legacy's
+  logged −128.12 × 1.35.
 - **KIC** samples its exact distribution in a test that traces every
   closure of a window (ψ-driver windows on chignolin and actin, driver widths
   0.1 and 1.0 rad).
@@ -228,8 +243,9 @@ in its version with umbrella sampling, run with its reference configuration
   driver 30° (legacy `YANG_SCALE` 15), continuous 10° sidechain moves, and
   25 % pivot, 25 % KIC and 50 % sidechain moves (legacy: one backbone and
   one sidechain move per step, half the backbone moves KIC, cluster moves
-  off), at T = 0.6 with the shipped contact table (`READ_POTENTIAL 1`) and
-  all residues coil. One legacy MC step counts as two attempts. Both codes
+  off), at T = 0.6 with the shipped contact table (`READ_POTENTIAL 1`), all
+  residues coil, and legacy's sheet factor, 3, in both codes. One legacy MC
+  step counts as two attempts. Both codes
   ran on one core each of the same exclusive node (Intel Xeon Platinum
   8480CL), in 5 paired, interleaved rounds. Costs are medians over the
   rounds; the speedup is the median of the per-round ratios, with its range

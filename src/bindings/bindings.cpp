@@ -569,7 +569,7 @@ PYBIND11_MODULE(mcpu_core, m) {
         "sidechain, rotamer-library and kinematic-closure loop moves.\n\n"
         "temperature is required: a DIMENSIONLESS reduced parameter, not Kelvin.\n"
         "Where a protein unfolds depends on the protein; chignolin melts at\n"
-        "about 0.75 to 0.8.\n\n"
+        "about 0.6.\n\n"
         "Call set_seed(): the same seed, input and build reproduce a run exactly.")
         .def(py::init<double, float, float, float>(), py::arg("temperature"),
              py::arg("step_size_rad") = 0.1f,
@@ -1255,9 +1255,13 @@ PYBIND11_MODULE(mcpu_core, m) {
         "Directional 7D hydrogen-bond potential (energy group 4).\n\n"
         "The configured outer weight is 1.35, but the EFFECTIVE multiplier\n"
         "is 2.7: RDTHREE_CON (2.0) is applied in the group weight rather\n"
-        "than inside the term. Builds its own virtual amide hydrogens.")
-        .def(py::init<std::vector<float>, std::vector<float>>(),
-             py::arg("loaded_params"), py::arg("seq_dep_params"));
+        "than inside the term. Builds its own virtual amide hydrogens.\n\n"
+        "beta_favor multiplies every pair more than four residues apart,\n"
+        "fixed at construction: 2.0 by default (legacy MCPU compiled 3.0).")
+        .def(py::init<std::vector<float>, std::vector<float>, float>(),
+             py::arg("loaded_params"), py::arg("seq_dep_params"), py::kw_only(),
+             py::arg("beta_favor") = forces::HBondPotential::kDefaultBetaFavor)
+        .def_property_readonly("beta_favor", &forces::HBondPotential::beta_favor);
     py::class_<forces::AromaticPotential, Potential, std::shared_ptr<forces::AromaticPotential>>(m, "AromaticPotential",
         "Ring-ring aromatic stacking for PHE and TRP (energy group 5,\n"
         "default outer weight 5.0).")

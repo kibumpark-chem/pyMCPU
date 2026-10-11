@@ -135,7 +135,7 @@ your own tables.
    :param loaded_params: ``Sequence[float]`` -- flattened parameter
       table.
 
-.. py:class:: HBondPotential(loaded_params, seq_dep_params)
+.. py:class:: HBondPotential(loaded_params, seq_dep_params, *, beta_favor=2.0)
 
    Directional hydrogen-bond term. Default energy group **4**. See
    :doc:`../physics_notes/hbond_directional` and
@@ -145,6 +145,14 @@ your own tables.
       table.
    :param seq_dep_params: ``Sequence[float]`` -- sequence-dependent
       parameter table.
+   :param beta_favor: ``float`` -- factor on every pair more than four
+      residues apart: ``2.0`` by default; legacy MCPU compiled ``3.0``.
+      Must be a finite number above 0, or ``ValueError`` is raised.
+
+   .. py:attribute:: beta_favor
+
+      Read-only ``float``. The factor on pairs more than four residues
+      apart, fixed when the term is built.
 
 .. py:class:: AromaticPotential(aromatic_atom_indices, loaded_params)
 

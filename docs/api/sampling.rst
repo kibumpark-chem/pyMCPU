@@ -21,7 +21,7 @@ the default, and the only force field pyMCPU ships, is mcpu08
 .. note::
    Temperature is a dimensionless reduced parameter, not a physical
    temperature. Where a protein unfolds depends on the protein; chignolin
-   melts at about 0.75 to 0.8. Energies are unitless sums of
+   melts at about 0.6. Energies are unitless sums of
    knowledge-based potential table entries.
 
 Replica exchange

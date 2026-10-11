@@ -225,3 +225,32 @@ def test_resume_cuts_analysis_samples_past_the_checkpoint_with_mock_comm(
     assert want["cycle"].tolist() == [c for c in range(12) for _ in range(2)]
     for key in want:
         np.testing.assert_array_equal(got[key], want[key], err_msg=key)
+
+
+def test_mpi_resume_refuses_another_hbond_beta_favor(
+    mock_comm_rank0, tmp_path, minimal_pdb_path, monkeypatch
+):
+    """The checkpoint records the hydrogen-bond sheet factor, and a run built
+    with another one stops on rank 0's verdict."""
+    from pymcpu import mcpu_core
+    from pymcpu.checkpointing import CheckpointConfig, load_checkpoint
+
+    _ensure_mpi_module_for_construction(monkeypatch)
+    cfg = CheckpointConfig(checkpoint_dir=str(tmp_path / "chk"), checkpoint_interval=1,
+                           resume=False)
+    for out in ("out", "out2"):
+        (tmp_path / out).mkdir()
+    re = _make_two_temp_mpi_re(mock_comm_rank0, minimal_pdb_path, cfg, tmp_path / "out")
+    re._attach_traj_reporters(resume=False)
+    re._mc_replica_steps = 1
+    re._mpi_save_checkpoint(cycle=1, comm=mock_comm_rank0)
+    assert load_checkpoint(tmp_path / "chk" / "last.chk")["hbond_beta_favor"] == 2.0
+
+    cfg.resume = True
+    other = _make_two_temp_mpi_re(mock_comm_rank0, minimal_pdb_path, cfg, tmp_path / "out2",
+                                  forcefield_options={"hbond_beta_favor": 3.0})
+    (hbond,) = [p for p in other.system.get_potentials()
+                if isinstance(p, mcpu_core.HBondPotential)]
+    assert hbond.beta_favor == 3.0
+    with pytest.raises(ValueError, match="written with hbond_beta_favor 2.0, but this run uses 3.0"):
+        other._mpi_load_checkpoint(comm=mock_comm_rank0)
