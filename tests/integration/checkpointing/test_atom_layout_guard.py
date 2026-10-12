@@ -153,6 +153,7 @@ def _bare_mpi_rex(system, checkpoint_dir: Path):
     rex.system = system
     rex.forcefield_name = "mcpu08"
     rex.forcefield = SimpleNamespace(hbond_beta_favor=2.0)
+    rex.move_settings = {"sidechain_move_mode": "rotamer_library"}
     rex.local_replica_indices = []
     rex.replicas = {}
     return rex
@@ -178,7 +179,8 @@ def test_mpi_resume_decides_on_rank_0_and_every_rank_raises(sim, tmp_path: Path)
 def test_mpi_resume_of_a_matching_checkpoint_gets_past_the_check(sim, tmp_path: Path) -> None:
     simulation, coords = sim
     save_checkpoint(
-        {"replica_coords": [coords], "walker_at_state": [0], "cycle": 3, "hbond_beta_favor": 2.0},
+        {"replica_coords": [coords], "walker_at_state": [0], "cycle": 3, "hbond_beta_favor": 2.0,
+         "rotamer_library": simulation.system.get_rotamer_library().fingerprint},
         tmp_path, filename="last.chk",
     )
     rex = _bare_mpi_rex(simulation.system, tmp_path)

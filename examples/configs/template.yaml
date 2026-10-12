@@ -48,6 +48,8 @@ mc_replica_steps: 10                  # int | MC steps per replica per cycle  # 
 seed: 0                               # int | random seed for reproducibility  # default: 42
 # step_size_rad: 0.1                  # float | pivot move width in radians  # default: 0.1
 # kic_step_size_rad: 0.5236           # float | KIC driver width in radians  # default: pi/6 (30 deg)
+# rotamer_library: dunbrack2002_sym   # dunbrack2002_sym | dunbrack2002 (legacy MCPU's draw)
+#                                     #   proposal of the rotamer sidechain move  # default: dunbrack2002_sym
 
 # ── Folding only (1 temperature, no targets) ──────────────────
 # In a folding config `steps` is the TOTAL number of MC steps (in replica

@@ -21,6 +21,7 @@ from pathlib import Path
 import logging
 
 from pymcpu import mcpu_core
+from pymcpu.config import DEFAULT_ROTAMER_LIBRARY
 from pymcpu.mcpu_core import DownstreamCache
 from pymcpu.params import ParamsError, ensure_params, optional_files, required_files
 
@@ -32,7 +33,7 @@ from .builders.mu_builder import MuPotentialBuilder
 from .builders.triplet_builder import TripletPotentialBuilder, SidechainTripletBuilder
 from .builders.hbond_builder import AMINO_INDEX, HydrogenBondBuilder
 from .builders.aromatic_builder import AromaticPotentialBuilder
-from .builders.rotamer_builder import RotamerLibraryBuilder
+from .builders.rotamer_builder import load_rotamer_library
 from .builders.rama_mixture_builder import RamaMixtureLibraryBuilder
 
 logger = logging.getLogger(__name__)
@@ -408,9 +409,9 @@ class MCPUForceField(BaseForceField):
         self.aromatic = AromaticPotentialBuilder.load_parameters(
             str(required_paths["aromatic"])
         )
-        self.rotamer_lib_raw = RotamerLibraryBuilder.load_parameters(
-            str(required_paths["rotamer library"])
-        )
+        # Parsed (and checked) here, once per process; create_system attaches it.
+        self.rotamer_library_path = str(required_paths["rotamer library"])
+        load_rotamer_library(DEFAULT_ROTAMER_LIBRARY, bbind_path=self.rotamer_library_path)
         self.rama_mixture_raw = (
             RamaMixtureLibraryBuilder.load_parameters(
                 str(rama_mixture_path),
@@ -599,7 +600,11 @@ class MCPUForceField(BaseForceField):
         system.set_torsions_per_residue(ntorsions)
         system.set_chi_atom_indices(self.chi_atom_indices)
         system.set_chi_moved_atom_ranges(self.chi_moved_atom_ranges)
-        system.set_rotamer_library(RotamerLibraryBuilder.build(self.rotamer_lib_raw))
+        # The default rotamer library; attach_rotamer_library (pymcpu.config)
+        # swaps in another one when the run selects it.
+        system.set_rotamer_library(
+            load_rotamer_library(DEFAULT_ROTAMER_LIBRARY, bbind_path=self.rotamer_library_path)
+        )
         if self.rama_mixture_raw is not None:
             system.set_rama_mixture_library(
                 RamaMixtureLibraryBuilder.build(self.rama_mixture_raw)

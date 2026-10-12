@@ -106,8 +106,9 @@ The mcpu08 terms and weights
 ----------------------------
 
 :meth:`~pymcpu.MCPUForceField.create_system` adds the five mcpu08 potentials
-to a new system, one per energy group, and installs the rotamer library. Each
-group's energy is multiplied by its weight:
+to a new system, one per energy group, and installs the default rotamer
+library (see `Rotamer libraries`_). Each group's energy is multiplied by its
+weight:
 
 =====  =====================  =============================  ======
 Group  Term                   Potential                      Weight
@@ -234,6 +235,19 @@ The constructor arguments ``param_set``, ``virtual_amide_h``,
 as attributes of the same name. Everything else on the instance, such as the
 loaded parameter tables and the per-residue bookkeeping, is internal and may
 change.
+
+Rotamer libraries
+-----------------
+
+The rotamer sidechain move draws from a rotamer library held by the system.
+:meth:`~pymcpu.MCPUForceField.create_system` installs
+``dunbrack2002_sym``, built from the parameter set's 2002 library
+(``constants/bbind02.May.lib``); a run selects the other proposal,
+``dunbrack2002`` (legacy MCPU's draw), with the ``rotamer_library`` setting.
+In Python, build one with this function and pass it to
+``System.set_rotamer_library``. See :doc:`../physics_notes/rotamer_proposal`.
+
+.. autofunction:: pymcpu.forcefields.builders.rotamer_builder.load_rotamer_library
 
 Supporting types
 ----------------

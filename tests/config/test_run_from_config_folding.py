@@ -127,6 +127,7 @@ def test_folding_settings_reach_the_runner(tmp_path: Path, monkeypatch) -> None:
             "min_seq_sep": 5,
             "contact_atom_mode": "cb",
             "native_contact_pairs": [[0, 7]],
+            "rotamer_library": "dunbrack2002",
             "output_prefix": str(tmp_path / "out" / "fold"),
             "checkpointing": {"enabled": False},
         }
@@ -137,6 +138,7 @@ def test_folding_settings_reach_the_runner(tmp_path: Path, monkeypatch) -> None:
 
     assert seen["steps_per_cycle"] == 300
     assert (seen["step_size_rad"], seen["kic_step_size_rad"]) == (0.05, 0.25)
+    assert seen["rotamer_library"] == "dunbrack2002"
     assert Path(seen["reference_pdb"]) == Path(pdb).resolve()
     assert (seen["q_threshold"], seen["convergence_window"]) == (0.7, 3)
     assert (seen["contact_cutoff_ang"], seen["min_seq_sep"]) == (7.5, 5)

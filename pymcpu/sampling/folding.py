@@ -15,6 +15,7 @@ from pymcpu.config import (
     DEFAULT_CONTACT_ATOM_MODE,
     DEFAULT_CONTACT_CUTOFF,
     DEFAULT_KIC_STEP_SIZE_RAD,
+    DEFAULT_ROTAMER_LIBRARY,
     DEFAULT_MIN_SEQ_SEP,
 )
 from pymcpu.checkpointing import (
@@ -25,6 +26,7 @@ from pymcpu.checkpointing import (
     checkpoint_cycle_filename,
     checkpoint_forcefield_error,
     checkpoint_layout_error,
+    checkpoint_rotamer_library_error,
     get_integrator_move_counters,
     get_integrator_rng_states,
     load_checkpoint as _load_checkpoint,
@@ -74,6 +76,12 @@ class FoldingRunner:
     ``full_energy_every_steps`` sets the simulation's full energy recompute
     cadence (:attr:`pymcpu.Simulation.full_energy_every_steps`); a checkpoint
     save also recomputes.
+
+    ``rotamer_library`` chooses the proposal of the rotamer-library sidechain
+    move (``sidechain_move_mode="rotamer_library"``): ``"dunbrack2002_sym"``
+    (the default) or ``"dunbrack2002"``, legacy MCPU's; see
+    :mod:`pymcpu.forcefields.builders.rotamer_builder`. A checkpoint records
+    it, and resuming with another library is refused.
     """
 
     def __init__(
@@ -94,6 +102,7 @@ class FoldingRunner:
         step_size_rad: float = 0.1,
         kic_step_size_rad: float = DEFAULT_KIC_STEP_SIZE_RAD,
         sidechain_move_mode: str = "rotamer_library",
+        rotamer_library: str = DEFAULT_ROTAMER_LIBRARY,
         pivot_rama_probability: float = 0.0,
         move_weights: tuple[float, float, float] | None = None,
         full_energy_every_steps: int = 1_000_000,
@@ -155,12 +164,14 @@ class FoldingRunner:
             normalize_move_weights,
             normalize_pivot_rama_probability,
             normalize_pivot_rama_schedule,
+            normalize_rotamer_library,
             normalize_sidechain_move_mode,
             validate_fixed_linker_disjoint,
         )
 
         self.linker_energy_mode = normalize_linker_energy_mode(linker_energy_mode)
         self.sidechain_move_mode = normalize_sidechain_move_mode(sidechain_move_mode)
+        self.rotamer_library = normalize_rotamer_library(rotamer_library)
         self.pivot_rama_probability = normalize_pivot_rama_probability(pivot_rama_probability)
         self.move_weights = normalize_move_weights(move_weights)
         self.kic_step_size_rad = normalize_kic_step_size_rad(kic_step_size_rad)
@@ -212,7 +223,9 @@ class FoldingRunner:
         self.system = self.forcefield.create_system(self.topology)
         self.mapping = self.forcefield.inverse_mapping
 
-        from pymcpu.config import apply_linker_energy_mask
+        from pymcpu.config import apply_linker_energy_mask, attach_rotamer_library
+
+        attach_rotamer_library(self.system, self.rotamer_library, self.forcefield)
 
         apply_linker_energy_mask(
             self.system,
@@ -616,6 +629,7 @@ class FoldingRunner:
             pdb_path=str(self.pdb_path),
             forcefield=self.forcefield_name,
             hbond_beta_favor=getattr(self.forcefield, "hbond_beta_favor", None),
+            rotamer_library=self.system.get_rotamer_library().fingerprint,
             reference_pdb=str(self.reference_pdb),
             temperatures=np.asarray([self.temperature], dtype=np.float64),
             n_targets=None,
@@ -682,6 +696,9 @@ class FoldingRunner:
             state.hbond_beta_favor,
             getattr(self.forcefield, "hbond_beta_favor", None),
             checkpoint_path,
+        ) or checkpoint_rotamer_library_error(
+            state.rotamer_library, self.system.get_rotamer_library().fingerprint,
+            self.sidechain_move_mode, checkpoint_path,
         )
         if layout_error:
             raise ValueError(layout_error)

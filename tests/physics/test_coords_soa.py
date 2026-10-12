@@ -146,8 +146,18 @@ pytestmark = pytest.mark.slow
 # the two runs are identical through the warmup and the first 578 measured
 # steps; measured step 579 is the first that differs. Captured with GCC 15 by
 # re-running the recipe above via `run_hotpath`.
-BASELINE_ACCEPT = 264
-BASELINE_E_HBOND = -153.455837281203
+#
+# THIRTEENTH capture, 2026-10-12, after the rotamer move's default proposal
+# went from dunbrack2002 to dunbrack2002_sym (both images of the symmetric
+# chi, each chi from a truncated normal); build_test_context installs the
+# default library. The previous values, ACCEPT 264 and E_HBOND
+# -153.455837281203, still come out of this engine with rotamer_library
+# dunbrack2002. The two proposals read different random numbers, so the runs
+# part at their first sidechain step; the first accept bit that differs is at
+# warmup step 4. Captured with GCC 15 by re-running the recipe above via
+# `run_hotpath`; GCC 13 at x86-64-v3 and v2 give the same values.
+BASELINE_ACCEPT = 221
+BASELINE_E_HBOND = -155.75400980943058
 
 # Repeatability allowance for two back-to-back identical-seed runs -- not a
 # physics constant. Chosen empirically: tight enough that a real

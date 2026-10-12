@@ -5,8 +5,8 @@ Two conventions to know before you start:
 
 * **Temperature is dimensionless** — a reduced parameter, not Kelvin. Where a
   protein unfolds depends on the protein: chignolin, the example structure
-  below, melts at about ``0.6`` in long replica-exchange runs
-  (see :doc:`tutorials/02_replica_exchange`).
+  below, melts at about ``0.6`` in long replica-exchange runs with the
+  default settings (see :doc:`tutorials/02_replica_exchange`).
 * **Energies are unitless** — sums of knowledge-based table entries scaled by a
   dimensionless per-group weight.
 

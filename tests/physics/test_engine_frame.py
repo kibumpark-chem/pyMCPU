@@ -139,7 +139,12 @@ def test_kic_works_far_from_the_origin() -> None:
     RE-MEASURED 2026-10-10 when the KIC driver's default width went from
     0.1 rad to pi/6: at 0.1 rad the same runs gave ~2200 failures and ~8
     accepts kept far, 1 failure and ~440 accepts at the origin, and the
-    accept threshold below was 300."""
+    accept threshold below was 300.
+
+    RE-MEASURED 2026-10-12 when the default rotamer proposal became
+    dunbrack2002_sym: ~1700 to 1860 failures kept far (GCC 15 and GCC 13,
+    x86-64-v3 and v2), and ~210 accepts in the engine frame. With
+    rotamer_library dunbrack2002 they are ~1950 and ~150."""
     ff, top, coords = _chignolin_at(4000.0)
 
     def run(**kwargs):

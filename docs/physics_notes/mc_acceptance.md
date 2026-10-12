@@ -24,8 +24,10 @@ proposed symmetrically:
 The continuous moves draw a symmetric Gaussian step, so w = 1. The library
 moves draw new angles from a distribution q that does not depend on the
 current ones, and q(old) / q(new) makes up for q favouring some angles over
-others. For KIC, J is the Jacobian of the loop closure and n the number of
-closures, before and after the move; see {doc}`kic_jacobian`.
+others; for the rotamer move, q is the proposal density of the selected
+`rotamer_library` (see {doc}`rotamer_proposal`). For KIC, J is the Jacobian of
+the loop closure and n the number of closures, before and after the move; see
+{doc}`kic_jacobian`.
 
 A move that cannot be made, such as a KIC window with no closure, counts as an
 attempt that was not accepted, so it lowers that move's acceptance rate.

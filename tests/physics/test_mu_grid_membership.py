@@ -64,11 +64,14 @@ def test_a_mask_changed_between_runs_keeps_the_running_energy_exact() -> None:
     settings leave none. They include the KIC driver width: at the default
     (pi/6) this seed leaves an overlap after the first masked run. So does
     seed 7, used until 2026-10-11, since the hydrogen-bond sheet factor's
-    default went from 3 to 2."""
+    default went from 3 to 2, and seed 2, used until 2026-10-12, since the
+    rotamer move's default proposal became dunbrack2002_sym. Seed 12 compares
+    all three runs with either rotamer proposal, on GCC 15 at x86-64-v3 and
+    GCC 13 at v3 and v2."""
     ctx = _context()
     full = _grid_atoms(ctx)
     integ = mcpu_core.Integrator(temperature=0.6, step_size_rad=0.2, kic_step_size_rad=0.1)
-    integ.set_seed(2)
+    integ.set_seed(12)
     system = ctx.get_system()
     compared = []
     for chunk, mask in enumerate([MASKED, None, MASKED]):

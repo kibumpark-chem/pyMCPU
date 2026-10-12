@@ -23,6 +23,7 @@ from pymcpu.config import (
     DEFAULT_CONTACT_ATOM_MODE,
     DEFAULT_CONTACT_CUTOFF,
     DEFAULT_KIC_STEP_SIZE_RAD,
+    DEFAULT_ROTAMER_LIBRARY,
     DEFAULT_MIN_SEQ_SEP,
 )
 from pymcpu.checkpointing import (
@@ -33,6 +34,7 @@ from pymcpu.checkpointing import (
     checkpoint_cycle_filename,
     checkpoint_forcefield_error,
     checkpoint_layout_error,
+    checkpoint_rotamer_library_error,
     load_checkpoint,
     save_checkpoint,
     saved_frame_offset,
@@ -156,7 +158,7 @@ class MPIReplicaExchange:
         MPI communicator (typically ``MPI.COMM_WORLD``).
     pdb_path : str
         Input structure path.
-    step_size_rad, kic_step_size_rad, move_weights, sidechain_move_mode, pivot_rama_probability, pivot_rama_schedule
+    step_size_rad, kic_step_size_rad, move_weights, sidechain_move_mode, rotamer_library, pivot_rama_probability, pivot_rama_schedule
         Move settings for every replica, as in
         :class:`~pymcpu.sampling.ReplicaExchange`.
     full_energy_every_steps : int
@@ -193,6 +195,7 @@ class MPIReplicaExchange:
         move_weights: tuple[float, float, float] | None = None,
         full_energy_every_steps: int = 1_000_000,
         sidechain_move_mode: str = "rotamer_library",
+        rotamer_library: str = DEFAULT_ROTAMER_LIBRARY,
         pivot_rama_probability: float = 0.0,
         pivot_rama_schedule: dict[str, float] | None = None,
         kic_step_size_rad: float = DEFAULT_KIC_STEP_SIZE_RAD,
@@ -233,6 +236,7 @@ class MPIReplicaExchange:
         from pymcpu.config import (
             normalize_linker_energy_mode,
             normalize_move_settings,
+            normalize_rotamer_library,
             validate_fixed_linker_disjoint,
         )
 
@@ -248,6 +252,7 @@ class MPIReplicaExchange:
             pivot_rama_schedule=pivot_rama_schedule,
             kic_step_size_rad=kic_step_size_rad,
         )
+        self.rotamer_library = normalize_rotamer_library(rotamer_library)
         self._cycle = 0
         self._exchange_tag = 0
         # MPI tags must stay in [0, TAG_UB]. Exchanges use tag_base..tag_base+2,
@@ -362,6 +367,7 @@ class MPIReplicaExchange:
                 param_set=param_set,
                 param_dir=None if param_dir is None else str(param_dir),
                 move_weights=self.move_settings["move_weights"],
+                rotamer_library=self.rotamer_library,
             )
         )
         n_res = self.system.get_num_residues()
@@ -668,6 +674,7 @@ class MPIReplicaExchange:
                 pdb_path=str(self.pdb_path),
                 forcefield=self.forcefield_name,
                 hbond_beta_favor=getattr(self.forcefield, "hbond_beta_favor", None),
+                rotamer_library=self.system.get_rotamer_library().fingerprint,
                 reference_pdb=str(self.reference_pdb),
                 temperatures=np.asarray(self.temperatures, dtype=np.float64),
                 n_targets=np.asarray(self.n_targets, dtype=np.float64),
@@ -764,6 +771,9 @@ class MPIReplicaExchange:
                 state.get("hbond_beta_favor"),
                 getattr(self.forcefield, "hbond_beta_favor", None),
                 last_chk,
+            ) or checkpoint_rotamer_library_error(
+                state.get("rotamer_library"), self.system.get_rotamer_library().fingerprint,
+                self.move_settings["sidechain_move_mode"], last_chk,
             )
 
         # ── Step 2: broadcast to all ranks ────────────────────────

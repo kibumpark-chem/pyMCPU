@@ -95,13 +95,17 @@ Temperature
 
 Temperature is a dimensionless reduced parameter, as in legacy MCPU, not a
 temperature in Kelvin. Where a protein unfolds depends on the protein:
-with mcpu08, chignolin melts at about 0.6. Replica-exchange runs of 20,000
-cycles put the midpoint at 0.58 to 0.62, both where Q crosses 0.5 and at the
-heat-capacity peak. Runs of 300 cycles that start from the native structure
-scatter between 0.56 and 0.66, because they are too short for equilibrium
-(see :doc:`/tutorials/02_replica_exchange`). With legacy's hydrogen-bond
-sheet factor of 3 instead of the default 2 (see :doc:`hbond_directional`),
-chignolin melts at about 0.75 to 0.8 (midpoint 0.76 to 0.79).
+with mcpu08 and the 0.1.0 defaults (hydrogen-bond sheet factor 2,
+``rotamer_library: dunbrack2002_sym``), chignolin melts at about 0.6.
+Replica-exchange runs of 20,000 cycles at these defaults put the midpoint at
+0.57 to 0.60, both where Q crosses 0.5 and at the heat-capacity peak. Runs of
+300 cycles that start from the native structure put the Q = 0.5 midpoint
+anywhere from 0.52 to 0.66, because they are too short for equilibrium (see
+:doc:`/tutorials/02_replica_exchange`). With legacy's draw of rotamers,
+``rotamer_library: dunbrack2002`` (see :doc:`rotamer_proposal`), the
+20,000-cycle midpoints are 0.58 to 0.62; with that draw and legacy's sheet
+factor of 3 (see :doc:`hbond_directional`), chignolin melts at about 0.75 to
+0.8 (midpoint 0.76 to 0.79).
 
 References
 ----------

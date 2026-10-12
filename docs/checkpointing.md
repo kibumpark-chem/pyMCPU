@@ -97,8 +97,12 @@ from before this was recorded count as mcpu08. It records the hydrogen-bond
 sheet factor too (`forcefield_options: {hbond_beta_favor: ...}`, default 2.0),
 and a run resumed with a different one stops with an error; checkpoints from
 before it was recorded count as legacy MCPU's 3.0, so resume one of those with
-`hbond_beta_favor: 3.0`. A checkpoint whose atom count does
-not match the system stops with an error that names both counts. Format
+`hbond_beta_favor: 3.0`. It records the rotamer library (`rotamer_library`,
+default `dunbrack2002_sym`), and a run resumed with another one stops with an
+error; checkpoints from before it was recorded count as `dunbrack2002`, so
+resume one of those with `rotamer_library: dunbrack2002`. A checkpoint whose
+atom count does not match the system stops with an error that names both
+counts. Format
 version 2 stores each glycine CA once, so a version 1 checkpoint of a protein
 with glycine cannot be resumed; start that run again from its input
 structure. Version 1 checkpoints of glycine-free proteins still resume.

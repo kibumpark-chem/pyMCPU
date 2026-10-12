@@ -154,15 +154,67 @@ PYBIND11_MODULE(mcpu_core, m) {
         .def(py::init<>())
         .def("add_residue_type", &mcpu::RotamerLibrary::add_residue_type,
              py::arg("amino_idx"), py::arg("weights"), py::arg("means"), py::arg("sigmas"),
-             "Registers amino_idx's rotamer table: per-row weight (need not "
-             "already sum to 1) plus per-chi (mean, sigma) in radians.")
+             "Registers amino_idx's row table (the dunbrack2002 proposal): per-row "
+             "weight (need not already sum to 1) plus per-chi (mean, sigma) in radians.")
         .def("num_rows", &mcpu::RotamerLibrary::num_rows, py::arg("amino_idx"))
         .def("sample_row", &mcpu::RotamerLibrary::sample_row,
              py::arg("amino_idx"), py::arg("u01"))
         .def("row", &mcpu::RotamerLibrary::row, py::arg("amino_idx"), py::arg("row_idx"),
              py::return_value_policy::reference_internal)
         .def("log_mixture_density", &mcpu::RotamerLibrary::log_mixture_density,
-             py::arg("amino_idx"), py::arg("ntorsions"), py::arg("chi"));
+             py::arg("amino_idx"), py::arg("ntorsions"), py::arg("chi"))
+        .def("add_truncated_table",
+             [](mcpu::RotamerLibrary& lib, int amino_idx,
+                py::array_t<double, py::array::c_style | py::array::forcecast> weights,
+                py::array_t<double, py::array::c_style | py::array::forcecast> means,
+                py::array_t<double, py::array::c_style | py::array::forcecast> sigmas,
+                py::array_t<double, py::array::c_style | py::array::forcecast> periods) {
+                 if (weights.ndim() != 1 || means.ndim() != 2 || sigmas.ndim() != 2 ||
+                     periods.ndim() != 1) {
+                     throw std::invalid_argument(
+                         "add_truncated_table: weights (rows,), means and sigmas (rows, chi), "
+                         "periods (chi,)");
+                 }
+                 const auto flat = [](const auto& a) {
+                     return std::vector<double>(a.data(), a.data() + a.size());
+                 };
+                 lib.add_truncated_table(amino_idx, flat(weights), flat(means), flat(sigmas),
+                                         flat(periods));
+             },
+             py::arg("amino_idx"), py::arg("weights"), py::arg("means"), py::arg("sigmas"),
+             py::arg("periods"),
+             "Registers amino_idx's truncated table: weights (rows,), means and sigmas "
+             "(rows, chi) in radians, periods (chi,) of 2 pi or pi.")
+        .def("has_truncated_tables", &mcpu::RotamerLibrary::has_truncated_tables)
+        .def("log_density", &mcpu::RotamerLibrary::log_density, py::arg("amino_idx"), py::arg("chi"))
+        .def("sample_chi",
+             [](const mcpu::RotamerLibrary& lib, int amino_idx, unsigned seed, int count) {
+                 // Test helper: `count` draws of the move's own sampler from a
+                 // fresh std::mt19937(seed). Returns (rows (count,), chi (count, 4)).
+                 std::mt19937 rng(seed);
+                 std::normal_distribution<float> unit_normal(0.0f, 1.0f);
+                 py::array_t<int> rows(count);
+                 py::array_t<float> chi({count, 4});
+                 auto r = rows.mutable_unchecked<1>();
+                 auto c = chi.mutable_unchecked<2>();
+                 std::array<float, 4> x{0.0f, 0.0f, 0.0f, 0.0f};
+                 for (int i = 0; i < count; ++i) {
+                     r(i) = lib.sample(amino_idx, rng, unit_normal, x);
+                     for (int j = 0; j < 4; ++j) c(i, j) = x[static_cast<size_t>(j)];
+                 }
+                 return py::make_tuple(rows, chi);
+             },
+             py::arg("amino_idx"), py::arg("seed"), py::arg("count"))
+        .def("table_row",
+             [](const mcpu::RotamerLibrary& lib, int amino_idx, int k) {
+                 const auto row = lib.table_row(amino_idx, k);
+                 return py::make_tuple(row.weight, row.mean, row.sigma);
+             },
+             py::arg("amino_idx"), py::arg("k"),
+             "(weight, means, sigmas) of stored row k of a truncated table, rows "
+             "ordered by weight, largest first.")
+        .def_property("fingerprint", &mcpu::RotamerLibrary::fingerprint,
+                      &mcpu::RotamerLibrary::set_fingerprint);
 
     py::class_<mcpu::RamaComponent>(m, "RamaComponent")
         .def(py::init<>())
@@ -568,8 +620,8 @@ PYBIND11_MODULE(mcpu_core, m) {
         "Metropolis Monte Carlo move engine: backbone pivot, continuous\n"
         "sidechain, rotamer-library and kinematic-closure loop moves.\n\n"
         "temperature is required: a DIMENSIONLESS reduced parameter, not Kelvin.\n"
-        "Where a protein unfolds depends on the protein; chignolin melts at\n"
-        "about 0.6.\n\n"
+        "Where a protein unfolds depends on the protein; with the default\n"
+        "settings, chignolin melts at about 0.6.\n\n"
         "Call set_seed(): the same seed, input and build reproduce a run exactly.")
         .def(py::init<double, float, float, float>(), py::arg("temperature"),
              py::arg("step_size_rad") = 0.1f,
@@ -602,7 +654,7 @@ PYBIND11_MODULE(mcpu_core, m) {
         .def("set_sidechain_move_mode", &mcpu::MCIntegrator::set_sidechain_move_mode,
              py::arg("mode"),
              "Selects the Sidechain-slot proposal algorithm: 'rotamer_library' "
-             "(default) or 'continuous'.")
+             "(default; draws from the System's rotamer library) or 'continuous'.")
         .def("sidechain_move_mode", &mcpu::MCIntegrator::sidechain_move_mode)
         .def("set_pivot_rama_probability", &mcpu::MCIntegrator::set_pivot_rama_probability,
              py::arg("p"),
@@ -823,6 +875,10 @@ PYBIND11_MODULE(mcpu_core, m) {
              py::arg("context"), py::arg("residue"))
         .def("debug_force_rotamer", &mcpu::MCIntegrator::debug_force_rotamer,
              py::arg("context"), py::arg("residue"))
+        .def("debug_force_rotamer_to", &mcpu::MCIntegrator::debug_force_rotamer_to,
+             py::arg("context"), py::arg("residue"), py::arg("target_chi"),
+             "Test-only: forces the rotamer-library sidechain move to an explicit "
+             "chi vector (4 values, radians) instead of drawing one.")
         .def("debug_force_rama_pivot", &mcpu::MCIntegrator::debug_force_rama_pivot,
              py::arg("context"), py::arg("residue"))
         .def("debug_force_rama_pivot_to", &mcpu::MCIntegrator::debug_force_rama_pivot_to,

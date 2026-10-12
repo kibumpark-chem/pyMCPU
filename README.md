@@ -113,7 +113,8 @@ heavy = traj.atom_slice(traj.topology.select("not element H"))
 forcefield = MCPUForceField(heavy, param_set="mcpu08")
 system = forcefield.create_system(heavy.topology)
 
-# Temperature is reduced (dimensionless); chignolin melts at about 0.6
+# Temperature is reduced (dimensionless); with the default settings,
+# chignolin melts at about 0.6
 integrator = mc.Integrator(temperature=0.6, step_size_rad=0.1)
 integrator.set_seed(42)
 
@@ -157,6 +158,7 @@ sheet factor `hbond_beta_favor`: 2 by default, where legacy MCPU used 3.
 |---|---|
 | Legacy outer energy weights | on |
 | H-bond sheet factor (`hbond_beta_favor`) | 2.0 (legacy MCPU: 3.0) |
+| Rotamer proposal (`rotamer_library`) | `dunbrack2002_sym`, both images of symmetric χ (legacy MCPU's draw: `dunbrack2002`) |
 | Virtual amide H (H-bond-only hydrogens) | on |
 | Periodic boundary conditions | none (open boundary) |
 | Floating-point math | IEEE-ish release FP, no fast-math |

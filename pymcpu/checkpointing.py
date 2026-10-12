@@ -80,6 +80,10 @@ class CheckpointState:
     #: None for a force field without one, and in checkpoints written before
     #: it was recorded, whose builds all used legacy MCPU's 3.0.
     hbond_beta_favor: float | None = None
+    #: What the run's rotamer library was (RotamerLibrary.fingerprint: name,
+    #: data checksum, builder constants). Empty in checkpoints written before
+    #: it was recorded; those runs could only use dunbrack2002.
+    rotamer_library: str = ""
     temperatures: Any = None
     n_targets: Any = None
     k_bias: float = 0.0
@@ -463,6 +467,35 @@ def checkpoint_beta_favor_error(
         f"{label} was written with hbond_beta_favor {saved_factor!s}, but this "
         f"run uses {current_factor!s}; resume it with forcefield_options: "
         f"{{hbond_beta_favor: {saved_factor!s}}}, or start a new run without resume"
+    )
+
+
+def checkpoint_rotamer_library_error(
+    saved: str | None, current: str, sidechain_move_mode: str, source: Any = None
+) -> str | None:
+    """Why a checkpoint whose run used rotamer library ``saved`` cannot resume
+    a run whose System holds ``current``, or None. Both are
+    ``RotamerLibrary.fingerprint`` values: the library's name, the checksum of
+    its data file and, for dunbrack2002_sym, the builder version.
+
+    A resumed run must write what the uninterrupted run writes, so the
+    library must be the same one. The continuous sidechain move uses no
+    library and is not checked. A checkpoint without a fingerprint was
+    written before it was recorded, by a build whose only library was
+    dunbrack2002, so only the name is compared then. Checked after the atom
+    layout, like the sheet factor.
+    """
+    if sidechain_move_mode == "continuous":
+        return None
+    current = current or ""
+    saved_name = (saved or "dunbrack2002").split(" ")[0]
+    if saved == current or (not saved and current.split(" ")[0] == saved_name):
+        return None
+    label = f"checkpoint {source}" if source else "the checkpoint"
+    return (
+        f"{label} was written with rotamer library {saved or saved_name!r}, but "
+        f"this run uses {current!r}; resume it with rotamer_library: {saved_name} "
+        "(and the same parameter files), or start a new run without resume"
     )
 
 

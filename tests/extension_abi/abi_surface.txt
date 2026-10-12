@@ -87,6 +87,7 @@ Integrator.debug_force_pivot
 Integrator.debug_force_rama_pivot
 Integrator.debug_force_rama_pivot_to
 Integrator.debug_force_rotamer
+Integrator.debug_force_rotamer_to
 Integrator.debug_force_sc
 Integrator.get_bb_accepted
 Integrator.get_bb_attempted
@@ -209,10 +210,16 @@ RamaMixtureLibrary.num_rows
 RamaMixtureLibrary.row
 RamaMixtureLibrary.sample_row
 RotamerLibrary.add_residue_type
+RotamerLibrary.add_truncated_table
+RotamerLibrary.fingerprint
+RotamerLibrary.has_truncated_tables
+RotamerLibrary.log_density
 RotamerLibrary.log_mixture_density
 RotamerLibrary.num_rows
 RotamerLibrary.row
+RotamerLibrary.sample_chi
 RotamerLibrary.sample_row
+RotamerLibrary.table_row
 EnergyWeights.LEGACY_ARO
 EnergyWeights.LEGACY_BB_TOR
 EnergyWeights.LEGACY_HBOND

@@ -7,8 +7,8 @@ or rejects, and feeds the attached :doc:`reporters <reporters>`.
 
 .. note::
    ``temperature`` is a dimensionless reduced parameter, not a physical
-   temperature unit. Where a protein unfolds depends on the protein;
-   chignolin melts at about 0.6. Energies are unitless
+   temperature unit. Where a protein unfolds depends on the protein; with
+   the default settings, chignolin melts at about 0.6. Energies are unitless
    knowledge-based table sums, so there is no kT and no Boltzmann constant
    in the acceptance test -- see :doc:`../physics_notes/mc_acceptance`.
 
@@ -123,9 +123,31 @@ below, and not every draw can produce a move (see the note under
    ``'rotamer_library'``. Any other value raises ``ValueError``.
 
    The built extension defaults to ``'rotamer_library'``, which draws
-   from the Dunbrack-style rotamer table on the system.
-   ``'continuous'`` perturbs each chi by a Gaussian of width
+   all chi of the residue at once from the rotamer library on the system
+   (``System.set_rotamer_library``) and accepts with the Hastings ratio
+   q(old) / q(new). ``'continuous'`` perturbs each chi by a Gaussian of width
    :py:meth:`Integrator.sidechain_step_size_rad`.
+
+   Which proposal the library makes: the config key ``rotamer_library``
+   (also an ``IntegratorConfig``, ``EngineSpec``, runner and sampler field),
+   or :func:`~pymcpu.forcefields.builders.rotamer_builder.load_rotamer_library`
+   in Python. Both draw from Dunbrack's 2002 rotamer library.
+   ``'dunbrack2002_sym'`` (the default) draws each chi from a normal
+   truncated to one period and gives the two-fold symmetric chi (ASP chi2,
+   GLU chi3, PHE chi2, TYR chi2) period 180 degrees and a random 180 degree
+   image, so both of their halves are proposed. ``'dunbrack2002'`` draws as
+   legacy MCPU does, only on the half of those chi that the rows cover, so a
+   residue that starts in the other half can stay frozen for the whole run;
+   it is kept for comparisons with legacy MCPU. Both proposals target the
+   same ensemble, but ``'dunbrack2002'`` samples only part of it, so its
+   averages can differ; see :doc:`../physics_notes/rotamer_proposal`.
+   Checkpoints record it, and a run refuses to resume under the other one.
+
+   .. code-block:: python
+
+      from pymcpu.forcefields.builders.rotamer_builder import load_rotamer_library
+
+      system.set_rotamer_library(load_rotamer_library("dunbrack2002"))
 
 .. py:method:: Integrator.sidechain_move_mode() -> str
 
@@ -411,13 +433,17 @@ move mix, so a run that uses them is not a valid sample:
 ``debug_force_rama_pivot(context, residue) -> bool``,
 ``debug_force_rama_pivot_to(context, residue, phi, psi) -> bool``,
 ``debug_force_rotamer(context, residue) -> bool``,
+``debug_force_rotamer_to(context, residue, target_chi) -> bool``,
 ``debug_force_sc(context, residue) -> bool`` and
 ``verify_physics_consistency(context, num_steps, atol=0.001)``.
 
 A ``debug_force_*`` hook never commits its move, and, like ``run()``,
 refuses a fixed residue (counting it in ``get_fixed_rejected()``).
 ``debug_force_pivot`` takes the torsions a pivot draws, from ψ of residue
-0 to φ of residue N - 1, and returns ``False`` for any other. When it returns
+0 to φ of residue N - 1, and returns ``False`` for any other.
+``debug_force_rotamer_to`` moves the residue's chi to ``target_chi`` (four
+values in radians, the slots past its chi count ignored) with the Hastings
+term of the drawn move, log q(old) - log q(target). When it returns
 ``True``, ``last_move_kind()``, ``last_move_is_rigid()``,
 ``last_moved_indices()``, ``last_delta_energy()`` and
 ``last_log_jacobian_weight()`` describe the move it proposed.

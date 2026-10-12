@@ -13,12 +13,24 @@ from __future__ import annotations
 import pytest
 
 from pymcpu import mcpu_core
+from pymcpu.forcefields.builders.rotamer_builder import load_rotamer_library
 from tests.fixtures.context_builders import build_raw_context
 
 pytestmark = pytest.mark.slow
 
 
-def test_rotamer_mode_checkpoint_restore_round_trip() -> None:
+@pytest.fixture(scope="module", params=["dunbrack2002_sym", "dunbrack2002"])
+def library(request):
+    return load_rotamer_library(request.param)
+
+
+def _context(library):
+    ctx, top = build_raw_context(virtual_amide_h=True)
+    ctx.get_system().set_rotamer_library(library)
+    return ctx, top
+
+
+def test_rotamer_mode_checkpoint_restore_round_trip(library) -> None:
     """A restored integrator must reproduce the exact continuation of the
     original -- including cases where the checkpoint moment happens to fall
     right after unit_normal_dist_ cached a spare Gaussian.
@@ -34,7 +46,7 @@ def test_rotamer_mode_checkpoint_restore_round_trip() -> None:
     n_warmup = 300
     n_continue = 300
 
-    ctx1, _ = build_raw_context(virtual_amide_h=True)
+    ctx1, _ = _context(library)
     integ1 = mcpu_core.Integrator(temperature=0.6, step_size_rad=0.1)
     integ1.set_sidechain_move_mode("rotamer_library")
     integ1.set_seed(seed)
@@ -46,7 +58,7 @@ def test_rotamer_mode_checkpoint_restore_round_trip() -> None:
 
     # Reproduce ctx1's state-at-checkpoint on ctx2 via an independent,
     # identically-seeded replay.
-    ctx2, _ = build_raw_context(virtual_amide_h=True)
+    ctx2, _ = _context(library)
     integ2 = mcpu_core.Integrator(temperature=0.6, step_size_rad=0.1)
     integ2.set_sidechain_move_mode("rotamer_library")
     integ2.set_seed(seed)
@@ -55,7 +67,7 @@ def test_rotamer_mode_checkpoint_restore_round_trip() -> None:
     # Dirty integ2's rng/cache with unrelated draws, then force it back to
     # the checkpoint -- if reset() is missing, stale cache contamination
     # from this unrelated history would leak into the continuation below.
-    ctx_dirty, _ = build_raw_context(virtual_amide_h=True)
+    ctx_dirty, _ = _context(library)
     integ2.set_seed(seed + 1)
     integ2.run(ctx_dirty, 137)
     integ2.set_rng_state(checkpoint)
