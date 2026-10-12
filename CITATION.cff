@@ -7,11 +7,11 @@ authors:
     given-names: Kibum
     email: kibum_park@fas.harvard.edu
     affiliation: "Shakhnovich Laboratory, Harvard University"
-version: 0.1.0
+version: 0.1.0rc1
 # Set to the release day as the last step before tagging (CONTRIBUTING.md,
 # "Making a release"); wheels.yml refuses to publish while this placeholder
 # is here.
-date-released: "2026-10-11"
+date-released: "2026-10-12"
 # No `license` key: CFF reads a list of licences as alternatives (OR), but the
 # package is MIT AND five third-party licences (README, "License").
 repository-code: "https://github.com/kibumpark-chem/pyMCPU"

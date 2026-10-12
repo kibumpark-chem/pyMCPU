@@ -7,7 +7,7 @@ import importlib.util
 import os
 import sys
 
-__version__ = "0.1.0"
+__version__ = "0.1.0rc1"
 
 PACKAGE_ROOT = os.path.dirname(os.path.abspath(__file__))
 
