@@ -26,10 +26,13 @@ from pymcpu.checkpointing import (
     checkpoint_cycle_filename,
     checkpoint_forcefield_error,
     checkpoint_layout_error,
+    checkpoint_param_set_error,
     checkpoint_rotamer_library_error,
+    describe_param_set,
     get_integrator_move_counters,
     get_integrator_rng_states,
     load_checkpoint as _load_checkpoint,
+    param_set_record,
     save_checkpoint as _save_checkpoint,
     saved_frame_offset,
     set_integrator_move_counters,
@@ -82,6 +85,11 @@ class FoldingRunner:
     (the default) or ``"dunbrack2002"``, legacy MCPU's; see
     :mod:`pymcpu.forcefields.builders.rotamer_builder`. A checkpoint records
     it, and resuming with another library is refused.
+
+    A checkpoint also records the parameter set and the signature of its
+    files (:attr:`pymcpu.MCPUForceField.param_signature`, taken when the
+    runner is built), and resuming with another set or other files is
+    refused.
     """
 
     def __init__(
@@ -216,6 +224,8 @@ class FoldingRunner:
             compute_dssp=self.compute_dssp, dssp_coil_state=self.dssp_coil_state,
         )
         check_move_weights(self.forcefield, self.move_weights, forcefield)
+        # Taken now, from the files just read; checkpoints record it.
+        self._param_record = param_set_record(self.forcefield)
         self.topology = self.forcefield.output_topology
         self.top_path = trajectory_topology_path(
             self.forcefield, self.pdb_path, self.pdb_path,
@@ -630,6 +640,7 @@ class FoldingRunner:
             forcefield=self.forcefield_name,
             hbond_beta_favor=getattr(self.forcefield, "hbond_beta_favor", None),
             rotamer_library=self.system.get_rotamer_library().fingerprint,
+            **self._param_record,
             reference_pdb=str(self.reference_pdb),
             temperatures=np.asarray([self.temperature], dtype=np.float64),
             n_targets=None,
@@ -690,6 +701,8 @@ class FoldingRunner:
         # Restore coordinates / step / RNG
         layout_error = checkpoint_forcefield_error(
             state.forcefield, self.forcefield_name, checkpoint_path
+        ) or checkpoint_param_set_error(
+            state, self._param_record, checkpoint_path
         ) or checkpoint_layout_error(
             state.replica_coords, self.system.get_num_atoms(), checkpoint_path
         ) or checkpoint_beta_favor_error(
@@ -817,6 +830,9 @@ class FoldingRunner:
 
         if self.verbose:
             print(f"PDB: {self.pdb_path}")
+            parameters = describe_param_set(self._param_record)
+            if parameters:
+                print(parameters)
             print(
                 f"Temperature: {self.temperature}  "
                 f"steps_target: {self._total_steps_target}  "

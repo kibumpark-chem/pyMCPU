@@ -34,8 +34,11 @@ from pymcpu.checkpointing import (
     checkpoint_cycle_filename,
     checkpoint_forcefield_error,
     checkpoint_layout_error,
+    checkpoint_param_set_error,
     checkpoint_rotamer_library_error,
+    describe_param_set,
     load_checkpoint,
+    param_set_record,
     save_checkpoint,
     saved_frame_offset,
 )
@@ -387,6 +390,21 @@ class MPIReplicaExchange:
         if top_error:
             raise RuntimeError(top_error)
 
+        # Rank 0 alone reads the parameter files to sign them (0.7 GB for
+        # mcpu08, about 2 s, which every rank would spend if each signed its
+        # own) and sends the record to the others. Its error, if any, is sent
+        # instead, so the other ranks raise rather than wait.
+        record, record_error = None, None
+        if self.rank == 0:
+            try:
+                record = param_set_record(self.forcefield)
+            except Exception as exc:
+                record_error = f"rank 0 could not sign the parameter files: {exc!r}"
+        record, record_error = comm.bcast((record, record_error), root=0)
+        if record_error:
+            raise RuntimeError(record_error)
+        self._param_record: dict[str, str] = dict(record)
+
         n_contacts = float(self.q_cv.n_contacts)
         self.n_targets = resolve_n_targets(n_targets_raw, q_targets_raw, n_contacts)
         self.q_targets = self.n_targets / n_contacts
@@ -675,6 +693,7 @@ class MPIReplicaExchange:
                 forcefield=self.forcefield_name,
                 hbond_beta_favor=getattr(self.forcefield, "hbond_beta_favor", None),
                 rotamer_library=self.system.get_rotamer_library().fingerprint,
+                **self._param_record,
                 reference_pdb=str(self.reference_pdb),
                 temperatures=np.asarray(self.temperatures, dtype=np.float64),
                 n_targets=np.asarray(self.n_targets, dtype=np.float64),
@@ -765,6 +784,8 @@ class MPIReplicaExchange:
         if rank == 0 and state is not None:
             layout_error = checkpoint_forcefield_error(
                 state.get("forcefield"), self.forcefield_name, last_chk
+            ) or checkpoint_param_set_error(
+                state, self._param_record, last_chk
             ) or checkpoint_layout_error(
                 state.get("replica_coords"), self.system.get_num_atoms(), last_chk
             ) or checkpoint_beta_favor_error(
@@ -869,6 +890,9 @@ class MPIReplicaExchange:
             native_contacts_desc,
             f"Rank {self.rank} replicas: {local_desc}",
         ]
+        parameters = describe_param_set(self._param_record)
+        if parameters:
+            lines.append(parameters)
         if self.k_bias > 0.0:
             lines.append(
                 f"N umbrella bias: k_bias={self.k_bias} (harmonic on hard N) "

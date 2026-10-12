@@ -13,6 +13,9 @@ Environment:
 
 - ``MCPU_PARAMS_DIR``: offline / HPC pre-placed params root
 - ``MCPU_CACHE_DIR``: override cache parent (default ``~/.cache/pymcpu``)
+
+:func:`param_signature` identifies the files of a resolved folder, wherever it
+is; checkpoints record it, so a run cannot resume with other tables.
 """
 
 from __future__ import annotations
@@ -34,6 +37,10 @@ from pymcpu import PACKAGE_ROOT
 
 _REGISTRY_PATH = Path(PACKAGE_ROOT) / "data" / "params_registry.json"
 _DEFAULT_SET = "mcpu08"
+
+#: A parameter set's own description file. A folder need not have one; when
+#: it does, :func:`param_signature` covers it as it covers the tables.
+PARAMSET_MANIFEST = "constants/paramset.json"
 
 logger = logging.getLogger(__name__)
 
@@ -123,6 +130,63 @@ def table_layout(set_name: str = _DEFAULT_SET) -> dict[str, str]:
 def constants_files(set_name: str = _DEFAULT_SET) -> list[str]:
     """Relative paths of the non-table (``constants/``) files in a set."""
     return list(_layout(set_name).get("constants") or [])
+
+
+def signed_files(set_name: str = _DEFAULT_SET) -> list[str]:
+    """Relative paths :func:`param_signature` covers, sorted: every file the
+    set's layout names (required, optional, tables and constants), which are
+    the files ``MCPUForceField`` reads, and :data:`PARAMSET_MANIFEST`."""
+    layout = _layout(set_name)
+    paths = set(layout.get("required", {}).values())
+    paths.update((layout.get("optional") or {}).values())
+    paths.update((layout.get("tables") or {}).values())
+    paths.update(layout.get("constants") or [])
+    paths.add(PARAMSET_MANIFEST)
+    return sorted(paths)
+
+
+#: sha256 of each file read so far, by (real path, device, inode, size,
+#: modification time): see _file_sha256.
+_FILE_SHA256: dict[tuple[str, int, int, int, int], str] = {}
+
+
+def _file_sha256(path: Path) -> str:
+    """sha256 (hex) of a file's bytes, kept for the life of the process.
+
+    Kept by the file's real path, device, inode, size and modification time,
+    so a process that builds many runs from one folder reads each file once
+    (the mcpu08 tables are 0.7 GB, about 2 s to hash), and a file that has
+    been replaced or rewritten since is read again.
+    """
+    real = os.path.realpath(path)
+    st = os.stat(real)
+    key = (real, st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns)
+    digest = _FILE_SHA256.get(key)
+    if digest is None:
+        with open(real, "rb") as handle:
+            digest = hashlib.file_digest(handle, "sha256").hexdigest()
+        _FILE_SHA256[key] = digest
+    return digest
+
+
+def param_signature(param_dir: str | Path, set_name: str = _DEFAULT_SET) -> str:
+    """sha256 (hex) identifying the parameter files a force field reads from
+    ``param_dir``, a folder laid out as ``set_name``.
+
+    It covers each of :func:`signed_files` by its relative path and the
+    sha256 of its bytes; a file the folder lacks counts as absent. So two
+    folders that hold the same files have the same signature wherever they
+    are, and changing, adding or removing one of those files changes it.
+    Other files in the folder do not count. Links are followed. Each file is
+    read once per process while it stays unchanged.
+    """
+    root = Path(param_dir)
+    digest = hashlib.sha256()
+    for rel in signed_files(set_name):
+        path = root / rel
+        entry = _file_sha256(path) if path.is_file() else "absent"
+        digest.update(f"{rel}\0{entry}\n".encode())
+    return digest.hexdigest()
 
 
 def _looks_like_params_root(path: Path, files: list[str]) -> bool:

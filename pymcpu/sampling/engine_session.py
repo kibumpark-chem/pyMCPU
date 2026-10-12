@@ -30,6 +30,7 @@ import mdtraj as md
 import numpy as np
 
 from pymcpu import mcpu_core
+from pymcpu.checkpointing import param_set_record
 from pymcpu.config import (
     EngineSpec,
     apply_linker_energy_mask,
@@ -53,18 +54,25 @@ def compute_fingerprint(
     *,
     compute_dssp: bool = False,
     dssp_coil_state: str = "C",
+    param_signature: str | None = None,
 ) -> str:
     """Short hash identifying what an engine was built from.
 
     Lets a restart state loaded against a different system fail loudly
     instead of producing silent nonsense -- the coordinates would have the
-    wrong atom count, or the right count in a different order.
+    wrong atom count, or the right count in a different order -- or against
+    other parameter tables. ``param_signature`` is the signature of the
+    parameter files (:attr:`pymcpu.MCPUForceField.param_signature`, which
+    checkpoints record too); without it the hash is the one earlier versions
+    gave, which did not cover the tables.
     """
     payload = (
         f"{Path(pdb_path).resolve()}|{param_set}|{int(n_atoms)}|"
         f"{bool(compute_dssp)}|{dssp_coil_state}"
-    ).encode()
-    return hashlib.sha256(payload).hexdigest()[:16]
+    )
+    if param_signature:
+        payload += f"|{param_signature}"
+    return hashlib.sha256(payload.encode()).hexdigest()[:16]
 
 
 def build_forcefield(spec: EngineSpec) -> tuple[BaseForceField, md.Topology]:
@@ -150,9 +158,14 @@ class EngineSession:
             self._sim.context.set_positions(coords0)
             self._sim.context.calculate_total_energy(-1)
             check_state_clash(self._sim.context, "start structure")
+            # The set and files the force field read, as a checkpoint records
+            # them; forcefield_options can name another set than spec.param_set.
+            record = param_set_record(ff)
             self._fingerprint = compute_fingerprint(
-                self.spec.pdb, self.spec.param_set, system.get_num_atoms(),
+                self.spec.pdb, record["param_set"] or self.spec.param_set,
+                system.get_num_atoms(),
                 compute_dssp=self.spec.compute_dssp, dssp_coil_state=self.spec.dssp_coil_state,
+                param_signature=record["param_signature"] or None,
             )
         return self._sim
 
@@ -161,6 +174,9 @@ class EngineSession:
     # ------------------------------------------------------------------
     @property
     def fingerprint(self) -> str:
+        """:func:`compute_fingerprint` of the engine: the PDB's path, the
+        parameter set and the signature of its files, the atom count and the
+        DSSP settings. Taken when the engine is built."""
         self._ensure_sim()
         assert self._fingerprint is not None
         return self._fingerprint

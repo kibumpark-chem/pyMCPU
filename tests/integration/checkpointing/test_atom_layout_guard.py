@@ -22,6 +22,7 @@ from pymcpu.checkpointing import (  # noqa: E402
     CheckpointConfig,
     checkpoint_layout_error,
     load_checkpoint,
+    param_set_record,
     save_checkpoint,
 )
 from pymcpu.runners import default_example_pdb  # noqa: E402
@@ -153,6 +154,7 @@ def _bare_mpi_rex(system, checkpoint_dir: Path):
     rex.system = system
     rex.forcefield_name = "mcpu08"
     rex.forcefield = SimpleNamespace(hbond_beta_favor=2.0)
+    rex._param_record = param_set_record(rex.forcefield)  # no parameter set: not checked
     rex.move_settings = {"sidechain_move_mode": "rotamer_library"}
     rex.local_replica_indices = []
     rex.replicas = {}

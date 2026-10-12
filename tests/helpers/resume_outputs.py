@@ -28,6 +28,9 @@ CHECKPOINT_KEYS = (
     "exchange_rng",
     "exchange_counts",
     "traj_frame_indices",
+    # Not param_dir: the same files in another folder resume the run.
+    "param_set",
+    "param_signature",
 )
 
 

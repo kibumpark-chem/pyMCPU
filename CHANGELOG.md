@@ -5,6 +5,38 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Checkpoints record the parameter set and refuse a resume under another
+  one.** A run started with one parameter folder used to resume silently with
+  any other, for example under another set's tables given through
+  `MCPU_PARAMS_DIR`. Checkpoints now record `param_set`, `param_signature`
+  and `param_dir`. The signature is a sha256 over the files the force field
+  reads: those the set's registry layout names, plus
+  `constants/paramset.json` when the folder has one. A resume under another
+  set, or with files whose signature differs, stops with an error that says
+  which differs, gives both values, and names the `param_set:` or
+  `param_dir:` that resumes it. The same files in another folder resume. A
+  checkpoint written before these fields counts as mcpu08 and resumes under it
+  with a one-line warning, as its files cannot be checked. Folding, replica
+  exchange and MPI replica exchange all check it.
+- `MCPUForceField.param_signature` and `pymcpu.params.param_signature`. A
+  process reads each parameter file once while it is unchanged (0.7 GB, about
+  2 s, for mcpu08). The runners take the signature when they are built; MPI
+  replica exchange takes it on rank 0 and sends it to the other ranks.
+  Building a force field alone does not take it.
+
+### Changed
+
+- `EngineSession.fingerprint` covers the parameter set the force field was
+  built from and the signature of its files, so it differs from 0.1.0's for
+  the same engine. `compute_fingerprint` takes `param_signature`; without it
+  the hash is the old one.
+- Runs print the parameter set, its folder and the start of its signature
+  with the rest of their description.
+
 ## [0.1.0] - 2026-10-11
 
 First public release. pyMCPU reimplements MCPU, the Shakhnovich lab's Monte

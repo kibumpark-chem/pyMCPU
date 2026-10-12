@@ -88,24 +88,35 @@ beginning, while single-process replica exchange stops with an error.
 
 Under MPI, rank 0 writes and reads the checkpoint, which covers every replica.
 
-### Checkpoints from other versions
+### Checkpoints from other versions and other settings
 
 Every checkpoint records its format version, and a file newer than the
-installed pyMCPU understands is refused. It also records the force field, and
-a run resumed with a different `forcefield:` stops with an error; checkpoints
-from before this was recorded count as mcpu08. It records the hydrogen-bond
-sheet factor too (`forcefield_options: {hbond_beta_favor: ...}`, default 2.0),
-and a run resumed with a different one stops with an error; checkpoints from
-before it was recorded count as legacy MCPU's 3.0, so resume one of those with
-`hbond_beta_favor: 3.0`. It records the rotamer library (`rotamer_library`,
-default `dunbrack2002_sym`), and a run resumed with another one stops with an
-error; checkpoints from before it was recorded count as `dunbrack2002`, so
-resume one of those with `rotamer_library: dunbrack2002`. A checkpoint whose
-atom count does not match the system stops with an error that names both
-counts. Format
-version 2 stores each glycine CA once, so a version 1 checkpoint of a protein
-with glycine cannot be resumed; start that run again from its input
-structure. Version 1 checkpoints of glycine-free proteins still resume.
+installed pyMCPU understands is refused. It also records what the run was
+built with, and a run resumed with something different stops with an error
+that says what differs, gives both values, and names the setting that
+resumes it:
+
+- The force field (`forcefield:`). Checkpoints from before this was recorded
+  count as mcpu08.
+- The parameter set (`param_set:`, default `mcpu08`) and a signature of its
+  files: a sha256 over the tables and constants the force field reads
+  (`MCPUForceField.param_signature`). The same files in another folder
+  resume the run; other files do not, and the error names the folder the
+  checkpoint was written with, to pass as `param_dir:`. Checkpoints from
+  before this was recorded count as mcpu08. They resume under it with a
+  one-line warning, because their files cannot be checked.
+- The hydrogen-bond sheet factor (`forcefield_options: {hbond_beta_favor:
+  ...}`, default 2.0). Checkpoints from before it was recorded count as legacy
+  MCPU's 3.0, so resume one of those with `hbond_beta_favor: 3.0`.
+- The rotamer library (`rotamer_library`, default `dunbrack2002_sym`).
+  Checkpoints from before it was recorded count as `dunbrack2002`, so resume
+  one of those with `rotamer_library: dunbrack2002`.
+
+A checkpoint whose atom count does not match the system stops with an error
+that names both counts. Format version 2 stores each glycine CA once, so a
+version 1 checkpoint of a protein with glycine cannot be resumed; start that
+run again from its input structure. Version 1 checkpoints of glycine-free
+proteins still resume.
 
 ### Exact continuation
 

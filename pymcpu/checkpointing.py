@@ -84,6 +84,16 @@ class CheckpointState:
     #: data checksum, builder constants). Empty in checkpoints written before
     #: it was recorded; those runs could only use dunbrack2002.
     rotamer_library: str = ""
+    #: The parameter set the force field was built from
+    #: (MCPUForceField.param_set). Empty for a force field without one, and
+    #: in checkpoints written before it was recorded, which count as mcpu08.
+    param_set: str = ""
+    #: sha256 of the parameter files the force field read
+    #: (MCPUForceField.param_signature); empty when param_set is.
+    param_signature: str = ""
+    #: The folder those files were read from, as an absolute path. Only
+    #: reported, never compared: the same files elsewhere resume the run.
+    param_dir: str = ""
     temperatures: Any = None
     n_targets: Any = None
     k_bias: float = 0.0
@@ -440,6 +450,116 @@ def checkpoint_forcefield_error(
         f"{label} was written by a {saved_name!r} run, but this run builds "
         f"forcefield {current!r}; resume it with the force field it was "
         "started with, or start a new run without resume"
+    )
+
+
+#: The parameter set a checkpoint written before param_set was recorded
+#: counts as: those builds shipped no other.
+LEGACY_PARAM_SET = "mcpu08"
+
+
+def param_set_record(forcefield: Any) -> dict[str, str]:
+    """What a checkpoint records about the parameters ``forcefield`` reads:
+    ``param_set``, ``param_signature`` (``MCPUForceField.param_signature``)
+    and ``param_dir`` (the folder, as an absolute path). All three are empty
+    for a force field without a parameter set.
+
+    Taking the signature reads the parameter files the first time a process
+    asks for them (about 2 s for mcpu08), so the runners take the record once,
+    when they are built; the MPI replica exchange takes it on rank 0 and
+    sends it to the other ranks.
+    """
+    param_set = getattr(forcefield, "param_set", None)
+    if not isinstance(param_set, str) or not param_set:
+        return {"param_set": "", "param_signature": "", "param_dir": ""}
+    signature = getattr(forcefield, "param_signature", None)
+    folder = getattr(forcefield, "param_dir", None)
+    return {
+        "param_set": param_set,
+        "param_signature": signature if isinstance(signature, str) else "",
+        "param_dir": os.path.abspath(folder) if isinstance(folder, (str, os.PathLike)) else "",
+    }
+
+
+def describe_param_set(record: dict[str, str]) -> str | None:
+    """One line naming the parameters of a :func:`param_set_record`, for a
+    run's log, or None for a force field without a parameter set."""
+    if not record.get("param_set"):
+        return None
+    return (
+        f"Parameters: {record['param_set']} from {record['param_dir']} "
+        f"(signature {record['param_signature'][:16]})"
+    )
+
+
+def checkpoint_param_set_error(
+    saved: dict[str, Any] | CheckpointState,
+    current: dict[str, str],
+    source: Any = None,
+) -> str | None:
+    """Why a checkpoint cannot resume a run that reads the parameters
+    ``current`` (a :func:`param_set_record`), or None.
+
+    The run must use the parameter set the checkpoint names, and read files
+    with the same signature, so the same tables and constants; where the
+    folder is does not matter. A force field without a parameter set is not
+    checked. A checkpoint written before parameter sets were recorded counts
+    as mcpu08, the only set of those builds, and its files cannot be checked:
+    resuming one under mcpu08 logs one warning that says so. Checked after
+    the force field and before the atom layout, which the parameter set's
+    residue templates decide.
+    """
+
+    def saved_value(key: str) -> str:
+        value = saved.get(key) if isinstance(saved, dict) else getattr(saved, key, None)
+        return value if isinstance(value, str) else ""
+
+    current_set = current.get("param_set") or ""
+    if not current_set:
+        return None
+    label = f"checkpoint {source}" if source else "the checkpoint"
+    current_dir = current.get("param_dir") or "?"
+    saved_set = saved_value("param_set")
+    if not saved_set:
+        if current_set == LEGACY_PARAM_SET:
+            logger.warning(
+                "%s records no parameter set, as it was written before they were recorded: "
+                "it counts as %s, and its parameter files are not checked against this run's (%s)",
+                label, LEGACY_PARAM_SET, current_dir,
+            )
+            return None
+        return (
+            f"{label} records no parameter set, so it counts as {LEGACY_PARAM_SET!r} (the "
+            f"only set when it was written), but this run uses param_set {current_set!r}; "
+            f"resume it with param_set: {LEGACY_PARAM_SET}, or start a new run without resume"
+        )
+    if saved_set != current_set:
+        return (
+            f"{label} was written with param_set {saved_set!r}, but this run uses "
+            f"{current_set!r}; resume it with param_set: {saved_set}, or start a new run "
+            "without resume"
+        )
+    saved_signature = saved_value("param_signature")
+    current_signature = current.get("param_signature") or ""
+    if not saved_signature or not current_signature or saved_signature == current_signature:
+        return None
+    saved_dir = saved_value("param_dir")
+    if saved_dir and saved_dir != current_dir:
+        advice = (
+            f"resume it with param_dir: {saved_dir} (or another folder with the same "
+            "files), or start a new run without resume"
+        )
+    else:
+        advice = (
+            f"the files in {current_dir} have changed since; resume it with param_dir set "
+            "to a folder that holds the files it was written with, or start a new run "
+            "without resume"
+        )
+    return (
+        f"{label} was written with param_set {saved_set!r} from parameter files with "
+        f"signature {saved_signature} ({saved_dir or 'folder not recorded'}), but this "
+        f"run's files have signature {current_signature} ({current_dir}): a table or "
+        f"constants file differs; {advice}"
     )
 
 

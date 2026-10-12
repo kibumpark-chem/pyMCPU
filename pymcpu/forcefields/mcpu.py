@@ -23,7 +23,13 @@ import logging
 from pymcpu import mcpu_core
 from pymcpu.config import DEFAULT_ROTAMER_LIBRARY
 from pymcpu.mcpu_core import DownstreamCache
-from pymcpu.params import ParamsError, ensure_params, optional_files, required_files
+from pymcpu.params import (
+    ParamsError,
+    ensure_params,
+    optional_files,
+    param_signature,
+    required_files,
+)
 
 
 from .base import BaseForceField
@@ -158,6 +164,7 @@ class MCPUForceField(BaseForceField):
                 raise FileNotFoundError(str(exc)) from exc
         self.param_dir = Path(param_dir)
         self.param_set = param_set
+        self._param_signature: str | None = None
         self.virtual_amide_h = bool(virtual_amide_h)
         self.compute_dssp = bool(compute_dssp)
         self.dssp_coil_state = dssp_coil_state
@@ -760,6 +767,23 @@ class MCPUForceField(BaseForceField):
                 )
             )
     
+    @property
+    def param_signature(self) -> str:
+        """sha256 (hex) of the parameter files this force field reads:
+        :func:`pymcpu.params.param_signature` of :attr:`param_dir` with the
+        ``param_set`` layout. Folders that hold the same files have the same
+        signature wherever they are.
+
+        It is taken the first time it is asked for, and kept. That reads the
+        files again (0.7 GB for mcpu08, about 2 s, once per process), so
+        building a force field does not take it; the runners do, when they
+        are built, and their checkpoints record it, so a run cannot resume
+        with other tables.
+        """
+        if self._param_signature is None:
+            self._param_signature = param_signature(self.param_dir, self.param_set)
+        return self._param_signature
+
     @property
     def sidechain_move_residues(self) -> list[int]:
         """Residues a sidechain move can act on: those with chi angles, except

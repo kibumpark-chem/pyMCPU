@@ -31,12 +31,15 @@ from pymcpu.checkpointing import (
     checkpoint_beta_favor_error,
     checkpoint_cycle_filename,
     checkpoint_forcefield_error,
+    checkpoint_param_set_error,
     checkpoint_rotamer_library_error,
     checkpoint_layout_error,
+    describe_param_set,
     find_latest_checkpoint,
     get_integrator_move_counters,
     get_integrator_rng_states,
     load_checkpoint,
+    param_set_record,
     restore_numpy_rng,
     save_checkpoint,
     saved_frame_offset,
@@ -270,6 +273,8 @@ class ReplicaExchange:
           rotamer_library=self.rotamer_library,
         )
       )
+      # Taken now, from the files just read; checkpoints record it.
+      self._param_record = param_set_record(self.forcefield)
 
       n_contacts = float(self.q_cv.n_contacts)
       self.n_targets = resolve_n_targets(n_targets_raw, q_targets_raw, n_contacts)
@@ -343,6 +348,9 @@ class ReplicaExchange:
           f"N umbrella bias: k_bias={self.k_bias} (harmonic on hard N) "
           "applied during MC moves and exchange."
         )
+      parameters = describe_param_set(self._param_record)
+      if parameters:
+        lines.append(parameters)
       return "\n".join(lines)
 
     def get_replica_state(self, replica: Replica) -> ReplicaState:
@@ -394,6 +402,7 @@ class ReplicaExchange:
         "forcefield": self.forcefield_name,
         "hbond_beta_favor": getattr(self.forcefield, "hbond_beta_favor", None),
         "rotamer_library": self.system.get_rotamer_library().fingerprint,
+        **self._param_record,
         "reference_pdb": str(self.reference_pdb),
         "temperatures": np.asarray(self.temperatures, dtype=np.float64),
         "n_targets": np.asarray(self.n_targets, dtype=np.float64),
@@ -464,6 +473,8 @@ class ReplicaExchange:
         raise ValueError(f"Unsupported checkpoint kind: {kind!r}")
       layout_error = checkpoint_forcefield_error(
         checkpoint.get("forcefield"), self.forcefield_name
+      ) or checkpoint_param_set_error(
+        checkpoint, self._param_record
       ) or checkpoint_layout_error(
         checkpoint.get("replica_coords"), self.system.get_num_atoms()
       ) or checkpoint_beta_favor_error(

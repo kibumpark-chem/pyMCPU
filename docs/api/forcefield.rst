@@ -62,8 +62,11 @@ Class reference
 Besides :meth:`~pymcpu.MCPUForceField.create_system`, the class has the
 :attr:`~pymcpu.MCPUForceField.inverse_mapping` and
 :attr:`~pymcpu.MCPUForceField.output_topology` properties and
-:meth:`~pymcpu.MCPUForceField.prepare_trajectory`, which drops hydrogens. The
-attributes worth reading are listed under `Attributes`_.
+:meth:`~pymcpu.MCPUForceField.prepare_trajectory`, which drops hydrogens.
+:attr:`~pymcpu.MCPUForceField.param_signature` identifies the parameter files
+it read; checkpoints record it with the parameter set, so a run cannot resume
+with other tables (see :doc:`../checkpointing`). The attributes worth reading
+are listed under `Attributes`_.
 
 Atom order, ``coords`` and ``inverse_mapping``
 ----------------------------------------------

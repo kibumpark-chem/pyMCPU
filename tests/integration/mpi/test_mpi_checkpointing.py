@@ -282,3 +282,125 @@ def test_mpi_resume_refuses_another_rotamer_library(
     assert other.system.get_rotamer_library().fingerprint.startswith("dunbrack2002 md5=")
     with pytest.raises(ValueError, match="resume it with rotamer_library: dunbrack2002_sym"):
         other._mpi_load_checkpoint(comm=mock_comm_rank0)
+
+
+def _save_one_checkpoint(comm, pdb_path, tmp_path):
+    """A 2-replica run's checkpoint at cycle 1, saved by rank 0 (mock)."""
+    from pymcpu.checkpointing import CheckpointConfig
+
+    cfg = CheckpointConfig(checkpoint_dir=str(tmp_path / "chk"), checkpoint_interval=1,
+                           resume=False)
+    (tmp_path / "out").mkdir()
+    rex = _make_two_temp_mpi_re(comm, pdb_path, cfg, tmp_path / "out")
+    rex._attach_traj_reporters(resume=False)
+    rex._mc_replica_steps = 1
+    rex._mpi_save_checkpoint(cycle=1, comm=comm)
+    cfg.resume = True
+    return rex, cfg
+
+
+@pytest.mark.parametrize("change", ["files", "set"])
+def test_mpi_resume_refuses_other_parameter_files_or_another_set(
+    change, mock_comm_rank0, tmp_path, minimal_pdb_path, monkeypatch
+):
+    """The checkpoint records the parameter set and the signature of its
+    files, and a run built with other files or another set stops on rank 0's
+    verdict, with the value to pass."""
+    from pymcpu.checkpointing import load_checkpoint
+    from tests.helpers.param_folders import (
+        changed_param_folder,
+        linked_param_folder,
+        register_set_like_mcpu08,
+    )
+
+    _ensure_mpi_module_for_construction(monkeypatch)
+    rex, cfg = _save_one_checkpoint(mock_comm_rank0, minimal_pdb_path, tmp_path)
+    saved = load_checkpoint(tmp_path / "chk" / "last.chk")
+    assert saved["param_set"] == "mcpu08"
+    assert saved["param_signature"] == rex.forcefield.param_signature
+
+    if change == "files":
+        options = {"param_dir": str(changed_param_folder(tmp_path / "changed"))}
+        expected = (
+            "a table or constants file differs; resume it with param_dir: "
+            f"{saved['param_dir']} "
+        )
+    else:
+        name = register_set_like_mcpu08(monkeypatch)
+        options = {"param_set": name, "param_dir": str(linked_param_folder(tmp_path / "linked"))}
+        expected = f"but this run uses '{name}'; resume it with param_set: mcpu08,"
+    (tmp_path / "out2").mkdir()
+    other = _make_two_temp_mpi_re(mock_comm_rank0, minimal_pdb_path, cfg, tmp_path / "out2",
+                                  **options)
+    with pytest.raises(ValueError) as refused:
+        other._mpi_load_checkpoint(comm=mock_comm_rank0)
+    assert expected in str(refused.value)
+
+
+def test_mpi_resumes_a_checkpoint_without_a_parameter_set_as_mcpu08(
+    mock_comm_rank0, tmp_path, minimal_pdb_path, monkeypatch, caplog
+):
+    """A checkpoint written before the parameter set was recorded counts as
+    mcpu08: it resumes, and says once that its files were not checked."""
+    import logging
+
+    from pymcpu.checkpointing import CheckpointConfig, load_checkpoint, save_checkpoint
+
+    _ensure_mpi_module_for_construction(monkeypatch)
+    out, last = _run_stages(mock_comm_rank0, minimal_pdb_path, tmp_path, [3])
+    for chk in last.parent.glob("*.chk"):
+        state = load_checkpoint(chk)
+        for key in ("param_set", "param_signature", "param_dir"):
+            assert state.pop(key)  # saved by this version...
+        save_checkpoint(state, chk.parent, filename=chk.name)  # ...and now removed
+
+    cfg = CheckpointConfig(checkpoint_dir=str(last.parent), checkpoint_interval=3, resume=True)
+    with caplog.at_level(logging.WARNING, logger="pymcpu.checkpointing"):
+        rex = _make_two_temp_mpi_re(
+            mock_comm_rank0, minimal_pdb_path, cfg, out, exchange_log="all", state_log_interval=1
+        )
+        rex.run(6, 10, verbose=False, write_logs=True)
+    lines = [r.getMessage() for r in caplog.records if "records no parameter set" in r.getMessage()]
+    assert len(lines) == 1 and "it counts as mcpu08" in lines[0]
+    resumed = load_checkpoint(last)
+    assert resumed["cycle"] == 6 and resumed["param_set"] == "mcpu08"
+
+
+def test_rank0_alone_signs_the_parameter_files(tmp_path, minimal_pdb_path, monkeypatch):
+    """Rank 0 reads the parameter files to sign them and sends the record to
+    the other ranks, which do not read them. Two ranks are mocked here: rank
+    1's broadcasts return what rank 0 sent. ``test_mpi_checkpointing_multirank``
+    checks the same with two live ranks."""
+    import pymcpu.forcefields.mcpu as mcpu_module
+    from pymcpu.checkpointing import CheckpointConfig
+
+    _ensure_mpi_module_for_construction(monkeypatch)
+    signed = []
+    sign = mcpu_module.param_signature
+    monkeypatch.setattr(mcpu_module, "param_signature",
+                        lambda *args: signed.append(args) or sign(*args))
+
+    sent = []
+
+    def comm_of(rank, replies=None):
+        comm = MagicMock()
+        comm.Get_rank.return_value = rank
+        comm.Get_size.return_value = 2
+        comm.Get_attr.return_value = 32767
+        comm.Barrier.return_value = None
+        if replies is None:
+            comm.bcast.side_effect = lambda data, root=0: sent.append(data) or data
+        else:
+            replies = iter(replies)
+            comm.bcast.side_effect = lambda data, root=0: next(replies)
+        return comm
+
+    cfg = CheckpointConfig(checkpoint_dir=str(tmp_path / "chk"), resume=False)
+    (tmp_path / "out").mkdir()
+    rank0 = _make_two_temp_mpi_re(comm_of(0), minimal_pdb_path, cfg, tmp_path / "out")
+    assert len(signed) == 1
+    rank1 = _make_two_temp_mpi_re(comm_of(1, list(sent)), minimal_pdb_path, cfg, tmp_path / "out")
+    assert len(signed) == 1  # rank 1 took rank 0's record
+    assert rank1._param_record == rank0._param_record
+    assert rank0._param_record["param_signature"] == rank0.forcefield.param_signature
+    assert rank1.forcefield._param_signature is None
