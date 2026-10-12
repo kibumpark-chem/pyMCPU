@@ -43,7 +43,12 @@ many times as you need.
    positions = (ff.coords[0] * 10.0).T.astype(np.float32)
 
 The parameters are read in the constructor, so a missing or incomplete
-parameter directory fails there. Without ``param_dir``, the set named by
+parameter directory fails there. So does a residue template
+(``constants/standard_amino_acids.json``) in which a residue names its chi
+atoms (``chi_atoms``) without the atoms each chi moves (``chi_moved_atoms``,
+one row of atom names per chi). The side-chain moves turn only the atoms in
+those rows, so a chi angle without its row would never change, and the
+energies would not show it. Without ``param_dir``, the set named by
 ``param_set`` is found as described under "MCPU parameter lookup" in
 :doc:`../installation`.
 

@@ -71,6 +71,50 @@ def _hbond_beta_favor(value: object) -> float:
     raise ValueError(f"hbond_beta_favor must be a finite number above 0, got {value!r}")
 
 
+def _check_chi_moved_atoms(template: dict, path: Path) -> None:
+    """Raise ValueError unless every residue in ``template`` that names chi
+    atoms also names the atoms each chi moves.
+
+    ``chi_atoms`` holds the four atoms that define each chi angle, and
+    ``chi_moved_atoms`` the atoms that turn with it, one row per chi. The
+    side-chain moves turn only the atoms in those rows. A template without
+    them used to load: every chi got the moved range [-1, -1], so no side
+    chain ever moved, and the energies, which do not read the rows, looked
+    normal. ``path`` is the template's file, for the message. An entry that
+    is not a residue (not a JSON object) is left alone, as before.
+    """
+    problems = []
+    for name in sorted(template):
+        entry = template[name]
+        if not isinstance(entry, dict):
+            continue
+        chi = entry.get("chi_atoms") or []
+        if not chi:
+            continue
+        moved = entry.get("chi_moved_atoms")
+        if moved is None:
+            problems.append(f"{name} has none")
+        elif not isinstance(moved, list):
+            problems.append(f"{name} has a {type(moved).__name__}, not a list of rows")
+        elif len(moved) != len(chi):
+            problems.append(f"{name} has {len(moved)} rows for {len(chi)} chi")
+        else:
+            empty = [f"chi{k + 1}" for k, row in enumerate(moved)
+                     if not isinstance(row, list) or not row]
+            if empty:
+                problems.append(f"{name} has no atoms for {', '.join(empty)}")
+    if problems:
+        raise ValueError(
+            f"{path}: a residue that names chi atoms ('chi_atoms') must name the atoms "
+            "each chi moves ('chi_moved_atoms', one row of atom names per chi), and "
+            f"{len(problems)} do not: {'; '.join(problems)}. The side-chain moves turn "
+            "only the atoms in those rows, so a chi angle without its row would never "
+            "change, and the energies would not show it. mcpu08's template "
+            "(pymcpu/data/params/mcpu08/constants/standard_amino_acids.json in the "
+            "package) has the rows for every residue."
+        )
+
+
 @dataclass
 class MCPUAtom:
     """One engine atom: the topology atom it came from, its name and residue.
@@ -153,8 +197,13 @@ class MCPUForceField(BaseForceField):
         ------
         ValueError
             For a residue MCPU has no parameters for, a missing heavy atom
-            (named with its residue), a chain break, as above, or an
-            ``hbond_beta_favor`` that is not a finite number above 0.
+            (named with its residue), a chain break, as above, an
+            ``hbond_beta_favor`` that is not a finite number above 0, or a
+            residue template (``constants/standard_amino_acids.json``) in
+            which a residue names chi atoms (``chi_atoms``) without the atoms
+            each chi moves (``chi_moved_atoms``, one row per chi), as those
+            chi angles would never change. The message names the file and
+            the residues.
         """
         self.hbond_beta_favor = _hbond_beta_favor(hbond_beta_favor)
         if param_dir is None:
@@ -395,6 +444,9 @@ class MCPUForceField(BaseForceField):
                 )
         with open(required_paths["amino acids template"], "r") as f:
             self.ff_template = json.load(f)
+        # A property of the parameter set, not of the structure: checked for
+        # every residue in the template, whether or not the structure has it.
+        _check_chi_moved_atoms(self.ff_template, required_paths["amino acids template"])
         self.atom_type_lookup = MuPotentialBuilder.load_atom_types(
             str(required_paths["atom types"])
         )
@@ -513,7 +565,10 @@ class MCPUForceField(BaseForceField):
         # resolved independently from real atom names, with contiguity
         # asserted here as the safety net for the assumption that this
         # named atom set forms a contiguous run under the engine's current
-        # atom ordering.
+        # atom ordering. _load_parameters has refused a template in which a
+        # residue names chi atoms without one non-empty row here per chi, so
+        # the [] default below is reached only by residues without chi angles
+        # (GLY and ALA in mcpu08), never by one whose chi would then not move.
         self.chi_moved_atom_ranges: list[list[list[int]]] = []
         for res_idx, residue in enumerate(topology.residues):
             moved_rows = self.ff_template.get(residue.name, {}).get("chi_moved_atoms", [])

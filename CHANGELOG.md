@@ -37,6 +37,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Runs print the parameter set, its folder and the start of its signature
   with the rest of their description.
 
+### Fixed
+
+- **A residue template that names chi atoms must name the atoms they move.**
+  `MCPUForceField` refuses a parameter folder whose
+  `constants/standard_amino_acids.json` gives a residue `chi_atoms` without
+  one `chi_moved_atoms` row of atom names per chi, with an error that names
+  the file and each such residue. Such a template used to load: the
+  side-chain moves turn only the atoms in those rows, so those chi angles
+  never changed, and the energies, which do not read the rows, gave no sign.
+  Every residue in the template is checked, not only those in the structure.
+  mcpu08's template passes, and loads as before.
+
 ## [0.1.0] - 2026-10-11
 
 First public release. pyMCPU reimplements MCPU, the Shakhnovich lab's Monte
