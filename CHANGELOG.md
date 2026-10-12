@@ -57,8 +57,9 @@ in its version with umbrella sampling, run with its reference configuration
   (`define.h`). Bonds four apart are not scaled in either. On the native
   structures this raises the hydrogen-bond energy, and so the total, by 0.39
   on CLN025, 28.1 on 1igd and 23.7 on actin (1.3 %, 8.2 % and 4.3 % of the
-  total). β-hairpins are less stable: chignolin (1UAO) melts at about 0.6
-  instead of 0.75 to 0.8 (midpoints from 20,000-cycle replica exchange).
+  total). β-hairpins are less stable: with the 0.1.0 defaults, chignolin
+  (1UAO) melts at about 0.6 (midpoints 0.57 to 0.60 from 20,000-cycle
+  replica exchange), lower than with legacy's factor.
   The factor is a force-field option: `forcefield_options:
   {hbond_beta_favor: 3.0}` in a config, or
   `MCPUForceField(hbond_beta_favor=3.0)`, restores legacy's. Checkpoints
@@ -98,13 +99,16 @@ in its version with umbrella sampling, run with its reference configuration
   a normal truncated to one period (`rotamer_library: dunbrack2002_sym`, the
   default). The library's rows cover one half of those χ. Legacy drew only
   from the rows, so it hardly ever proposed the other half, and with the
-  proposal correction (see Fixed) the same draw can leave a residue that starts
-  in that half frozen: in 10⁹-step runs with the default moves, at legacy's sheet factor 3, it froze 1.5
-  to 3 residues of CLN025 and 1igd for the whole run (TYR38, TYR50 and GLU61
-  of 1igd, TYR1 and TYR10 of CLN025), and the default froze none. The
-  default is also the cheaper move: 4 % more steps per second on 1igd and
-  5 % on actin with the default move mix. `rotamer_library: dunbrack2002`
-  gives legacy's draw, still corrected, for comparisons with legacy MCPU.
+  proposal correction (see Fixed) the same draw can leave a residue that
+  starts in that half frozen: in 10⁹-step runs with the default moves, at
+  legacy's sheet factor 3, it froze 1.5 to 3 residues of CLN025 and 1igd for
+  the whole run (TYR38, TYR50 and GLU61 of 1igd, TYR1 and TYR10 of CLN025),
+  and the default froze none. With the 0.1.0 defaults chignolin (1UAO) melts
+  at 0.57 to 0.60 (midpoints from 20,000-cycle replica exchange), against
+  0.58 to 0.62 with legacy's draw at the same sheet factor. The default is
+  also the cheaper move: 4 % more steps per second on 1igd and 5 % on actin
+  with the default move mix. `rotamer_library: dunbrack2002` gives legacy's
+  draw, still corrected, for comparisons with legacy MCPU.
 - **Umbrella bias.** pyMCPU adds ½ k_bias (N − N0)² to the energy, so the
   bias is divided by T in the Metropolis and exchange tests. Legacy added
   k_bias (N − s)² to the exponent, with no ½ (its README says ½) and no 1/T.

@@ -620,8 +620,8 @@ PYBIND11_MODULE(mcpu_core, m) {
         "Metropolis Monte Carlo move engine: backbone pivot, continuous\n"
         "sidechain, rotamer-library and kinematic-closure loop moves.\n\n"
         "temperature is required: a DIMENSIONLESS reduced parameter, not Kelvin.\n"
-        "Where a protein unfolds depends on the protein; chignolin melts at\n"
-        "about 0.6.\n\n"
+        "Where a protein unfolds depends on the protein; with the default\n"
+        "settings, chignolin melts at about 0.6.\n\n"
         "Call set_seed(): the same seed, input and build reproduce a run exactly.")
         .def(py::init<double, float, float, float>(), py::arg("temperature"),
              py::arg("step_size_rad") = 0.1f,

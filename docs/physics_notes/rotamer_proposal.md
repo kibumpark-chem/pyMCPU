@@ -106,10 +106,18 @@ and timed them, and actin, on one exclusive node.
   `dunbrack2002` (139,000 against 132,000), and 5 % more on actin (116,000
   against 110,000).
 
-Energies, Q and Rg, which the backbone moves limit, showed no difference
-between the proposals that the runs could resolve. A better sidechain proposal
-buys sidechain equilibration and the absence of frozen residues, not faster
-folding.
+In the study's full-move runs, energies, Q and Rg, which the backbone moves
+limit, showed no difference between the proposals that the runs could
+resolve: over whole runs, 1igd at T = 1.0 had a 0.4 Å smaller mean Rg with
+`dunbrack2002`, but the second halves of the runs agree. Replica exchange of
+chignolin (1UAO) at sheet factor 2 does resolve one. The melting midpoint is
+0.57 to 0.60 with `dunbrack2002_sym` and 0.58 to 0.62 with `dunbrack2002`
+(twelve 20,000-cycle runs each), on average 0.016 higher with `dunbrack2002`
+where Q crosses 0.5 and 0.019 higher at the heat-capacity peak (Mann-Whitney
+p = 0.001). Both proposals target the same ensemble, so this is a difference
+in sampling: `dunbrack2002` samples only part of the ensemble. A better
+sidechain proposal buys sidechain equilibration and the absence of frozen
+residues, not faster folding.
 
 **Remaining weaknesses.** mcpu08 has no sidechain-torsion energy for the first
 and last residue, so their χ have an almost flat target, and the library's

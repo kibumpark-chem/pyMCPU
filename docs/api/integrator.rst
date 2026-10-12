@@ -7,8 +7,8 @@ or rejects, and feeds the attached :doc:`reporters <reporters>`.
 
 .. note::
    ``temperature`` is a dimensionless reduced parameter, not a physical
-   temperature unit. Where a protein unfolds depends on the protein;
-   chignolin melts at about 0.6. Energies are unitless
+   temperature unit. Where a protein unfolds depends on the protein; with
+   the default settings, chignolin melts at about 0.6. Energies are unitless
    knowledge-based table sums, so there is no kT and no Boltzmann constant
    in the acceptance test -- see :doc:`../physics_notes/mc_acceptance`.
 

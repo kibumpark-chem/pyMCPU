@@ -41,8 +41,8 @@ Composing a run
    print(float(sim.context.get_state().current_energy))
 
 Temperature is a dimensionless reduced parameter, and where a protein
-unfolds depends on the protein (chignolin: about 0.6). Energies are
-unitless sums of knowledge-based table entries.
+unfolds depends on the protein (chignolin: about 0.6 with the default
+settings). Energies are unitless sums of knowledge-based table entries.
 
 .. note::
    ``Simulation`` constructs its own ``Context`` from the system and
