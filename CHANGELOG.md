@@ -44,7 +44,8 @@ in its version with umbrella sampling, run with its reference configuration
     move would change a proline's φ is refused;
   - sidechain: a residue with χ angles, other than proline, gets either a
     rotamer from the `bbind02.May.lib` library (a Gaussian around the
-    rotamer's mean χ) or a Gaussian change of each χ.
+    rotamer's mean χ; see Symmetric χ under Changed) or a Gaussian change of
+    each χ.
 - **Native contacts.** N counts residue pairs at least `min_seq_sep` apart
   whose CA–CA distance is below the cutoff both in the reference structure
   and in the current one.
@@ -92,6 +93,18 @@ in its version with umbrella sampling, run with its reference configuration
   Fixed). The width of the continuous move, `sidechain_step_size_rad`
   (Python API only), defaults to `step_size_rad` (legacy: `SIDECHAIN_NOISE`,
   10° in the reference configs).
+- **Symmetric χ.** The rotamer move also proposes the other 180° image of the
+  two-fold symmetric χ (ASP χ2, GLU χ3, PHE χ2, TYR χ2), and draws each χ from
+  a normal truncated to one period (`rotamer_library: dunbrack2002_sym`, the
+  default). The library's rows cover one half of those χ. Legacy drew only
+  from the rows, so it hardly ever proposed the other half, and with the
+  proposal correction (see Fixed) the same draw can leave a residue that starts
+  in that half frozen: in 10⁹-step runs with the default moves, at legacy's sheet factor 3, it froze 1.5
+  to 3 residues of CLN025 and 1igd for the whole run (TYR38, TYR50 and GLU61
+  of 1igd, TYR1 and TYR10 of CLN025), and the default froze none. The
+  default is also the cheaper move: 4 % more steps per second on 1igd and
+  5 % on actin with the default move mix. `rotamer_library: dunbrack2002`
+  gives legacy's draw, still corrected, for comparisons with legacy MCPU.
 - **Umbrella bias.** pyMCPU adds ½ k_bias (N − N0)² to the energy, so the
   bias is divided by T in the Metropolis and exchange tests. Legacy added
   k_bias (N − s)² to the exponent, with no ½ (its README says ½) and no 1/T.
@@ -145,7 +158,9 @@ in its version with umbrella sampling, run with its reference configuration
 - **Rotamer moves are corrected for their proposal.** Their acceptance
   includes q(old)/q(new), the ratio of the densities with which the library
   proposes the old and the new χ. Legacy accepted them on exp(−ΔE/T) alone,
-  so it sampled the Boltzmann distribution times that density.
+  so it sampled the Boltzmann distribution times that density, which is
+  close to 0 on the half of each symmetric χ that the library does not cover
+  (see Symmetric χ above).
 - **KIC moves are reversible and do not depend on orientation.** The
   Jacobian is computed from the six torsion axes of the window, so it does
   not change when the molecule turns. Legacy's Jacobian (`jac_local.h`)

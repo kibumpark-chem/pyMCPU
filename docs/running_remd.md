@@ -73,6 +73,23 @@ multiplies hydrogen bonds between residues more than four apart by 3, as
 legacy MCPU did, instead of mcpu08's default of 2. The value must be a finite
 number above 0.
 
+## Sidechain moves
+
+`rotamer_library:` picks the proposal of the rotamer sidechain move (the
+default `sidechain_move_mode`). Both draw from Dunbrack's 2002 rotamer
+library. `dunbrack2002_sym`, the default, also proposes the other 180° image
+of the two-fold symmetric χ (ASP χ2, GLU χ3, PHE χ2, TYR χ2); with
+
+```yaml
+rotamer_library: dunbrack2002
+```
+
+the move draws as legacy MCPU does, only on the half of those χ that the
+library's rows cover, so a residue that starts in the other half can stay
+frozen for the whole run. Both proposals target the same ensemble, but
+`dunbrack2002` samples only part of it, so its averages can differ; see
+[Rotamer proposal](physics_notes/rotamer_proposal.md).
+
 ## Running on one process
 
 ```bash

@@ -157,6 +157,7 @@ sheet factor `hbond_beta_favor`: 2 by default, where legacy MCPU used 3.
 |---|---|
 | Legacy outer energy weights | on |
 | H-bond sheet factor (`hbond_beta_favor`) | 2.0 (legacy MCPU: 3.0) |
+| Rotamer proposal (`rotamer_library`) | `dunbrack2002_sym`, both images of symmetric χ (legacy MCPU's draw: `dunbrack2002`) |
 | Virtual amide H (H-bond-only hydrogens) | on |
 | Periodic boundary conditions | none (open boundary) |
 | Floating-point math | IEEE-ish release FP, no fast-math |

@@ -60,6 +60,7 @@ simple, composable Python interface.
    physics_notes/hbond_directional
    physics_notes/triplet_torsion
    physics_notes/mc_acceptance
+   physics_notes/rotamer_proposal
    physics_notes/kic_jacobian
    physics_notes/aromatic_stacking
    hbond_legacy_parity

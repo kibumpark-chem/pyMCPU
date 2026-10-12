@@ -163,11 +163,14 @@ files, and registers the five mcpu08 potentials.
    .. py:method:: get_rotamer_library() -> RotamerLibrary
 
       The rotamer library backing the ``rotamer_library`` sidechain
-      move mode.
+      move mode. Its ``fingerprint`` (name, data checksum and, for
+      ``dunbrack2002_sym``, builder version) is what checkpoints record.
 
    .. py:method:: set_rotamer_library(library, /) -> None
 
-      Install the rotamer library.
+      Install the rotamer library, for example one built by
+      :func:`~pymcpu.forcefields.builders.rotamer_builder.load_rotamer_library`.
+      The system keeps a copy.
 
    .. py:method:: get_rama_mixture_library() -> RamaMixtureLibrary
 
