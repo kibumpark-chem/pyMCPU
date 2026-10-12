@@ -163,6 +163,7 @@ MuPotential.mu_exact_cutoff
 MuPotential.set_enabled
 MuPotential.set_energy_group
 MuPotential.set_name
+HBondPotential.beta_favor
 HBondPotential.get_energy_group
 HBondPotential.get_name
 HBondPotential.is_enabled

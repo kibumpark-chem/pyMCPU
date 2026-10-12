@@ -63,7 +63,15 @@ shows the common keys with their defaults.
 `forcefield:` picks the force field. pyMCPU has one, `mcpu08` (all-atom, the
 default), so a config can leave the key out; see
 [Force fields](api/forcefield.rst). Its constructor options go in
-`forcefield_options:`.
+`forcefield_options:`. For example,
+
+```yaml
+forcefield_options: {hbond_beta_favor: 3.0}
+```
+
+multiplies hydrogen bonds between residues more than four apart by 3, as
+legacy MCPU did, instead of mcpu08's default of 2. The value must be a finite
+number above 0.
 
 ## Running on one process
 

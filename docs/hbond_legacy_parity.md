@@ -25,10 +25,14 @@ exact legacy line ranges each function mirrors; it produced the ladder below.
 through the compiled engine, via `tests/legacy_parity/framework.py`'s
 `LegacyReference`/`assert_legacy_parity`.
 
+Every comparison here uses legacy's sheet factor, `beta_favor` 3.0. pyMCPU's
+mcpu08 default is 2.0 (see "The sheet factor: legacy 3, default 2" below), so
+the parity test builds its force field with `hbond_beta_favor=3.0`.
+
 ## Ablation ladder
 
 Weighted group-4 (hydrogen_bond) energy on `acta.pdb`, `use_legacy_weights=True`
-(`HBOND_WEIGHT = 1.35`):
+(`HBOND_WEIGHT = 1.35`), sheet factor 3.0 as in legacy:
 
 | Stage | Change | Weighted E |
 |---|---|---|
@@ -127,7 +131,7 @@ pyMCPU (`HBondPotential::evaluate_directional`):
 ```cpp
 float e = get(indices[0], indices[1], ..., indices[6]);
 e *= seq_dep_factor(indices[0], sys.amino_index(r_don), sys.amino_index(r_acc));
-if (indices[0] != 0) { e *= BETA_FAVOR; }  // BETA_FAVOR = 3.0f; indices[0]==0 only for res_idx_diff==4
+if (std::abs(r_don - r_acc) > 4) { e *= beta_favor_; }  // set at construction; 2.0f by default
 ```
 
 `seq_dep_factor` indexes a flat `(3, 20, 20)` table (`mcpu_params/hbond_seq_dep.bin`,
@@ -137,6 +141,28 @@ legacy's `seq_hb[type][a][b] = -1.0 * value` convention). `amino_index` is a
 per-residue `uint8_t` on `System` (`System::setAminoIndex`/`amino_index`),
 populated from residue name via the same alphabetical order as legacy's
 `GetAminoNumber()` (`pymcpu/forcefields/builders/hbond_builder.py::AMINO_ORDER`).
+
+### The sheet factor: legacy 3, default 2
+
+Legacy compiles `beta_favor` into the binary (`define.h`:
+`#define beta_favor 3.0 // MODIFY THIS for FACTOR`). In pyMCPU it is a
+constructor argument of `HBondPotential` (`beta_favor`), fixed for the term's
+lifetime, and mcpu08 sets it to 2.0 (`HBondPotential::kDefaultBetaFavor`;
+`kLegacyBetaFavor` is 3.0). Pairs four apart are not scaled, so only bonds
+between residues more than four apart are weaker than in legacy, by a third.
+On the native structures the weighted H-bond energy changes from
+−1.637 to −1.248 on CLN025, from −102.135 to −73.989 on 1igd and from
+−172.961 to −149.283 on actin; the other terms do not change.
+
+To score hydrogen bonds as legacy did, pass 3.0:
+`MCPUForceField(heavy, hbond_beta_favor=3.0)` in Python, or in a config:
+
+```yaml
+forcefield_options: {hbond_beta_favor: 3.0}
+```
+
+A checkpoint records the factor, and a run resumed with another one stops
+with an error.
 
 ## Secondary structure (opt-in)
 
@@ -175,7 +201,8 @@ and `we/propagator.py`, which all rely on the same RNG save/restore contract.
 
 - `include/pymcpu/utils/hydrogen_bond_utils.h` — gates, `ang_CACA`, table indices.
 - `src/pymcpu/forces/mcpu/common/HydrogenBondPotential.{h,cpp}` — `HBondPotential`,
-  `seq_dep_factor`, `BETA_FAVOR`, `evaluate_directional`.
+  `seq_dep_factor`, `beta_favor_` (`kDefaultBetaFavor`, `kLegacyBetaFavor`),
+  `evaluate_directional`.
 - `include/pymcpu/System.h` — `amino_index_`, `secondary_structure_` storage.
 - `pymcpu/forcefields/builders/hbond_builder.py` — `AMINO_ORDER`, seq-dep table loader.
 - `pymcpu/forcefields/mcpu.py` — DSSP computation, `amino_index`/SS plumbing into `System`.

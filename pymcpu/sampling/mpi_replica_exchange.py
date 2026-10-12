@@ -29,6 +29,7 @@ from pymcpu.checkpointing import (
     CHECKPOINT_FORMAT_VERSION,
     CheckpointConfig,
     CheckpointState,
+    checkpoint_beta_favor_error,
     checkpoint_cycle_filename,
     checkpoint_forcefield_error,
     checkpoint_layout_error,
@@ -666,6 +667,7 @@ class MPIReplicaExchange:
                 kind="mpi_replica_exchange",
                 pdb_path=str(self.pdb_path),
                 forcefield=self.forcefield_name,
+                hbond_beta_favor=getattr(self.forcefield, "hbond_beta_favor", None),
                 reference_pdb=str(self.reference_pdb),
                 temperatures=np.asarray(self.temperatures, dtype=np.float64),
                 n_targets=np.asarray(self.n_targets, dtype=np.float64),
@@ -758,6 +760,10 @@ class MPIReplicaExchange:
                 state.get("forcefield"), self.forcefield_name, last_chk
             ) or checkpoint_layout_error(
                 state.get("replica_coords"), self.system.get_num_atoms(), last_chk
+            ) or checkpoint_beta_favor_error(
+                state.get("hbond_beta_favor"),
+                getattr(self.forcefield, "hbond_beta_favor", None),
+                last_chk,
             )
 
         # ── Step 2: broadcast to all ranks ────────────────────────

@@ -5,7 +5,7 @@ Two conventions to know before you start:
 
 * **Temperature is dimensionless** — a reduced parameter, not Kelvin. Where a
   protein unfolds depends on the protein: chignolin, the example structure
-  below, melts at about ``0.75`` to ``0.8`` in long replica-exchange runs
+  below, melts at about ``0.6`` in long replica-exchange runs
   (see :doc:`tutorials/02_replica_exchange`).
 * **Energies are unitless** — sums of knowledge-based table entries scaled by a
   dimensionless per-group weight.
@@ -103,9 +103,10 @@ temperature, and a very high rate means the moves are too small to explore;
 ``kic_step_size_rad`` (default π/6, 30°) plays the same part for ``kic``,
 except that a KIC acceptance of a few percent is expected at the default
 width, and narrowing the driver to raise the rate can stop KIC from
-exploring: in a study of driver widths, 20° to 120° sampled the same
-equilibrium, while 10° hardly moved the ψ of CLN025's proline and 0.1 rad
-(5.7°) or less never moved it out of its basin, so keep it at 20° or more.
+exploring: in a study of driver widths (run at legacy's sheet factor, 3),
+20° to 120° sampled the same equilibrium, while 10° hardly moved the ψ of
+CLN025's proline and 0.1 rad (5.7°) or less never moved it out of its
+basin, so keep it at 20° or more.
 The ``rotamer`` move draws whole rotamers from a library and uses neither:
 
 .. code-block:: python

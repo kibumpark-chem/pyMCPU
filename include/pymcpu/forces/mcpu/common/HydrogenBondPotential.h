@@ -19,6 +19,11 @@ namespace mcpu::forces {
         // scaling of the table lookup, indexed by (helix_sheet, donor aa, acceptor aa).
         std::vector<float> seq_dep_params;
 
+        // The scoring rule, fixed at construction: the ledger (State::hbond_cache)
+        // and a Context's running energy both assume it never changes.
+        //   beta_favor_: multiplies every pair more than four residues apart.
+        float beta_favor_;
+
         static constexpr int HBOND_DIM = 9;
         static constexpr int STRIDE1 = HBOND_DIM;
         static constexpr int STRIDE2 = HBOND_DIM * HBOND_DIM;
@@ -27,8 +32,16 @@ namespace mcpu::forces {
         static constexpr int STRIDE5 = HBOND_DIM * HBOND_DIM * HBOND_DIM * HBOND_DIM * HBOND_DIM;
         static constexpr int STRIDE6 = HBOND_DIM * HBOND_DIM * HBOND_DIM * HBOND_DIM * HBOND_DIM * HBOND_DIM;
         static constexpr int N_AMINO = 20;
-        // legacy hbonds.h: `e += beta_favor * seq_hb[...] * hbond_E[...]` for res_dif>4.
-        static constexpr float BETA_FAVOR = 3.0f;
+
+    public:
+        /// The legacy value: hbonds.h's `e += beta_favor * seq_hb[...] * hbond_E[...]`
+        /// with beta_favor 3 for res_dif > 4.
+        static constexpr float kLegacyBetaFavor = 3.0f;
+        /// The mcpu08 default. MCPUForceField(hbond_beta_favor=...) and
+        /// HydrogenBondBuilder.build default to the same value.
+        static constexpr float kDefaultBetaFavor = 2.0f;
+
+    private:
 
         inline float get(int i, int a, int b, int c, int d, int e, int f) const {
             size_t index = (static_cast<size_t>(i) * STRIDE6) +
@@ -75,7 +88,10 @@ namespace mcpu::forces {
                            const State& proposed_state) const;
 
     public:
-        HBondPotential(std::vector<float> loaded_params, std::vector<float> seq_dep_params);
+        HBondPotential(std::vector<float> loaded_params, std::vector<float> seq_dep_params,
+                       float beta_favor = kDefaultBetaFavor);
+
+        [[nodiscard]] float beta_favor() const noexcept { return beta_favor_; }
 
         /// Stores no atom ids: it reads State torsions and System blocks,
         /// which are remapped for it.

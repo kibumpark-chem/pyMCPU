@@ -21,6 +21,7 @@ from pymcpu.checkpointing import (
     CHECKPOINT_FORMAT_VERSION,
     CheckpointConfig,
     FoldingCheckpointState,
+    checkpoint_beta_favor_error,
     checkpoint_cycle_filename,
     checkpoint_forcefield_error,
     checkpoint_layout_error,
@@ -614,6 +615,7 @@ class FoldingRunner:
             checkpoint_type="folding",
             pdb_path=str(self.pdb_path),
             forcefield=self.forcefield_name,
+            hbond_beta_favor=getattr(self.forcefield, "hbond_beta_favor", None),
             reference_pdb=str(self.reference_pdb),
             temperatures=np.asarray([self.temperature], dtype=np.float64),
             n_targets=None,
@@ -676,6 +678,10 @@ class FoldingRunner:
             state.forcefield, self.forcefield_name, checkpoint_path
         ) or checkpoint_layout_error(
             state.replica_coords, self.system.get_num_atoms(), checkpoint_path
+        ) or checkpoint_beta_favor_error(
+            state.hbond_beta_favor,
+            getattr(self.forcefield, "hbond_beta_favor", None),
+            checkpoint_path,
         )
         if layout_error:
             raise ValueError(layout_error)

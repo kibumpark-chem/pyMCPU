@@ -88,6 +88,17 @@ class HydrogenBondBuilder:
         return raw_params
 
     @classmethod
-    def build(cls, raw_params: np.ndarray, seq_dep_params: np.ndarray) -> mcpu_core.HBondPotential:
-        """Construct the C++ HBondPotential from pre-validated parameter arrays."""
-        return mcpu_core.HBondPotential(raw_params, seq_dep_params)
+    def build(
+        cls,
+        raw_params: np.ndarray,
+        seq_dep_params: np.ndarray,
+        *,
+        beta_favor: float = 2.0,
+    ) -> mcpu_core.HBondPotential:
+        """Construct the C++ HBondPotential from pre-validated parameter arrays.
+
+        ``beta_favor``, the factor on pairs more than four residues apart, is
+        fixed for the potential's lifetime; the default is mcpu08's (legacy
+        MCPU compiled 3.0; see ``HBondPotential``).
+        """
+        return mcpu_core.HBondPotential(raw_params, seq_dep_params, beta_favor=beta_favor)

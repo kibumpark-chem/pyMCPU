@@ -8,7 +8,9 @@
 pdb: examples/data/1uao.pdb          # REQUIRED | path to input PDB (heavy atoms)
 # reference_pdb: null                 # native reference for contacts (default: same as pdb)
 # forcefield: mcpu08                 # force field; mcpu08 (all-atom, alias mcpu) is the only one
-# forcefield_options: {}              # constructor arguments for the force field
+# forcefield_options: {}              # constructor arguments for the force field, e.g.
+#                                    # {hbond_beta_favor: 3.0}: legacy MCPU's factor on H-bonds
+#                                    # more than 4 residues apart (default 2.0)
 # param_set: mcpu08                  # mcpu08 parameter set name  # default: mcpu08
 # param_dir: null                     # explicit parameter directory (overrides param_set resolution)
 

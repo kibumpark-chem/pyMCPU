@@ -137,8 +137,17 @@ pytestmark = pytest.mark.slow
 # move that the parent engine accepts and this one rejects, and the runs
 # separate from there. Captured with GCC 15 by re-running the recipe above
 # via `run_hotpath`.
-BASELINE_ACCEPT = 254
-BASELINE_E_HBOND = -179.71418313259161
+#
+# TWELFTH capture, 2026-10-11, after the hydrogen-bond sheet factor's default
+# (hbond_beta_favor, the factor on bonds more than four residues apart) went
+# from legacy's 3 to 2; build_test_context builds the force field with its
+# defaults. The previous values, ACCEPT 254 and E_HBOND -179.71418313259161,
+# still come out of this engine with hbond_beta_favor=3.0. The accept bits of
+# the two runs are identical through the warmup and the first 578 measured
+# steps; measured step 579 is the first that differs. Captured with GCC 15 by
+# re-running the recipe above via `run_hotpath`.
+BASELINE_ACCEPT = 264
+BASELINE_E_HBOND = -153.455837281203
 
 # Repeatability allowance for two back-to-back identical-seed runs -- not a
 # physics constant. Chosen empirically: tight enough that a real

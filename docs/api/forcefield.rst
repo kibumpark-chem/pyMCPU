@@ -124,6 +124,13 @@ MCPU, so it counts 2.7. The weights are dimensionless, like the energies.
 These are the mcpu08 values; another MCPU parameter set can change the
 weights or a potential.
 
+Within the hydrogen-bond term, a bond between residues more than four apart
+is multiplied by the sheet factor ``hbond_beta_favor``, 2.0 by default.
+Legacy MCPU compiled 3.0 (``beta_favor`` in its ``define.h``);
+``MCPUForceField(..., hbond_beta_favor=3.0)``, or
+``forcefield_options: {hbond_beta_favor: 3.0}`` in a config, scores hydrogen
+bonds as it did. Bonds four apart, the helical ones, are not scaled.
+
 The Ramachandran mixture library is loaded too when the parameter set has one
 (``constants/rama_mixture.json``). Only the ``rama_pivot`` backbone move uses
 it, and that move is off by default, so a set without the library still
@@ -197,6 +204,12 @@ Set during construction and safe to read:
    :type: list[int]
 
    Engine amino-acid type code per residue.
+
+.. py:attribute:: pymcpu.MCPUForceField.hbond_beta_favor
+   :type: float
+
+   The hydrogen-bond sheet factor the systems it builds use (the
+   ``hbond_beta_favor`` argument, default 2.0).
 
 .. py:attribute:: pymcpu.MCPUForceField.is_proline
    :type: list[int]

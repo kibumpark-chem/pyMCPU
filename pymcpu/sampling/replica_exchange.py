@@ -27,6 +27,7 @@ from pymcpu.config import (
 from pymcpu.checkpointing import (
     CHECKPOINT_FORMAT_VERSION,
     CheckpointConfig,
+    checkpoint_beta_favor_error,
     checkpoint_cycle_filename,
     checkpoint_forcefield_error,
     checkpoint_layout_error,
@@ -385,6 +386,7 @@ class ReplicaExchange:
         "seed": int(self.seed),
         "pdb_path": str(self.pdb_path),
         "forcefield": self.forcefield_name,
+        "hbond_beta_favor": getattr(self.forcefield, "hbond_beta_favor", None),
         "reference_pdb": str(self.reference_pdb),
         "temperatures": np.asarray(self.temperatures, dtype=np.float64),
         "n_targets": np.asarray(self.n_targets, dtype=np.float64),
@@ -457,6 +459,8 @@ class ReplicaExchange:
         checkpoint.get("forcefield"), self.forcefield_name
       ) or checkpoint_layout_error(
         checkpoint.get("replica_coords"), self.system.get_num_atoms()
+      ) or checkpoint_beta_favor_error(
+        checkpoint.get("hbond_beta_favor"), getattr(self.forcefield, "hbond_beta_favor", None)
       )
       if layout_error:
         raise ValueError(layout_error)

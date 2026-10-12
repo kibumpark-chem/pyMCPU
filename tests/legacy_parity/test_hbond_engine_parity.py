@@ -15,7 +15,7 @@ import mdtraj as md
 import numpy as np
 
 from tests.legacy_parity.framework import LegacyReference, ParityTolerance, assert_legacy_parity
-from tests.legacy_parity.helpers.legacy_hbond_oracle import HBOND_WEIGHT
+from tests.legacy_parity.helpers.legacy_hbond_oracle import BETA_FAVOR, HBOND_WEIGHT
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 ACTA_PDB = REPO_ROOT / "examples" / "actin" / "input_pdb" / "acta.pdb"
@@ -34,7 +34,8 @@ def _measure_engine_hbond_energy(pdb_path: Path) -> float:
 
     traj = md.load(str(pdb_path))
     heavy = traj.atom_slice(traj.topology.select("not element H"))
-    forcefield = MCPUForceField(heavy, param_set="mcpu08")
+    # Legacy compiled beta_favor 3.0 (define.h); mcpu08's default is 2.0.
+    forcefield = MCPUForceField(heavy, param_set="mcpu08", hbond_beta_favor=BETA_FAVOR)
     system = forcefield.create_system(heavy.topology)
     context = mcpu_core.Context(system)
     context.set_positions((forcefield.coords[0] * 10.0).T.astype(np.float32))
