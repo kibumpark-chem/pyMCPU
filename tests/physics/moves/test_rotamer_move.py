@@ -14,9 +14,21 @@ from __future__ import annotations
 import pytest
 
 from pymcpu import mcpu_core
+from pymcpu.forcefields.builders.rotamer_builder import load_rotamer_library
 from tests.fixtures.context_builders import build_raw_context
 
 pytestmark = pytest.mark.slow
+
+
+@pytest.fixture(scope="module", params=["dunbrack2002_sym", "dunbrack2002"])
+def library(request):
+    return load_rotamer_library(request.param)
+
+
+def _context(library):
+    ctx, top = build_raw_context(virtual_amide_h=True)
+    ctx.get_system().set_rotamer_library(library)
+    return ctx, top
 
 
 def _pro_residues(topology) -> list[int]:
@@ -50,8 +62,8 @@ def test_move_stats_includes_rotamer_counters() -> None:
     assert stats["num_accept_rotamer"] == 0
 
 
-def test_debug_force_rotamer_on_multi_chi_residue_succeeds() -> None:
-    ctx, top = build_raw_context(virtual_amide_h=True)
+def test_debug_force_rotamer_on_multi_chi_residue_succeeds(library) -> None:
+    ctx, top = _context(library)
     residue = _multi_chi_residue(ctx)
     integ = mcpu_core.Integrator(temperature=300.0, step_size_rad=0.1)
     integ.set_seed(7)
@@ -59,8 +71,8 @@ def test_debug_force_rotamer_on_multi_chi_residue_succeeds() -> None:
     assert proposed is True
 
 
-def test_debug_force_rotamer_at_pro_resamples() -> None:
-    ctx, top = build_raw_context(virtual_amide_h=True)
+def test_debug_force_rotamer_at_pro_resamples(library) -> None:
+    ctx, top = _context(library)
     pros = _pro_residues(top)
     assert pros, "test PDB should contain proline"
     pro = pros[0]
@@ -72,11 +84,11 @@ def test_debug_force_rotamer_at_pro_resamples() -> None:
     assert integ.num_sc_resample_pro() == before + 1
 
 
-def test_debug_force_rotamer_at_gly_ala_rejects_without_counting() -> None:
+def test_debug_force_rotamer_at_gly_ala_rejects_without_counting(library) -> None:
     """Gly/Ala (ntorsions=0) have nothing to propose -- rejected exactly
     like the continuous move's num_sc_atoms<2 fast-reject, without
     incrementing the (proline-specific) resample counter."""
-    ctx, top = build_raw_context(virtual_amide_h=True)
+    ctx, top = _context(library)
     no_chi = _gly_ala_residues(ctx)
     assert no_chi, "test PDB should contain a Gly or Ala residue"
     residue = no_chi[0]
@@ -88,7 +100,7 @@ def test_debug_force_rotamer_at_gly_ala_rejects_without_counting() -> None:
     assert integ.num_sc_resample_pro() == before
 
 
-def test_rotamer_run_only_moves_sidechain_atoms() -> None:
+def test_rotamer_run_only_moves_sidechain_atoms(library) -> None:
     """Over a real run entirely in rotamer_library mode, every residue's
     cached backbone torsions (phi/psi/pCA/bCA) must stay bit-identical --
     this move never touches backbone atoms nor calls
@@ -102,7 +114,7 @@ def test_rotamer_run_only_moves_sidechain_atoms() -> None:
     was valid, i.e. proposed-and-either-accepted-or-rejected -- an invalid/
     resampled-away step never touches ``ctx``'s committed state at all,
     regardless of what kind it reports)."""
-    ctx, _ = build_raw_context(virtual_amide_h=True)
+    ctx, _ = _context(library)
     integ = mcpu_core.Integrator(temperature=0.6, step_size_rad=0.1)
     integ.set_sidechain_move_mode("rotamer_library")
     integ.set_seed(42)

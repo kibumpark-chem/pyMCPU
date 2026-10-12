@@ -253,6 +253,13 @@ public:
     /// the current sidechain_move_mode(). Proline / no-chi residues increment
     /// the resample counter and return false, matching debug_force_sc.
     bool debug_force_rotamer(Context& context, int residue);
+    /// Forces the rotamer-library sidechain move at `residue` to the chi
+    /// vector `target_chi` (radians; slots past the residue's chi count are
+    /// ignored) instead of drawing it, with the Hastings term of the drawn
+    /// move: last_log_jacobian_weight() is then log q(old chi) - log q(target).
+    /// Returns false for proline, a fixed residue or a residue type without
+    /// rotamer rows.
+    bool debug_force_rotamer_to(Context& context, int residue, const std::array<float, 4>& target_chi);
     /// Forces the knowledge-based backbone pivot move at `residue`
     /// regardless of pivot_rama_probability(). Proline / no-mixture-
     /// registered residues increment the resample counter and return
@@ -625,6 +632,8 @@ private:
     /// see last_log_jacobian_weight(). run() consumes the patch's weight
     /// inline and never needs it kept.
     float last_log_jacobian_weight_ = 0.f;
+    /// Set only during debug_force_rotamer_to: the chi vector to move to.
+    const std::array<float, 4>* forced_rotamer_target_ = nullptr;
 
     // ── Fixed-residue rules ─────────────────────────────────────────
     // A step never proposes a move that would move a fixed residue's atoms.
@@ -687,6 +696,10 @@ private:
     /// sc_sites_, fixed residues redrawn).
     void apply_rotamer_move(Context& context, State& proposal, ProposalPatch& patch);
     void apply_rotamer_at(Context& context, State& proposal, ProposalPatch& patch, int r);
+    /// The move with a truncated-table library or a forced target; see Integrator.cpp.
+    [[gnu::noinline]] void apply_rotamer_truncated_at(Context& context, State& proposal,
+                                                      ProposalPatch& patch, int r,
+                                                      const std::array<float, 4>* forced_target);
     void apply_concerted_rotation_move(Context& context, State& proposal, ProposalPatch& patch);
     /// Knowledge-based backbone pivot proposal: jointly resamples (phi,psi)
     /// at one residue from RamaMixtureLibrary (see that class and this

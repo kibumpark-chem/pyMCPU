@@ -33,6 +33,7 @@ from pymcpu import mcpu_core
 from pymcpu.config import (
     EngineSpec,
     apply_linker_energy_mask,
+    attach_rotamer_library,
     check_move_weights,
     configure_integrator,
 )
@@ -125,6 +126,7 @@ class EngineSession:
             ff = self._ensure_forcefield()
             check_move_weights(ff, self.spec.move_weights, self.spec.forcefield)
             system = ff.create_system(self._topology)
+            attach_rotamer_library(system, self.spec.rotamer_library, ff)
             apply_linker_energy_mask(
                 system,
                 list(self.spec.linker_residues),

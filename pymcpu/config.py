@@ -33,16 +33,20 @@ __all__ = [
     "DEFAULT_CONTACT_CUTOFF",
     "DEFAULT_KIC_STEP_SIZE_RAD",
     "DEFAULT_MIN_SEQ_SEP",
+    "DEFAULT_ROTAMER_LIBRARY",
     "LinkerEnergyMode",
     "Mode",
+    "RotamerLibraryName",
     "SidechainMoveMode",
     "VALID_CONTACT_ATOM_MODES",
     "VALID_LINKER_ENERGY_MODES",
+    "VALID_ROTAMER_LIBRARIES",
     "VALID_SIDECHAIN_MOVE_MODES",
     # Normalizers and validators. Anything building a pyMCPU run from its own
     # config format should go through these rather than reimplement the rules,
     # so that every entry point rejects the same inputs identically.
     "apply_linker_energy_mask",
+    "attach_rotamer_library",
     "check_yaml_keys",
     "normalize_kic_step_size_rad",
     "normalize_linker_energy_mode",
@@ -50,6 +54,7 @@ __all__ = [
     "check_move_weights",
     "normalize_pivot_rama_probability",
     "normalize_pivot_rama_schedule",
+    "normalize_rotamer_library",
     "normalize_sidechain_move_mode",
     "resolve_k_bias",
     "validate_fixed_linker_disjoint",
@@ -124,6 +129,26 @@ def normalize_sidechain_move_mode(mode: str | None) -> SidechainMoveMode:
             f"sidechain_move_mode must be one of {VALID_SIDECHAIN_MOVE_MODES}, got {mode!r}"
         )
     return m  # type: ignore[return-value]
+
+
+RotamerLibraryName = Literal["dunbrack2002_sym", "dunbrack2002"]
+#: The proposals the rotamer-library sidechain move can draw from: the 2002
+#: rotamer library with both 180 degree images of the symmetric chi (the
+#: default), or as legacy MCPU draws it; see
+#: pymcpu.forcefields.builders.rotamer_builder.
+VALID_ROTAMER_LIBRARIES: tuple[str, ...] = ("dunbrack2002_sym", "dunbrack2002")
+DEFAULT_ROTAMER_LIBRARY: RotamerLibraryName = "dunbrack2002_sym"
+
+
+def normalize_rotamer_library(name: str | None) -> RotamerLibraryName:
+    if name is None or name == "":
+        return DEFAULT_ROTAMER_LIBRARY
+    n = str(name).strip().lower()
+    if n not in VALID_ROTAMER_LIBRARIES:
+        raise ValueError(
+            f"rotamer_library must be one of {VALID_ROTAMER_LIBRARIES}, got {name!r}"
+        )
+    return n  # type: ignore[return-value]
 
 
 #: Width (Gaussian std-dev, radians) of the KIC driver, the torsion that moves
@@ -257,6 +282,9 @@ class IntegratorConfig:
     #: Width (radians) of the KIC driver; see DEFAULT_KIC_STEP_SIZE_RAD.
     kic_step_size_rad: float = DEFAULT_KIC_STEP_SIZE_RAD
     sidechain_move_mode: SidechainMoveMode = "rotamer_library"
+    #: Library the rotamer-library sidechain move draws from; see
+    #: VALID_ROTAMER_LIBRARIES. Not used by the continuous sidechain move.
+    rotamer_library: RotamerLibraryName = DEFAULT_ROTAMER_LIBRARY
     pivot_rama_probability: float = 0.0
     pivot_rama_schedule: dict[str, float] | None = None
     #: (pivot, kic, sidechain) move-slot probabilities. Set the third to 0.0
@@ -270,6 +298,7 @@ class IntegratorConfig:
     def __post_init__(self) -> None:
         self.move_weights = normalize_move_weights(self.move_weights)
         self.kic_step_size_rad = normalize_kic_step_size_rad(self.kic_step_size_rad)
+        self.rotamer_library = normalize_rotamer_library(self.rotamer_library)
         steps = self.full_energy_every_steps
         if isinstance(steps, bool) or not isinstance(steps, (int, float)) or steps != int(steps) or steps < 1:
             raise ValueError(
@@ -428,6 +457,21 @@ def apply_linker_energy_mask(
     system.set_energy_ignored_residues(list(int(r) for r in linker_residues), mode)
 
 
+def attach_rotamer_library(system: Any, name: str, forcefield: Any) -> None:
+    """Give ``system``, built by ``forcefield``, the rotamer library ``name``.
+
+    The library is read from the force field's own parameter set (its
+    ``rotamer_library_path``), as ``MCPUForceField.create_system`` does for the
+    default one.
+    """
+    from pymcpu.forcefields.builders.rotamer_builder import load_rotamer_library
+
+    system.set_rotamer_library(load_rotamer_library(
+        normalize_rotamer_library(name),
+        bbind_path=getattr(forcefield, "rotamer_library_path", None),
+    ))
+
+
 def normalize_move_settings(
     *,
     move_weights: Sequence[float] | None = None,
@@ -556,6 +600,7 @@ class EngineSpec:
     step_size_rad: float = 0.1
     kic_step_size_rad: float = DEFAULT_KIC_STEP_SIZE_RAD
     sidechain_move_mode: str = "rotamer_library"
+    rotamer_library: str = DEFAULT_ROTAMER_LIBRARY
     pivot_rama_probability: float = 0.0
     pivot_rama_schedule: dict[str, float] | None = None
     move_weights: tuple[float, float, float] = (0.25, 0.25, 0.50)
@@ -566,6 +611,7 @@ class EngineSpec:
     def __post_init__(self) -> None:
         self.linker_energy_mode = normalize_linker_energy_mode(self.linker_energy_mode)
         self.sidechain_move_mode = normalize_sidechain_move_mode(self.sidechain_move_mode)
+        self.rotamer_library = normalize_rotamer_library(self.rotamer_library)
         self.pivot_rama_probability = normalize_pivot_rama_probability(
             self.pivot_rama_probability
         )
@@ -617,6 +663,7 @@ class EngineSpec:
             step_size_rad=cfg.integrator.step_size_rad,
             kic_step_size_rad=cfg.integrator.kic_step_size_rad,
             sidechain_move_mode=cfg.integrator.sidechain_move_mode,
+            rotamer_library=cfg.integrator.rotamer_library,
             pivot_rama_probability=cfg.integrator.pivot_rama_probability,
             pivot_rama_schedule=cfg.integrator.pivot_rama_schedule,
             move_weights=cfg.integrator.move_weights,
@@ -881,7 +928,7 @@ _YAML_KEYS = frozenset({
     "temperatures", "temp_min", "temp_step", "n_temps",
     # run length and moves
     "seed", "mc_replica_steps", "steps", "num_cycles", "log_interval",
-    "step_size_rad", "kic_step_size_rad", "sidechain_move_mode",
+    "step_size_rad", "kic_step_size_rad", "sidechain_move_mode", "rotamer_library",
     "pivot_rama_probability", "pivot_rama_schedule", "move_weights",
     "full_energy_every_steps",
     # folding only: the early stop
@@ -1192,6 +1239,7 @@ def yaml_dict_to_config(
         sidechain_move_mode=normalize_sidechain_move_mode(
             data.get("sidechain_move_mode", "rotamer_library")
         ),
+        rotamer_library=normalize_rotamer_library(data.get("rotamer_library")),
         pivot_rama_probability=normalize_pivot_rama_probability(
             data.get("pivot_rama_probability")
         ),

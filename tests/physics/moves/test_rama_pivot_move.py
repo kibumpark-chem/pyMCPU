@@ -279,18 +279,27 @@ def test_p_zero_is_bit_identical_to_genuine_legacy_code() -> None:
     rejected in both engines, at steps 5 and 12 for different reasons (a
     clash in one engine and not in the other), and from step 13 on the runs
     draw different moves. Step 16, a KIC move in the parent engine, is an
-    accepted rotamer move here."""
+    accepted rotamer move here.
+
+    RE-CAPTURED 2026-10-12 after the rotamer move's default proposal went
+    from dunbrack2002 to dunbrack2002_sym. That changes rotamer proposals
+    only, and with rotamer_library dunbrack2002 this engine still gives sum
+    82 and the head [0, 0, 0, 1, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0,
+    0]. The two proposals read different random numbers, so the runs part at
+    their first sidechain step; the first accept bit that differs is step 10.
+    GCC 15 at x86-64-v3 and GCC 13 at v3 and v2 give the same numbers."""
     ctx, _ = build_raw_context(virtual_amide_h=True)
     integ = mcpu_core.Integrator(temperature=300.0, step_size_rad=0.1)
     integ.set_pivot_rama_probability(0.0)
     integ.set_seed(99)
     integ.run(ctx, 300)
 
-    legacy_accept_bits_head = [0, 0, 0, 1, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0]
+    legacy_accept_bits_head = [0, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 1, 0, 1, 1, 0, 1]
     # 92 before the KIC fix, 79 before the rotation fix, 81 before the
     # chain-end pivots and sidechain sites, 77 before the KIC driver's
-    # default width became pi/6
-    legacy_accept_bits_sum = 82
+    # default width became pi/6, 82 before the default rotamer proposal
+    # became dunbrack2002_sym
+    legacy_accept_bits_sum = 77
 
     bits = list(integ.last_accept_bits())
     assert bits[:20] == legacy_accept_bits_head

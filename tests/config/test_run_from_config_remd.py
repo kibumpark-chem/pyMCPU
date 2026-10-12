@@ -94,6 +94,7 @@ _SETTINGS = dict(
     kic_step_size_rad=0.3,
     move_weights=(0.5, 0.3, 0.2),
     sidechain_move_mode="continuous",
+    rotamer_library="dunbrack2002",
     pivot_rama_probability=0.4,
     pivot_rama_schedule={"t_low": 0.5, "t_high": 0.6, "p_min": 0.1, "p_max": 0.9},
 )
@@ -124,6 +125,7 @@ def test_every_move_setting_is_forwarded(tmp_path: Path, monkeypatch, mpi: bool)
     assert seen["kic_step_size_rad"] == pytest.approx(0.3)
     assert seen["move_weights"] == pytest.approx(integrator.move_weights)
     assert seen["sidechain_move_mode"] == "continuous"
+    assert seen["rotamer_library"] == "dunbrack2002"
     assert seen["pivot_rama_probability"] == pytest.approx(0.4)
     assert seen["pivot_rama_schedule"] == _SETTINGS["pivot_rama_schedule"]
     # Not a move setting, but it reaches the driver the same way.

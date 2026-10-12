@@ -24,6 +24,7 @@ import mdtraj as md
 import numpy as np
 
 from pymcpu import mcpu_core
+from pymcpu.config import DEFAULT_ROTAMER_LIBRARY
 from pymcpu.forcefields import BaseForceField, load_forcefield
 from pymcpu.sampling.collective_variables import (
     NativeContactsCV,
@@ -412,6 +413,7 @@ def build_system_and_cv(
     param_set: str = "mcpu08",
     param_dir: str | None = None,
     move_weights: Sequence[float] | None = None,
+    rotamer_library: str = DEFAULT_ROTAMER_LIBRARY,
 ) -> tuple[mcpu_core.System, BaseForceField, md.Topology, np.ndarray, NativeContactsCV]:
     """Load the structure, build the configured force field and its C++
     System, and attach the native-contacts bias force -- identical setup
@@ -420,7 +422,11 @@ def build_system_and_cv(
     Returns ``(system, forcefield, topology, coords_angstroms, q_cv)``, where
     ``topology`` is the one the engine simulates.
     """
-    from pymcpu.config import apply_linker_energy_mask, check_move_weights
+    from pymcpu.config import (
+        apply_linker_energy_mask,
+        attach_rotamer_library,
+        check_move_weights,
+    )
 
     ff_name = forcefield
     forcefield = load_forcefield(
@@ -428,6 +434,7 @@ def build_system_and_cv(
     check_move_weights(forcefield, move_weights, ff_name)
     topology = forcefield.output_topology
     system = forcefield.create_system(topology)
+    attach_rotamer_library(system, rotamer_library, forcefield)
     coords_angstroms = forcefield.coords[0] * 10.0
     n_res = system.get_num_residues()
 

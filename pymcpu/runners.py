@@ -14,6 +14,7 @@ from pymcpu.config import (
     DEFAULT_CONTACT_CUTOFF,
     DEFAULT_KIC_STEP_SIZE_RAD,
     DEFAULT_MIN_SEQ_SEP,
+    DEFAULT_ROTAMER_LIBRARY,
     SimulationConfig,
     resolve_k_bias,
     resolve_path,
@@ -49,6 +50,7 @@ def run_folding(
     step_size_rad: float = 0.1,
     kic_step_size_rad: float = DEFAULT_KIC_STEP_SIZE_RAD,
     sidechain_move_mode: str = "rotamer_library",
+    rotamer_library: str = DEFAULT_ROTAMER_LIBRARY,
     move_weights: tuple[float, float, float] | None = None,
     full_energy_every_steps: int = 1_000_000,
     pivot_rama_probability: float = 0.0,
@@ -118,6 +120,7 @@ def run_folding(
         step_size_rad=float(step_size_rad),
         kic_step_size_rad=float(kic_step_size_rad),
         sidechain_move_mode=sidechain_move_mode,
+        rotamer_library=rotamer_library,
         move_weights=move_weights,
         full_energy_every_steps=int(full_energy_every_steps),
         pivot_rama_probability=pivot_rama_probability,
@@ -190,6 +193,7 @@ def run_replica_exchange_2d(
     move_weights: tuple[float, float, float] | None = None,
     full_energy_every_steps: int = 1_000_000,
     sidechain_move_mode: str = "rotamer_library",
+    rotamer_library: str = DEFAULT_ROTAMER_LIBRARY,
     pivot_rama_probability: float = 0.0,
     pivot_rama_schedule: dict[str, float] | None = None,
 ) -> RunSummary:
@@ -280,6 +284,7 @@ def run_replica_exchange_2d(
         move_weights=move_weights,
         full_energy_every_steps=int(full_energy_every_steps),
         sidechain_move_mode=sidechain_move_mode,
+        rotamer_library=rotamer_library,
         pivot_rama_probability=pivot_rama_probability,
         pivot_rama_schedule=pivot_rama_schedule,
     )
@@ -345,6 +350,7 @@ def run_mpi_replica_exchange_2d(
     move_weights: tuple[float, float, float] | None = None,
     full_energy_every_steps: int = 1_000_000,
     sidechain_move_mode: str = "rotamer_library",
+    rotamer_library: str = DEFAULT_ROTAMER_LIBRARY,
     pivot_rama_probability: float = 0.0,
     pivot_rama_schedule: dict[str, float] | None = None,
 ) -> RunSummary | None:
@@ -431,6 +437,7 @@ def run_mpi_replica_exchange_2d(
         "move_weights": move_weights,
         "full_energy_every_steps": int(full_energy_every_steps),
         "sidechain_move_mode": sidechain_move_mode,
+        "rotamer_library": rotamer_library,
         "pivot_rama_probability": pivot_rama_probability,
         "pivot_rama_schedule": pivot_rama_schedule,
     }
@@ -494,6 +501,7 @@ def run_from_config(
             step_size_rad=cfg.integrator.step_size_rad,
             kic_step_size_rad=cfg.integrator.kic_step_size_rad,
             sidechain_move_mode=cfg.integrator.sidechain_move_mode,
+            rotamer_library=cfg.integrator.rotamer_library,
             move_weights=cfg.integrator.move_weights,
             full_energy_every_steps=cfg.integrator.full_energy_every_steps,
             pivot_rama_probability=cfg.integrator.pivot_rama_probability,
@@ -563,6 +571,7 @@ def run_from_config(
             move_weights=cfg.integrator.move_weights,
             full_energy_every_steps=cfg.integrator.full_energy_every_steps,
             sidechain_move_mode=cfg.integrator.sidechain_move_mode,
+            rotamer_library=cfg.integrator.rotamer_library,
             pivot_rama_probability=cfg.integrator.pivot_rama_probability,
             pivot_rama_schedule=cfg.integrator.pivot_rama_schedule,
         )

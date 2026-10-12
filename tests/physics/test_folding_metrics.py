@@ -88,6 +88,8 @@ def _make_minimal_folding_runner(
     runner.system = MagicMock()
     runner.forcefield_name = "mcpu08"
     runner.system.get_num_atoms.return_value = n_atoms
+    runner.system.get_rotamer_library.return_value.fingerprint = "dunbrack2002_sym md5=test builder=1"
+    runner.sidechain_move_mode = "rotamer_library"
     runner.pdb_path = Path(pdb_path) if pdb_path is not None else None
     runner.reference_pdb = str(reference_pdb) if reference_pdb is not None else None
     runner.contact_cutoff_ang = _INIT_DEFAULTS["contact_cutoff_ang"].default

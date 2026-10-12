@@ -1156,6 +1156,14 @@ void MCIntegrator::apply_sidechain_at(Context& context, State& proposal, Proposa
 // with its own Jacobian/solution-count correction, Integrator.cpp's
 // apply_concerted_rotation_move) — no changes to the shared Metropolis
 // acceptance code (see `run()`) are needed.
+//
+// That is the "dunbrack2002" proposal (row tables), kept for comparisons with
+// legacy MCPU. Its rows cover one half of each two-fold symmetric chi, so a
+// residue whose symmetric chi starts in the other half has q(x_old) close to
+// 0 and can stay frozen for a whole run. The default, "dunbrack2002_sym" (truncated tables),
+// draws each chi from a normal truncated to one period and gives the
+// symmetric chi period pi and a random 180 degree image; it runs in
+// apply_rotamer_truncated_at. See docs/physics_notes/rotamer_proposal.md.
 // ---------------------------------------------------------------
 void MCIntegrator::apply_rotamer_move(Context& context, State& proposal, ProposalPatch& patch) {
     patch.is_valid = false;
@@ -1175,6 +1183,10 @@ void MCIntegrator::apply_rotamer_move(Context& context, State& proposal, Proposa
 
 void MCIntegrator::apply_rotamer_at(Context& context, State& proposal, ProposalPatch& patch, int r) {
     const System& system = context.getSystem();
+    if (forced_rotamer_target_ != nullptr || system.getRotamerLibrary().has_truncated_tables()) {
+        apply_rotamer_truncated_at(context, proposal, patch, r, forced_rotamer_target_);
+        return;
+    }
     patch.is_valid = false;
     if (sidechainTouchesFixed_(r)) {
         ++fixed_rejected_;
@@ -1258,6 +1270,65 @@ void MCIntegrator::apply_rotamer_at(Context& context, State& proposal, ProposalP
     // recompute_sidechain_torsion()'s docstring above. Recomputes from the
     // now-rotated coordinates, which should equal new_chi up to
     // floating-point rounding.
+    recompute_sidechain_torsion(proposal, system, r);
+}
+
+// The rotamer move for a truncated table (dunbrack2002_sym), and for a forced
+// target (debug_force_rotamer_to) with either kind of table. It is kept apart
+// from apply_rotamer_at, which is the dunbrack2002 move unchanged: with LTO
+// the compiler decides inlining, and with it where FMA contraction applies,
+// across the whole program, so leaving that function and its callers as they
+// were is what keeps dunbrack2002 runs bit-identical to the builds before
+// dunbrack2002_sym existed.
+void MCIntegrator::apply_rotamer_truncated_at(Context& context, State& proposal,
+                                              ProposalPatch& patch, int r,
+                                              const std::array<float, 4>* forced_target) {
+    const System& system = context.getSystem();
+    patch.is_valid = false;
+    if (sidechainTouchesFixed_(r)) {
+        ++fixed_rejected_;
+        return;
+    }
+    const int ntorsions = system.getTorsionsPerResidue()[static_cast<size_t>(r)];
+    if (ntorsions <= 0) return;  // Gly/Ala: no chi angles, nothing to propose
+    const int amino_idx = system.amino_index(r);
+    const RotamerLibrary& lib = system.getRotamerLibrary();
+    if (lib.num_rows(amino_idx) <= 0) return;  // no rotamer table for this residue type
+
+    patch.add_distorted_sc_residue(r);
+    // Current chi from current coordinates, as apply_rotamer_at explains.
+    recompute_sidechain_torsion(proposal, system, r);
+    const std::array<float, 4>& old_chi =
+        proposal.sidechain_torsions[static_cast<size_t>(r)].chi_angles;
+
+    std::array<float, 4> target = old_chi;
+    if (forced_target != nullptr) {
+        target = *forced_target;
+    } else {
+        lib.sample(amino_idx, rng, unit_normal_dist_, target);
+    }
+    std::array<float, 4> delta{0.f, 0.f, 0.f, 0.f};
+    std::array<float, 4> new_chi = old_chi;
+    for (int k = 0; k < ntorsions; ++k) {
+        const size_t ks = static_cast<size_t>(k);
+        delta[ks] = wrap_angle_to_pi(target[ks] - old_chi[ks]);
+        new_chi[ks] = wrap_angle_to_pi(old_chi[ks] + delta[ks]);
+    }
+    // An independence sampler, as apply_rotamer_at explains: the Hastings
+    // term is log q(old) - log q(new).
+    if (lib.has_truncated_tables()) {
+        patch.log_jacobian_weight = lib.log_density(amino_idx, old_chi) - lib.log_density(amino_idx, new_chi);
+    } else {
+        const float log_q_old = lib.log_mixture_density(amino_idx, ntorsions, old_chi);
+        const float log_q_new = lib.log_mixture_density(amino_idx, ntorsions, new_chi);
+        patch.log_jacobian_weight = log_q_old - log_q_new;
+    }
+
+    if (!apply_chi_cascade(proposal, system, r, ntorsions, delta, patch)) return;
+    patch.is_valid = true;
+    patch.first_affected_residue = r;
+    patch.last_affected_residue = r;
+    patch.is_rigid = false;  // a multi-chi cascade, see apply_rotamer_at
     recompute_sidechain_torsion(proposal, system, r);
 }
 
@@ -2134,6 +2205,18 @@ bool MCIntegrator::debug_force_rotamer(Context& context, int residue) {
     move_patch.reset_for_step();
     apply_rotamer_at(context, proposal, move_patch, residue);
     return record_forced_proposal(context, "Sidechain");
+}
+
+bool MCIntegrator::debug_force_rotamer_to(Context& context, int residue,
+                                          const std::array<float, 4>& target_chi) {
+    // Routed through debug_force_rotamer, which apply_rotamer_at hands to
+    // apply_rotamer_truncated_at while a forced target is set.
+    struct Clear {
+        const std::array<float, 4>*& target;
+        ~Clear() { target = nullptr; }
+    } clear{forced_rotamer_target_};
+    forced_rotamer_target_ = &target_chi;
+    return debug_force_rotamer(context, residue);
 }
 
 bool MCIntegrator::debug_force_rama_pivot(Context& context, int residue) {
