@@ -438,3 +438,79 @@ def test_rank0_alone_signs_the_parameter_files(tmp_path, minimal_pdb_path, monke
     assert rank1.forcefield._param_signature is None
     rank0._ensure_param_record(comm0)  # taken once
     assert len(signed) == 1 and len(sent) == built + 1
+
+
+def _md5_folder(root, table_md5=None):
+    """mcpu08's files linked into ``root``, with the aromatic table a file of
+    its own whose md5 the folder's manifest lists (its true md5 unless
+    ``table_md5`` is given)."""
+    import hashlib
+    import json
+
+    from pymcpu.params import PARAMSET_FORMAT, PARAMSET_MANIFEST
+    from tests.helpers.param_folders import linked_param_folder
+
+    folder = linked_param_folder(root)
+    table = folder / "mcpu_params" / "aromatic_potentials.bin"
+    data = table.read_bytes()
+    table.unlink()
+    table.write_bytes(data)
+    md5 = table_md5 or hashlib.md5(data).hexdigest()
+    (folder / PARAMSET_MANIFEST).write_text(json.dumps({
+        "format": PARAMSET_FORMAT, "name": "test_set",
+        "provenance": {"md5": {"mcpu_params/aromatic_potentials.bin": md5}}}))
+    return folder
+
+
+@pytest.mark.parametrize("md5", ["true", "wrong"])
+def test_rank0_alone_compares_the_provenance_md5s(tmp_path, minimal_pdb_path, monkeypatch, md5):
+    """Every rank builds its force field without comparing the md5s the
+    set's manifest lists (each would read the listed tables); rank 0
+    compares them and sends its error, so with a wrong md5 every rank raises
+    it. Two ranks are mocked: rank 1's broadcasts return what rank 0 sent."""
+    from pymcpu import params
+    from pymcpu.checkpointing import CheckpointConfig
+
+    _ensure_mpi_module_for_construction(monkeypatch)
+    compared = []
+    check = params._check_provenance_md5
+
+    def counting(*args, **kwargs):  # counts the calls that compare md5s
+        if kwargs.get("compare", True):
+            compared.append(True)
+        return check(*args, **kwargs)
+
+    monkeypatch.setattr(params, "_check_provenance_md5", counting)
+    folder = _md5_folder(tmp_path / "params", None if md5 == "true" else "0" * 32)
+    sent = []
+
+    def comm_of(rank, replies=None):
+        comm = MagicMock()
+        comm.Get_rank.return_value = rank
+        comm.Get_size.return_value = 2
+        comm.Get_attr.return_value = 32767
+        comm.Barrier.return_value = None
+        if replies is None:
+            comm.bcast.side_effect = lambda data, root=0: sent.append(data) or data
+        else:
+            replies = iter(replies)
+            comm.bcast.side_effect = lambda data, root=0: next(replies)
+        return comm
+
+    cfg = CheckpointConfig(checkpoint_dir=str(tmp_path / "chk"), resume=False)
+    (tmp_path / "out").mkdir()
+    errors = []
+    for rank in (0, 1):
+        comm = comm_of(0) if rank == 0 else comm_of(1, list(sent))
+        try:
+            _make_two_temp_mpi_re(comm, minimal_pdb_path, cfg, tmp_path / "out",
+                                  param_dir=str(folder))
+            errors.append(None)
+        except ValueError as exc:
+            errors.append(str(exc))
+        assert compared == [True]  # rank 0 compared once, rank 1 not at all
+    if md5 == "true":
+        assert errors == [None, None]
+    else:
+        assert errors[0] == errors[1] and "records " + "0" * 32 in errors[0]
+

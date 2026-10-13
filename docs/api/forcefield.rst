@@ -171,8 +171,14 @@ A parameter folder can describe its set in ``constants/paramset.json``
 The force field reads the file before the tables. It refuses one with an
 unknown key, a key given twice, a value of the wrong kind, or a listed file
 that is missing or no longer has its md5, and the error names the file.
-Checking the md5s reads each listed file once per process while it is
-unchanged, about 1 s for 0.7 GB. The checked contents are
+Checking the md5s reads each listed file the first time. The md5 and the
+sha256 (for :attr:`~pymcpu.MCPUForceField.param_signature`) come from that
+one read and are kept under the cache root (``MCPU_CACHE_DIR``, in
+``params/digests.json``) while the file is unchanged, so later processes do
+not read it again. ``verify_provenance=False`` builds the force field
+without comparing them, and :meth:`~pymcpu.MCPUForceField.check_provenance`
+compares them later; MPI replica exchange does so on rank 0 alone. The
+checked contents are
 :attr:`~pymcpu.MCPUForceField.paramset_manifest`. The file counts in
 :attr:`~pymcpu.MCPUForceField.param_signature`, so a checkpoint resumes only
 with the same file, and checkpoints record the sheet factor a run used,
@@ -182,6 +188,8 @@ wheel install unpacks it with the tables, so a set reads the same from a
 wheel as from a checkout or ``MCPU_PARAMS_DIR``.
 
 .. autofunction:: pymcpu.params.load_paramset_manifest
+
+.. autofunction:: pymcpu.params.check_paramset_provenance
 
 Attributes
 ----------

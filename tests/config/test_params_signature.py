@@ -11,7 +11,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
+import time
 from pathlib import Path
 
 import mdtraj as md
@@ -100,21 +102,29 @@ def test_changing_the_set_description_changes_it(tmp_path: Path, chignolin_pdb_p
     assert param_signature(ensure_params("mcpu08")) not in signatures
 
 
+def _count_reads(monkeypatch, tmp_path: Path) -> list[str]:
+    """The name of each parameter file read in full from now on, with a
+    digest store of the test's own (``MCPU_CACHE_DIR``)."""
+    monkeypatch.setenv("MCPU_CACHE_DIR", str(tmp_path / "cache"))
+    reads: list[str] = []
+    hash_file = params._hash_file
+    monkeypatch.setattr(params, "_hash_file",
+                        lambda path: reads.append(Path(path).name) or hash_file(path))
+    return reads
+
+
+def _small_folder(root: Path) -> Path:
+    (root / "constants").mkdir(parents=True)
+    (root / "constants" / "atom_types.csv").write_text("a,b\n")
+    (root / "constants" / "standard_amino_acids.json").write_text("{}")
+    return root
+
+
 def test_each_file_is_read_once_until_it_changes(tmp_path: Path, monkeypatch) -> None:
     """A process that builds many runs from one folder hashes it once; a file
     rewritten since is read again."""
-    reads: list[str] = []
-    real_digest = hashlib.file_digest
-
-    def counting(handle, name):
-        reads.append(Path(handle.name).name)
-        return real_digest(handle, name)
-
-    monkeypatch.setattr(params.hashlib, "file_digest", counting)
-    folder = tmp_path / "small"
-    (folder / "constants").mkdir(parents=True)
-    (folder / "constants" / "atom_types.csv").write_text("a,b\n")
-    (folder / "constants" / "standard_amino_acids.json").write_text("{}")
+    reads = _count_reads(monkeypatch, tmp_path)
+    folder = _small_folder(tmp_path / "small")
 
     first = param_signature(folder)
     assert sorted(reads) == ["atom_types.csv", "standard_amino_acids.json"]
@@ -123,6 +133,77 @@ def test_each_file_is_read_once_until_it_changes(tmp_path: Path, monkeypatch) ->
     (folder / "constants" / "atom_types.csv").write_text("a,b,c\n")
     assert param_signature(folder) != first
     assert reads[2:] == ["atom_types.csv"]
+
+
+def test_a_file_rewritten_with_its_size_and_mtime_restored_is_read_again(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """``cp -p`` or ``rsync --inplace -t`` onto a file of the same size keeps
+    its inode, size and modification time, but not its change time."""
+    reads = _count_reads(monkeypatch, tmp_path)
+    folder = _small_folder(tmp_path / "small")
+    table = folder / "constants" / "atom_types.csv"
+    before = table.stat()
+    first = param_signature(folder)
+    time.sleep(0.05)  # past the filesystem's timestamp tick
+    with table.open("r+b") as handle:  # the same inode
+        handle.write(b"x,y\n")
+    os.utime(table, ns=(before.st_atime_ns, before.st_mtime_ns))
+    after = table.stat()
+    assert (after.st_ino, after.st_size, after.st_mtime_ns) == (
+        before.st_ino, before.st_size, before.st_mtime_ns)
+    assert param_signature(folder) != first
+    assert reads.count("atom_types.csv") == 2
+
+
+def test_another_process_takes_the_digests_from_the_store(tmp_path: Path, monkeypatch) -> None:
+    """The digests of each file read are kept under the cache root, by its
+    real path, inode, size and times, so another process (here: this one
+    with its own memory cleared) does not read the file again while it is
+    unchanged. Another cache root, a changed file and a damaged store mean
+    a new read."""
+    reads = _count_reads(monkeypatch, tmp_path)
+    folder = _small_folder(tmp_path / "small")
+    first = param_signature(folder)
+    assert len(reads) == 2
+    store = json.loads((tmp_path / "cache" / "params" / params.DIGEST_STORE).read_text())
+    table = os.path.realpath(folder / "constants" / "atom_types.csv")
+    entry = store["files"][table]
+    assert entry["md5"] == hashlib.md5(b"a,b\n").hexdigest()
+    assert entry["sha256"] == hashlib.sha256(b"a,b\n").hexdigest()
+    assert entry["size"] == 4 and entry["inode"] == os.stat(table).st_ino
+
+    monkeypatch.setattr(params, "_FILE_DIGESTS", {})  # a new process
+    assert param_signature(folder) == first
+    assert len(reads) == 2
+    (folder / "constants" / "atom_types.csv").write_text("a,b,c\n")
+    monkeypatch.setattr(params, "_FILE_DIGESTS", {})
+    second = param_signature(folder)
+    assert second != first and reads[2:] == ["atom_types.csv"]
+
+    monkeypatch.setattr(params, "_FILE_DIGESTS", {})
+    monkeypatch.setenv("MCPU_CACHE_DIR", str(tmp_path / "other_cache"))
+    assert param_signature(folder) == second
+    assert len(reads) == 5
+    (tmp_path / "other_cache" / "params" / params.DIGEST_STORE).write_text("{not json")
+    monkeypatch.setattr(params, "_FILE_DIGESTS", {})
+    assert param_signature(folder) == second
+    assert len(reads) == 7
+
+
+def test_one_read_gives_the_md5_and_the_sha256(tmp_path: Path, monkeypatch) -> None:
+    """Checking a manifest's provenance md5 and signing the folder read each
+    listed file once between them."""
+    reads = _count_reads(monkeypatch, tmp_path)
+    folder = _small_folder(tmp_path / "small")
+    md5 = hashlib.md5(b"a,b\n").hexdigest()
+    (folder / PARAMSET_MANIFEST).write_text(json.dumps({
+        "format": PARAMSET_FORMAT, "name": "test",
+        "provenance": {"md5": {"constants/atom_types.csv": md5}}}))
+    params.load_paramset_manifest(folder)
+    assert reads == ["atom_types.csv"]
+    param_signature(folder)
+    assert sorted(reads) == ["atom_types.csv", "paramset.json", "standard_amino_acids.json"]
 
 
 @pytest.mark.parametrize("change", ["table rewritten", "description added", "link moved"])

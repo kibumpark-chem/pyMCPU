@@ -335,14 +335,11 @@ def test_provenance_md5s_are_checked_when_the_set_is_loaded(small, tmp_path) -> 
 
 
 def test_each_listed_file_is_hashed_once_until_it_changes(tmp_path, monkeypatch) -> None:
-    reads: list[tuple[str, str]] = []
-    real_digest = hashlib.file_digest
-
-    def counting(handle, name):
-        reads.append((Path(handle.name).name, name))
-        return real_digest(handle, name)
-
-    monkeypatch.setattr(params.hashlib, "file_digest", counting)
+    monkeypatch.setenv("MCPU_CACHE_DIR", str(tmp_path / "cache"))
+    reads: list[str] = []
+    hash_file = params._hash_file
+    monkeypatch.setattr(params, "_hash_file",
+                        lambda path: reads.append(Path(path).name) or hash_file(path))
     folder = tmp_path / "small"
     (folder / "constants").mkdir(parents=True)
     listed = folder / "constants" / "atom_types.csv"
@@ -351,8 +348,38 @@ def test_each_listed_file_is_hashed_once_until_it_changes(tmp_path, monkeypatch)
     (folder / PARAMSET_MANIFEST).write_text(json.dumps(_manifest(provenance={"md5": md5})))
     load_paramset_manifest(folder)
     load_paramset_manifest(folder)
-    assert reads == [("atom_types.csv", "md5")]
+    assert reads == ["atom_types.csv"]
     listed.write_text("a,b,c\n")
     with pytest.raises(ValueError, match="the file changed"):
         load_paramset_manifest(folder)
-    assert reads[1:] == [("atom_types.csv", "md5")]
+    assert reads[1:] == ["atom_types.csv"]
+
+
+def test_provenance_can_be_compared_later(small, tmp_path, monkeypatch) -> None:
+    """``verify_provenance=False`` builds a force field without reading the
+    files the manifest lists md5s for (MPI replica exchange does so on every
+    rank, and compares on rank 0 alone); ``check_provenance`` compares them.
+    What the manifest lists is still checked when it is read."""
+    monkeypatch.setenv("MCPU_CACHE_DIR", str(tmp_path / "cache"))
+    folder = _folder(tmp_path / "f")
+    _own_copy(folder, TABLE)
+    (folder / PARAMSET_MANIFEST).write_text(json.dumps(
+        _manifest(provenance={"md5": {TABLE: MD5_ZERO}})))
+    reads: list[str] = []
+    hash_file = params._hash_file
+    monkeypatch.setattr(params, "_hash_file",
+                        lambda path: reads.append(Path(path).name) or hash_file(path))
+
+    ff = MCPUForceField(small, param_dir=str(folder), verify_provenance=False)
+    assert reads == []
+    with pytest.raises(ValueError, match=f"records {MD5_ZERO}: the file changed"):
+        ff.check_provenance()
+    assert reads == ["aromatic_potentials.bin"]
+    with pytest.raises(ValueError, match=f"records {MD5_ZERO}: the file changed"):
+        MCPUForceField(small, param_dir=str(folder))
+    (folder / PARAMSET_MANIFEST).write_text(json.dumps(
+        _manifest(provenance={"md5": {"mcpu_params/gone.bin": MD5_ZERO}})))
+    with pytest.raises(ValueError, match="lists mcpu_params/gone.bin, which is not a file"):
+        MCPUForceField(small, param_dir=str(folder), verify_provenance=False)
+    # A set without listed md5s has nothing to compare.
+    MCPUForceField(small, verify_provenance=False).check_provenance()

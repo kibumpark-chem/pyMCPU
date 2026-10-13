@@ -268,3 +268,46 @@ def test_rank0_signs_the_parameter_files_and_every_rank_refuses_others(
     with pytest.raises(ValueError, match="a table or constants file differs"):
         other._mpi_load_checkpoint(comm=comm)
     comm.Barrier()
+
+
+@pytest.mark.mpi_integration
+def test_rank0_alone_compares_the_provenance_md5s_and_every_rank_raises(
+    broadcast_tmp_path, minimal_pdb_path, monkeypatch
+):
+    """With a manifest that lists md5s, only rank 0 compares them, and a
+    wrong one stops both ranks at construction, with rank 0's error.
+
+    Run with: mpirun -n 2 pytest tests/integration/mpi/test_mpi_checkpointing_multirank.py
+                      -v -k test_rank0_alone_compares
+    """
+    from pymcpu import params
+    from pymcpu.checkpointing import CheckpointConfig
+    from tests.integration.mpi.test_mpi_checkpointing import _md5_folder
+
+    comm = _two_rank_comm()
+    rank = comm.Get_rank()
+    compared = []
+    check = params._check_provenance_md5
+
+    def counting(*args, **kwargs):  # counts the calls that compare md5s
+        if kwargs.get("compare", True):
+            compared.append(True)
+        return check(*args, **kwargs)
+
+    monkeypatch.setattr(params, "_check_provenance_md5", counting)
+    good, bad = broadcast_tmp_path / "md5_good", broadcast_tmp_path / "md5_bad"
+    out_dir = broadcast_tmp_path / "out_md5"
+    if rank == 0:
+        _md5_folder(good)
+        _md5_folder(bad, "0" * 32)
+        out_dir.mkdir(parents=True, exist_ok=True)
+    comm.Barrier()
+
+    cfg = CheckpointConfig(checkpoint_dir=str(broadcast_tmp_path / "chk_md5"), resume=False)
+    _make_two_temp_mpi_re(comm, minimal_pdb_path, cfg, out_dir, param_dir=str(good))
+    assert comm.allgather(len(compared)) == [1, 0]
+    with pytest.raises(ValueError, match="records " + "0" * 32):
+        _make_two_temp_mpi_re(comm, minimal_pdb_path, cfg, out_dir, param_dir=str(bad))
+    assert comm.allgather(len(compared)) == [2, 0]
+    comm.Barrier()
+

@@ -237,8 +237,10 @@ the parameters in this order and uses the first match:
 A directory you set explicitly therefore always wins over the shipped copy.
 Checkpoints record the parameter set and a signature of the files read from
 it, so a run resumes only with the same files, wherever they are (see
-:doc:`checkpointing`). On a cluster, a node-local cache is usually faster
-than a shared home directory:
+:doc:`checkpointing`). Taking a signature reads every parameter file once;
+the cache keeps what it found in ``params/digests.json``, so a file is read
+again only after it changes or from another cache. On a cluster, a
+node-local cache is usually faster than a shared home directory:
 
 .. code-block:: bash
 

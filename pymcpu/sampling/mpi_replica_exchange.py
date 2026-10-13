@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import sys
 import csv
+import inspect
 import logging
 import os
 import time
@@ -26,6 +27,7 @@ from pymcpu.config import (
     DEFAULT_ROTAMER_LIBRARY,
     DEFAULT_MIN_SEQ_SEP,
 )
+from pymcpu.forcefields import get_forcefield
 from pymcpu.checkpointing import (
     CheckpointConfig,
     CheckpointState,
@@ -353,6 +355,13 @@ class MPIReplicaExchange:
         self.replicas_per_rank = len(self.local_replica_indices)
 
         self.forcefield_name = forcefield
+        # Every rank builds its force field without comparing the parameter
+        # set's provenance md5s with its files, which would have each rank
+        # read every listed table in full; rank 0 compares them below.
+        options = dict(forcefield_options or {})
+        verify_provenance = bool(options.get("verify_provenance", True))
+        if "verify_provenance" in inspect.signature(get_forcefield(forcefield).__init__).parameters:
+            options["verify_provenance"] = False
         self.system, self.forcefield, self.topology, coords_angstroms, self.q_cv = (
             build_system_and_cv(
                 pdb_path,
@@ -366,7 +375,7 @@ class MPIReplicaExchange:
                 linker_residues=self.linker_residues,
                 linker_energy_mode=self.linker_energy_mode,
                 forcefield=forcefield,
-                forcefield_options=forcefield_options,
+                forcefield_options=options,
                 param_set=param_set,
                 param_dir=None if param_dir is None else str(param_dir),
                 move_weights=self.move_settings["move_weights"],
@@ -389,6 +398,20 @@ class MPIReplicaExchange:
         top_error = comm.bcast(top_error, root=0)
         if top_error:
             raise RuntimeError(top_error)
+
+        # Rank 0 compares the provenance md5s and sends its error, if any, so
+        # every rank raises rather than waits.
+        provenance_error = None
+        if self.rank == 0 and verify_provenance:
+            try:
+                check = getattr(self.forcefield, "check_provenance", None)
+                if check is not None:
+                    check()
+            except Exception as exc:
+                provenance_error = str(exc)
+        provenance_error = comm.bcast(provenance_error, root=0)
+        if provenance_error:
+            raise ValueError(provenance_error)
 
         # What checkpoints record about the parameter files: taken by
         # _ensure_param_record when the run first saves or resumes one, as

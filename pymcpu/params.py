@@ -177,29 +177,139 @@ def signed_files(set_name: str = _DEFAULT_SET) -> list[str]:
     return sorted(paths)
 
 
-#: Digest of each file read so far, by (real path, device, inode, size,
-#: modification time, algorithm): see _file_digest.
-_FILE_DIGESTS: dict[tuple[str, int, int, int, int, str], str] = {}
+#: The digests a parameter file gets, from one read: sha256 for
+#: param_signature, md5 for a manifest's provenance.
+_DIGEST_ALGORITHMS = ("md5", "sha256")
+_DIGEST_LENGTHS = {"md5": 32, "sha256": 64}
+
+#: Digests of the files read so far in this process, by file identity
+#: (_file_identity).
+_FILE_DIGESTS: dict[tuple[str, int, int, int, int], dict[str, str]] = {}
+
+#: The file, under the cache root's params/ folder, that keeps the digests
+#: of parameter files between processes (see _files_digests), and its format.
+DIGEST_STORE = "digests.json"
+_DIGEST_STORE_FORMAT = "pymcpu-digests/1"
+#: Files the store keeps at most; the oldest entries go first.
+_DIGEST_STORE_LIMIT = 4096
 
 
-def _file_digest(path: Path, algorithm: str = "sha256") -> str:
-    """The ``algorithm`` digest (hex) of a file's bytes, kept for the life of
-    the process.
+def _file_identity(path: str | Path) -> tuple[str, int, int, int, int]:
+    """What the digest caches trust a file's contents by, without reading
+    it: its real path, inode, size, and modification and change times (ns).
 
-    Kept by the file's real path, device, inode, size and modification time,
-    so a process that builds many runs from one folder reads each file once
-    (the mcpu08 tables are 0.7 GB, about 2 s to hash), and a file that has
-    been replaced or rewritten since is read again.
+    Not the device: one file on a network filesystem has another st_dev on
+    each node. The change time cannot be set back by hand, so a file
+    rewritten with its size and modification time restored is read again.
     """
     real = os.path.realpath(path)
     st = os.stat(real)
-    key = (real, st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns, algorithm)
-    digest = _FILE_DIGESTS.get(key)
-    if digest is None:
-        with open(real, "rb") as handle:
-            digest = hashlib.file_digest(handle, algorithm).hexdigest()
-        _FILE_DIGESTS[key] = digest
-    return digest
+    return (real, st.st_ino, st.st_size, st.st_mtime_ns, st.st_ctime_ns)
+
+
+def _digest_store_path() -> Path:
+    return cache_root() / "params" / DIGEST_STORE
+
+
+def _read_digest_store() -> dict[str, Any]:
+    """The digest store's entries by real path; empty when there is no store
+    or it cannot be read."""
+    try:
+        data = json.loads(_digest_store_path().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(data, dict) or data.get("format") != _DIGEST_STORE_FORMAT:
+        return {}
+    files = data.get("files")
+    return files if isinstance(files, dict) else {}
+
+
+def _stored_digests(store: dict[str, Any], identity: tuple) -> dict[str, str] | None:
+    """The digests the store holds for this identity of a file, or None."""
+    entry = store.get(identity[0])
+    if not isinstance(entry, dict) or [
+        entry.get(key) for key in ("inode", "size", "mtime_ns", "ctime_ns")
+    ] != list(identity[1:]):
+        return None
+    digests = {algorithm: entry.get(algorithm) for algorithm in _DIGEST_ALGORITHMS}
+    for algorithm, digest in digests.items():
+        if not (isinstance(digest, str) and len(digest) == _DIGEST_LENGTHS[algorithm]
+                and re.fullmatch(r"[0-9a-f]+", digest)):
+            return None
+    return digests
+
+
+def _keep_digests(taken: dict[tuple, dict[str, str]]) -> None:
+    """Add digests just taken to the store, merged with what it holds now
+    and written atomically. A store that cannot be written is left alone:
+    the digests then last for this process only."""
+    if not taken:
+        return
+    path = _digest_store_path()
+    try:
+        store = _read_digest_store()
+        for identity, digests in taken.items():
+            real, inode, size, mtime_ns, ctime_ns = identity
+            store.pop(real, None)  # one entry per path: the file as it is now
+            store[real] = {"inode": inode, "size": size, "mtime_ns": mtime_ns,
+                           "ctime_ns": ctime_ns, **digests}
+        for real in list(store)[: max(0, len(store) - _DIGEST_STORE_LIMIT)]:
+            del store[real]
+        payload = {"format": _DIGEST_STORE_FORMAT, "files": store}
+        _atomic_write_bytes(path, json.dumps(payload, indent=1).encode())
+    except OSError as exc:
+        logger.debug("could not keep parameter digests in %s: %s", path, exc)
+
+
+def _hash_file(path: str) -> dict[str, str]:
+    """Every digest of :data:`_DIGEST_ALGORITHMS` of a file's bytes, from one
+    read."""
+    hashers = {algorithm: hashlib.new(algorithm) for algorithm in _DIGEST_ALGORITHMS}
+    with open(path, "rb") as handle:
+        while chunk := handle.read(1 << 22):
+            for hasher in hashers.values():
+                hasher.update(chunk)
+    return {algorithm: hasher.hexdigest() for algorithm, hasher in hashers.items()}
+
+
+def _files_digests(paths: list[Path]) -> list[dict[str, str]]:
+    """The md5 and sha256 (hex) of each file's bytes.
+
+    Both come from one read, and are kept by the file's identity
+    (:func:`_file_identity`) for the life of the process and in the digest
+    store under the cache root (``MCPU_CACHE_DIR``, default
+    ``~/.cache/pymcpu``): a parameter file is read once per cache root while
+    it stays unchanged, not once per process (the mcpu08 tables are 0.7 GB:
+    about 3 s from the page cache, up to 45 s from a home directory when
+    they are not cached). A file replaced, rewritten or touched since has
+    another identity and is read again; so is one that changed while it was
+    read, whose digests are not kept.
+    """
+    identities = [_file_identity(path) for path in paths]
+    missing = [identity for identity in dict.fromkeys(identities) if identity not in _FILE_DIGESTS]
+    if missing:
+        store = _read_digest_store()
+        taken: dict[tuple, dict[str, str]] = {}
+        for identity in missing:
+            digests = _stored_digests(store, identity)
+            if digests is None:
+                digests = _hash_file(identity[0])
+                if _file_identity(identity[0]) != identity:
+                    _FILE_DIGESTS.pop(identity, None)
+                    raise ParamsError(
+                        f"{identity[0]} changed while it was read; read it again when it "
+                        "is no longer being written"
+                    )
+                taken[identity] = digests
+            _FILE_DIGESTS[identity] = digests
+        _keep_digests(taken)
+    return [_FILE_DIGESTS[identity] for identity in identities]
+
+
+def _file_digest(path: str | Path, algorithm: str = "sha256") -> str:
+    """The ``algorithm`` (md5 or sha256) digest of one file: see
+    :func:`_files_digests`."""
+    return _files_digests([Path(path)])[0][algorithm]
 
 
 def param_file_identities(
@@ -234,18 +344,23 @@ def param_signature(param_dir: str | Path, set_name: str = _DEFAULT_SET) -> str:
     folders that hold the same files have the same signature wherever they
     are, and changing, adding or removing one of those files changes it.
     Other files in the folder do not count. Links are followed. Each file is
-    read once per process while it stays unchanged.
+    read once per cache root (``MCPU_CACHE_DIR``) while it stays unchanged:
+    its digests are kept there, in ``params/digests.json``.
     """
     root = Path(param_dir)
+    files = signed_files(set_name)
+    present = [rel for rel in files if (root / rel).is_file()]
+    digests = dict(zip(present, _files_digests([root / rel for rel in present])))
     digest = hashlib.sha256()
-    for rel in signed_files(set_name):
-        path = root / rel
-        entry = _file_digest(path) if path.is_file() else "absent"
+    for rel in files:
+        entry = digests[rel]["sha256"] if rel in digests else "absent"
         digest.update(f"{rel}\0{entry}\n".encode())
     return digest.hexdigest()
 
 
-def load_paramset_manifest(param_dir: str | Path) -> dict[str, Any] | None:
+def load_paramset_manifest(
+    param_dir: str | Path, *, check_md5: bool = True
+) -> dict[str, Any] | None:
     """Read and check the :data:`PARAMSET_MANIFEST` of a parameter folder, or
     return None when the folder has none.
 
@@ -278,8 +393,12 @@ def load_paramset_manifest(param_dir: str | Path) -> dict[str, Any] | None:
     Unknown keys, a key given twice anywhere in the file and a value of the
     wrong kind are refused with ValueError naming the file, as is a listed
     file that is missing or has changed. Returns the checked manifest, with
-    numbers as floats. The md5 of each listed file is taken once per process
-    while the file stays unchanged (about 1 s for 0.7 GB).
+    numbers as floats. Comparing a listed file's md5 reads it the first time
+    (0.7 GB for mcpu08's tables, about 3 s with the sha256 the signature
+    takes from the same read), and then once per cache root
+    (``MCPU_CACHE_DIR``) while it stays unchanged. With ``check_md5=False`` the
+    listed files are not read, only checked to exist;
+    :func:`check_paramset_provenance` compares them later.
     """
     root = Path(param_dir)
     path = root / PARAMSET_MANIFEST
@@ -346,7 +465,7 @@ def load_paramset_manifest(param_dir: str | Path) -> dict[str, Any] | None:
         if not isinstance(provenance, dict):
             raise ValueError(f"{path}: 'provenance' must be an object, got {provenance!r}")
         if "md5" in provenance:
-            _check_provenance_md5(root, path, provenance["md5"])
+            _check_provenance_md5(root, path, provenance["md5"], compare=check_md5)
         checked["provenance"] = provenance
     return checked
 
@@ -385,9 +504,10 @@ def _folded_weight(value: Any, key: str, path: Path) -> float:
     raise ValueError(f"{path}: '{key}' must be a finite number, 0 or above, got {value!r}")
 
 
-def _check_provenance_md5(root: Path, path: Path, md5s: Any) -> None:
+def _check_provenance_md5(root: Path, path: Path, md5s: Any, *, compare: bool = True) -> None:
     """Raise ValueError unless ``md5s`` maps paths inside ``root`` to md5
-    digests that the files there still have."""
+    digests that the files there still have. With ``compare=False``, only
+    what it lists is checked, and no file is read."""
     if not isinstance(md5s, dict) or not all(
         isinstance(rel, str) and isinstance(md5, str) for rel, md5 in md5s.items()
     ):
@@ -414,13 +534,31 @@ def _check_provenance_md5(root: Path, path: Path, md5s: Any) -> None:
             raise ValueError(
                 f"{path}: 'provenance.md5' lists {rel}, which is not a file in {root}"
             )
-        found = _file_digest(target, "md5")
+    if not compare:
+        return
+    targets = [root / PurePosixPath(rel) for rel in md5s]
+    for target, expected, digests in zip(targets, md5s.values(), _files_digests(targets)):
+        found = digests["md5"]
         if found != expected.lower():
             raise ValueError(
                 f"{target} has md5 {found}, but {path} records {expected.lower()}: the "
                 "file changed after the parameter set was written; restore it, or write "
                 "the set again"
             )
+
+
+def check_paramset_provenance(param_dir: str | Path, manifest: dict[str, Any] | None) -> None:
+    """Raise ValueError unless every file whose md5 a checked manifest
+    (:func:`load_paramset_manifest`) lists under ``provenance.md5`` still has
+    it. Nothing to do for None or a manifest without md5s.
+
+    For a manifest read with ``check_md5=False``: MPI replica exchange reads
+    it so on every rank, and compares the md5s on rank 0 alone.
+    """
+    md5s = ((manifest or {}).get("provenance") or {}).get("md5")
+    if md5s:
+        root = Path(param_dir)
+        _check_provenance_md5(root, root / PARAMSET_MANIFEST, md5s)
 
 
 def _looks_like_params_root(path: Path, files: list[str]) -> bool:

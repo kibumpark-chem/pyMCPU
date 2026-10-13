@@ -40,10 +40,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   runners when they first save or resume a checkpoint (MPI replica exchange
   on rank 0, which sends it to the other ranks), and by `EngineSession` the
   first time its fingerprint is read. A run without checkpoints, and a force
-  field alone, never take it. A process reads each file at most once while
-  it is unchanged. A force field refuses to sign parameter files that have
-  changed since it read them, as the signature would not describe its
-  tables.
+  field alone, never take it. A file's sha256 and md5 come from one read,
+  and are kept under the cache root (`MCPU_CACHE_DIR`, default
+  `~/.cache/pymcpu`) in `params/digests.json`, by the file's real path,
+  inode, size, and modification and change times: each parameter file is
+  read once per cache root while it is unchanged, not once per process. A
+  force field refuses to sign parameter files that have changed since it
+  read them, as the signature would not describe its tables.
 - **A parameter set can carry its own defaults in
   `constants/paramset.json`.** The file (format `pymcpu-paramset/1`) names
   the set and can give its hydrogen-bond sheet factor (`hbond_beta_favor`),
@@ -51,7 +54,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   above, a record only: the engine's group weights do not change) and its
   provenance,
   including the md5 of any of its files, which each file must still have when
-  a force field is built. Unknown or repeated keys and values of the wrong
+  a force field is built. `MCPUForceField(verify_provenance=False)` builds
+  without comparing them, and `MCPUForceField.check_provenance` compares
+  them later; MPI replica exchange builds so on every rank and compares on
+  rank 0 alone, which sends its error to the others. Unknown or repeated keys and values of the wrong
   kind are refused with an error that names the file.
   `pymcpu.params.load_paramset_manifest` reads and checks it, and
   `MCPUForceField.paramset_manifest` holds what the force field read. mcpu08

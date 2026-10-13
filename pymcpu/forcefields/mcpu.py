@@ -26,6 +26,7 @@ from pymcpu.mcpu_core import DownstreamCache
 from pymcpu.params import (
     PARAMSET_MANIFEST,
     ParamsError,
+    check_paramset_provenance,
     ensure_params,
     load_paramset_manifest,
     optional_files,
@@ -187,7 +188,8 @@ class MCPUForceField(BaseForceField):
              dssp_coil_state: str = "C",
              allow_provisional_rama: bool = False,
              allow_chain_breaks: bool = False,
-             hbond_beta_favor: float | None = None) -> None:
+             hbond_beta_favor: float | None = None,
+             verify_provenance: bool = True) -> None:
         """
         Load the parameters, check the structure and lay out its atoms.
 
@@ -235,6 +237,14 @@ class MCPUForceField(BaseForceField):
             when the set gives none, as for mcpu08. A value given here
             always wins. Legacy MCPU compiled 3.0 (``beta_favor`` in its
             ``define.h``); pass 3.0 to score hydrogen bonds as it did.
+        verify_provenance
+            If True (the default), compare the md5 that the set's
+            ``constants/paramset.json`` lists for any of its files with the
+            file, which reads it the first time (see
+            :func:`pymcpu.params.load_paramset_manifest`). If False, the
+            files are not read; :meth:`check_provenance` compares them later.
+            MPI replica exchange passes False on every rank and compares on
+            rank 0 alone.
 
         Raises
         ------
@@ -266,7 +276,8 @@ class MCPUForceField(BaseForceField):
         # The folder's checked constants/paramset.json, or None (mcpu08 has
         # none). Read before the tables, so a table whose provenance md5 no
         # longer matches is refused before it is loaded.
-        self.paramset_manifest = load_paramset_manifest(self.param_dir)
+        self.paramset_manifest = load_paramset_manifest(
+            self.param_dir, check_md5=bool(verify_provenance))
         if hbond_beta_favor is None:
             hbond_beta_favor = (self.paramset_manifest or {}).get("hbond_beta_favor")
             if hbond_beta_favor is None:
@@ -928,6 +939,14 @@ class MCPUForceField(BaseForceField):
                     )
             self._param_signature = param_signature(self.param_dir, self.param_set)
         return self._param_signature
+
+    def check_provenance(self) -> None:
+        """Compare the md5 that the parameter set's ``constants/paramset.json``
+        lists for any of its files with the file, as building the force field
+        does unless given ``verify_provenance=False``. Raises ValueError,
+        naming the file, for one that no longer has its md5; a set that lists
+        none has nothing to compare."""
+        check_paramset_provenance(self.param_dir, self.paramset_manifest)
 
     @property
     def sidechain_move_residues(self) -> list[int]:
