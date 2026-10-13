@@ -148,7 +148,8 @@ The hydrogen-bond row needs two notes. 1.35 is the configured group
 weight, but the effective multiplier applied to the raw H-bond energy is
 **2.7** (`1.35 × RDTHREE_CON`, with `RDTHREE_CON = 2.0`). And a bond between
 residues more than four apart, as in a β-sheet, is also multiplied by the
-sheet factor `hbond_beta_favor`: 2 by default, where legacy MCPU used 3.
+sheet factor `hbond_beta_favor`: by default the parameter set's own (from its
+`constants/paramset.json`), else 2, as for mcpu08; legacy MCPU used 3.
 
 `energy_breakdown()` returns both raw and weighted values.
 
@@ -157,7 +158,7 @@ sheet factor `hbond_beta_favor`: 2 by default, where legacy MCPU used 3.
 | Setting | Default |
 |---|---|
 | Legacy outer energy weights | on |
-| H-bond sheet factor (`hbond_beta_favor`) | 2.0 (legacy MCPU: 3.0) |
+| H-bond sheet factor (`hbond_beta_favor`) | the set's `paramset.json`, else 2.0 (mcpu08; legacy MCPU: 3.0) |
 | Rotamer proposal (`rotamer_library`) | `dunbrack2002_sym`, both images of symmetric χ (legacy MCPU's draw: `dunbrack2002`) |
 | Virtual amide H (H-bond-only hydrogens) | on |
 | Periodic boundary conditions | none (open boundary) |

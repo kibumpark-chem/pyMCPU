@@ -54,9 +54,10 @@ E_pair = table[class][six bins] × s[class][donor type][acceptor type] × f
 
 s is a factor for the two residue types, and f is the sheet factor for a pair
 more than four apart (parallel or antiparallel) and 1.0 for a helix-like pair.
-The sheet factor is 2.0 by default and is set with
+By default the sheet factor is the parameter set's own (from its
+`constants/paramset.json`), else 2.0, as for mcpu08. It is set with
 `MCPUForceField(hbond_beta_favor=...)` (in a config,
-`forcefield_options: {hbond_beta_favor: ...}`). Legacy MCPU compiled 3.0
+`forcefield_options: {hbond_beta_favor: ...}`), which always wins. Legacy MCPU compiled 3.0
 (`beta_favor` in its `define.h`); set 3.0 to score hydrogen bonds as it did.
 The term is the sum over pairs divided by 1000; the weight of 2.7 then applies.
 

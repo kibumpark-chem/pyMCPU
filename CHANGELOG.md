@@ -76,7 +76,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   so mcpu08 runs as before. A factor given as an argument or in
   `forcefield_options` always wins, and checkpoints record the factor the run
   used. `hbond_beta_favor: null` in a config now asks for this default
-  instead of being refused.
+  instead of being refused. The README's physics defaults and the
+  hydrogen-bond physics notes give the default this way.
 - `EngineSession.fingerprint` covers the parameter set the force field was
   built from, the signature of its files and the hydrogen-bond sheet factor
   it resolved, so it differs from 0.1.0's for the same engine, and restart
