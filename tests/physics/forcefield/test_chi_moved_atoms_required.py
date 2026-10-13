@@ -1,13 +1,17 @@
-"""A residue template that names chi atoms must name the atoms they move.
+"""A residue template must name, for each chi angle a residue has, the atoms
+that define it and the atoms it moves.
 
-``chi_atoms`` holds the four atoms that define each chi angle, and
-``chi_moved_atoms`` the atoms that turn with it, one row per chi. The
-side-chain moves turn only the atoms in those rows. A template without them
-used to load: every chi got the moved range [-1, -1], so no side chain ever
-moved, and the energies, which do not read the rows, looked normal. A
-research parameter set did this in September 2026. ``MCPUForceField`` now
-refuses such a template when it reads it, and names the file and the
-residues.
+The engine counts a residue's chi angles by its ``ntorsions``. ``chi_atoms``
+holds the four atoms that define each chi angle, and ``chi_moved_atoms`` the
+atoms that turn with it, one row per chi. The side-chain moves turn only the
+atoms in the ``chi_moved_atoms`` rows, and the side-chain torsion energy reads
+each chi from its ``chi_atoms`` row. A template without them used to load:
+every chi got the moved range [-1, -1], so no side chain ever moved, and the
+energies, which do not read the moved rows, looked normal. A research
+parameter set did this in September 2026. A residue whose ``ntorsions``
+counted more chi angles than its rows also loaded: those angles never moved
+and were scored at a placeholder angle. ``MCPUForceField`` now refuses such a
+template when it reads it, and names the file and the residues.
 
 Each case edits a copy of mcpu08's template in a folder that links mcpu08's
 other files. ``test_chi_moved_atoms_topology.py`` checks what the rows hold;
@@ -82,6 +86,25 @@ def _set_rows(residue: str, change: Callable[[list], object]) -> Edit:
     return edit
 
 
+def _set(residue: str, **values: object) -> Edit:
+    """Set keys of one residue; a value of None removes the key."""
+    def edit(template: dict) -> None:
+        for key, value in values.items():
+            if value is None:
+                template[residue].pop(key, None)
+            else:
+                template[residue][key] = value
+    return edit
+
+
+def _cut_both(residue: str, n: int) -> Edit:
+    """Keep the first ``n`` rows of both chi lists of one residue."""
+    def edit(template: dict) -> None:
+        for key in ("chi_atoms", "chi_moved_atoms"):
+            template[residue][key] = template[residue][key][:n]
+    return edit
+
+
 def test_a_template_without_the_key_is_refused(tmp_path: Path, chignolin: md.Trajectory) -> None:
     """The September 2026 case: the key gone from every residue. All 18
     residues with chi angles are named; GLY and ALA have none, so not them."""
@@ -91,7 +114,7 @@ def test_a_template_without_the_key_is_refused(tmp_path: Path, chignolin: md.Tra
     message = str(caught.value)
     assert message.startswith(f"{folder / TEMPLATE}: ")
     assert "'chi_moved_atoms'" in message
-    named = re.findall(r"\b([A-Z]{3}) has none\b", message)
+    named = re.findall(r"\b([A-Z]{3}) has no chi_moved_atoms\b", message)
     template = json.loads((folder / TEMPLATE).read_text())
     assert named == sorted(name for name, entry in template.items() if entry.get("chi_atoms"))
     assert len(named) == 18 and "GLY" not in named and "ALA" not in named
@@ -102,16 +125,35 @@ def test_a_template_without_the_key_is_refused(tmp_path: Path, chignolin: md.Tra
     ("edit", "expected"),
     [
         # Chignolin has no lysine: the template is checked, not the structure.
-        (_drop_key("LYS"), "LYS has none"),
-        (_set_rows("ARG", lambda rows: rows[:2]), "ARG has 2 rows for 4 chi"),
-        (_set_rows("SER", lambda rows: rows + rows), "SER has 2 rows for 1 chi"),
-        (_set_rows("SER", lambda rows: [[]]), "SER has no atoms for chi1"),
+        (_drop_key("LYS"), "LYS has no chi_moved_atoms"),
+        (_set_rows("ARG", lambda rows: rows[:2]), "ARG has 2 chi_moved_atoms rows for 4 chi"),
+        (_set_rows("SER", lambda rows: rows + rows), "SER has 2 chi_moved_atoms rows for 1 chi"),
+        (_set_rows("SER", lambda rows: [[]]), "SER has no atoms in chi_moved_atoms for chi1"),
         (_set_rows("LYS", lambda rows: [rows[0], [], rows[2], []]),
-         "LYS has no atoms for chi2, chi4"),
-        (_set_rows("MET", lambda rows: "CG SD CE"), "MET has a str, not a list of rows"),
+         "LYS has no atoms in chi_moved_atoms for chi2, chi4"),
+        (_set_rows("MET", lambda rows: "CG SD CE"),
+         "MET has chi_moved_atoms of type str, not a list of rows"),
+        # The engine counts chi angles by ntorsions, whatever the rows say.
+        (_set("LYS", chi_atoms=None, chi_moved_atoms=None),
+         "LYS has ntorsions 4 but 0 chi_atoms rows, and has no chi_moved_atoms"),
+        (_cut_both("LYS", 3),
+         "LYS has ntorsions 4 but 3 chi_atoms rows, and has 3 chi_moved_atoms rows for 4 chi"),
+        (_set("ALA", ntorsions=1),
+         "ALA has ntorsions 1 but 0 chi_atoms rows, and has no chi_moved_atoms"),
+        (_set("SER", ntorsions=0),
+         "SER has ntorsions 0 but 1 chi_atoms rows, and has 1 chi_moved_atoms rows for 0 chi"),
+        (_set("VAL", ntorsions=5), "VAL has ntorsions 5, not a whole number from 0 to 4"),
+        (_set("VAL", ntorsions="1"), "VAL has ntorsions '1', not a whole number from 0 to 4"),
+        (_set("VAL", ntorsions=None), "VAL has no ntorsions"),
+        (_set("CYS", chi_atoms=[["N", "CA", "CB"]]),
+         "CYS has a chi_atoms row for chi1 that is not four atom names"),
+        (_set("CYS", chi_atoms="N CA CB SG"),
+         "CYS has chi_atoms of type str, not a list of rows"),
     ],
     ids=["key-missing", "too-few-rows", "too-many-rows", "empty-row", "two-empty-rows",
-         "not-a-list"],
+         "not-a-list", "ntorsions-without-rows", "ntorsions-above-rows", "ntorsions-on-ala",
+         "rows-above-ntorsions", "ntorsions-above-4", "ntorsions-a-string",
+         "ntorsions-missing", "chi-atoms-row-of-3", "chi-atoms-not-a-list"],
 )
 def test_one_bad_residue_is_refused_and_named(
     tmp_path: Path, chignolin: md.Trajectory, edit: Edit, expected: str
@@ -132,15 +174,18 @@ def test_an_entry_that_is_not_a_residue_is_left_alone(
     MCPUForceField(chignolin, param_dir=str(folder))
 
 
-def test_mcpu08_loads_and_every_chi_moves(shipped: MCPUForceField) -> None:
-    """mcpu08's template loads as it is, and every chi angle of the test
-    structure (actin: every residue in the template) has atoms to turn."""
+def test_mcpu08_loads_and_every_chi_moves(shipped: MCPUForceField, actin: md.Trajectory) -> None:
+    """mcpu08's template loads as it is, and every chi angle the engine
+    counts (``ntorsions``) in the test structure (actin: every residue in the
+    template) has its defining atoms and atoms to turn."""
     on_disk = json.loads((shipped.param_dir / TEMPLATE).read_text())
     assert shipped.ff_template == on_disk
-    resolved = [[row[0] >= 0 for row in rows] for rows in shipped.chi_atom_indices]
-    live = [[lo >= 0 for lo, _hi in ranges] for ranges in shipped.chi_moved_atom_ranges]
-    assert sum(map(sum, resolved)) > 0
-    assert live == resolved
+    counted = [shipped.ff_template[r.name]["ntorsions"] for r in actin.topology.residues]
+    resolved = [sum(row[0] >= 0 for row in rows) for rows in shipped.chi_atom_indices]
+    live = [sum(lo >= 0 for lo, _hi in ranges) for ranges in shipped.chi_moved_atom_ranges]
+    assert sum(counted) > 0
+    assert resolved == counted
+    assert live == counted
 
 
 def test_an_unedited_copy_loads_the_same(

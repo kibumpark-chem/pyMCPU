@@ -44,11 +44,13 @@ many times as you need.
 
 The parameters are read in the constructor, so a missing or incomplete
 parameter directory fails there. So does a residue template
-(``constants/standard_amino_acids.json``) in which a residue names its chi
-atoms (``chi_atoms``) without the atoms each chi moves (``chi_moved_atoms``,
-one row of atom names per chi). The side-chain moves turn only the atoms in
-those rows, so a chi angle without its row would never change, and the
-energies would not show it. Without ``param_dir``, the set named by
+(``constants/standard_amino_acids.json``) in which a residue lacks, for any
+chi angle it has (its ``ntorsions``, which is how the engine counts them),
+the four atoms that define the angle (``chi_atoms``) or the atoms it moves
+(``chi_moved_atoms``), one row per chi in both. The side-chain moves turn
+only the atoms in the ``chi_moved_atoms`` rows, and the side-chain torsion
+energy reads each chi from its ``chi_atoms`` row, so a chi angle without its
+rows would never change, and the energies would not show it. Without ``param_dir``, the set named by
 ``param_set`` is found as described under "MCPU parameter lookup" in
 :doc:`../installation`.
 

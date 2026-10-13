@@ -62,15 +62,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **A residue template that names chi atoms must name the atoms they move.**
-  `MCPUForceField` refuses a parameter folder whose
-  `constants/standard_amino_acids.json` gives a residue `chi_atoms` without
-  one `chi_moved_atoms` row of atom names per chi, with an error that names
-  the file and each such residue. Such a template used to load: the
-  side-chain moves turn only the atoms in those rows, so those chi angles
-  never changed, and the energies, which do not read the rows, gave no sign.
-  Every residue in the template is checked, not only those in the structure.
-  mcpu08's template passes, and loads as before.
+- **A residue template must name the atoms of every chi angle the engine
+  counts.** `MCPUForceField` refuses a parameter folder whose
+  `constants/standard_amino_acids.json` gives a residue, for each of its
+  `ntorsions` chi angles (a whole number from 0 to 4), anything but one
+  `chi_atoms` row of four atom names and one `chi_moved_atoms` row of atom
+  names, with an error that names the file and each such residue. Such a
+  template used to load: the engine counts chi angles by `ntorsions`, the
+  side-chain moves turn only the atoms in the `chi_moved_atoms` rows, and the
+  side-chain torsion energy reads each chi from its `chi_atoms` row, so a chi
+  angle without its rows never changed and was scored at a placeholder
+  angle, with no other sign. Every residue in the template is checked, not
+  only those in the structure. mcpu08's template passes, and loads as before.
 
 ## [0.1.0] - 2026-10-11
 

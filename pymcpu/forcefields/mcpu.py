@@ -76,45 +76,79 @@ def _hbond_beta_favor(value: object) -> float:
     raise ValueError(f"hbond_beta_favor must be a finite number above 0, got {value!r}")
 
 
-def _check_chi_moved_atoms(template: dict, path: Path) -> None:
-    """Raise ValueError unless every residue in ``template`` that names chi
-    atoms also names the atoms each chi moves.
+def _chi_row_problems(entry: dict) -> list[str]:
+    """What one residue of a template lacks for the engine to move and score
+    its chi angles, as phrases that follow its name; empty when nothing."""
+    if "ntorsions" not in entry:
+        if entry.get("chi_atoms") or entry.get("chi_moved_atoms"):
+            return ["has no ntorsions"]
+        return []  # not a residue with chi angles, nor one the engine can use
+    n = entry["ntorsions"]
+    if not isinstance(n, int) or isinstance(n, bool) or not 0 <= n <= 4:
+        return [f"has ntorsions {n!r}, not a whole number from 0 to 4"]
+    problems = []
+    chi = entry.get("chi_atoms", [])
+    if not isinstance(chi, list):
+        problems.append(f"has chi_atoms of type {type(chi).__name__}, not a list of rows")
+    elif len(chi) != n:
+        problems.append(f"has ntorsions {n} but {len(chi)} chi_atoms rows")
+    else:
+        bad = [f"chi{k + 1}" for k, row in enumerate(chi)
+               if not (isinstance(row, list) and len(row) == 4
+                       and all(isinstance(atom, str) for atom in row))]
+        if bad:
+            rows = "a chi_atoms row" if len(bad) == 1 else "chi_atoms rows"
+            verb = "is" if len(bad) == 1 else "are"
+            problems.append(f"has {rows} for {', '.join(bad)} that {verb} not four atom names")
+    moved = entry.get("chi_moved_atoms")
+    if moved is None:
+        if n:
+            problems.append("has no chi_moved_atoms")
+    elif not isinstance(moved, list):
+        problems.append(f"has chi_moved_atoms of type {type(moved).__name__}, not a list of rows")
+    elif len(moved) != n:
+        problems.append(f"has {len(moved)} chi_moved_atoms rows for {n} chi")
+    else:
+        empty = [f"chi{k + 1}" for k, row in enumerate(moved)
+                 if not isinstance(row, list) or not row]
+        if empty:
+            problems.append(f"has no atoms in chi_moved_atoms for {', '.join(empty)}")
+    return problems
 
-    ``chi_atoms`` holds the four atoms that define each chi angle, and
-    ``chi_moved_atoms`` the atoms that turn with it, one row per chi. The
-    side-chain moves turn only the atoms in those rows. A template without
-    them used to load: every chi got the moved range [-1, -1], so no side
-    chain ever moved, and the energies, which do not read the rows, looked
-    normal. ``path`` is the template's file, for the message. An entry that
-    is not a residue (not a JSON object) is left alone, as before.
+
+def _check_chi_rows(template: dict, path: Path) -> None:
+    """Raise ValueError unless every residue in ``template`` names, for each
+    chi angle the engine counts for it (``ntorsions``, 0 to 4), the four
+    atoms that define the angle and the atoms it moves.
+
+    ``chi_atoms`` holds the defining atoms and ``chi_moved_atoms`` the atoms
+    that turn with each chi, one row per chi in both. The engine counts a
+    residue's chi angles by ``ntorsions``, not by the rows: the side-chain
+    moves turn only the atoms in the ``chi_moved_atoms`` rows, and the
+    side-chain torsion energy reads each chi from its ``chi_atoms`` row. A
+    chi without its rows used to load: its moved range was [-1, -1], so it
+    never changed, and it was scored at a placeholder angle, with nothing
+    else to show it. ``path`` is the template's file, for the message. An
+    entry that is not a residue (not a JSON object) is left alone, as is an
+    object with neither ``ntorsions`` nor chi rows.
     """
     problems = []
     for name in sorted(template):
         entry = template[name]
-        if not isinstance(entry, dict):
-            continue
-        chi = entry.get("chi_atoms") or []
-        if not chi:
-            continue
-        moved = entry.get("chi_moved_atoms")
-        if moved is None:
-            problems.append(f"{name} has none")
-        elif not isinstance(moved, list):
-            problems.append(f"{name} has a {type(moved).__name__}, not a list of rows")
-        elif len(moved) != len(chi):
-            problems.append(f"{name} has {len(moved)} rows for {len(chi)} chi")
-        else:
-            empty = [f"chi{k + 1}" for k, row in enumerate(moved)
-                     if not isinstance(row, list) or not row]
-            if empty:
-                problems.append(f"{name} has no atoms for {', '.join(empty)}")
+        if isinstance(entry, dict):
+            found = _chi_row_problems(entry)
+            if found:
+                problems.append(f"{name} " + ", and ".join(found))
     if problems:
         raise ValueError(
-            f"{path}: a residue that names chi atoms ('chi_atoms') must name the atoms "
-            "each chi moves ('chi_moved_atoms', one row of atom names per chi), and "
+            f"{path}: a residue must name, for each chi angle it has ('ntorsions'), the "
+            "four atoms that define it ('chi_atoms', one row per chi) and the atoms it "
+            "moves ('chi_moved_atoms', one row of atom names per chi), and "
             f"{len(problems)} do not: {'; '.join(problems)}. The side-chain moves turn "
-            "only the atoms in those rows, so a chi angle without its row would never "
-            "change, and the energies would not show it. mcpu08's template "
+            "only the atoms in the 'chi_moved_atoms' rows, and the side-chain torsion "
+            "energy reads each chi from its 'chi_atoms' row, so a chi angle without its "
+            "rows would never change and would be scored at a placeholder angle, with "
+            "nothing else to show it. mcpu08's template "
             "(pymcpu/data/params/mcpu08/constants/standard_amino_acids.json in the "
             "package) has the rows for every residue."
         )
@@ -211,10 +245,11 @@ class MCPUForceField(BaseForceField):
             :func:`pymcpu.params.load_paramset_manifest` refuses (including
             one whose provenance md5 a listed file no longer has), or a
             residue template (``constants/standard_amino_acids.json``) in
-            which a residue names chi atoms (``chi_atoms``) without the atoms
-            each chi moves (``chi_moved_atoms``, one row per chi), as those
-            chi angles would never change. The message names the file and
-            the residues.
+            which a residue lacks, for any of the chi angles it has
+            (``ntorsions``), the atoms that define it (``chi_atoms``) or the
+            atoms it moves (``chi_moved_atoms``, one row per chi in both), as
+            that chi angle would never change. The message names the file
+            and the residues.
         """
         # A value given here is checked before any file is read.
         if hbond_beta_favor is not None:
@@ -473,7 +508,7 @@ class MCPUForceField(BaseForceField):
             self.ff_template = json.load(f)
         # A property of the parameter set, not of the structure: checked for
         # every residue in the template, whether or not the structure has it.
-        _check_chi_moved_atoms(self.ff_template, required_paths["amino acids template"])
+        _check_chi_rows(self.ff_template, required_paths["amino acids template"])
         self.atom_type_lookup = MuPotentialBuilder.load_atom_types(
             str(required_paths["atom types"])
         )
@@ -593,9 +628,10 @@ class MCPUForceField(BaseForceField):
         # asserted here as the safety net for the assumption that this
         # named atom set forms a contiguous run under the engine's current
         # atom ordering. _load_parameters has refused a template in which a
-        # residue names chi atoms without one non-empty row here per chi, so
-        # the [] default below is reached only by residues without chi angles
-        # (GLY and ALA in mcpu08), never by one whose chi would then not move.
+        # residue lacks one chi_atoms row and one non-empty row here for each
+        # of its ntorsions chi angles, so the [] default below is reached only
+        # by residues without chi angles (GLY and ALA in mcpu08), never by one
+        # whose chi would then not move.
         self.chi_moved_atom_ranges: list[list[list[int]]] = []
         for res_idx, residue in enumerate(topology.residues):
             moved_rows = self.ff_template.get(residue.name, {}).get("chi_moved_atoms", [])
