@@ -337,6 +337,31 @@ def test_mpi_resume_refuses_other_parameter_files_or_another_set(
     assert expected in str(refused.value)
 
 
+def test_mpi_checkpoint_of_other_files_is_format_3(
+    mock_comm_rank0, tmp_path, minimal_pdb_path, monkeypatch
+):
+    """A checkpoint of parameter files other than the mcpu08 files pyMCPU
+    0.1.0 shipped is written as format version 3, which older pyMCPU refuse;
+    one of the shipped files stays at version 2."""
+    from pymcpu.checkpointing import CheckpointConfig, load_checkpoint
+    from tests.helpers.param_folders import changed_param_folder
+
+    _ensure_mpi_module_for_construction(monkeypatch)
+    versions = {}
+    changed = str(changed_param_folder(tmp_path / "changed"))
+    for label, options in (("shipped", {}), ("changed", {"param_dir": changed})):
+        cfg = CheckpointConfig(checkpoint_dir=str(tmp_path / label / "chk"),
+                               checkpoint_interval=1, resume=False)
+        (tmp_path / label / "out").mkdir(parents=True)
+        rex = _make_two_temp_mpi_re(mock_comm_rank0, minimal_pdb_path, cfg,
+                                    tmp_path / label / "out", **options)
+        rex._attach_traj_reporters(resume=False)
+        rex._mc_replica_steps = 1
+        rex._mpi_save_checkpoint(cycle=1, comm=mock_comm_rank0)
+        versions[label] = load_checkpoint(tmp_path / label / "chk" / "last.chk")["format_version"]
+    assert versions == {"shipped": 2, "changed": 3}
+
+
 def test_mpi_resumes_a_checkpoint_without_a_parameter_set_as_mcpu08(
     mock_comm_rank0, tmp_path, minimal_pdb_path, monkeypatch, caplog
 ):

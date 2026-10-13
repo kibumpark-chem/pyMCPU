@@ -27,12 +27,12 @@ from pymcpu.config import (
     DEFAULT_MIN_SEQ_SEP,
 )
 from pymcpu.checkpointing import (
-    CHECKPOINT_FORMAT_VERSION,
     CheckpointConfig,
     CheckpointState,
     checkpoint_beta_favor_error,
     checkpoint_cycle_filename,
     checkpoint_forcefield_error,
+    checkpoint_format_version,
     checkpoint_layout_error,
     checkpoint_param_set_error,
     checkpoint_rotamer_library_error,
@@ -687,7 +687,7 @@ class MPIReplicaExchange:
                 cycle=int(cycle),
                 global_step=int(cycle) * steps_per,
                 seed=int(self.seed),
-                format_version=CHECKPOINT_FORMAT_VERSION,
+                format_version=checkpoint_format_version(self._param_record),
                 kind="mpi_replica_exchange",
                 pdb_path=str(self.pdb_path),
                 forcefield=self.forcefield_name,

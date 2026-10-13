@@ -25,7 +25,13 @@ logger = logging.getLogger(__name__)
 # 2: the MCPU layout stores each glycine CA once. Version 1 files from a
 # protein with glycine have one extra atom per glycine and are rejected on
 # resume by checkpoint_layout_error.
-CHECKPOINT_FORMAT_VERSION = 2
+# 3: the fields of version 2, written when the checkpoint records parameter
+# files other than the mcpu08 files pyMCPU 0.1.0 shipped
+# (checkpoint_format_version). A pyMCPU that reads at most version 2 ignores
+# the parameter record, so it would resume such a run under its own mcpu08;
+# it refuses a version 3 file as newer than it understands. This is the
+# newest version this pyMCPU reads.
+CHECKPOINT_FORMAT_VERSION = 3
 DEFAULT_FILENAME = "last.chk"
 _CYCLE_NAME_RE = re.compile(r"^checkpoint_cycle_(\d+)\.chk$")
 
@@ -459,6 +465,30 @@ def checkpoint_forcefield_error(
 #: The parameter set a checkpoint written before param_set was recorded
 #: counts as: those builds shipped no other.
 LEGACY_PARAM_SET = "mcpu08"
+
+#: param_signature of the mcpu08 files pyMCPU 0.1.0 shipped, wherever they
+#: are: the tables its wheel decodes, its raw tree, and any copy of them.
+SHIPPED_MCPU08_SIGNATURE = "615479a19e4e2a80d89278c8898a762afe558bb2d644cfc5382e61a94a73fc90"
+
+
+def checkpoint_format_version(record: dict[str, str]) -> int:
+    """The format version a checkpoint of a run is written in, from the
+    run's :func:`param_set_record`.
+
+    :data:`CHECKPOINT_FORMAT_VERSION` (3) when the run's parameter files are
+    not the mcpu08 files pyMCPU 0.1.0 shipped (another set, or mcpu08 with
+    other files): a pyMCPU that reads at most version 2 cannot check them,
+    and refuses the file instead of resuming it under its own mcpu08. 2 for
+    the shipped mcpu08 files and for a force field without a parameter set,
+    which older pyMCPU resume as before.
+    """
+    param_set = record.get("param_set") or ""
+    if not param_set or (
+        param_set == LEGACY_PARAM_SET
+        and record.get("param_signature") == SHIPPED_MCPU08_SIGNATURE
+    ):
+        return 2
+    return CHECKPOINT_FORMAT_VERSION
 
 
 def param_set_record(forcefield: Any) -> dict[str, str]:

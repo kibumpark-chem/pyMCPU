@@ -121,7 +121,11 @@ A checkpoint whose atom count does not match the system stops with an error
 that names both counts. Format version 2 stores each glycine CA once, so a
 version 1 checkpoint of a protein with glycine cannot be resumed; start that
 run again from its input structure. Version 1 checkpoints of glycine-free
-proteins still resume.
+proteins still resume. A checkpoint of parameter files other than the mcpu08
+files pyMCPU 0.1.0 shipped (another set, or mcpu08 with other tables) is
+written as format version 3. pyMCPU 0.1.0, which cannot check parameter
+files, refuses it as newer than it understands instead of resuming it under
+its own mcpu08; other checkpoints stay at version 2.
 
 ### Exact continuation
 

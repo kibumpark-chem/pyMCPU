@@ -24,7 +24,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   another folder resume. A
   checkpoint written before these fields counts as mcpu08 and resumes under it
   with a one-line warning, as its files cannot be checked. Folding, replica
-  exchange and MPI replica exchange all check it. The three new
+  exchange and MPI replica exchange all check it. A checkpoint of parameter
+  files other than the mcpu08 files 0.1.0 shipped is written as format
+  version 3, which pyMCPU 0.1.0 refuses as newer than it understands instead
+  of resuming it under its own mcpu08; other checkpoints stay at version 2,
+  and this version reads both. The three new
   `CheckpointState` fields are keyword-only, so the other fields keep their
   positional order.
 - `MCPUForceField.param_signature` and `pymcpu.params.param_signature`. A

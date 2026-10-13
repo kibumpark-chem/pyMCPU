@@ -21,6 +21,7 @@ import pytest
 
 pytest.importorskip("mdtraj")
 
+from pymcpu import checkpointing  # noqa: E402
 from pymcpu.checkpointing import (  # noqa: E402
     CheckpointState,
     checkpoint_param_set_error,
@@ -220,6 +221,54 @@ def test_an_old_folding_checkpoint_resumes_as_mcpu08(
     assert load_checkpoint(tmp_path / "ck" / "last.chk")["param_set"] == "mcpu08"
 
 
+# The signature of the mcpu08 files pyMCPU 0.1.0 shipped, wherever they are.
+SHIPPED_MCPU08 = "615479a19e4e2a80d89278c8898a762afe558bb2d644cfc5382e61a94a73fc90"
+
+
+def test_the_shipped_mcpu08_files_sign_as_older_pymcpu_shipped_them() -> None:
+    """Checkpoints of these files stay at format version 2 (below)."""
+    assert param_signature(ensure_params("mcpu08")) == SHIPPED_MCPU08
+
+
+def test_a_checkpoint_older_pymcpu_cannot_check_is_format_3(
+    chignolin_pdb_path: str, tmp_path: Path, monkeypatch
+) -> None:
+    """A checkpoint of parameter files other than the mcpu08 files pyMCPU
+    0.1.0 shipped is written as format version 3. A pyMCPU that reads at
+    most version 2 (0.1.0 to f52ac23) ignores the parameter record, so it
+    would resume such a run under its own mcpu08; it refuses a version 3
+    file as newer than it understands. A checkpoint of the shipped files
+    stays at version 2, which it resumes as before; this pyMCPU reads both."""
+    changed = str(changed_param_folder(tmp_path / "changed"))
+    _folding(chignolin_pdb_path, tmp_path / "shipped").run(n_cycles=1)
+    _folding(chignolin_pdb_path, tmp_path / "other", param_dir=changed).run(n_cycles=1)
+    shipped = tmp_path / "shipped" / "ck" / "last.chk"
+    other = tmp_path / "other" / "ck" / "last.chk"
+    assert load_checkpoint(shipped)["format_version"] == 2
+    assert load_checkpoint(other)["format_version"] == 3
+    resumed = _folding(chignolin_pdb_path, tmp_path / "other", resume=True, param_dir=changed)
+    resumed.run(n_cycles=2)
+    assert load_checkpoint(other)["cycle"] == 1
+
+    monkeypatch.setattr(checkpointing, "CHECKPOINT_FORMAT_VERSION", 2)  # an older reader
+    assert load_checkpoint(shipped)["cycle"] == 0
+    with pytest.raises(ValueError, match="format_version=3 is newer than supported 2"):
+        load_checkpoint(other)
+
+
+def test_the_format_version_follows_the_recorded_files() -> None:
+    def version(param_set: str, signature: str) -> int:
+        return checkpointing.checkpoint_format_version(
+            {"param_set": param_set, "param_signature": signature, "param_dir": "/p"})
+
+    assert version("", "") == 2  # a force field without a parameter set
+    assert version("mcpu08", SHIPPED_MCPU08) == 2
+    assert version("mcpu08", OLD) == 3
+    assert version("mcpu26", SHIPPED_MCPU08) == 3
+    assert version("mcpu08", "") == 3
+    assert checkpointing.CHECKPOINT_FORMAT_VERSION == 3
+
+
 def _rex(pdb: str, root: Path, **options) -> ReplicaExchange:
     return ReplicaExchange(
         pdb, temperatures=[0.5, 0.6], n_targets=[0.0], k_bias=0.0, log_interval=5,
@@ -242,6 +291,7 @@ def test_serial_replica_exchange_refuses_other_files_and_another_set(
     saved = load_checkpoint(tmp_path / "ck" / "last.chk")
     assert saved["param_set"] == "mcpu08"
     assert saved["param_signature"] == first.forcefield.param_signature
+    assert saved["format_version"] == 2
 
     changed = str(changed_param_folder(tmp_path / "changed"))
     with pytest.raises(ValueError, match=(
@@ -249,6 +299,10 @@ def test_serial_replica_exchange_refuses_other_files_and_another_set(
         f"{saved['param_dir']} "
     )):
         _rex_run(_rex(chignolin_pdb_path, tmp_path, param_dir=changed), tmp_path, 2, resume=True)
+    # A run of the other files writes a checkpoint older pyMCPU refuse.
+    other_root = tmp_path / "other"
+    _rex_run(_rex(chignolin_pdb_path, other_root, param_dir=changed), other_root, 1, resume=False)
+    assert load_checkpoint(other_root / "ck" / "last.chk")["format_version"] == 3
 
     name = register_set_like_mcpu08(monkeypatch)
     linked = str(linked_param_folder(tmp_path / "linked"))

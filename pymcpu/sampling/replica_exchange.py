@@ -26,11 +26,11 @@ from pymcpu.config import (
     DEFAULT_MIN_SEQ_SEP,
 )
 from pymcpu.checkpointing import (
-    CHECKPOINT_FORMAT_VERSION,
     CheckpointConfig,
     checkpoint_beta_favor_error,
     checkpoint_cycle_filename,
     checkpoint_forcefield_error,
+    checkpoint_format_version,
     checkpoint_param_set_error,
     checkpoint_rotamer_library_error,
     checkpoint_layout_error,
@@ -393,7 +393,7 @@ class ReplicaExchange:
           logger.warning("Could not record RexSampleWriter frame count: %s", exc)
 
       return {
-        "format_version": CHECKPOINT_FORMAT_VERSION,
+        "format_version": checkpoint_format_version(self._param_record),
         "kind": "replica_exchange",
         "cycle": int(self._cycle),
         "global_step": int(self._cycle),  # RE progress unit is cycle

@@ -19,12 +19,12 @@ from pymcpu.config import (
     DEFAULT_MIN_SEQ_SEP,
 )
 from pymcpu.checkpointing import (
-    CHECKPOINT_FORMAT_VERSION,
     CheckpointConfig,
     FoldingCheckpointState,
     checkpoint_beta_favor_error,
     checkpoint_cycle_filename,
     checkpoint_forcefield_error,
+    checkpoint_format_version,
     checkpoint_layout_error,
     checkpoint_param_set_error,
     checkpoint_rotamer_library_error,
@@ -633,7 +633,7 @@ class FoldingRunner:
             cycle=int(cycle),
             global_step=int(self.simulation.current_step),
             seed=int(self.seed),
-            format_version=CHECKPOINT_FORMAT_VERSION,
+            format_version=checkpoint_format_version(self._param_record),
             kind="folding",
             checkpoint_type="folding",
             pdb_path=str(self.pdb_path),
