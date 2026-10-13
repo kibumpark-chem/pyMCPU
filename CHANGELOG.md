@@ -60,9 +60,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   used. `hbond_beta_favor: null` in a config now asks for this default
   instead of being refused.
 - `EngineSession.fingerprint` covers the parameter set the force field was
-  built from and the signature of its files, so it differs from 0.1.0's for
-  the same engine. `compute_fingerprint` takes `param_signature`; without it
-  the hash is the old one.
+  built from, the signature of its files and the hydrogen-bond sheet factor
+  it resolved, so it differs from 0.1.0's for the same engine, and restart
+  states from sessions that differ only in the factor no longer match.
+  `compute_fingerprint` takes `param_signature` and `hbond_beta_favor`;
+  without them the hash is the old one.
 - Runs print the parameter set, its folder and the start of its signature
   with the rest of their description.
 

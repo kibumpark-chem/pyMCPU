@@ -55,16 +55,19 @@ def compute_fingerprint(
     compute_dssp: bool = False,
     dssp_coil_state: str = "C",
     param_signature: str | None = None,
+    hbond_beta_favor: float | None = None,
 ) -> str:
     """Short hash identifying what an engine was built from.
 
     Lets a restart state loaded against a different system fail loudly
     instead of producing silent nonsense -- the coordinates would have the
     wrong atom count, or the right count in a different order -- or against
-    other parameter tables. ``param_signature`` is the signature of the
-    parameter files (:attr:`pymcpu.MCPUForceField.param_signature`, which
-    checkpoints record too); without it the hash is the one earlier versions
-    gave, which did not cover the tables.
+    other parameter tables or another sheet factor. ``param_signature`` is
+    the signature of the parameter files
+    (:attr:`pymcpu.MCPUForceField.param_signature`), and ``hbond_beta_favor``
+    the hydrogen-bond sheet factor the force field resolved, taken as the
+    engine's float32; checkpoints record and check both. Without them the
+    hash is the one earlier versions gave, which covered neither.
     """
     payload = (
         f"{Path(pdb_path).resolve()}|{param_set}|{int(n_atoms)}|"
@@ -72,6 +75,8 @@ def compute_fingerprint(
     )
     if param_signature:
         payload += f"|{param_signature}"
+    if hbond_beta_favor is not None:
+        payload += f"|hbond_beta_favor={float(np.float32(hbond_beta_favor))!r}"
     return hashlib.sha256(payload.encode()).hexdigest()[:16]
 
 
@@ -158,14 +163,16 @@ class EngineSession:
             self._sim.context.set_positions(coords0)
             self._sim.context.calculate_total_energy(-1)
             check_state_clash(self._sim.context, "start structure")
-            # The set and files the force field read, as a checkpoint records
-            # them; forcefield_options can name another set than spec.param_set.
+            # The set and files the force field read, and its sheet factor, as
+            # a checkpoint records them; forcefield_options can name another
+            # set than spec.param_set.
             record = param_set_record(ff)
             self._fingerprint = compute_fingerprint(
                 self.spec.pdb, record["param_set"] or self.spec.param_set,
                 system.get_num_atoms(),
                 compute_dssp=self.spec.compute_dssp, dssp_coil_state=self.spec.dssp_coil_state,
                 param_signature=record["param_signature"] or None,
+                hbond_beta_favor=getattr(ff, "hbond_beta_favor", None),
             )
         return self._sim
 
@@ -175,8 +182,8 @@ class EngineSession:
     @property
     def fingerprint(self) -> str:
         """:func:`compute_fingerprint` of the engine: the PDB's path, the
-        parameter set and the signature of its files, the atom count and the
-        DSSP settings. Taken when the engine is built."""
+        parameter set and the signature of its files, the sheet factor, the
+        atom count and the DSSP settings. Taken when the engine is built."""
         self._ensure_sim()
         assert self._fingerprint is not None
         return self._fingerprint

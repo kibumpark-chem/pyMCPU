@@ -157,14 +157,15 @@ from there the two trajectories differ, at first only by float32 rounding.
 
 `session.fingerprint` is a hash of what the engine was built from: the PDB's
 absolute path, the parameter set, a signature of the parameter files
-(`MCPUForceField.param_signature`, which checkpoints record too), the atom
-count and the DSSP settings. Record it with your state and compare it on
+(`MCPUForceField.param_signature`), the hydrogen-bond sheet factor the force
+field resolved (both of which checkpoints record too), the atom count and
+the DSSP settings. Record it with your state and compare it on
 load, so that a state loaded against a different system, or other parameter
 tables, fails loudly instead of producing nonsense. Because the PDB's path is
 part of it, the same PDB moved to another directory gives a different
 fingerprint; the parameter files count by their contents, wherever they are.
-pyMCPU 0.1.0's fingerprint did not cover the parameter files, so one it
-recorded differs from this version's for the same engine. `set_coords` also
+pyMCPU 0.1.0's fingerprint covered neither the parameter files nor the sheet
+factor, so one it recorded differs from this version's for the same engine. `set_coords` also
 rejects coordinates of the wrong size, and coordinates with overlapping
 atoms.
 
