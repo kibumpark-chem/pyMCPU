@@ -15,6 +15,7 @@ from __future__ import annotations
 import logging
 import os
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -24,6 +25,7 @@ from pymcpu.checkpointing import (  # noqa: E402
     CheckpointState,
     checkpoint_param_set_error,
     load_checkpoint,
+    param_set_record,
     save_checkpoint,
 )
 from pymcpu.params import ensure_params, param_signature  # noqa: E402
@@ -87,6 +89,29 @@ def test_the_check_says_what_differs_and_what_to_pass() -> None:
     assert "param_set 'mcpu26'" in checkpoint_param_set_error(CheckpointState(param_set="mcpu26"), current)
 
 
+def test_one_folder_reached_by_two_paths_is_the_same_folder(tmp_path: Path) -> None:
+    """A folder reached through a link is the folder it links to: the record
+    names its real path, and when the files there changed, the error says so
+    instead of advising a resume from that same folder."""
+    real = tmp_path / "real"
+    real.mkdir()
+    alias = tmp_path / "alias"
+    alias.symlink_to(real)
+    forcefield = SimpleNamespace(param_set="mcpu08", param_signature=NEW, param_dir=alias)
+    assert param_set_record(forcefield)["param_dir"] == str(real)
+
+    current = {"param_set": "mcpu08", "param_signature": NEW, "param_dir": str(alias)}
+    for saved_dir in (real, alias):  # written through either path, as 1e7896e recorded it
+        saved = {"param_set": "mcpu08", "param_signature": OLD, "param_dir": str(saved_dir)}
+        message = checkpoint_param_set_error(saved, current)
+        assert f"the files in {alias} have changed since" in message
+        assert "resume it with param_dir:" not in message
+    # Another folder is still named as the one to resume from.
+    other = {"param_set": "mcpu08", "param_signature": OLD, "param_dir": str(tmp_path / "old")}
+    assert f"resume it with param_dir: {tmp_path / 'old'} " in checkpoint_param_set_error(
+        other, current)
+
+
 def test_a_checkpoint_without_a_parameter_set_counts_as_mcpu08(caplog) -> None:
     current = {"param_set": "mcpu08", "param_signature": NEW, "param_dir": "/new"}
     with caplog.at_level(logging.WARNING, logger="pymcpu.checkpointing"):
@@ -127,7 +152,7 @@ def test_folding_records_the_files_and_refuses_others(
     folder = ensure_params("mcpu08")
     assert saved["param_set"] == "mcpu08"
     assert saved["param_signature"] == param_signature(folder) == first.forcefield.param_signature
-    assert saved["param_dir"] == os.path.abspath(first.forcefield.param_dir)
+    assert saved["param_dir"] == os.path.realpath(first.forcefield.param_dir)
 
     other = _folding(chignolin_pdb_path, tmp_path, resume=True,
                      param_dir=str(changed_param_folder(tmp_path / "changed")))

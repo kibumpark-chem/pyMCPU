@@ -103,7 +103,9 @@ resumes it:
   including the set's own `constants/paramset.json` when it has one
   (`MCPUForceField.param_signature`). The same files in another folder
   resume the run; other files do not, and the error names the folder the
-  checkpoint was written with, to pass as `param_dir:`. Checkpoints from
+  checkpoint was written with (its real path, links resolved), to pass as
+  `param_dir:`, or says that the files in this run's folder have changed
+  since, when that is the same folder. Checkpoints from
   before this was recorded count as mcpu08. They resume under it with a
   one-line warning, because their files cannot be checked.
 - The hydrogen-bond sheet factor the run used: `forcefield_options:

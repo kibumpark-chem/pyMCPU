@@ -93,8 +93,9 @@ class CheckpointState:
     #: sha256 of the parameter files the force field read
     #: (MCPUForceField.param_signature); empty when param_set is.
     param_signature: str = field(default="", kw_only=True)
-    #: The folder those files were read from, as an absolute path. Only
-    #: reported, never compared: the same files elsewhere resume the run.
+    #: The folder those files were read from, as its real path (links
+    #: resolved). Only reported, never required: the same files elsewhere
+    #: resume the run.
     param_dir: str = field(default="", kw_only=True)
     temperatures: Any = None
     n_targets: Any = None
@@ -463,8 +464,9 @@ LEGACY_PARAM_SET = "mcpu08"
 def param_set_record(forcefield: Any) -> dict[str, str]:
     """What a checkpoint records about the parameters ``forcefield`` reads:
     ``param_set``, ``param_signature`` (``MCPUForceField.param_signature``)
-    and ``param_dir`` (the folder, as an absolute path). All three are empty
-    for a force field without a parameter set.
+    and ``param_dir`` (the folder, as its real path, so one folder reached
+    through a link is recorded as itself). All three are empty for a force
+    field without a parameter set.
 
     Taking the signature reads the parameter files the first time a process
     asks for them (about 2 s for mcpu08), so the runners take the record once,
@@ -479,7 +481,7 @@ def param_set_record(forcefield: Any) -> dict[str, str]:
     return {
         "param_set": param_set,
         "param_signature": signature if isinstance(signature, str) else "",
-        "param_dir": os.path.abspath(folder) if isinstance(folder, (str, os.PathLike)) else "",
+        "param_dir": os.path.realpath(folder) if isinstance(folder, (str, os.PathLike)) else "",
     }
 
 
@@ -546,7 +548,9 @@ def checkpoint_param_set_error(
     if not saved_signature or not current_signature or saved_signature == current_signature:
         return None
     saved_dir = saved_value("param_dir")
-    if saved_dir and saved_dir != current_dir:
+    # One folder can be reached by several paths (links, and older
+    # checkpoints recorded the path as given): compare where they lead.
+    if saved_dir and os.path.realpath(saved_dir) != os.path.realpath(current_dir):
         advice = (
             f"resume it with param_dir: {saved_dir} (or another folder with the same "
             "files), or start a new run without resume"

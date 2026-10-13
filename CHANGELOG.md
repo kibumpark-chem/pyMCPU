@@ -18,7 +18,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `constants/paramset.json` when the folder has one. A resume under another
   set, or with files whose signature differs, stops with an error that says
   which differs, gives both values, and names the `param_set:` or
-  `param_dir:` that resumes it. The same files in another folder resume. A
+  `param_dir:` that resumes it. The folder is recorded as its real path, and
+  one folder reached through a link counts as itself, so the error does not
+  send a resume back to the folder whose files changed. The same files in
+  another folder resume. A
   checkpoint written before these fields counts as mcpu08 and resumes under it
   with a one-line warning, as its files cannot be checked. Folding, replica
   exchange and MPI replica exchange all check it. The three new
