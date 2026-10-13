@@ -170,6 +170,19 @@ def test_folded_weights_are_a_record_only(heavy, explicit_energies, tmp_path) ->
     assert _evaluate(ff, heavy) == (2.0, explicit_energies(2.0))
 
 
+def test_a_folded_weight_may_be_zero(small, tmp_path) -> None:
+    """A fit with weights of 0 or above (NNLS) can switch a term off: its
+    table is multiplied by 0, and the manifest records that 0. The sheet
+    factor, which the engine applies, must stay above 0."""
+    weights = {"mu": 0, "hbond": 0.0, "sc_torsion": 1e-46}
+    folder = _folder(tmp_path / "z", _manifest(folded_weights=weights))
+    recorded = {"mu": 0.0, "hbond": 0.0, "sc_torsion": 1e-46}
+    assert load_paramset_manifest(folder)["folded_weights"] == recorded
+    ff = MCPUForceField(small, param_dir=str(folder))
+    assert ff.paramset_manifest["folded_weights"] == recorded
+    assert ff.hbond_beta_favor == 2.0
+
+
 def test_a_config_takes_the_sets_factor_unless_it_gives_one(chignolin_pdb_path, tmp_path) -> None:
     folder = _folder(tmp_path / "three", _manifest(hbond_beta_favor=3.0))
     assert load_forcefield(chignolin_pdb_path, param_dir=folder).hbond_beta_favor == 3.0
@@ -243,14 +256,18 @@ MALFORMED = {
                               "'folded_weights' must be an object"),
     "unknown weight": (_manifest(folded_weights={"solvation": 1.0}),
                        r"unknown 'folded_weights' terms \['solvation'\]"),
-    "weight zero": (_manifest(folded_weights={"mu": 0}),
-                    "'folded_weights.mu' must be a finite number above 0"),
+    "weight negative": (_manifest(folded_weights={"mu": -0.5}),
+                        "'folded_weights.mu' must be a finite number, 0 or above, got -0.5"),
     "weight nan": (_manifest(folded_weights={"hbond": float("nan")}),
-                   "'folded_weights.hbond' must be a finite number above 0"),
+                   "'folded_weights.hbond' must be a finite number, 0 or above"),
     "weight inf": (_manifest(folded_weights={"aromatic": float("inf")}),
-                   "'folded_weights.aromatic' must be a finite number above 0"),
+                   "'folded_weights.aromatic' must be a finite number, 0 or above"),
+    "weight beyond float32": (_manifest(folded_weights={"bb_torsion": 1e300}),
+                              "'folded_weights.bb_torsion' must be a finite number, 0 or above"),
     "weight text": (_manifest(folded_weights={"sc_torsion": "1"}),
-                    "'folded_weights.sc_torsion' must be a finite number above 0"),
+                    "'folded_weights.sc_torsion' must be a finite number, 0 or above"),
+    "weight true": (_manifest(folded_weights={"sc_torsion": True}),
+                    "'folded_weights.sc_torsion' must be a finite number, 0 or above"),
     "provenance not an object": (_manifest(provenance="by hand"), "'provenance' must be an object"),
     "md5 not an object": (_manifest(provenance={"md5": [TABLE]}), "'provenance.md5' must map"),
     "md5 not text": (_manifest(provenance={"md5": {TABLE: 5}}), "'provenance.md5' must map"),

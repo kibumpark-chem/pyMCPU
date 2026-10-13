@@ -30,8 +30,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **A parameter set can carry its own defaults in
   `constants/paramset.json`.** The file (format `pymcpu-paramset/1`) names
   the set and can give its hydrogen-bond sheet factor (`hbond_beta_favor`),
-  the factors already multiplied into its tables (`folded_weights`, a record
-  only: the engine's group weights do not change) and its provenance,
+  the factors already multiplied into its tables (`folded_weights`, 0 or
+  above, a record only: the engine's group weights do not change) and its
+  provenance,
   including the md5 of any of its files, which each file must still have when
   a force field is built. Unknown or repeated keys and values of the wrong
   kind are refused with an error that names the file.

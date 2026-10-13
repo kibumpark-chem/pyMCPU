@@ -245,9 +245,10 @@ def load_paramset_manifest(param_dir: str | Path) -> dict[str, Any] | None:
     a number that stays finite and above 0 in float32, the rule the force
     field applies to its own argument. ``folded_weights`` maps any of
     :data:`FOLDED_WEIGHT_TERMS` to the factor w_new / w_legacy that was
-    already multiplied into that term's table, a number of the same kind. It
-    is a record only: the engine applies nothing, and its group weights stay
-    the legacy ones. ``provenance`` is an object of any content, except that
+    already multiplied into that term's table, a number that stays finite in
+    float32 and is 0 or above (0 for a term the fit switched off). It is a
+    record only: the engine applies nothing, and its group weights stay the
+    legacy ones. ``provenance`` is an object of any content, except that
     an ``md5`` entry maps paths relative to the folder to the md5 each file
     had when the set was written, and every listed file must still have it.
 
@@ -314,7 +315,7 @@ def load_paramset_manifest(param_dir: str | Path) -> dict[str, Any] | None:
                 f"{list(FOLDED_WEIGHT_TERMS)}"
             )
         checked["folded_weights"] = {
-            term: _positive_factor(value, f"folded_weights.{term}", path)
+            term: _folded_weight(value, f"folded_weights.{term}", path)
             for term, value in weights.items()
         }
     if "provenance" in manifest:
@@ -341,6 +342,24 @@ def _positive_factor(value: Any, key: str, path: Path) -> float:
         if 0.0 < factor <= float(np.finfo(np.float32).max) and np.float32(factor) > 0.0:
             return factor
     raise ValueError(f"{path}: '{key}' must be a finite number above 0, got {value!r}")
+
+
+def _folded_weight(value: Any, key: str, path: Path) -> float:
+    """``value`` as a float, or ValueError unless it is a number (not a bool)
+    that stays finite in float32 and is 0 or above. A folded weight is a
+    record of what was multiplied into a table, and a fit with weights of 0
+    or above can switch a term off with an exact 0; the engine applies none
+    of them, so they need not be above 0 as ``hbond_beta_favor`` must."""
+    import numpy as np  # local: keeps numpy off this import path
+
+    if isinstance(value, numbers.Real) and not isinstance(value, bool):
+        try:
+            weight = float(value)
+        except OverflowError:  # an integer too large for a float
+            weight = float("inf")
+        if 0.0 <= weight <= float(np.finfo(np.float32).max):
+            return weight
+    raise ValueError(f"{path}: '{key}' must be a finite number, 0 or above, got {value!r}")
 
 
 def _check_provenance_md5(root: Path, path: Path, md5s: Any) -> None:

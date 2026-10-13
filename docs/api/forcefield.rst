@@ -160,9 +160,9 @@ A parameter folder can describe its set in ``constants/paramset.json``
   :class:`~pymcpu.MCPUForceField` uses when it is given none. A factor given
   explicitly, as an argument or in ``forcefield_options``, wins;
 - ``folded_weights``: for any of the five terms, the factor
-  w_new / w_legacy that the set multiplied into that term's table. It is a
-  record only. The engine applies nothing, and the group weights above stay
-  as they are;
+  w_new / w_legacy that the set multiplied into that term's table, 0 or
+  above (0 for a term the fit switched off). It is a record only. The engine
+  applies nothing, and the group weights above stay as they are;
 - ``provenance``, of any content, except that an ``md5`` entry lists files
   of the folder with the md5 each had when the set was written.
 
