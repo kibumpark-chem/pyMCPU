@@ -21,7 +21,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `param_dir:` that resumes it. The same files in another folder resume. A
   checkpoint written before these fields counts as mcpu08 and resumes under it
   with a one-line warning, as its files cannot be checked. Folding, replica
-  exchange and MPI replica exchange all check it.
+  exchange and MPI replica exchange all check it. The three new
+  `CheckpointState` fields are keyword-only, so the other fields keep their
+  positional order.
 - `MCPUForceField.param_signature` and `pymcpu.params.param_signature`. A
   process reads each parameter file once while it is unchanged (0.7 GB, about
   2 s, for mcpu08). The runners take the signature when they are built; MPI

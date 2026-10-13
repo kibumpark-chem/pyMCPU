@@ -87,13 +87,15 @@ class CheckpointState:
     #: The parameter set the force field was built from
     #: (MCPUForceField.param_set). Empty for a force field without one, and
     #: in checkpoints written before it was recorded, which count as mcpu08.
-    param_set: str = ""
+    #: Keyword-only, like the next two, so the fields before and after them
+    #: keep the positional order they had before these were added.
+    param_set: str = field(default="", kw_only=True)
     #: sha256 of the parameter files the force field read
     #: (MCPUForceField.param_signature); empty when param_set is.
-    param_signature: str = ""
+    param_signature: str = field(default="", kw_only=True)
     #: The folder those files were read from, as an absolute path. Only
     #: reported, never compared: the same files elsewhere resume the run.
-    param_dir: str = ""
+    param_dir: str = field(default="", kw_only=True)
     temperatures: Any = None
     n_targets: Any = None
     k_bias: float = 0.0
