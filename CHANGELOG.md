@@ -37,7 +37,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   kind are refused with an error that names the file.
   `pymcpu.params.load_paramset_manifest` reads and checks it, and
   `MCPUForceField.paramset_manifest` holds what the force field read. mcpu08
-  has none.
+  has none. The file ships with its set: `scripts/encode_params.py` copies it
+  next to the table archive (and `--check` compares it), and a wheel install
+  unpacks it with the tables, into a cache folder whose name covers it. So a
+  set has the same defaults and signature from a wheel as from a checkout or
+  `MCPU_PARAMS_DIR`. `scripts/encode_params.py` also removes a constants file
+  from `--out` when `--src` no longer has it, and `--check` reports one that
+  only one side has.
 
 ### Changed
 

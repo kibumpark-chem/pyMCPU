@@ -17,7 +17,9 @@ Usage::
     python scripts/encode_params.py --check
 
 The table list and the constants list both come from the registry's
-``layout``, never from a local copy.
+``layout``, never from a local copy. The set's own manifest,
+``constants/paramset.json``, ships with the constants when ``--src`` has
+one (``pymcpu.params.shipped_constants``).
 """
 
 from __future__ import annotations
@@ -36,7 +38,7 @@ if str(REPO_ROOT) not in sys.path:
 import numpy as np  # noqa: E402
 
 from pymcpu.paramcodec import decode_table, encode_set, read_header  # noqa: E402
-from pymcpu.params import constants_files, table_layout  # noqa: E402
+from pymcpu.params import shipped_constants, table_layout  # noqa: E402
 
 _DEFAULT_SRC = REPO_ROOT / "src" / "pymcpu" / "parameters" / "pretrained" / "mcpu08"
 _ARCHIVE_NAME = "tables.npz"
@@ -74,12 +76,18 @@ def _encode_into(src: Path, out_dir: Path, set_name: str, version: str, level: i
     report = encode_set(src, archive, set_name=set_name, version=version, tables=tables)
 
     # The constants (atom types, amino-acid template, rotamer library, rama
-    # mixture) are small and shipped verbatim -- they are not tables.
+    # mixture) and the set's manifest (constants/paramset.json) are small and
+    # shipped verbatim -- they are not tables. --out mirrors --src: a file an
+    # earlier encode left there, and --src no longer has, is removed.
     copied = []
-    for rel in constants_files(set_name):
+    for rel in shipped_constants(set_name):
         source = src / rel
         if not source.is_file():
-            continue          # rama_mixture.json is optional
+            # rama_mixture.json is optional; mcpu08 has no manifest
+            if (out_dir / rel).is_file():
+                (out_dir / rel).unlink()
+                print(f"  removed        : {rel} (not in --src)")
+            continue
         _atomic_copy(source, out_dir / rel)
         copied.append(rel)
 
@@ -145,9 +153,12 @@ def main() -> int:
                 b = decode_table(committed, name, verify=False)
                 if not np.array_equal(a.view(np.uint32), b.view(np.uint32)):
                     raise SystemExit(f"DRIFT: table {name} differs from the committed archive")
-            for rel in constants_files(args.set_name):
+            for rel in shipped_constants(args.set_name):
                 s, d = staging / rel, args.out / rel
-                if s.is_file() and not (d.is_file() and filecmp.cmp(s, d, shallow=False)):
+                if s.is_file() != d.is_file():
+                    side = "--src" if s.is_file() else "--out"
+                    raise SystemExit(f"DRIFT: constant {rel} is only in {side}")
+                if s.is_file() and not filecmp.cmp(s, d, shallow=False):
                     raise SystemExit(f"DRIFT: constant {rel} differs")
             print("\n  --check: committed archive is up to date")
         return 0

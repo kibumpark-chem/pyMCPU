@@ -147,6 +147,23 @@ def constants_files(set_name: str = _DEFAULT_SET) -> list[str]:
     return list(_layout(set_name).get("constants") or [])
 
 
+def shipped_constants(set_name: str = _DEFAULT_SET) -> list[str]:
+    """Relative paths of the files a set ships as they are, next to its
+    table archive: :func:`constants_files` and :data:`PARAMSET_MANIFEST`,
+    once each.
+
+    ``scripts/encode_params.py`` copies them, the wheel materialiser copies
+    them into the cache and the cache key covers them, so a set's own
+    defaults reach a pip install as they reach a checkout or
+    ``MCPU_PARAMS_DIR``. Each step skips a file the set does not have, as
+    mcpu08 has no manifest.
+    """
+    files = constants_files(set_name)
+    if PARAMSET_MANIFEST not in files:
+        files.append(PARAMSET_MANIFEST)
+    return files
+
+
 def signed_files(set_name: str = _DEFAULT_SET) -> list[str]:
     """Relative paths :func:`param_signature` covers, sorted: every file the
     set's layout names (required, optional, tables and constants), which are
@@ -410,10 +427,13 @@ def _bundled_root(set_name: str) -> Path:
 def _cache_digest12(set_name: str, archive: Path) -> str:
     """First 12 hex digits of a sha256 over everything a materialized set holds.
 
-    That is the table archive and every constants file copied next to it,
-    each by its relative path (sorted) and contents, so a release that changes
-    only a constants file gets a new cache directory too. A constants file
-    the package lacks is hashed as absent, as ``_materialize_into`` skips it.
+    That is the table archive and every file copied next to it
+    (:func:`shipped_constants`), each by its relative path (sorted) and
+    contents, so a release that changes only a constants file, or only the
+    set's manifest, gets a new cache directory too. A constants file the
+    package lacks is hashed as absent, as ``_materialize_into`` skips it. An
+    absent manifest that the layout does not list is left out, so a set
+    without one (mcpu08) keeps the directory it had before manifests shipped.
     """
     digest = hashlib.sha256()
 
@@ -429,7 +449,10 @@ def _cache_digest12(set_name: str, archive: Path) -> str:
 
     _add("tables.npz", archive)
     src_root = _bundled_root(set_name)
-    for relpath in sorted(constants_files(set_name)):
+    listed = set(constants_files(set_name))
+    for relpath in sorted(shipped_constants(set_name)):
+        if relpath not in listed and not (src_root / relpath).is_file():
+            continue
         _add(relpath, src_root / relpath)
     return digest.hexdigest()[:12]
 
@@ -463,7 +486,8 @@ def _fsync_dir(path: Path) -> None:
 
 
 def _materialize_into(staging: Path, set_name: str, archive: Path, verify: bool) -> None:
-    """Decode every table and copy every constant into ``staging``."""
+    """Decode every table, and copy every constant and the set's manifest
+    (:func:`shipped_constants`), into ``staging``."""
     from pymcpu.paramcodec import decode_table  # local: keeps numpy off this import path
 
     for name, relpath in table_layout(set_name).items():
@@ -471,7 +495,7 @@ def _materialize_into(staging: Path, set_name: str, archive: Path, verify: bool)
         _atomic_write_bytes(staging / relpath, values.tobytes())
         del values
     src_root = _bundled_root(set_name)
-    for relpath in constants_files(set_name):
+    for relpath in shipped_constants(set_name):
         source = src_root / relpath
         if source.is_file():
             _atomic_write_bytes(staging / relpath, source.read_bytes())
@@ -491,10 +515,10 @@ def materialize_from_wheel(
     single code path.
 
     The cache directory is **content-addressed** (``<set>-<sha256[:12]>``, the
-    hash covering the table archive and every constants file), which removes
-    staleness logic entirely: a wheel upgrade that changes the tables or a
-    constants file produces a different directory, so there is nothing to
-    invalidate.
+    hash covering the table archive and every constants file, the set's
+    manifest included), which removes staleness logic entirely: a wheel
+    upgrade that changes the tables or a constants file produces a different
+    directory, so there is nothing to invalidate.
 
     Concurrency: ``scripts/job_template.slurm`` starts N MPI ranks per node
     against a shared ``$HOME``, so N processes can race here. ``os.mkdir`` is

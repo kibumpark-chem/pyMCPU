@@ -172,7 +172,10 @@ unchanged, about 1 s for 0.7 GB. The checked contents are
 :attr:`~pymcpu.MCPUForceField.paramset_manifest`. The file counts in
 :attr:`~pymcpu.MCPUForceField.param_signature`, so a checkpoint resumes only
 with the same file, and checkpoints record the sheet factor a run used,
-wherever it came from (see :doc:`../checkpointing`).
+wherever it came from (see :doc:`../checkpointing`). The file ships with its
+set: ``scripts/encode_params.py`` copies it next to the table archive, and a
+wheel install unpacks it with the tables, so a set reads the same from a
+wheel as from a checkout or ``MCPU_PARAMS_DIR``.
 
 .. autofunction:: pymcpu.params.load_paramset_manifest
 
