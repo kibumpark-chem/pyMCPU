@@ -130,20 +130,51 @@ Group  Term                   Potential                      Weight
 
 The hydrogen-bond weight is set as 1.35, and the term is doubled as in legacy
 MCPU, so it counts 2.7. The weights are dimensionless, like the energies.
-These are the mcpu08 values; another MCPU parameter set can change the
-weights or a potential.
+They are the same for every MCPU parameter set: a set that needs another
+weight multiplies it into its table (see `A parameter set's own defaults`_).
 
 Within the hydrogen-bond term, a bond between residues more than four apart
-is multiplied by the sheet factor ``hbond_beta_favor``, 2.0 by default.
-Legacy MCPU compiled 3.0 (``beta_favor`` in its ``define.h``);
-``MCPUForceField(..., hbond_beta_favor=3.0)``, or
+is multiplied by the sheet factor ``hbond_beta_favor``. A force field that
+is not given one takes the parameter set's own, or 2.0 when the set gives
+none, as for mcpu08. Legacy MCPU compiled 3.0 (``beta_favor`` in its
+``define.h``); ``MCPUForceField(..., hbond_beta_favor=3.0)``, or
 ``forcefield_options: {hbond_beta_favor: 3.0}`` in a config, scores hydrogen
-bonds as it did. Bonds four apart, the helical ones, are not scaled.
+bonds as it did, whatever the set says. Bonds four apart, the helical ones,
+are not scaled.
 
 The Ramachandran mixture library is loaded too when the parameter set has one
 (``constants/rama_mixture.json``). Only the ``rama_pivot`` backbone move uses
 it, and that move is off by default, so a set without the library still
 loads.
+
+A parameter set's own defaults
+------------------------------
+
+A parameter folder can describe its set in ``constants/paramset.json``
+(format ``pymcpu-paramset/1``; mcpu08 has none):
+
+- its ``name``, and optionally a ``description``;
+- ``hbond_beta_favor``, the set's sheet factor, which
+  :class:`~pymcpu.MCPUForceField` uses when it is given none. A factor given
+  explicitly, as an argument or in ``forcefield_options``, wins;
+- ``folded_weights``: for any of the five terms, the factor
+  w_new / w_legacy that the set multiplied into that term's table. It is a
+  record only. The engine applies nothing, and the group weights above stay
+  as they are;
+- ``provenance``, of any content, except that an ``md5`` entry lists files
+  of the folder with the md5 each had when the set was written.
+
+The force field reads the file before the tables. It refuses one with an
+unknown key, a key given twice, a value of the wrong kind, or a listed file
+that is missing or no longer has its md5, and the error names the file.
+Checking the md5s reads each listed file once per process while it is
+unchanged, about 1 s for 0.7 GB. The checked contents are
+:attr:`~pymcpu.MCPUForceField.paramset_manifest`. The file counts in
+:attr:`~pymcpu.MCPUForceField.param_signature`, so a checkpoint resumes only
+with the same file, and checkpoints record the sheet factor a run used,
+wherever it came from (see :doc:`../checkpointing`).
+
+.. autofunction:: pymcpu.params.load_paramset_manifest
 
 Attributes
 ----------
@@ -217,8 +248,9 @@ Set during construction and safe to read:
 .. py:attribute:: pymcpu.MCPUForceField.hbond_beta_favor
    :type: float
 
-   The hydrogen-bond sheet factor the systems it builds use (the
-   ``hbond_beta_favor`` argument, default 2.0).
+   The hydrogen-bond sheet factor the systems it builds use: the
+   ``hbond_beta_favor`` argument, or, when that is None, the parameter
+   set's own (see `A parameter set's own defaults`_), else 2.0.
 
 .. py:attribute:: pymcpu.MCPUForceField.is_proline
    :type: list[int]
@@ -237,6 +269,13 @@ Set during construction and safe to read:
 
    Resolved parameter root, containing ``constants/`` and
    ``mcpu_params/``.
+
+.. py:attribute:: pymcpu.MCPUForceField.paramset_manifest
+   :type: dict | None
+
+   The checked contents of the folder's ``constants/paramset.json``
+   (:func:`~pymcpu.params.load_paramset_manifest`), or ``None`` when it has
+   none, as for mcpu08.
 
 The constructor arguments ``param_set``, ``virtual_amide_h``,
 ``compute_dssp``, ``dssp_coil_state`` and ``allow_provisional_rama`` are kept

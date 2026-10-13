@@ -141,7 +141,9 @@ def reference(heavy) -> tuple[float, float]:
 def test_the_default_is_two_in_cpp_and_python(heavy) -> None:
     ff = MCPUForceField(heavy)
     assert ff.hbond_beta_favor == 2.0
-    assert inspect.signature(MCPUForceField).parameters["hbond_beta_favor"].default == 2.0
+    # None takes the parameter set's own factor (constants/paramset.json),
+    # which mcpu08 does not set: test_paramset_manifest.py.
+    assert inspect.signature(MCPUForceField).parameters["hbond_beta_favor"].default is None
     assert inspect.signature(HydrogenBondBuilder.build).parameters["beta_favor"].default == 2.0
     assert mcpu_core.HBondPotential(ff.hbond, ff.hbond_seq_dep).beta_favor == 2.0
     assert _hbond_term(ff.create_system(heavy.topology)).beta_favor == 2.0
@@ -193,7 +195,7 @@ def test_a_factor_that_is_not_a_finite_number_above_zero_is_refused(heavy, bad) 
         MCPUForceField(heavy, hbond_beta_favor=bad)
 
 
-@pytest.mark.parametrize("bad", [True, "two", "3", None])
+@pytest.mark.parametrize("bad", [True, "two", "3"])
 def test_the_force_field_refuses_a_factor_that_is_not_a_number(heavy, bad) -> None:
     with pytest.raises(ValueError, match="hbond_beta_favor must be a finite number above 0"):
         MCPUForceField(heavy, hbond_beta_favor=bad)

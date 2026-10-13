@@ -27,9 +27,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   2 s, for mcpu08). The runners take the signature when they are built; MPI
   replica exchange takes it on rank 0 and sends it to the other ranks.
   Building a force field alone does not take it.
+- **A parameter set can carry its own defaults in
+  `constants/paramset.json`.** The file (format `pymcpu-paramset/1`) names
+  the set and can give its hydrogen-bond sheet factor (`hbond_beta_favor`),
+  the factors already multiplied into its tables (`folded_weights`, a record
+  only: the engine's group weights do not change) and its provenance,
+  including the md5 of any of its files, which each file must still have when
+  a force field is built. Unknown or repeated keys and values of the wrong
+  kind are refused with an error that names the file.
+  `pymcpu.params.load_paramset_manifest` reads and checks it, and
+  `MCPUForceField.paramset_manifest` holds what the force field read. mcpu08
+  has none.
 
 ### Changed
 
+- `MCPUForceField(hbond_beta_favor=None)` is the default: a force field
+  given no factor takes its parameter set's, and 2.0 when the set gives none,
+  so mcpu08 runs as before. A factor given as an argument or in
+  `forcefield_options` always wins, and checkpoints record the factor the run
+  used. `hbond_beta_favor: null` in a config now asks for this default
+  instead of being refused.
 - `EngineSession.fingerprint` covers the parameter set the force field was
   built from and the signature of its files, so it differs from 0.1.0's for
   the same engine. `compute_fingerprint` takes `param_signature`; without it

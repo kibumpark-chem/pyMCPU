@@ -16,6 +16,8 @@ Environment:
 
 :func:`param_signature` identifies the files of a resolved folder, wherever it
 is; checkpoints record it, so a run cannot resume with other tables.
+:func:`load_paramset_manifest` reads the folder's own description of its set,
+``constants/paramset.json``, when it has one.
 """
 
 from __future__ import annotations
@@ -23,14 +25,16 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import numbers
 import os
+import re
 import shutil
 import socket
 import tempfile
 import time
 import uuid
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 from pymcpu import PACKAGE_ROOT
@@ -39,8 +43,19 @@ _REGISTRY_PATH = Path(PACKAGE_ROOT) / "data" / "params_registry.json"
 _DEFAULT_SET = "mcpu08"
 
 #: A parameter set's own description file. A folder need not have one; when
-#: it does, :func:`param_signature` covers it as it covers the tables.
+#: it does, :func:`param_signature` covers it as it covers the tables, and
+#: :func:`load_paramset_manifest` reads it.
 PARAMSET_MANIFEST = "constants/paramset.json"
+
+#: The ``format`` a :data:`PARAMSET_MANIFEST` declares.
+PARAMSET_FORMAT = "pymcpu-paramset/1"
+
+#: The terms a manifest's ``folded_weights`` may name: energy groups 1 to 5.
+FOLDED_WEIGHT_TERMS = ("mu", "bb_torsion", "sc_torsion", "hbond", "aromatic")
+
+_PARAMSET_KEYS = (
+    "format", "name", "description", "hbond_beta_favor", "folded_weights", "provenance",
+)
 
 logger = logging.getLogger(__name__)
 
@@ -145,13 +160,14 @@ def signed_files(set_name: str = _DEFAULT_SET) -> list[str]:
     return sorted(paths)
 
 
-#: sha256 of each file read so far, by (real path, device, inode, size,
-#: modification time): see _file_sha256.
-_FILE_SHA256: dict[tuple[str, int, int, int, int], str] = {}
+#: Digest of each file read so far, by (real path, device, inode, size,
+#: modification time, algorithm): see _file_digest.
+_FILE_DIGESTS: dict[tuple[str, int, int, int, int, str], str] = {}
 
 
-def _file_sha256(path: Path) -> str:
-    """sha256 (hex) of a file's bytes, kept for the life of the process.
+def _file_digest(path: Path, algorithm: str = "sha256") -> str:
+    """The ``algorithm`` digest (hex) of a file's bytes, kept for the life of
+    the process.
 
     Kept by the file's real path, device, inode, size and modification time,
     so a process that builds many runs from one folder reads each file once
@@ -160,12 +176,12 @@ def _file_sha256(path: Path) -> str:
     """
     real = os.path.realpath(path)
     st = os.stat(real)
-    key = (real, st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns)
-    digest = _FILE_SHA256.get(key)
+    key = (real, st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns, algorithm)
+    digest = _FILE_DIGESTS.get(key)
     if digest is None:
         with open(real, "rb") as handle:
-            digest = hashlib.file_digest(handle, "sha256").hexdigest()
-        _FILE_SHA256[key] = digest
+            digest = hashlib.file_digest(handle, algorithm).hexdigest()
+        _FILE_DIGESTS[key] = digest
     return digest
 
 
@@ -184,9 +200,168 @@ def param_signature(param_dir: str | Path, set_name: str = _DEFAULT_SET) -> str:
     digest = hashlib.sha256()
     for rel in signed_files(set_name):
         path = root / rel
-        entry = _file_sha256(path) if path.is_file() else "absent"
+        entry = _file_digest(path) if path.is_file() else "absent"
         digest.update(f"{rel}\0{entry}\n".encode())
     return digest.hexdigest()
+
+
+def load_paramset_manifest(param_dir: str | Path) -> dict[str, Any] | None:
+    """Read and check the :data:`PARAMSET_MANIFEST` of a parameter folder, or
+    return None when the folder has none.
+
+    The file lets a parameter set carry its own defaults. It is a JSON
+    object::
+
+        {
+          "format": "pymcpu-paramset/1",
+          "name": "mcpu26",
+          "description": "PISCES 2026 tables, fitted weights",
+          "hbond_beta_favor": 3.0,
+          "folded_weights": {"mu": 1.25, "hbond": 0.9},
+          "provenance": {"md5": {"mcpu_params/mu_potentials.bin": "<32 hex digits>"}}
+        }
+
+    ``format`` (exactly :data:`PARAMSET_FORMAT`) and ``name`` (a non-empty
+    string) are required; ``description`` is a string. ``hbond_beta_favor``
+    is the set's hydrogen-bond sheet factor, which
+    :class:`~pymcpu.MCPUForceField` uses when it is not given one; it must be
+    a number that stays finite and above 0 in float32, the rule the force
+    field applies to its own argument. ``folded_weights`` maps any of
+    :data:`FOLDED_WEIGHT_TERMS` to the factor w_new / w_legacy that was
+    already multiplied into that term's table, a number of the same kind. It
+    is a record only: the engine applies nothing, and its group weights stay
+    the legacy ones. ``provenance`` is an object of any content, except that
+    an ``md5`` entry maps paths relative to the folder to the md5 each file
+    had when the set was written, and every listed file must still have it.
+
+    Unknown keys, a key given twice anywhere in the file and a value of the
+    wrong kind are refused with ValueError naming the file, as is a listed
+    file that is missing or has changed. Returns the checked manifest, with
+    numbers as floats. The md5 of each listed file is taken once per process
+    while the file stays unchanged (about 1 s for 0.7 GB).
+    """
+    root = Path(param_dir)
+    path = root / PARAMSET_MANIFEST
+    if not path.is_file():
+        if os.path.lexists(path):
+            raise ValueError(f"{path} exists but is not a file that can be read")
+        return None
+
+    def no_duplicates(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        keys = [key for key, _ in pairs]
+        repeated = sorted({key for key in keys if keys.count(key) > 1})
+        if repeated:
+            raise ValueError(f"{path}: keys given more than once: {repeated}")
+        return dict(pairs)
+
+    try:
+        manifest = json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=no_duplicates)
+    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+        raise ValueError(f"{path} is not valid JSON: {exc}") from None
+    if not isinstance(manifest, dict):
+        raise ValueError(f"{path} must hold a JSON object, not {type(manifest).__name__}")
+    unknown = sorted(set(manifest) - set(_PARAMSET_KEYS))
+    if unknown:
+        raise ValueError(f"{path}: unknown keys {unknown}; allowed {list(_PARAMSET_KEYS)}")
+    missing = [key for key in ("format", "name") if key not in manifest]
+    if missing:
+        raise ValueError(f"{path}: missing {missing}")
+    if manifest["format"] != PARAMSET_FORMAT:
+        raise ValueError(
+            f"{path}: 'format' must be {PARAMSET_FORMAT!r}, got {manifest['format']!r}"
+        )
+    name = manifest["name"]
+    if not isinstance(name, str) or not name.strip():
+        raise ValueError(f"{path}: 'name' must be a non-empty string, got {name!r}")
+    checked: dict[str, Any] = {"format": PARAMSET_FORMAT, "name": name}
+    if "description" in manifest:
+        if not isinstance(manifest["description"], str):
+            raise ValueError(
+                f"{path}: 'description' must be a string, got {manifest['description']!r}"
+            )
+        checked["description"] = manifest["description"]
+    if "hbond_beta_favor" in manifest:
+        checked["hbond_beta_favor"] = _positive_factor(
+            manifest["hbond_beta_favor"], "hbond_beta_favor", path
+        )
+    if "folded_weights" in manifest:
+        weights = manifest["folded_weights"]
+        if not isinstance(weights, dict):
+            raise ValueError(
+                f"{path}: 'folded_weights' must be an object of factors, got {weights!r}"
+            )
+        unknown = sorted(set(weights) - set(FOLDED_WEIGHT_TERMS))
+        if unknown:
+            raise ValueError(
+                f"{path}: unknown 'folded_weights' terms {unknown}; allowed "
+                f"{list(FOLDED_WEIGHT_TERMS)}"
+            )
+        checked["folded_weights"] = {
+            term: _positive_factor(value, f"folded_weights.{term}", path)
+            for term, value in weights.items()
+        }
+    if "provenance" in manifest:
+        provenance = manifest["provenance"]
+        if not isinstance(provenance, dict):
+            raise ValueError(f"{path}: 'provenance' must be an object, got {provenance!r}")
+        if "md5" in provenance:
+            _check_provenance_md5(root, path, provenance["md5"])
+        checked["provenance"] = provenance
+    return checked
+
+
+def _positive_factor(value: Any, key: str, path: Path) -> float:
+    """``value`` as a float, or ValueError unless it is a number (not a bool)
+    that stays finite and above 0 in float32, the engine's precision: the rule
+    MCPUForceField applies to ``hbond_beta_favor``."""
+    import numpy as np  # local: keeps numpy off this import path
+
+    if isinstance(value, numbers.Real) and not isinstance(value, bool):
+        try:
+            factor = float(value)
+        except OverflowError:  # an integer too large for a float
+            factor = float("inf")
+        if 0.0 < factor <= float(np.finfo(np.float32).max) and np.float32(factor) > 0.0:
+            return factor
+    raise ValueError(f"{path}: '{key}' must be a finite number above 0, got {value!r}")
+
+
+def _check_provenance_md5(root: Path, path: Path, md5s: Any) -> None:
+    """Raise ValueError unless ``md5s`` maps paths inside ``root`` to md5
+    digests that the files there still have."""
+    if not isinstance(md5s, dict) or not all(
+        isinstance(rel, str) and isinstance(md5, str) for rel, md5 in md5s.items()
+    ):
+        raise ValueError(
+            f"{path}: 'provenance.md5' must map file paths, relative to the folder, to md5 "
+            f"strings, got {md5s!r}"
+        )
+    for rel, expected in md5s.items():
+        pure = PurePosixPath(rel)
+        if not rel or pure.is_absolute() or ".." in pure.parts:
+            raise ValueError(
+                f"{path}: 'provenance.md5' lists {rel!r}; a path must be relative to the "
+                "folder and stay inside it"
+            )
+        if pure.as_posix() == PARAMSET_MANIFEST:
+            raise ValueError(f"{path}: 'provenance.md5' cannot list the manifest itself")
+        if not re.fullmatch(r"[0-9a-fA-F]{32}", expected):
+            raise ValueError(
+                f"{path}: 'provenance.md5' gives {rel} {expected!r}, which is not an md5 "
+                "(32 hexadecimal digits)"
+            )
+        target = root / pure
+        if not target.is_file():
+            raise ValueError(
+                f"{path}: 'provenance.md5' lists {rel}, which is not a file in {root}"
+            )
+        found = _file_digest(target, "md5")
+        if found != expected.lower():
+            raise ValueError(
+                f"{target} has md5 {found}, but {path} records {expected.lower()}: the "
+                "file changed after the parameter set was written; restore it, or write "
+                "the set again"
+            )
 
 
 def _looks_like_params_root(path: Path, files: list[str]) -> bool:

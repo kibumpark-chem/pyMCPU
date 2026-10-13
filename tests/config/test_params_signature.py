@@ -10,6 +10,7 @@ so a run cannot resume with other tables; the resume checks are in
 from __future__ import annotations
 
 import hashlib
+import json
 from pathlib import Path
 
 import mdtraj as md
@@ -18,6 +19,7 @@ import pytest
 from pymcpu import params
 from pymcpu.forcefields.mcpu import MCPUForceField
 from pymcpu.params import (
+    PARAMSET_FORMAT,
     PARAMSET_MANIFEST,
     constants_files,
     ensure_params,
@@ -72,6 +74,29 @@ def test_changing_adding_or_removing_a_file_changes_it(tmp_path: Path, change: s
     else:
         (folder / "constants" / "rama_mixture.json").unlink()
     assert param_signature(folder) != before
+
+
+def test_changing_the_set_description_changes_it(tmp_path: Path, chignolin_pdb_path: str) -> None:
+    """The force field reads constants/paramset.json (its hbond_beta_favor,
+    for one), so the signature follows its contents."""
+    traj = md.load(chignolin_pdb_path)
+    heavy = traj.atom_slice(traj.topology.select("not element H"))
+    folder = linked_param_folder(tmp_path / "f")
+    manifest = folder / PARAMSET_MANIFEST
+    signatures = []
+    # Each with a size of its own: the digest cache keys on size and mtime,
+    # and two writes can fall within one clock tick.
+    for factor in (3.0, 2.25):
+        if manifest.exists():
+            manifest.unlink()
+        manifest.write_text(json.dumps(
+            {"format": PARAMSET_FORMAT, "name": "test", "hbond_beta_favor": factor}))
+        ff = MCPUForceField(heavy, param_dir=str(folder))
+        assert ff.hbond_beta_favor == factor
+        assert ff.param_signature == param_signature(folder)
+        signatures.append(ff.param_signature)
+    assert signatures[0] != signatures[1]
+    assert param_signature(ensure_params("mcpu08")) not in signatures
 
 
 def test_each_file_is_read_once_until_it_changes(tmp_path: Path, monkeypatch) -> None:

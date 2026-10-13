@@ -24,8 +24,10 @@ from pymcpu import mcpu_core
 from pymcpu.config import DEFAULT_ROTAMER_LIBRARY
 from pymcpu.mcpu_core import DownstreamCache
 from pymcpu.params import (
+    PARAMSET_MANIFEST,
     ParamsError,
     ensure_params,
+    load_paramset_manifest,
     optional_files,
     param_signature,
     required_files,
@@ -53,6 +55,9 @@ _MAX_PEPTIDE_BOND_NM = 0.2
 # Problems listed in one structure error before the rest are counted.
 _MAX_LISTED_PROBLEMS = 10
 _FLOAT32_MAX = float(np.finfo(np.float32).max)
+# The sheet factor of a parameter set whose constants/paramset.json sets none,
+# or that has no such file (mcpu08): the engine's kDefaultBetaFavor.
+_DEFAULT_HBOND_BETA_FAVOR = 2.0
 
 
 def _listed(problems: list[str]) -> str:
@@ -147,7 +152,7 @@ class MCPUForceField(BaseForceField):
              dssp_coil_state: str = "C",
              allow_provisional_rama: bool = False,
              allow_chain_breaks: bool = False,
-             hbond_beta_favor: float = 2.0) -> None:
+             hbond_beta_favor: float | None = None) -> None:
         """
         Load the parameters, check the structure and lay out its atoms.
 
@@ -190,22 +195,30 @@ class MCPUForceField(BaseForceField):
             simulates as one chain.
         hbond_beta_favor
             Factor on every hydrogen bond between residues more than four
-            apart (default 2.0). Legacy MCPU compiled 3.0 (``beta_favor`` in
-            its ``define.h``); pass 3.0 to score hydrogen bonds as it did.
+            apart. None (the default) takes the parameter set's own, the
+            ``hbond_beta_favor`` of its ``constants/paramset.json``, or 2.0
+            when the set gives none, as for mcpu08. A value given here
+            always wins. Legacy MCPU compiled 3.0 (``beta_favor`` in its
+            ``define.h``); pass 3.0 to score hydrogen bonds as it did.
 
         Raises
         ------
         ValueError
             For a residue MCPU has no parameters for, a missing heavy atom
             (named with its residue), a chain break, as above, an
-            ``hbond_beta_favor`` that is not a finite number above 0, or a
+            ``hbond_beta_favor`` that is not a finite number above 0, a
+            ``constants/paramset.json`` that
+            :func:`pymcpu.params.load_paramset_manifest` refuses (including
+            one whose provenance md5 a listed file no longer has), or a
             residue template (``constants/standard_amino_acids.json``) in
             which a residue names chi atoms (``chi_atoms``) without the atoms
             each chi moves (``chi_moved_atoms``, one row per chi), as those
             chi angles would never change. The message names the file and
             the residues.
         """
-        self.hbond_beta_favor = _hbond_beta_favor(hbond_beta_favor)
+        # A value given here is checked before any file is read.
+        if hbond_beta_favor is not None:
+            hbond_beta_favor = _hbond_beta_favor(hbond_beta_favor)
         if param_dir is None:
             try:
                 param_dir = ensure_params(param_set)
@@ -214,6 +227,20 @@ class MCPUForceField(BaseForceField):
         self.param_dir = Path(param_dir)
         self.param_set = param_set
         self._param_signature: str | None = None
+        # The folder's checked constants/paramset.json, or None (mcpu08 has
+        # none). Read before the tables, so a table whose provenance md5 no
+        # longer matches is refused before it is loaded.
+        self.paramset_manifest = load_paramset_manifest(self.param_dir)
+        if hbond_beta_favor is None:
+            hbond_beta_favor = (self.paramset_manifest or {}).get("hbond_beta_favor")
+            if hbond_beta_favor is None:
+                hbond_beta_favor = _DEFAULT_HBOND_BETA_FAVOR
+            else:
+                logger.info("hbond_beta_favor %s from %s", hbond_beta_favor,
+                            self.param_dir / PARAMSET_MANIFEST)
+        # The argument, else the parameter set's, else 2.0; checkpoints
+        # record this value.
+        self.hbond_beta_favor = _hbond_beta_favor(hbond_beta_favor)
         self.virtual_amide_h = bool(virtual_amide_h)
         self.compute_dssp = bool(compute_dssp)
         self.dssp_coil_state = dssp_coil_state

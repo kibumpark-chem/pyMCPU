@@ -99,15 +99,18 @@ resumes it:
 - The force field (`forcefield:`). Checkpoints from before this was recorded
   count as mcpu08.
 - The parameter set (`param_set:`, default `mcpu08`) and a signature of its
-  files: a sha256 over the tables and constants the force field reads
+  files: a sha256 over the tables and constants the force field reads,
+  including the set's own `constants/paramset.json` when it has one
   (`MCPUForceField.param_signature`). The same files in another folder
   resume the run; other files do not, and the error names the folder the
   checkpoint was written with, to pass as `param_dir:`. Checkpoints from
   before this was recorded count as mcpu08. They resume under it with a
   one-line warning, because their files cannot be checked.
-- The hydrogen-bond sheet factor (`forcefield_options: {hbond_beta_favor:
-  ...}`, default 2.0). Checkpoints from before it was recorded count as legacy
-  MCPU's 3.0, so resume one of those with `hbond_beta_favor: 3.0`.
+- The hydrogen-bond sheet factor the run used: `forcefield_options:
+  {hbond_beta_favor: ...}` when the config gives one, otherwise the parameter
+  set's own (from its `constants/paramset.json`), otherwise 2.0, as for
+  mcpu08. Checkpoints from before it was recorded count as legacy MCPU's 3.0,
+  so resume one of those with `hbond_beta_favor: 3.0`.
 - The rotamer library (`rotamer_library`, default `dunbrack2002_sym`).
   Checkpoints from before it was recorded count as `dunbrack2002`, so resume
   one of those with `rotamer_library: dunbrack2002`.
