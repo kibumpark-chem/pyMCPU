@@ -159,14 +159,17 @@ from there the two trajectories differ, at first only by float32 rounding.
 absolute path, the parameter set, a signature of the parameter files
 (`MCPUForceField.param_signature`), the hydrogen-bond sheet factor the force
 field resolved (both of which checkpoints record too), the atom count and
-the DSSP settings. Record it with your state and compare it on
-load, so that a state loaded against a different system, or other parameter
-tables, fails loudly instead of producing nonsense. Because the PDB's path is
-part of it, the same PDB moved to another directory gives a different
-fingerprint; the parameter files count by their contents, wherever they are.
-pyMCPU 0.1.0's fingerprint covered neither the parameter files nor the sheet
-factor, so one it recorded differs from this version's for the same engine. `set_coords` also
-rejects coordinates of the wrong size, and coordinates with overlapping
+the DSSP settings. Record it with your state and compare it on load, so that
+a state loaded against a different system, or other parameter tables, fails
+loudly instead of producing nonsense. Because the PDB's path is part of it,
+the same PDB moved to another directory gives a different fingerprint; the
+parameter files count by their contents, wherever they are. It is taken the
+first time it is read: that signs the parameter files, which reads each one
+in full unless the cache (`MCPU_CACHE_DIR`) already holds its digests, so a
+worker that never reads the fingerprint does not pay for it. pyMCPU 0.1.0's
+fingerprint covered neither the parameter files nor the sheet factor, so one
+it recorded differs from this version's for the same engine. `set_coords`
+also rejects coordinates of the wrong size, and coordinates with overlapping
 atoms.
 
 ## 6. Ship it as your own package

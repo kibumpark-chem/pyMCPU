@@ -282,8 +282,9 @@ def _files_digests(paths: list[Path]) -> list[dict[str, str]]:
     it stays unchanged, not once per process (the mcpu08 tables are 0.7 GB:
     about 3 s from the page cache, up to 45 s from a home directory when
     they are not cached). A file replaced, rewritten or touched since has
-    another identity and is read again; so is one that changed while it was
-    read, whose digests are not kept.
+    another identity and is read again. A file that changes while it is
+    read is refused with :class:`ParamsError`, as its digests would describe
+    no one version of it.
     """
     identities = [_file_identity(path) for path in paths]
     missing = [identity for identity in dict.fromkeys(identities) if identity not in _FILE_DIGESTS]
