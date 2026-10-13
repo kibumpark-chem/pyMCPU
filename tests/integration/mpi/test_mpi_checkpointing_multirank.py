@@ -226,8 +226,9 @@ def test_resumed_run_matches_uninterrupted_across_ranks(
 def test_rank0_signs_the_parameter_files_and_every_rank_refuses_others(
     broadcast_tmp_path, minimal_pdb_path, monkeypatch
 ):
-    """Rank 0 alone reads the parameter files to sign them, both ranks hold
-    its record, and a resume with other files stops on both ranks.
+    """Building the run signs nothing; at the first checkpoint save rank 0
+    alone reads the parameter files to sign them, both ranks hold its record,
+    and a resume with other files stops on both ranks.
 
     Run with: mpirun -n 2 pytest tests/integration/mpi/test_mpi_checkpointing_multirank.py
                       -v -k test_rank0_signs_the_parameter_files
@@ -254,12 +255,13 @@ def test_rank0_signs_the_parameter_files_and_every_rank_refuses_others(
 
     cfg = CheckpointConfig(checkpoint_dir=str(chk_dir), checkpoint_interval=1, resume=False)
     rex = _make_two_temp_mpi_re(comm, minimal_pdb_path, cfg, out_dir)
+    assert comm.allgather(len(signed)) == [0, 0]
+    rex.run(1, 1, verbose=False, write_logs=False)
+    comm.Barrier()
     assert comm.allgather(len(signed)) == [1, 0]
     records = comm.allgather(rex._param_record)
     assert records[0] == records[1]
     assert records[0]["param_set"] == "mcpu08" and len(records[0]["param_signature"]) == 64
-    rex.run(1, 1, verbose=False, write_logs=False)
-    comm.Barrier()
 
     cfg = CheckpointConfig(checkpoint_dir=str(chk_dir), checkpoint_interval=1, resume=True)
     other = _make_two_temp_mpi_re(comm, minimal_pdb_path, cfg, out_dir, param_dir=str(changed))

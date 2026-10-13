@@ -86,6 +86,47 @@ def test_a_yaml_checkpointing_block_turns_it_off(tmp_path: Path) -> None:
     assert cfg.checkpoint.enabled is False
 
 
+def _count_signatures(monkeypatch) -> list:
+    """Each signature a force field takes from now on (through the name
+    pymcpu.forcefields.mcpu uses), with its arguments."""
+    import pymcpu.forcefields.mcpu as mcpu_module
+
+    signed: list = []
+    sign = mcpu_module.param_signature
+    monkeypatch.setattr(mcpu_module, "param_signature",
+                        lambda *args: signed.append(args) or sign(*args))
+    return signed
+
+
+@pytest.mark.parametrize("enabled", [False, True], ids=["checkpoints-off", "checkpoints-on"])
+@pytest.mark.parametrize("mode", ["folding", "replica_exchange_2d", "mpi"])
+def test_a_run_signs_its_parameter_files_only_to_checkpoint(
+    tmp_path: Path, monkeypatch, mock_comm_rank0, capsys, mode: str, enabled: bool
+) -> None:
+    """Signing reads every parameter file in full (0.7 GB for mcpu08), which
+    a run that writes no checkpoint never needs: it signs nothing, even when
+    it prints its description. A run that writes checkpoints signs once, at
+    its first save."""
+    comm = None
+    if mode == "mpi":
+        from tests.integration.mpi.test_mpi_checkpointing import (
+            _ensure_mpi_module_for_construction,
+        )
+
+        _ensure_mpi_module_for_construction(monkeypatch)
+        comm = mock_comm_rank0
+    monkeypatch.chdir(tmp_path)
+    signed = _count_signatures(monkeypatch)
+
+    config = _config(tmp_path, "folding" if mode == "folding" else "replica_exchange_2d",
+                     enabled=enabled)
+    runners.run_from_config(config, comm=comm, verbose=True)
+
+    assert len(signed) == (1 if enabled else 0)
+    assert "Parameters: mcpu08 from " in capsys.readouterr().out
+    assert bool(_checkpoints(tmp_path)) is enabled
+
+
 @pytest.mark.parametrize("mode", ["folding", "replica_exchange_2d"])
 def test_checkpoints_are_written_when_enabled(tmp_path: Path, monkeypatch, mode: str) -> None:
     monkeypatch.chdir(tmp_path)

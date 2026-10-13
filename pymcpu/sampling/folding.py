@@ -87,9 +87,9 @@ class FoldingRunner:
     it, and resuming with another library is refused.
 
     A checkpoint also records the parameter set and the signature of its
-    files (:attr:`pymcpu.MCPUForceField.param_signature`, taken when the
-    runner is built), and resuming with another set or other files is
-    refused.
+    files (:attr:`pymcpu.MCPUForceField.param_signature`, taken when the run
+    first saves or resumes a checkpoint, as it reads every parameter file),
+    and resuming with another set or other files is refused.
     """
 
     def __init__(
@@ -224,8 +224,10 @@ class FoldingRunner:
             compute_dssp=self.compute_dssp, dssp_coil_state=self.dssp_coil_state,
         )
         check_move_weights(self.forcefield, self.move_weights, forcefield)
-        # Taken now, from the files just read; checkpoints record it.
-        self._param_record = param_set_record(self.forcefield)
+        # What checkpoints record about the parameter files: taken by
+        # _signed_param_record when the run first saves or resumes one, as
+        # signing reads every parameter file in full.
+        self._param_record: dict[str, str] | None = None
         self.topology = self.forcefield.output_topology
         self.top_path = trajectory_topology_path(
             self.forcefield, self.pdb_path, self.pdb_path,
@@ -622,8 +624,22 @@ class FoldingRunner:
             self.simulation.step(int(n_steps))
         self._cycle = int(cycle) + 1
 
+    def _signed_param_record(self) -> dict[str, str]:
+        """What checkpoints record about the parameter files
+        (:func:`pymcpu.checkpointing.param_set_record`), taken the first time
+        a checkpoint is saved or resumed, and kept."""
+        record = getattr(self, "_param_record", None)
+        if record is None:
+            record = param_set_record(self.forcefield)
+            self._param_record = record
+            line = describe_param_set(record)
+            if line:
+                logger.info("[Folding] %s", line)
+        return record
+
     def save_checkpoint(self, cycle: int) -> None:
         """Save complete folding simulation state atomically."""
+        record = self._signed_param_record()
         self.simulation.recompute_and_recenter()
         q_values = self._compute_Q_values()
         rmsd_values = self._compute_rmsd_values()
@@ -633,14 +649,14 @@ class FoldingRunner:
             cycle=int(cycle),
             global_step=int(self.simulation.current_step),
             seed=int(self.seed),
-            format_version=checkpoint_format_version(self._param_record),
+            format_version=checkpoint_format_version(record),
             kind="folding",
             checkpoint_type="folding",
             pdb_path=str(self.pdb_path),
             forcefield=self.forcefield_name,
             hbond_beta_favor=getattr(self.forcefield, "hbond_beta_favor", None),
             rotamer_library=self.system.get_rotamer_library().fingerprint,
-            **self._param_record,
+            **record,
             reference_pdb=str(self.reference_pdb),
             temperatures=np.asarray([self.temperature], dtype=np.float64),
             n_targets=None,
@@ -702,7 +718,7 @@ class FoldingRunner:
         layout_error = checkpoint_forcefield_error(
             state.forcefield, self.forcefield_name, checkpoint_path
         ) or checkpoint_param_set_error(
-            state, self._param_record, checkpoint_path
+            state, self._signed_param_record(), checkpoint_path
         ) or checkpoint_layout_error(
             state.replica_coords, self.system.get_num_atoms(), checkpoint_path
         ) or checkpoint_beta_favor_error(
@@ -830,7 +846,8 @@ class FoldingRunner:
 
         if self.verbose:
             print(f"PDB: {self.pdb_path}")
-            parameters = describe_param_set(self._param_record)
+            parameters = describe_param_set(
+                self._param_record or param_set_record(self.forcefield, sign=False))
             if parameters:
                 print(parameters)
             print(

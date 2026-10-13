@@ -491,22 +491,25 @@ def checkpoint_format_version(record: dict[str, str]) -> int:
     return CHECKPOINT_FORMAT_VERSION
 
 
-def param_set_record(forcefield: Any) -> dict[str, str]:
+def param_set_record(forcefield: Any, *, sign: bool = True) -> dict[str, str]:
     """What a checkpoint records about the parameters ``forcefield`` reads:
     ``param_set``, ``param_signature`` (``MCPUForceField.param_signature``)
     and ``param_dir`` (the folder, as its real path, so one folder reached
     through a link is recorded as itself). All three are empty for a force
     field without a parameter set.
 
-    Taking the signature reads the parameter files the first time a process
-    asks for them (about 2 s for mcpu08), so the runners take the record once,
-    when they are built; the MPI replica exchange takes it on rank 0 and
-    sends it to the other ranks.
+    Taking the signature reads every parameter file in full the first time a
+    process asks for it (0.7 GB for mcpu08: about 1.7 s from the page cache,
+    up to 45 s from a home directory when the files are not cached), so the
+    runners take the record only when they first save or resume a
+    checkpoint, and the MPI replica exchange then takes it on rank 0 and
+    sends it to the other ranks. With ``sign=False`` the signature is left
+    empty and no file is read, for a run's description.
     """
     param_set = getattr(forcefield, "param_set", None)
     if not isinstance(param_set, str) or not param_set:
         return {"param_set": "", "param_signature": "", "param_dir": ""}
-    signature = getattr(forcefield, "param_signature", None)
+    signature = getattr(forcefield, "param_signature", None) if sign else ""
     folder = getattr(forcefield, "param_dir", None)
     return {
         "param_set": param_set,
@@ -517,13 +520,14 @@ def param_set_record(forcefield: Any) -> dict[str, str]:
 
 def describe_param_set(record: dict[str, str]) -> str | None:
     """One line naming the parameters of a :func:`param_set_record`, for a
-    run's log, or None for a force field without a parameter set."""
+    run's log, or None for a force field without a parameter set. It gives
+    the start of the signature when the record has one."""
     if not record.get("param_set"):
         return None
-    return (
-        f"Parameters: {record['param_set']} from {record['param_dir']} "
-        f"(signature {record['param_signature'][:16]})"
-    )
+    line = f"Parameters: {record['param_set']} from {record['param_dir']}"
+    if record.get("param_signature"):
+        line += f" (signature {record['param_signature'][:16]})"
+    return line
 
 
 def checkpoint_param_set_error(

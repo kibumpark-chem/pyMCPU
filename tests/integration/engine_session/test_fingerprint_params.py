@@ -50,6 +50,28 @@ def test_the_fingerprint_covers_the_parameter_files(
     )
 
 
+def test_a_session_signs_its_files_only_for_its_fingerprint(
+    engine_spec_factory, monkeypatch
+) -> None:
+    """Signing reads every parameter file in full (0.7 GB for mcpu08), so a
+    session takes the signature the first time its fingerprint is read, not
+    when it builds its engine."""
+    import pymcpu.forcefields.mcpu as mcpu_module
+
+    signed: list = []
+    sign = mcpu_module.param_signature
+    monkeypatch.setattr(mcpu_module, "param_signature",
+                        lambda *args: signed.append(args) or sign(*args))
+    session = EngineSession(engine_spec_factory())
+    session.set_seed(3)
+    session.step(5)
+    assert session.coords().shape[0] == 3
+    assert signed == []
+    fingerprint = session.fingerprint
+    assert len(signed) == 1
+    assert session.fingerprint == fingerprint and len(signed) == 1
+
+
 def test_the_fingerprint_covers_the_sheet_factor(engine_spec_factory) -> None:
     """Sessions that differ only in the sheet factor the force field
     resolved have different fingerprints, as a checkpoint written with one

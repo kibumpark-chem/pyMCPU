@@ -163,17 +163,6 @@ class EngineSession:
             self._sim.context.set_positions(coords0)
             self._sim.context.calculate_total_energy(-1)
             check_state_clash(self._sim.context, "start structure")
-            # The set and files the force field read, and its sheet factor, as
-            # a checkpoint records them; forcefield_options can name another
-            # set than spec.param_set.
-            record = param_set_record(ff)
-            self._fingerprint = compute_fingerprint(
-                self.spec.pdb, record["param_set"] or self.spec.param_set,
-                system.get_num_atoms(),
-                compute_dssp=self.spec.compute_dssp, dssp_coil_state=self.spec.dssp_coil_state,
-                param_signature=record["param_signature"] or None,
-                hbond_beta_favor=getattr(ff, "hbond_beta_favor", None),
-            )
         return self._sim
 
     # ------------------------------------------------------------------
@@ -183,9 +172,27 @@ class EngineSession:
     def fingerprint(self) -> str:
         """:func:`compute_fingerprint` of the engine: the PDB's path, the
         parameter set and the signature of its files, the sheet factor, the
-        atom count and the DSSP settings. Taken when the engine is built."""
-        self._ensure_sim()
-        assert self._fingerprint is not None
+        atom count and the DSSP settings.
+
+        Taken the first time it is read (building the engine first if need
+        be), and kept. Signing the parameter files reads every one of them in
+        full (0.7 GB for mcpu08, about 1.7 s from the page cache), so a
+        session whose fingerprint is never read does not pay for it.
+        """
+        if self._fingerprint is None:
+            sim = self._ensure_sim()
+            ff = self._forcefield
+            # The set and files the force field read, and its sheet factor, as
+            # a checkpoint records them; forcefield_options can name another
+            # set than spec.param_set.
+            record = param_set_record(ff)
+            self._fingerprint = compute_fingerprint(
+                self.spec.pdb, record["param_set"] or self.spec.param_set,
+                sim.system.get_num_atoms(),
+                compute_dssp=self.spec.compute_dssp, dssp_coil_state=self.spec.dssp_coil_state,
+                param_signature=record["param_signature"] or None,
+                hbond_beta_favor=getattr(ff, "hbond_beta_favor", None),
+            )
         return self._fingerprint
 
     def compute_cv(self, coords_3xn: np.ndarray) -> np.ndarray:

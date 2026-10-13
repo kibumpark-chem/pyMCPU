@@ -72,8 +72,10 @@ Besides :meth:`~pymcpu.MCPUForceField.create_system`, the class has the
 :meth:`~pymcpu.MCPUForceField.prepare_trajectory`, which drops hydrogens.
 :attr:`~pymcpu.MCPUForceField.param_signature` identifies the parameter files
 it read; checkpoints record it with the parameter set, so a run cannot resume
-with other tables (see :doc:`../checkpointing`). The attributes worth reading
-are listed under `Attributes`_.
+with other tables (see :doc:`../checkpointing`). Taking it reads every
+parameter file in full, so a force field takes it only when asked, and a run
+only when it first saves or resumes a checkpoint. The attributes worth
+reading are listed under `Attributes`_.
 
 Atom order, ``coords`` and ``inverse_mapping``
 ----------------------------------------------

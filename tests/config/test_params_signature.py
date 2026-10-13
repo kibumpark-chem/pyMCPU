@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from pathlib import Path
 
 import mdtraj as md
@@ -122,6 +123,40 @@ def test_each_file_is_read_once_until_it_changes(tmp_path: Path, monkeypatch) ->
     (folder / "constants" / "atom_types.csv").write_text("a,b,c\n")
     assert param_signature(folder) != first
     assert reads[2:] == ["atom_types.csv"]
+
+
+@pytest.mark.parametrize("change", ["table rewritten", "description added", "link moved"])
+def test_files_changed_after_the_force_field_read_them_are_not_signed(
+    tmp_path: Path, chignolin_pdb_path: str, change: str
+) -> None:
+    """The signature is taken when first asked for, not when the force field
+    reads the files, so it must not describe files that changed in between:
+    the force field refuses, naming them. One built afterwards signs them."""
+    traj = md.load(chignolin_pdb_path)
+    heavy = traj.atom_slice(traj.topology.select("not element H"))
+    folder = linked_param_folder(tmp_path / "f")
+    ff = MCPUForceField(heavy, param_dir=str(folder))
+    aromatic = folder / "mcpu_params" / "aromatic_potentials.bin"
+    if change == "table rewritten":
+        data = bytearray(aromatic.read_bytes())
+        data[0] ^= 1
+        _replace(aromatic, bytes(data))
+        named = "mcpu_params/aromatic_potentials.bin"
+    elif change == "description added":
+        (folder / PARAMSET_MANIFEST).write_text(
+            json.dumps({"format": PARAMSET_FORMAT, "name": "test"}))
+        named = PARAMSET_MANIFEST
+    else:  # the same contents, another file
+        copy = tmp_path / "aromatic_copy.bin"
+        copy.write_bytes(aromatic.read_bytes())
+        aromatic.unlink()
+        aromatic.symlink_to(copy)
+        named = "mcpu_params/aromatic_potentials.bin"
+    with pytest.raises(params.ParamsError, match=re.escape(
+        f"parameter files in {folder} have changed since this force field read them: {named}. "
+    )):
+        ff.param_signature
+    assert MCPUForceField(heavy, param_dir=str(folder)).param_signature == param_signature(folder)
 
 
 def test_the_force_field_takes_its_signature_when_asked(chignolin_pdb_path: str) -> None:

@@ -202,6 +202,29 @@ def _file_digest(path: Path, algorithm: str = "sha256") -> str:
     return digest
 
 
+def param_file_identities(
+    param_dir: str | Path, set_name: str = _DEFAULT_SET
+) -> dict[str, tuple[str, int, int, int] | None]:
+    """For each of :func:`signed_files` under ``param_dir``: its real path,
+    inode, size and modification time (ns), or None when the folder lacks it.
+
+    A few stat calls, no reads. A file rewritten or replaced since, or a link
+    pointed elsewhere, gives another value, so comparing two of these tells
+    whether a folder still holds the files a force field read.
+    """
+    root = Path(param_dir)
+    identities: dict[str, tuple[str, int, int, int] | None] = {}
+    for rel in signed_files(set_name):
+        real = os.path.realpath(root / rel)
+        try:
+            st = os.stat(real)
+        except FileNotFoundError:
+            identities[rel] = None
+            continue
+        identities[rel] = (real, st.st_ino, st.st_size, st.st_mtime_ns) if os.path.isfile(real) else None
+    return identities
+
+
 def param_signature(param_dir: str | Path, set_name: str = _DEFAULT_SET) -> str:
     """sha256 (hex) identifying the parameter files a force field reads from
     ``param_dir``, a folder laid out as ``set_name``.

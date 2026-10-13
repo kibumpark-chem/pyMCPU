@@ -31,11 +31,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and this version reads both. The three new
   `CheckpointState` fields are keyword-only, so the other fields keep their
   positional order.
-- `MCPUForceField.param_signature` and `pymcpu.params.param_signature`. A
-  process reads each parameter file once while it is unchanged (0.7 GB, about
-  2 s, for mcpu08). The runners take the signature when they are built; MPI
-  replica exchange takes it on rank 0 and sends it to the other ranks.
-  Building a force field alone does not take it.
+- `MCPUForceField.param_signature` and `pymcpu.params.param_signature`.
+  Taking a signature reads every parameter file in full, which a run
+  otherwise does not (the tables are mapped, and only the parts a structure
+  needs are read): 0.7 GB for mcpu08, about 1.7 s when the files are in the
+  page cache, 2.5 to 4 s from network scratch and up to 45 s from a home
+  directory when they are not. So it is taken only when needed: by the
+  runners when they first save or resume a checkpoint (MPI replica exchange
+  on rank 0, which sends it to the other ranks), and by `EngineSession` the
+  first time its fingerprint is read. A run without checkpoints, and a force
+  field alone, never take it. A process reads each file at most once while
+  it is unchanged. A force field refuses to sign parameter files that have
+  changed since it read them, as the signature would not describe its
+  tables.
 - **A parameter set can carry its own defaults in
   `constants/paramset.json`.** The file (format `pymcpu-paramset/1`) names
   the set and can give its hydrogen-bond sheet factor (`hbond_beta_favor`),
@@ -69,8 +77,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   states from sessions that differ only in the factor no longer match.
   `compute_fingerprint` takes `param_signature` and `hbond_beta_favor`;
   without them the hash is the old one.
-- Runs print the parameter set, its folder and the start of its signature
-  with the rest of their description.
+- Runs print the parameter set and its folder with the rest of their
+  description, and log the start of its signature when they take it.
 
 ### Fixed
 

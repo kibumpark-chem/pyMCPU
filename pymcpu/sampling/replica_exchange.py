@@ -273,8 +273,10 @@ class ReplicaExchange:
           rotamer_library=self.rotamer_library,
         )
       )
-      # Taken now, from the files just read; checkpoints record it.
-      self._param_record = param_set_record(self.forcefield)
+      # What checkpoints record about the parameter files: taken by
+      # _signed_param_record when the run first saves or resumes one, as
+      # signing reads every parameter file in full.
+      self._param_record: dict[str, str] | None = None
 
       n_contacts = float(self.q_cv.n_contacts)
       self.n_targets = resolve_n_targets(n_targets_raw, q_targets_raw, n_contacts)
@@ -348,10 +350,24 @@ class ReplicaExchange:
           f"N umbrella bias: k_bias={self.k_bias} (harmonic on hard N) "
           "applied during MC moves and exchange."
         )
-      parameters = describe_param_set(self._param_record)
+      parameters = describe_param_set(
+        self._param_record or param_set_record(self.forcefield, sign=False))
       if parameters:
         lines.append(parameters)
       return "\n".join(lines)
+
+    def _signed_param_record(self) -> dict[str, str]:
+      """What checkpoints record about the parameter files
+      (:func:`pymcpu.checkpointing.param_set_record`), taken the first time a
+      checkpoint is saved or resumed, and kept."""
+      record = getattr(self, "_param_record", None)
+      if record is None:
+        record = param_set_record(self.forcefield)
+        self._param_record = record
+        line = describe_param_set(record)
+        if line:
+          logger.info("[RE] %s", line)
+      return record
 
     def get_replica_state(self, replica: Replica) -> ReplicaState:
       coords = get_coords(replica.simulation.context)
@@ -376,6 +392,7 @@ class ReplicaExchange:
 
     def build_checkpoint_state(self) -> dict[str, Any]:
       """Serialize RE state needed to resume after interruption."""
+      record = self._signed_param_record()
       replica_coords = [get_coords(rep.simulation.context) for rep in self.replicas]
       frame_offsets = [get_frame_offset(rep.simulation.context) for rep in self.replicas]
       current_steps = [int(rep.simulation.current_step) for rep in self.replicas]
@@ -393,7 +410,7 @@ class ReplicaExchange:
           logger.warning("Could not record RexSampleWriter frame count: %s", exc)
 
       return {
-        "format_version": checkpoint_format_version(self._param_record),
+        "format_version": checkpoint_format_version(record),
         "kind": "replica_exchange",
         "cycle": int(self._cycle),
         "global_step": int(self._cycle),  # RE progress unit is cycle
@@ -402,7 +419,7 @@ class ReplicaExchange:
         "forcefield": self.forcefield_name,
         "hbond_beta_favor": getattr(self.forcefield, "hbond_beta_favor", None),
         "rotamer_library": self.system.get_rotamer_library().fingerprint,
-        **self._param_record,
+        **record,
         "reference_pdb": str(self.reference_pdb),
         "temperatures": np.asarray(self.temperatures, dtype=np.float64),
         "n_targets": np.asarray(self.n_targets, dtype=np.float64),
@@ -474,7 +491,7 @@ class ReplicaExchange:
       layout_error = checkpoint_forcefield_error(
         checkpoint.get("forcefield"), self.forcefield_name
       ) or checkpoint_param_set_error(
-        checkpoint, self._param_record
+        checkpoint, self._signed_param_record()
       ) or checkpoint_layout_error(
         checkpoint.get("replica_coords"), self.system.get_num_atoms()
       ) or checkpoint_beta_favor_error(

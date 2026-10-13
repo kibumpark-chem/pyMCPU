@@ -29,6 +29,7 @@ from pymcpu.params import (
     ensure_params,
     load_paramset_manifest,
     optional_files,
+    param_file_identities,
     param_signature,
     required_files,
 )
@@ -282,6 +283,10 @@ class MCPUForceField(BaseForceField):
         self.allow_provisional_rama = bool(allow_provisional_rama)
         self.allow_chain_breaks = bool(allow_chain_breaks)
         self._load_parameters()
+        # What each parameter file was when it was read (a few stat calls):
+        # param_signature, taken later and only when asked for, refuses to
+        # sign files that have changed since.
+        self._param_files = param_file_identities(self.param_dir, self.param_set)
         #: The topology the engine actually simulates, here the input's.
         #: Callers read this rather than the input's, so they can write
         #: trajectories without knowing which force field they have.
@@ -892,13 +897,35 @@ class MCPUForceField(BaseForceField):
         ``param_set`` layout. Folders that hold the same files have the same
         signature wherever they are.
 
-        It is taken the first time it is asked for, and kept. That reads the
-        files again (0.7 GB for mcpu08, about 2 s, once per process), so
-        building a force field does not take it; the runners do, when they
-        are built, and their checkpoints record it, so a run cannot resume
-        with other tables.
+        It is taken the first time it is asked for, and kept. Taking it reads
+        every parameter file in full, which building the force field does not
+        (the tables are mapped, and only the parts a structure needs are
+        read): 0.7 GB for mcpu08, about 1.7 s when the files are in the page
+        cache, 2.5 to 4 s from network scratch and up to 45 s from a home
+        directory when they are not. So the runners take it only when they
+        save or resume a checkpoint, which records it so that a run cannot
+        resume with other tables, and :class:`~pymcpu.sampling.EngineSession`
+        only when its fingerprint is read.
+
+        Raises :class:`pymcpu.params.ParamsError` if a parameter file has
+        changed (been rewritten, replaced or removed, or a link pointed
+        elsewhere) since the force field read it, as the signature would not
+        describe the tables it uses; build the force field again.
         """
         if self._param_signature is None:
+            read = getattr(self, "_param_files", None)
+            if read is not None:
+                now = param_file_identities(self.param_dir, self.param_set)
+                changed = sorted(rel for rel in set(read) | set(now)
+                                 if read.get(rel) != now.get(rel))
+                if changed:
+                    raise ParamsError(
+                        f"parameter files in {self.param_dir} have changed since this force "
+                        f"field read them: {', '.join(changed)}. Their signature would not "
+                        "describe the tables it uses, so it is not taken; build the force "
+                        "field again (for a run: start it again, or resume it from its last "
+                        "checkpoint)"
+                    )
             self._param_signature = param_signature(self.param_dir, self.param_set)
         return self._param_signature
 

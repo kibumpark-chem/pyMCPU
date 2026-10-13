@@ -392,10 +392,11 @@ def test_mpi_resumes_a_checkpoint_without_a_parameter_set_as_mcpu08(
 
 
 def test_rank0_alone_signs_the_parameter_files(tmp_path, minimal_pdb_path, monkeypatch):
-    """Rank 0 reads the parameter files to sign them and sends the record to
-    the other ranks, which do not read them. Two ranks are mocked here: rank
-    1's broadcasts return what rank 0 sent. ``test_mpi_checkpointing_multirank``
-    checks the same with two live ranks."""
+    """Building the run signs nothing. The first checkpoint save or load
+    takes the record: rank 0 reads the parameter files to sign them and sends
+    it to the other ranks, which do not read them. Two ranks are mocked here:
+    rank 1's broadcasts return what rank 0 sent.
+    ``test_mpi_checkpointing_multirank`` checks the same with two live ranks."""
     import pymcpu.forcefields.mcpu as mcpu_module
     from pymcpu.checkpointing import CheckpointConfig
 
@@ -422,10 +423,18 @@ def test_rank0_alone_signs_the_parameter_files(tmp_path, minimal_pdb_path, monke
 
     cfg = CheckpointConfig(checkpoint_dir=str(tmp_path / "chk"), resume=False)
     (tmp_path / "out").mkdir()
-    rank0 = _make_two_temp_mpi_re(comm_of(0), minimal_pdb_path, cfg, tmp_path / "out")
-    assert len(signed) == 1
+    comm0 = comm_of(0)
+    rank0 = _make_two_temp_mpi_re(comm0, minimal_pdb_path, cfg, tmp_path / "out")
+    built = len(sent)
     rank1 = _make_two_temp_mpi_re(comm_of(1, list(sent)), minimal_pdb_path, cfg, tmp_path / "out")
+    assert signed == []  # building the run signs nothing
+    assert rank0._param_record is None and rank1._param_record is None
+
+    record0 = rank0._ensure_param_record(comm0)  # the first checkpoint save or load
+    record1 = rank1._ensure_param_record(comm_of(1, sent[built:]))
     assert len(signed) == 1  # rank 1 took rank 0's record
-    assert rank1._param_record == rank0._param_record
-    assert rank0._param_record["param_signature"] == rank0.forcefield.param_signature
+    assert record1 == record0 == rank1._param_record
+    assert record0["param_signature"] == rank0.forcefield.param_signature
     assert rank1.forcefield._param_signature is None
+    rank0._ensure_param_record(comm0)  # taken once
+    assert len(signed) == 1 and len(sent) == built + 1

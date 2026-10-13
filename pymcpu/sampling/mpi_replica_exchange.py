@@ -390,20 +390,10 @@ class MPIReplicaExchange:
         if top_error:
             raise RuntimeError(top_error)
 
-        # Rank 0 alone reads the parameter files to sign them (0.7 GB for
-        # mcpu08, about 2 s, which every rank would spend if each signed its
-        # own) and sends the record to the others. Its error, if any, is sent
-        # instead, so the other ranks raise rather than wait.
-        record, record_error = None, None
-        if self.rank == 0:
-            try:
-                record = param_set_record(self.forcefield)
-            except Exception as exc:
-                record_error = f"rank 0 could not sign the parameter files: {exc!r}"
-        record, record_error = comm.bcast((record, record_error), root=0)
-        if record_error:
-            raise RuntimeError(record_error)
-        self._param_record: dict[str, str] = dict(record)
+        # What checkpoints record about the parameter files: taken by
+        # _ensure_param_record when the run first saves or resumes one, as
+        # signing reads every parameter file in full.
+        self._param_record: dict[str, str] | None = None
 
         n_contacts = float(self.q_cv.n_contacts)
         self.n_targets = resolve_n_targets(n_targets_raw, q_targets_raw, n_contacts)
@@ -596,11 +586,40 @@ class MPIReplicaExchange:
             self.traj_frame_counts[fname] = total
         return out
 
+    def _ensure_param_record(self, comm: Any) -> dict[str, str]:
+        """What checkpoints record about the parameter files
+        (:func:`pymcpu.checkpointing.param_set_record`), taken the first time
+        a checkpoint is saved or resumed, and kept.
+
+        Rank 0 alone reads the parameter files to sign them (0.7 GB for
+        mcpu08, which every rank would read if each signed its own) and sends
+        the record to the others. Its error, if any, is sent instead, so the
+        other ranks raise rather than wait. Every rank calls this at the same
+        point: the start of a checkpoint save or load.
+        """
+        if getattr(self, "_param_record", None) is None:
+            record, record_error = None, None
+            if comm.Get_rank() == 0:
+                try:
+                    record = param_set_record(self.forcefield)
+                except Exception as exc:
+                    record_error = f"rank 0 could not sign the parameter files: {exc}"
+            record, record_error = comm.bcast((record, record_error), root=0)
+            if record_error:
+                raise RuntimeError(record_error)
+            self._param_record = dict(record)
+            line = describe_param_set(self._param_record)
+            if line and comm.Get_rank() == 0:
+                logger.info("[MPI RE rank 0] %s", line)
+        return self._param_record
+
     def _mpi_save_checkpoint(self, cycle: int, comm: Any | None = None) -> None:
         """
         MPI-safe checkpoint save.
 
         Protocol:
+          0. The first save or load takes the parameter record (rank 0 signs
+             the files and broadcasts it; _ensure_param_record).
           1. Each rank packages its local replica state into a dict.
           2. All ranks call comm.gather() to send state to rank 0.
           3. ALL ranks hit comm.Barrier() — no rank proceeds until gather finishes.
@@ -610,6 +629,7 @@ class MPIReplicaExchange:
         if comm is None:
             comm = self.comm
         rank = comm.Get_rank()
+        record = self._ensure_param_record(comm)
 
         # ── Step 1: each rank packages its local replicas ──────────
         replica_ids = list(self.local_replica_indices)
@@ -687,13 +707,13 @@ class MPIReplicaExchange:
                 cycle=int(cycle),
                 global_step=int(cycle) * steps_per,
                 seed=int(self.seed),
-                format_version=checkpoint_format_version(self._param_record),
+                format_version=checkpoint_format_version(record),
                 kind="mpi_replica_exchange",
                 pdb_path=str(self.pdb_path),
                 forcefield=self.forcefield_name,
                 hbond_beta_favor=getattr(self.forcefield, "hbond_beta_favor", None),
                 rotamer_library=self.system.get_rotamer_library().fingerprint,
-                **self._param_record,
+                **record,
                 reference_pdb=str(self.reference_pdb),
                 temperatures=np.asarray(self.temperatures, dtype=np.float64),
                 n_targets=np.asarray(self.n_targets, dtype=np.float64),
@@ -751,6 +771,8 @@ class MPIReplicaExchange:
         MPI-safe checkpoint load.
 
         Protocol:
+          0. The first save or load takes the parameter record (rank 0 signs
+             the files and broadcasts it; _ensure_param_record).
           1. Rank 0 checks for last.chk and loads it if present.
           2. Rank 0 broadcasts the loaded state (or None) to all ranks.
           3. All ranks apply global fields (temperatures, walker_at_state, cycle).
@@ -759,6 +781,7 @@ class MPIReplicaExchange:
         if comm is None:
             comm = self.comm
         rank = comm.Get_rank()
+        record = self._ensure_param_record(comm)
         state: dict[str, Any] | None = None
 
         # ── Step 1: rank 0 loads ───────────────────────────────────
@@ -785,7 +808,7 @@ class MPIReplicaExchange:
             layout_error = checkpoint_forcefield_error(
                 state.get("forcefield"), self.forcefield_name, last_chk
             ) or checkpoint_param_set_error(
-                state, self._param_record, last_chk
+                state, record, last_chk
             ) or checkpoint_layout_error(
                 state.get("replica_coords"), self.system.get_num_atoms(), last_chk
             ) or checkpoint_beta_favor_error(
@@ -890,7 +913,8 @@ class MPIReplicaExchange:
             native_contacts_desc,
             f"Rank {self.rank} replicas: {local_desc}",
         ]
-        parameters = describe_param_set(self._param_record)
+        parameters = describe_param_set(
+            self._param_record or param_set_record(self.forcefield, sign=False))
         if parameters:
             lines.append(parameters)
         if self.k_bias > 0.0:
