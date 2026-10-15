@@ -53,6 +53,9 @@ _MU_ALPHA_DEFAULT  = 0.75
 # A hard core must stay inside the contact cutoff, lambda x alpha = 1.35 radius
 # sums, or it would swallow every contact.
 _CLASH_ALPHA_LIMIT = _MU_LAMBDA_DEFAULT * _MU_ALPHA_DEFAULT
+# clash_bond_exclusion: 0 keeps mcpu08's rules; at most three bonds, as a
+# molecular force field's bonded exclusions (1-2, 1-3 and 1-4 pairs).
+_MAX_CLASH_BOND_EXCLUSION = 3
 _DEFAULT_PARAM_SET = "mcpu08"
 # A C(i)-N(i+1) distance above this (nm) is a chain break; a peptide bond is
 # about 0.133 nm.
@@ -91,6 +94,18 @@ def _clash_alpha(value: object) -> float:
     raise ValueError(
         "clash_alpha must be a number above 0 and below 1.35 (the contact cutoff, "
         f"1.8 x 0.75 radius sums, which it does not move), got {value!r}"
+    )
+
+
+def _clash_bond_exclusion(value: object) -> int:
+    """``clash_bond_exclusion`` as an int, or ValueError unless it is a
+    whole number from 0 to 3."""
+    if isinstance(value, numbers.Integral) and not isinstance(value, bool):
+        if 0 <= int(value) <= _MAX_CLASH_BOND_EXCLUSION:
+            return int(value)
+    raise ValueError(
+        "clash_bond_exclusion must be 0 (mcpu08's clash rules) or 1, 2 or 3 (also "
+        f"leave out pairs at most that many covalent bonds apart), got {value!r}"
     )
 
 
@@ -206,7 +221,8 @@ class MCPUForceField(BaseForceField):
              allow_chain_breaks: bool = False,
              hbond_beta_favor: float | None = None,
              verify_provenance: bool = True,
-             clash_alpha: float = _MU_ALPHA_DEFAULT) -> None:
+             clash_alpha: float = _MU_ALPHA_DEFAULT,
+             clash_bond_exclusion: int = 0) -> None:
         """
         Load the parameters, check the structure and lay out its atoms.
 
@@ -267,6 +283,14 @@ class MCPUForceField(BaseForceField):
             this factor times the sum of their radii. 0.75 (the default) is
             mcpu08's. It must be above 0 and below 1.35, the factor of the
             contact cutoff, which it leaves where it is. Checkpoints record it.
+        clash_bond_exclusion
+            0 (the default) keeps mcpu08's rules for which pairs can clash.
+            1, 2 or 3 also leave out of the clash check every pair of atoms at
+            most that many covalent bonds apart (bonds from the residue
+            templates, not the coordinates). 3 leaves out the pairs whose
+            distance a single torsion sets, which a harder core would
+            otherwise forbid or, inside the core at the start, exempt for the
+            whole run. Contacts are not changed. Checkpoints record it.
 
         Raises
         ------
@@ -275,6 +299,7 @@ class MCPUForceField(BaseForceField):
             (named with its residue), a chain break, as above, an
             ``hbond_beta_favor`` that is not a finite number above 0, a
             ``clash_alpha`` that is not a number above 0 and below 1.35, a
+            ``clash_bond_exclusion`` that is not 0, 1, 2 or 3, a
             ``constants/paramset.json`` that
             :func:`pymcpu.params.load_paramset_manifest` refuses (including
             one whose provenance md5 a listed file no longer has), or a
@@ -290,6 +315,8 @@ class MCPUForceField(BaseForceField):
             hbond_beta_favor = _hbond_beta_favor(hbond_beta_favor)
         #: The hard-core factor the systems it builds use (see ``clash_alpha``).
         self.clash_alpha = _clash_alpha(clash_alpha)
+        #: Pairs at most this many bonds apart cannot clash; 0: mcpu08's rules.
+        self.clash_bond_exclusion = _clash_bond_exclusion(clash_bond_exclusion)
         if param_dir is None:
             try:
                 param_dir = ensure_params(param_set)
@@ -745,7 +772,9 @@ class MCPUForceField(BaseForceField):
         Build a System with the five MCPU potentials for this structure.
 
         Pass the topology the force field was built from. Call it once for
-        each simulation; every call returns a new System.
+        each simulation; every call returns a new System. With
+        ``clash_bond_exclusion``, a residue without a bond template, or an
+        atom that no template bond reaches, raises ValueError.
         """
         system = mcpu_core.System(self.n_atoms, self.n_res)
         system.set_block_indices(self.blocks)
@@ -801,7 +830,8 @@ class MCPUForceField(BaseForceField):
         )
         topo_contact, topo_clash = MuPotentialBuilder.build_topology_masks(
             self.ordered_atom_list,
-            self.n_atoms
+            self.n_atoms,
+            clash_bond_exclusion=self.clash_bond_exclusion,
         )
         mu_potential.cache_necessary_data(
             topo_contact, 
