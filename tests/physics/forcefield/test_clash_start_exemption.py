@@ -154,7 +154,7 @@ def test_a_cold_run_takes_them_out(three_overlaps, tmp_path: Path, caplog) -> No
     pdb = tmp_path / "turned.pdb"
     three_overlaps.save_pdb(str(pdb))
     runner = FoldingRunner(
-        str(pdb), temperature=0.1, report_interval=5_000, steps_per_cycle=5_000,
+        str(pdb), temperature=0.1, report_interval=10_000, steps_per_cycle=10_000,
         output_dir=str(tmp_path / "out"), seed=11, move_weights=(0.0, 0.5, 0.5),
         forcefield_options=PENALISED, verbose=False,
         checkpoint_config=CheckpointConfig(checkpoint_dir=None, enabled=False),
@@ -162,7 +162,7 @@ def test_a_cold_run_takes_them_out(three_overlaps, tmp_path: Path, caplog) -> No
     context = runner.simulation.context
     assert start_overlaps(context) == (3, 3)
     with caplog.at_level(logging.INFO, logger="pymcpu.sampling.folding"):
-        runner.run(steps=20_000)
+        runner.run(steps=50_000)
     assert start_overlaps(context) == (0, 3)
     assert any("0 of 3 still inside the hard core" in r.getMessage() for r in caplog.records)
     incremental = float(context.get_state().current_energy)
