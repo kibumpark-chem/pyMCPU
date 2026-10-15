@@ -50,6 +50,9 @@ logger = logging.getLogger(__name__)
 
 _MU_LAMBDA_DEFAULT = 1.8
 _MU_ALPHA_DEFAULT  = 0.75
+# A hard core must stay inside the contact cutoff, lambda x alpha = 1.35 radius
+# sums, or it would swallow every contact.
+_CLASH_ALPHA_LIMIT = _MU_LAMBDA_DEFAULT * _MU_ALPHA_DEFAULT
 _DEFAULT_PARAM_SET = "mcpu08"
 # A C(i)-N(i+1) distance above this (nm) is a chain break; a peptide bond is
 # about 0.133 nm.
@@ -76,6 +79,19 @@ def _hbond_beta_favor(value: object) -> float:
         if factor <= _FLOAT32_MAX and np.float32(factor) > 0.0:
             return factor
     raise ValueError(f"hbond_beta_favor must be a finite number above 0, got {value!r}")
+
+
+def _clash_alpha(value: object) -> float:
+    """``clash_alpha`` as a float, or ValueError unless it is a real number
+    above 0 and below 1.35, the factor of the contact cutoff."""
+    if isinstance(value, numbers.Real) and not isinstance(value, bool):
+        alpha = float(value)
+        if 0.0 < alpha < _CLASH_ALPHA_LIMIT:
+            return alpha
+    raise ValueError(
+        "clash_alpha must be a number above 0 and below 1.35 (the contact cutoff, "
+        f"1.8 x 0.75 radius sums, which it does not move), got {value!r}"
+    )
 
 
 def _chi_row_problems(entry: dict) -> list[str]:
@@ -189,7 +205,8 @@ class MCPUForceField(BaseForceField):
              allow_provisional_rama: bool = False,
              allow_chain_breaks: bool = False,
              hbond_beta_favor: float | None = None,
-             verify_provenance: bool = True) -> None:
+             verify_provenance: bool = True,
+             clash_alpha: float = _MU_ALPHA_DEFAULT) -> None:
         """
         Load the parameters, check the structure and lay out its atoms.
 
@@ -245,6 +262,11 @@ class MCPUForceField(BaseForceField):
             files are not read; :meth:`check_provenance` compares them later.
             MPI replica exchange passes False on every rank and compares on
             rank 0 alone.
+        clash_alpha
+            The hard core: two atoms that can clash may come no closer than
+            this factor times the sum of their radii. 0.75 (the default) is
+            mcpu08's. It must be above 0 and below 1.35, the factor of the
+            contact cutoff, which it leaves where it is. Checkpoints record it.
 
         Raises
         ------
@@ -252,6 +274,7 @@ class MCPUForceField(BaseForceField):
             For a residue MCPU has no parameters for, a missing heavy atom
             (named with its residue), a chain break, as above, an
             ``hbond_beta_favor`` that is not a finite number above 0, a
+            ``clash_alpha`` that is not a number above 0 and below 1.35, a
             ``constants/paramset.json`` that
             :func:`pymcpu.params.load_paramset_manifest` refuses (including
             one whose provenance md5 a listed file no longer has), or a
@@ -265,6 +288,8 @@ class MCPUForceField(BaseForceField):
         # A value given here is checked before any file is read.
         if hbond_beta_favor is not None:
             hbond_beta_favor = _hbond_beta_favor(hbond_beta_favor)
+        #: The hard-core factor the systems it builds use (see ``clash_alpha``).
+        self.clash_alpha = _clash_alpha(clash_alpha)
         if param_dir is None:
             try:
                 param_dir = ensure_params(param_set)
@@ -771,7 +796,8 @@ class MCPUForceField(BaseForceField):
             mu_potential_matrix=self.mu_energies,
             atom_type_lookup=self.atom_type_lookup,
             lambda_val=_MU_LAMBDA_DEFAULT,
-            alpha_val=_MU_ALPHA_DEFAULT
+            alpha_val=_MU_ALPHA_DEFAULT,
+            hard_core_alpha=self.clash_alpha,
         )
         topo_contact, topo_clash = MuPotentialBuilder.build_topology_masks(
             self.ordered_atom_list,

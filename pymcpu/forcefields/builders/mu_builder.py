@@ -240,8 +240,20 @@ class MuPotentialBuilder:
         mu_potential_matrix: np.ndarray,
         atom_type_lookup: dict[tuple[str, str], tuple[int, float]],
         lambda_val: float = 1.8,
-        alpha_val: float = 0.75
+        alpha_val: float = 0.75,
+        hard_core_alpha: float | None = None,
     ) -> mcpu_core.MuPotential:
+        """Build the C++ Mu term for ``atom_list``.
+
+        A contact-eligible pair is in contact closer than ``lambda_val *
+        alpha_val`` times the sum of its atoms' radii (1.35 for mcpu08), and a
+        clash-eligible pair may come no closer than ``hard_core_alpha`` times
+        it, its hard core. ``hard_core_alpha`` None (the default) takes
+        ``alpha_val``, as mcpu08 always has; another value moves the hard core
+        alone and leaves the contact cutoff where it was.
+        """
+        if hard_core_alpha is None:
+            hard_core_alpha = alpha_val
         atom_types = []
         atom_radii = []
         
@@ -269,7 +281,7 @@ class MuPotentialBuilder:
 
         # 2. Vectorized initialization of physical matrices
         rad_sum = radii_arr[:, np.newaxis] + radii_arr[np.newaxis, :]
-        hard_sq_mat = (alpha_val * rad_sum) ** 2
+        hard_sq_mat = (hard_core_alpha * rad_sum) ** 2
         dist_sq_mat = (lambda_val * alpha_val * rad_sum) ** 2
 
         global _MAX_CONTACT_PRINTED
