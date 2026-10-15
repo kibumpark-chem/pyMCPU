@@ -116,6 +116,10 @@ resumes it:
 - The rotamer library (`rotamer_library`, default `dunbrack2002_sym`).
   Checkpoints from before it was recorded count as `dunbrack2002`, so resume
   one of those with `rotamer_library: dunbrack2002`.
+- The hard core: `forcefield_options` `clash_alpha`, `clash_bond_exclusion`
+  and `clash_start_exemption` (see "The hard core" in the force-field docs).
+  Checkpoints from before they were recorded count as mcpu08's: 0.75, 0 and
+  true.
 
 A checkpoint whose atom count does not match the system stops with an error
 that names both counts. Format version 2 stores each glycine CA once, so a
@@ -125,7 +129,9 @@ proteins still resume. A checkpoint of parameter files other than the mcpu08
 files pyMCPU 0.1.0 shipped (another set, or mcpu08 with other tables) is
 written as format version 3. pyMCPU 0.1.0, which cannot check parameter
 files, refuses it as newer than it understands instead of resuming it under
-its own mcpu08; other checkpoints stay at version 2.
+its own mcpu08; other checkpoints stay at version 2. A checkpoint of clash
+options other than mcpu08's is written as format version 4, which a pyMCPU
+that cannot check them refuses.
 
 ### Exact continuation
 

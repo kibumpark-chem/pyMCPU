@@ -151,6 +151,37 @@ The Ramachandran mixture library is loaded too when the parameter set has one
 it, and that move is off by default, so a set without the library still
 loads.
 
+The hard core
+-------------
+
+Two atoms that can clash may come no closer than a hard core, a factor times
+the sum of their radii; a move that would put them closer is rejected. Three
+options set it. The defaults are mcpu08's, and checkpoints record all three,
+so a run resumes only with the values it started with.
+
+- ``clash_alpha`` (0.75): the factor. It must be above 0 and below 1.35; the
+  contact cutoff stays at 1.35 radius sums.
+- ``clash_bond_exclusion`` (0): 1, 2 or 3 leaves out of the clash check every
+  pair at most that many covalent bonds apart, by the residue templates.
+  mcpu08's rules already leave out bonded pairs, but not all pairs two or
+  three bonds apart, whose distance one torsion sets.
+- ``clash_start_exemption`` (True): a pair already inside its hard core in the
+  start structure (a start overlap) is exempt for the whole run. False
+  penalises it instead.
+
+To relax a start structure, build it with ``clash_start_exemption: false``.
+Each start overlap then adds 1000 to the raw ``mu`` energy (400 at its
+weight) while it stays inside its hard core, and every other pair keeps the
+hard core. A cold run of local moves, for example ``move_weights: [0, 0.5,
+0.5]`` (loop closure and side chains) at temperature 0.1, takes the overlaps
+out: a move that takes one out lowers the energy by the penalty, and one that
+puts it back raises it by as much. The run's energies include the penalties,
+so they fall in steps of 400 until the overlaps are gone.
+:func:`pymcpu.simulation.start_overlaps` (``MuPotential.count_start_overlaps``)
+gives how many are left, and a folding run prints it at its start and end.
+Start production runs from the relaxed structure, with the same
+``clash_alpha`` and ``clash_bond_exclusion``.
+
 A parameter set's own defaults
 ------------------------------
 
@@ -266,6 +297,22 @@ Set during construction and safe to read:
    The hydrogen-bond sheet factor the systems it builds use: the
    ``hbond_beta_favor`` argument, or, when that is None, the parameter
    set's own (see `A parameter set's own defaults`_), else 2.0.
+
+.. py:attribute:: pymcpu.MCPUForceField.clash_alpha
+   :type: float
+
+   The hard-core factor (see `The hard core`_).
+
+.. py:attribute:: pymcpu.MCPUForceField.clash_bond_exclusion
+   :type: int
+
+   Pairs at most this many covalent bonds apart cannot clash; 0 keeps
+   mcpu08's rules.
+
+.. py:attribute:: pymcpu.MCPUForceField.clash_start_exemption
+   :type: bool
+
+   Whether start overlaps are exempt (True) or penalised (False).
 
 .. py:attribute:: pymcpu.MCPUForceField.is_proline
    :type: list[int]
