@@ -49,7 +49,7 @@ from pymcpu.sampling.collective_variables import (
 )
 from pymcpu.sampling.replica_exchange import get_coords
 from pymcpu.sampling.replica_exchange_core import get_frame_offset
-from pymcpu.simulation import Simulation, check_state_clash
+from pymcpu.simulation import Simulation, check_state_clash, start_overlaps
 from pymcpu.trajectory_utils import (
     trajectory_topology_path,
     truncate_all_trajectories_on_resume,
@@ -613,6 +613,27 @@ class FoldingRunner:
                 pass
         return out
 
+    def _start_overlaps_message(self) -> str | None:
+        """How many penalised start overlaps are left (see
+        ``MCPUForceField(clash_start_exemption=False)``), or None when the
+        force field exempts them, as by default."""
+        if getattr(self.forcefield, "clash_start_exemption", True):
+            return None
+        inside, found = start_overlaps(self.simulation.context)
+        return (
+            f"[Folding] Start overlaps (penalised): {inside} of {found} still inside "
+            f"the hard core after {int(self.simulation.current_step):,} MC steps"
+        )
+
+    def _report_start_overlaps(self) -> None:
+        message = self._start_overlaps_message()
+        if message is None:
+            return
+        if self.verbose:
+            print(message)
+        else:
+            logger.info(message)
+
     def _run_folding_cycle(self, cycle: int) -> None:
         """Advance one cycle (up to ``steps_per_cycle`` MC steps)."""
         if self._total_steps_target > 0:
@@ -698,6 +719,9 @@ class FoldingRunner:
             keep_last_n=None,
         )
         logger.info("[Folding] checkpoint saved cycle=%s file=%s", cycle, cycle_name)
+        overlaps = self._start_overlaps_message()
+        if overlaps:
+            logger.info(overlaps)
 
     def load_checkpoint(self, checkpoint_path: str | Path) -> FoldingCheckpointState:
         """Load a folding checkpoint and restore simulation state."""
@@ -863,6 +887,7 @@ class FoldingRunner:
                     f"(mode={self.linker_energy_mode})"
                 )
             print(f"Writing outputs under {self.output_dir}")
+        self._report_start_overlaps()
 
         interval = max(1, int(cfg.checkpoint_interval))
 
@@ -897,5 +922,6 @@ class FoldingRunner:
             self.simulation.flush_reporters()
         except Exception:
             pass
+        self._report_start_overlaps()
 
         return self.output_dir

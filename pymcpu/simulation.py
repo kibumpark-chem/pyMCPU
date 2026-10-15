@@ -78,6 +78,22 @@ def check_state_clash(context: mcpu_core.Context, where: str) -> bool:
     return True
 
 
+def start_overlaps(context: mcpu_core.Context) -> tuple[int, int]:
+    """``(inside, found)``: how many of the start overlaps of ``context``'s
+    Mu term are still inside their hard core in its state, and how many the
+    structure the force field was built from had.
+
+    A start overlap is a pair that can clash and was already inside its
+    hard core in that structure: exempt for the whole run by default, or
+    penalised with ``MCPUForceField(clash_start_exemption=False)``, which a
+    cold run then removes. ``(0, 0)`` for a system without a Mu term.
+    """
+    mu = context.mu_potential
+    if mu is None:
+        return 0, 0
+    return int(mu.count_start_overlaps(context)), int(mu.start_overlap_pairs)
+
+
 class Simulation:
     """Bind topology + system + integrator and drive MC steps with reporters.
 

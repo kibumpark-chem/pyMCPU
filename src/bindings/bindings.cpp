@@ -1272,7 +1272,32 @@ PYBIND11_MODULE(mcpu_core, m) {
              py::arg("energies"), py::arg("dist_sq"), py::arg("hard_core"),
              py::arg("types"), py::arg("to_residue"))
         .def("cache_necessary_data", &m08::MuPotential::cache_necessary_data,
-             py::arg("topo_contact_mask"), py::arg("topo_clash_mask"), py::arg("coords"))
+             py::arg("topo_contact_mask"), py::arg("topo_clash_mask"), py::arg("coords"),
+             py::kw_only(), py::arg("exempt_start_overlaps") = true,
+             "Build the pair flags from the topology masks and coords (Å, 3 x n), "
+             "the structure the force field is built from. A clash-eligible pair "
+             "already under its hard-core cutoff there (a start overlap) is exempt "
+             "for the whole run; with exempt_start_overlaps=False it is penalised "
+             "instead, scoring start_overlap_penalty on top of its contact energy "
+             "while it stays under that cutoff.")
+        .def_property_readonly(
+            "start_overlap_pairs", &m08::MuPotential::start_overlap_pairs,
+            "Start overlaps cache_necessary_data found, exempt or penalised.")
+        .def_property_readonly(
+            "start_overlaps_penalised", &m08::MuPotential::start_overlaps_penalised,
+            "True when the start overlaps are penalised rather than exempt.")
+        .def_property_readonly(
+            "start_overlap_penalty",
+            [](const m08::MuPotential&) { return m08::MuPotential::kStartOverlapPenalty; },
+            "What a penalised start overlap adds to the raw Mu energy while under "
+            "its hard-core cutoff (x0.4, the Mu weight, in the total).")
+        .def("count_start_overlaps",
+             [](const m08::MuPotential& mu, const Context& context) {
+                 return mu.count_start_overlaps(context.getState());
+             },
+             py::arg("context"),
+             "How many start overlaps are still under their hard-core cutoff in "
+             "the context's state (exempt or penalised).")
         .def_property_readonly(
             "mu_exact_cutoff", &m08::MuPotential::mu_exact_cutoff,
             "Neighbour query cutoff (Å): the largest contact cutoff widened by "

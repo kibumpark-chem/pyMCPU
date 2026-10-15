@@ -3,6 +3,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <limits>
+#include <utility>
 #include <vector>
 #include <Eigen/Dense>
 #include <cstdint>
@@ -78,9 +79,23 @@ namespace mcpu::forces::mcpu08 {
         int n_types_ = 0;
 
         /// Per-pair enable flags, index i*N+j: bit0 = the pair can clash,
-        /// bit1 = it can make a contact. Built in cache_necessary_data from
-        /// the Python topology masks (mu_builder) and the native structure.
+        /// bit1 = it can make a contact, bit2 (kStartOverlapFlag) = a
+        /// penalised start overlap. Built in cache_necessary_data from the
+        /// Python topology masks (mu_builder) and the native structure.
         std::vector<uint8_t> topo_flag_;
+        static constexpr uint8_t kStartOverlapFlag = 4u;
+
+        /// The pairs under their move cutoff in the structure
+        /// cache_necessary_data was given (current atom order): exempt from
+        /// the clash test for the whole run, or penalised.
+        std::vector<std::pair<int, int>> start_overlaps_;
+        bool penalise_start_overlaps_ = false;
+        /// The most the penalised start overlaps can add to the full energy
+        /// (their number times kStartOverlapPenalty), 0 when they are
+        /// exempt. The full energy of a clashing state, and the threshold
+        /// that recognises it, are raised by it, so a state that holds only
+        /// penalised overlaps is never taken for a clash.
+        double start_overlap_budget_ = 0.0;
 
         /// topo_flag_ in a form that fits in cache, read by topo_flag().
         /// topo_flag_ is N*N bytes (8.5 MB on actin) and its lookups were
@@ -342,6 +357,17 @@ namespace mcpu::forces::mcpu08 {
                 if (clash_out) *clash_out = true;
                 return 0.0f;
             }
+            // A penalised start overlap still under its move cutoff: its
+            // contact energy plus kStartOverlapPenalty. It is an energy, not a
+            // rejection, so every path and cutoff C uses the same test, and
+            // the delta and the full energy agree.
+            if (__builtin_expect((flag & kStartOverlapFlag) != 0, 0) &&
+                r2 < g.hard_tol_r2) {
+                ++eval_pair_nonzero_local_;
+                return ((flag & 2u) && r2 <= g.contact_r2)
+                           ? kStartOverlapPenalty + g.energy
+                           : kStartOverlapPenalty;
+            }
             if ((flag & 2u) && r2 <= g.contact_r2) {
                 ++eval_pair_nonzero_local_;
                 return g.energy;
@@ -350,8 +376,11 @@ namespace mcpu::forces::mcpu08 {
                 r2 < g.contact_r2 + contact_band_w_r2_) {
                 *near_out = true;
             }
-            if (near_out && (flag & 1u) && g.hard_tol_r2 > 0.0f &&
-                r2 < g.hard_tol_r2 + clash_band_w_r2_) {
+            // A clash pair, or a penalised start overlap, just outside its
+            // move cutoff: listed, so a rigid move that carries it re-decides
+            // it.
+            if (near_out && (flag & (1u | kStartOverlapFlag)) &&
+                g.hard_tol_r2 > 0.0f && r2 < g.hard_tol_r2 + clash_band_w_r2_) {
                 *near_out = true;
             }
             return 0.0f;
@@ -503,6 +532,12 @@ namespace mcpu::forces::mcpu08 {
                                       bool hot_only) const;
 
     public:
+        /// What a penalised start overlap adds to the Mu energy while it is
+        /// under its move cutoff (raw units; x0.4 at the default weight).
+        /// Far above any change a move makes to the other terms, and far
+        /// below kHardCorePenalty.
+        static constexpr float kStartOverlapPenalty = 1000.0f;
+
         explicit MuPotential(
             const Eigen::MatrixXf& contact_energies,
             const Eigen::MatrixXf& contact_dist_sq,
@@ -511,11 +546,33 @@ namespace mcpu::forces::mcpu08 {
             std::vector<int> atom_to_residue
         );
 
+        /// Builds the pair flags from the topology masks and `coords`, the
+        /// structure the force field is built from. A clash-eligible pair
+        /// already under its move cutoff there (a start overlap) is exempt
+        /// from the clash test for the whole run, as every move that
+        /// re-decided it would be rejected. With exempt_start_overlaps
+        /// false it is penalised instead: it scores kStartOverlapPenalty
+        /// on top of its contact energy while under its move cutoff, so a
+        /// move that takes it out lowers the energy by that much, and one
+        /// that puts it back raises it. Other pairs keep the hard core.
         void cache_necessary_data(
             const std::vector<int8_t>& topo_contact_mask,
             const std::vector<int8_t>& topo_clash_mask,
-            const Eigen::Matrix3Xf& coords
+            const Eigen::Matrix3Xf& coords,
+            bool exempt_start_overlaps = true
         );
+
+        /// Start overlaps found by cache_necessary_data, exempt or penalised.
+        [[nodiscard]] int start_overlap_pairs() const noexcept {
+            return static_cast<int>(start_overlaps_.size());
+        }
+        /// True when the start overlaps are penalised, not exempt.
+        [[nodiscard]] bool start_overlaps_penalised() const noexcept {
+            return penalise_start_overlaps_;
+        }
+        /// How many start overlaps are still under their move cutoff in
+        /// `state`, a state of this potential's system. O(start overlaps).
+        [[nodiscard]] int count_start_overlaps(const State& state) const;
 
         void permute_atom_indices(const AtomPermutation& perm) override;
 
@@ -534,8 +591,11 @@ namespace mcpu::forces::mcpu08 {
         double resyncEnergy(const Context& context, const State& state) const override;
         bool canHardReject() const noexcept override { return true; }
         bool readsNeighborGrids() const noexcept override { return true; }
+        /// A full energy at or above half the hard-core sentinel, raised by
+        /// the penalised start overlaps' budget (0 unless they are
+        /// penalised), is a clash.
         RejectReason rejectionForEnergy(double energy) const noexcept override {
-            return energy >= 99999.0f * 0.5f
+            return energy >= 99999.0f * 0.5f + start_overlap_budget_
                 ? RejectReason::StericClash
                 : RejectReason::None;
         }

@@ -109,6 +109,13 @@ def _clash_bond_exclusion(value: object) -> int:
     )
 
 
+def _clash_start_exemption(value: object) -> bool:
+    """``clash_start_exemption`` as a bool, or ValueError unless it is one."""
+    if isinstance(value, (bool, np.bool_)):
+        return bool(value)
+    raise ValueError(f"clash_start_exemption must be True or False, got {value!r}")
+
+
 def _chi_row_problems(entry: dict) -> list[str]:
     """What one residue of a template lacks for the engine to move and score
     its chi angles, as phrases that follow its name; empty when nothing."""
@@ -222,7 +229,8 @@ class MCPUForceField(BaseForceField):
              hbond_beta_favor: float | None = None,
              verify_provenance: bool = True,
              clash_alpha: float = _MU_ALPHA_DEFAULT,
-             clash_bond_exclusion: int = 0) -> None:
+             clash_bond_exclusion: int = 0,
+             clash_start_exemption: bool = True) -> None:
         """
         Load the parameters, check the structure and lay out its atoms.
 
@@ -291,6 +299,16 @@ class MCPUForceField(BaseForceField):
             distance a single torsion sets, which a harder core would
             otherwise forbid or, inside the core at the start, exempt for the
             whole run. Contacts are not changed. Checkpoints record it.
+        clash_start_exemption
+            What happens to a pair that can clash and is already inside its
+            hard core in this structure (a start overlap). True (the default,
+            mcpu08's rule): it is exempt from the clash check for the whole
+            run. False: it is penalised instead, adding
+            ``MuPotential.start_overlap_penalty`` (1000, raw Mu units) to the
+            energy while it stays inside, so a cold run takes it out (and
+            cannot put it back), while every other pair keeps the hard core.
+            For relaxing a start structure; ``MuPotential.count_start_overlaps``
+            says how many are left. Checkpoints record it.
 
         Raises
         ------
@@ -300,6 +318,7 @@ class MCPUForceField(BaseForceField):
             ``hbond_beta_favor`` that is not a finite number above 0, a
             ``clash_alpha`` that is not a number above 0 and below 1.35, a
             ``clash_bond_exclusion`` that is not 0, 1, 2 or 3, a
+            ``clash_start_exemption`` that is not True or False, a
             ``constants/paramset.json`` that
             :func:`pymcpu.params.load_paramset_manifest` refuses (including
             one whose provenance md5 a listed file no longer has), or a
@@ -317,6 +336,8 @@ class MCPUForceField(BaseForceField):
         self.clash_alpha = _clash_alpha(clash_alpha)
         #: Pairs at most this many bonds apart cannot clash; 0: mcpu08's rules.
         self.clash_bond_exclusion = _clash_bond_exclusion(clash_bond_exclusion)
+        #: Start overlaps exempt (True, mcpu08) or penalised (False).
+        self.clash_start_exemption = _clash_start_exemption(clash_start_exemption)
         if param_dir is None:
             try:
                 param_dir = ensure_params(param_set)
@@ -833,11 +854,22 @@ class MCPUForceField(BaseForceField):
             self.n_atoms,
             clash_bond_exclusion=self.clash_bond_exclusion,
         )
+        # Pairs inside their hard core in this structure are exempt for the
+        # whole run, or penalised. The default makes the call mcpu08 always has.
+        start = {} if self.clash_start_exemption else {"exempt_start_overlaps": False}
         mu_potential.cache_necessary_data(
-            topo_contact, 
-            topo_clash, 
-            self.coords[0].T * 10.0  # Pass coordinates in Angstroms
+            topo_contact,
+            topo_clash,
+            self.coords[0].T * 10.0,  # Pass coordinates in Angstroms
+            **start,
         )
+        if not self.clash_start_exemption:
+            logger.info(
+                "%d atom pairs overlap in the start structure (inside %s radius sums); "
+                "they are penalised, %g each (raw Mu units), while they stay inside",
+                mu_potential.start_overlap_pairs, self.clash_alpha,
+                mu_potential.start_overlap_penalty,
+            )
         mu_potential.set_energy_group(1)
         mu_potential.set_name("mu")
         system.add_potential(mu_potential)
