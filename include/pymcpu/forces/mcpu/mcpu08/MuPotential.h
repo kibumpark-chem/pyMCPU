@@ -534,8 +534,9 @@ namespace mcpu::forces::mcpu08 {
     public:
         /// What a penalised start overlap adds to the Mu energy while it is
         /// under its move cutoff (raw units; x0.4 at the default weight).
-        /// Far above any change a move makes to the other terms, and far
-        /// below kHardCorePenalty.
+        /// Chosen to dwarf what a local move changes in the other terms at
+        /// a relaxation's low temperature, and far below kHardCorePenalty,
+        /// so a delta that puts one back is never read as a clash.
         static constexpr float kStartOverlapPenalty = 1000.0f;
 
         explicit MuPotential(
