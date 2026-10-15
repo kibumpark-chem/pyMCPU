@@ -22,12 +22,14 @@ from pymcpu.checkpointing import (
     CheckpointConfig,
     FoldingCheckpointState,
     checkpoint_beta_favor_error,
+    checkpoint_clash_options_error,
     checkpoint_cycle_filename,
     checkpoint_forcefield_error,
     checkpoint_format_version,
     checkpoint_layout_error,
     checkpoint_param_set_error,
     checkpoint_rotamer_library_error,
+    clash_options_record,
     describe_param_set,
     get_integrator_move_counters,
     get_integrator_rng_states,
@@ -666,16 +668,18 @@ class FoldingRunner:
         rmsd_values = self._compute_rmsd_values()
 
         coords = np.asarray(get_coords(self.simulation.context), dtype=np.float64)
+        clash = clash_options_record(self.forcefield)
         state = FoldingCheckpointState(
             cycle=int(cycle),
             global_step=int(self.simulation.current_step),
             seed=int(self.seed),
-            format_version=checkpoint_format_version(record),
+            format_version=checkpoint_format_version(record, clash),
             kind="folding",
             checkpoint_type="folding",
             pdb_path=str(self.pdb_path),
             forcefield=self.forcefield_name,
             hbond_beta_favor=getattr(self.forcefield, "hbond_beta_favor", None),
+            **clash,
             rotamer_library=self.system.get_rotamer_library().fingerprint,
             **record,
             reference_pdb=str(self.reference_pdb),
@@ -749,6 +753,8 @@ class FoldingRunner:
             state.hbond_beta_favor,
             getattr(self.forcefield, "hbond_beta_favor", None),
             checkpoint_path,
+        ) or checkpoint_clash_options_error(
+            state, clash_options_record(self.forcefield), checkpoint_path
         ) or checkpoint_rotamer_library_error(
             state.rotamer_library, self.system.get_rotamer_library().fingerprint,
             self.sidechain_move_mode, checkpoint_path,

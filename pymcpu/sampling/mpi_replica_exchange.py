@@ -32,12 +32,14 @@ from pymcpu.checkpointing import (
     CheckpointConfig,
     CheckpointState,
     checkpoint_beta_favor_error,
+    checkpoint_clash_options_error,
     checkpoint_cycle_filename,
     checkpoint_forcefield_error,
     checkpoint_format_version,
     checkpoint_layout_error,
     checkpoint_param_set_error,
     checkpoint_rotamer_library_error,
+    clash_options_record,
     describe_param_set,
     load_checkpoint,
     param_set_record,
@@ -726,15 +728,17 @@ class MPIReplicaExchange:
                 frame_idx_merged.update(s.get("traj_frame_indices") or {})
 
             steps_per = int(self._mc_replica_steps) if self._mc_replica_steps else 0
+            clash = clash_options_record(self.forcefield)
             state = CheckpointState(
                 cycle=int(cycle),
                 global_step=int(cycle) * steps_per,
                 seed=int(self.seed),
-                format_version=checkpoint_format_version(record),
+                format_version=checkpoint_format_version(record, clash),
                 kind="mpi_replica_exchange",
                 pdb_path=str(self.pdb_path),
                 forcefield=self.forcefield_name,
                 hbond_beta_favor=getattr(self.forcefield, "hbond_beta_favor", None),
+                **clash,
                 rotamer_library=self.system.get_rotamer_library().fingerprint,
                 **record,
                 reference_pdb=str(self.reference_pdb),
@@ -838,6 +842,8 @@ class MPIReplicaExchange:
                 state.get("hbond_beta_favor"),
                 getattr(self.forcefield, "hbond_beta_favor", None),
                 last_chk,
+            ) or checkpoint_clash_options_error(
+                state, clash_options_record(self.forcefield), last_chk
             ) or checkpoint_rotamer_library_error(
                 state.get("rotamer_library"), self.system.get_rotamer_library().fingerprint,
                 self.move_settings["sidechain_move_mode"], last_chk,

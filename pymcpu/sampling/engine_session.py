@@ -30,7 +30,12 @@ import mdtraj as md
 import numpy as np
 
 from pymcpu import mcpu_core
-from pymcpu.checkpointing import param_set_record
+from pymcpu.checkpointing import (
+    LEGACY_CLASH_OPTIONS,
+    clash_options_are_legacy,
+    clash_options_record,
+    param_set_record,
+)
 from pymcpu.config import (
     EngineSpec,
     apply_linker_energy_mask,
@@ -56,6 +61,7 @@ def compute_fingerprint(
     dssp_coil_state: str = "C",
     param_signature: str | None = None,
     hbond_beta_favor: float | None = None,
+    clash_options: dict[str, Any] | None = None,
 ) -> str:
     """Short hash identifying what an engine was built from.
 
@@ -68,6 +74,9 @@ def compute_fingerprint(
     the hydrogen-bond sheet factor the force field resolved, taken as the
     engine's float32; checkpoints record and check both. Without them the
     hash is the one earlier versions gave, which covered neither.
+    ``clash_options`` (a :func:`pymcpu.checkpointing.clash_options_record`)
+    counts only when it is not mcpu08's, so a default engine keeps the hash
+    it had before the options existed.
     """
     payload = (
         f"{Path(pdb_path).resolve()}|{param_set}|{int(n_atoms)}|"
@@ -77,6 +86,14 @@ def compute_fingerprint(
         payload += f"|{param_signature}"
     if hbond_beta_favor is not None:
         payload += f"|hbond_beta_favor={float(np.float32(hbond_beta_favor))!r}"
+    if clash_options and not clash_options_are_legacy(clash_options):
+        options = {key: LEGACY_CLASH_OPTIONS[key] if clash_options.get(key) is None
+                   else clash_options[key] for key in LEGACY_CLASH_OPTIONS}
+        payload += (
+            f"|clash_alpha={float(np.float32(options['clash_alpha']))!r}"
+            f"|clash_bond_exclusion={int(options['clash_bond_exclusion'])}"
+            f"|clash_start_exemption={bool(options['clash_start_exemption'])}"
+        )
     return hashlib.sha256(payload.encode()).hexdigest()[:16]
 
 
@@ -192,6 +209,7 @@ class EngineSession:
                 compute_dssp=self.spec.compute_dssp, dssp_coil_state=self.spec.dssp_coil_state,
                 param_signature=record["param_signature"] or None,
                 hbond_beta_favor=getattr(ff, "hbond_beta_favor", None),
+                clash_options=clash_options_record(ff),
             )
         return self._fingerprint
 

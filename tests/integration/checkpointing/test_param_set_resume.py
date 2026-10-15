@@ -266,7 +266,15 @@ def test_the_format_version_follows_the_recorded_files() -> None:
     assert version("mcpu08", OLD) == 3
     assert version("mcpu26", SHIPPED_MCPU08) == 3
     assert version("mcpu08", "") == 3
-    assert checkpointing.CHECKPOINT_FORMAT_VERSION == 3
+    # Clash options other than mcpu08's make it version 4, whatever the files.
+    shipped = {"param_set": "mcpu08", "param_signature": SHIPPED_MCPU08, "param_dir": "/p"}
+    legacy = {"clash_alpha": 0.75, "clash_bond_exclusion": 0, "clash_start_exemption": True}
+    assert checkpointing.checkpoint_format_version(shipped, legacy) == 2
+    assert checkpointing.checkpoint_format_version(shipped, dict.fromkeys(legacy)) == 2
+    for key, value in (("clash_alpha", 0.85), ("clash_bond_exclusion", 3),
+                       ("clash_start_exemption", False)):
+        assert checkpointing.checkpoint_format_version(shipped, {**legacy, key: value}) == 4
+    assert checkpointing.CHECKPOINT_FORMAT_VERSION == 4
 
 
 def _rex(pdb: str, root: Path, **options) -> ReplicaExchange:

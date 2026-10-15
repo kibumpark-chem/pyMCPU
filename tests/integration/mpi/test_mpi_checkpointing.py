@@ -256,6 +256,37 @@ def test_mpi_resume_refuses_another_hbond_beta_favor(
         other._mpi_load_checkpoint(comm=mock_comm_rank0)
 
 
+def test_mpi_resume_refuses_other_clash_options(
+    mock_comm_rank0, tmp_path, minimal_pdb_path, monkeypatch
+):
+    """The checkpoint records the force field's clash options (format
+    version 4 when they are not mcpu08's), and a run built with others stops
+    on rank 0's verdict."""
+    from pymcpu.checkpointing import CheckpointConfig, load_checkpoint
+
+    _ensure_mpi_module_for_construction(monkeypatch)
+    cfg = CheckpointConfig(checkpoint_dir=str(tmp_path / "chk"), checkpoint_interval=1,
+                           resume=False)
+    for out in ("out", "out2"):
+        (tmp_path / out).mkdir()
+    hard = {"clash_alpha": 0.85, "clash_bond_exclusion": 3}
+    re = _make_two_temp_mpi_re(mock_comm_rank0, minimal_pdb_path, cfg, tmp_path / "out",
+                               forcefield_options=hard)
+    re._attach_traj_reporters(resume=False)
+    re._mc_replica_steps = 1
+    re._mpi_save_checkpoint(cycle=1, comm=mock_comm_rank0)
+    saved = load_checkpoint(tmp_path / "chk" / "last.chk")
+    assert (saved["clash_alpha"], saved["clash_bond_exclusion"],
+            saved["clash_start_exemption"], saved["format_version"]) == (0.85, 3, True, 4)
+
+    cfg.resume = True
+    other = _make_two_temp_mpi_re(mock_comm_rank0, minimal_pdb_path, cfg, tmp_path / "out2")
+    with pytest.raises(ValueError, match=(
+        "written with clash_alpha 0.85, clash_bond_exclusion 3, but this run uses "
+        "clash_alpha 0.75, clash_bond_exclusion 0")):
+        other._mpi_load_checkpoint(comm=mock_comm_rank0)
+
+
 def test_mpi_resume_refuses_another_rotamer_library(
     mock_comm_rank0, tmp_path, minimal_pdb_path, monkeypatch
 ):

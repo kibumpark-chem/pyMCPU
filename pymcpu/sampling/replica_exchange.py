@@ -28,12 +28,14 @@ from pymcpu.config import (
 from pymcpu.checkpointing import (
     CheckpointConfig,
     checkpoint_beta_favor_error,
+    checkpoint_clash_options_error,
     checkpoint_cycle_filename,
     checkpoint_forcefield_error,
     checkpoint_format_version,
     checkpoint_param_set_error,
     checkpoint_rotamer_library_error,
     checkpoint_layout_error,
+    clash_options_record,
     describe_param_set,
     find_latest_checkpoint,
     get_integrator_move_counters,
@@ -393,6 +395,7 @@ class ReplicaExchange:
     def build_checkpoint_state(self) -> dict[str, Any]:
       """Serialize RE state needed to resume after interruption."""
       record = self._signed_param_record()
+      clash = clash_options_record(self.forcefield)
       replica_coords = [get_coords(rep.simulation.context) for rep in self.replicas]
       frame_offsets = [get_frame_offset(rep.simulation.context) for rep in self.replicas]
       current_steps = [int(rep.simulation.current_step) for rep in self.replicas]
@@ -410,7 +413,7 @@ class ReplicaExchange:
           logger.warning("Could not record RexSampleWriter frame count: %s", exc)
 
       return {
-        "format_version": checkpoint_format_version(record),
+        "format_version": checkpoint_format_version(record, clash),
         "kind": "replica_exchange",
         "cycle": int(self._cycle),
         "global_step": int(self._cycle),  # RE progress unit is cycle
@@ -418,6 +421,7 @@ class ReplicaExchange:
         "pdb_path": str(self.pdb_path),
         "forcefield": self.forcefield_name,
         "hbond_beta_favor": getattr(self.forcefield, "hbond_beta_favor", None),
+        **clash,
         "rotamer_library": self.system.get_rotamer_library().fingerprint,
         **record,
         "reference_pdb": str(self.reference_pdb),
@@ -496,6 +500,8 @@ class ReplicaExchange:
         checkpoint.get("replica_coords"), self.system.get_num_atoms()
       ) or checkpoint_beta_favor_error(
         checkpoint.get("hbond_beta_favor"), getattr(self.forcefield, "hbond_beta_favor", None)
+      ) or checkpoint_clash_options_error(
+        checkpoint, clash_options_record(self.forcefield)
       ) or checkpoint_rotamer_library_error(
         checkpoint.get("rotamer_library"), self.system.get_rotamer_library().fingerprint,
         self.move_settings["sidechain_move_mode"],

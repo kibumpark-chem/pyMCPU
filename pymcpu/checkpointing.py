@@ -29,9 +29,13 @@ logger = logging.getLogger(__name__)
 # files other than the mcpu08 files pyMCPU 0.1.0 shipped
 # (checkpoint_format_version). A pyMCPU that reads at most version 2 ignores
 # the parameter record, so it would resume such a run under its own mcpu08;
-# it refuses a version 3 file as newer than it understands. This is the
-# newest version this pyMCPU reads.
-CHECKPOINT_FORMAT_VERSION = 3
+# it refuses a version 3 file as newer than it understands.
+# 4: the fields of version 3, written when the force field's clash options
+# are not mcpu08's (LEGACY_CLASH_OPTIONS). A pyMCPU that reads at most
+# version 3 ignores them, so it would resume such a run with mcpu08's hard
+# core; it refuses a version 4 file. This is the newest version this pyMCPU
+# reads.
+CHECKPOINT_FORMAT_VERSION = 4
 DEFAULT_FILENAME = "last.chk"
 _CYCLE_NAME_RE = re.compile(r"^checkpoint_cycle_(\d+)\.chk$")
 
@@ -103,6 +107,14 @@ class CheckpointState:
     #: resolved). Only reported, never required: the same files elsewhere
     #: resume the run.
     param_dir: str = field(default="", kw_only=True)
+    #: The force field's hard core (MCPUForceField's clash_alpha,
+    #: clash_bond_exclusion and clash_start_exemption). None for a force
+    #: field without them, and in checkpoints written before they were
+    #: recorded, whose builds all used mcpu08's (LEGACY_CLASH_OPTIONS).
+    #: Keyword-only, like the parameter-set fields.
+    clash_alpha: float | None = field(default=None, kw_only=True)
+    clash_bond_exclusion: int | None = field(default=None, kw_only=True)
+    clash_start_exemption: bool | None = field(default=None, kw_only=True)
     temperatures: Any = None
     n_targets: Any = None
     k_bias: float = 0.0
@@ -471,24 +483,30 @@ LEGACY_PARAM_SET = "mcpu08"
 SHIPPED_MCPU08_SIGNATURE = "615479a19e4e2a80d89278c8898a762afe558bb2d644cfc5382e61a94a73fc90"
 
 
-def checkpoint_format_version(record: dict[str, str]) -> int:
+def checkpoint_format_version(
+    record: dict[str, str], clash: dict[str, Any] | None = None
+) -> int:
     """The format version a checkpoint of a run is written in, from the
-    run's :func:`param_set_record`.
+    run's :func:`param_set_record` and :func:`clash_options_record`.
 
-    :data:`CHECKPOINT_FORMAT_VERSION` (3) when the run's parameter files are
-    not the mcpu08 files pyMCPU 0.1.0 shipped (another set, or mcpu08 with
-    other files): a pyMCPU that reads at most version 2 cannot check them,
-    and refuses the file instead of resuming it under its own mcpu08. 2 for
-    the shipped mcpu08 files and for a force field without a parameter set,
-    which older pyMCPU resume as before.
+    4 when the force field's clash options are not mcpu08's: a pyMCPU that
+    reads at most version 3 cannot check them, and refuses the file instead
+    of resuming it with mcpu08's hard core. Otherwise 3 when the run's
+    parameter files are not the mcpu08 files pyMCPU 0.1.0 shipped (another
+    set, or mcpu08 with other files): a pyMCPU that reads at most version 2
+    cannot check them, and refuses the file instead of resuming it under its
+    own mcpu08. 2 for the shipped mcpu08 files and for a force field without
+    a parameter set, which older pyMCPU resume as before.
     """
+    if clash and not clash_options_are_legacy(clash):
+        return 4
     param_set = record.get("param_set") or ""
     if not param_set or (
         param_set == LEGACY_PARAM_SET
         and record.get("param_signature") == SHIPPED_MCPU08_SIGNATURE
     ):
         return 2
-    return CHECKPOINT_FORMAT_VERSION
+    return 3
 
 
 def param_set_record(forcefield: Any, *, sign: bool = True) -> dict[str, str]:
@@ -627,6 +645,87 @@ def checkpoint_beta_favor_error(
         f"{label} was written with hbond_beta_favor {saved_factor!s}, but this "
         f"run uses {current_factor!s}; resume it with forcefield_options: "
         f"{{hbond_beta_favor: {saved_factor!s}}}, or start a new run without resume"
+    )
+
+
+#: The clash options of mcpu08, the only ones builds had before they were
+#: recorded: what a checkpoint without them counts as.
+LEGACY_CLASH_OPTIONS: dict[str, Any] = {
+    "clash_alpha": 0.75,
+    "clash_bond_exclusion": 0,
+    "clash_start_exemption": True,
+}
+
+
+def clash_options_record(forcefield: Any) -> dict[str, Any]:
+    """What a checkpoint records about the force field's hard core: its
+    ``clash_alpha``, ``clash_bond_exclusion`` and ``clash_start_exemption``
+    (see :class:`~pymcpu.MCPUForceField`), each None for a force field
+    without it."""
+    return {key: getattr(forcefield, key, None) for key in LEGACY_CLASH_OPTIONS}
+
+
+def _same_clash_option(key: str, a: Any, b: Any) -> bool:
+    if key == "clash_alpha":  # compared as the engine's float32
+        return bool(np.float32(a) == np.float32(b))
+    if key == "clash_bond_exclusion":
+        return int(a) == int(b)
+    return bool(a) == bool(b)
+
+
+def _shown_clash_option(key: str, value: Any) -> str:
+    """A clash option as a YAML config writes it."""
+    if key == "clash_alpha":
+        return str(np.float32(value))
+    if key == "clash_bond_exclusion":
+        return str(int(value))
+    return "true" if value else "false"
+
+
+def clash_options_are_legacy(clash: dict[str, Any]) -> bool:
+    """True when every option in a :func:`clash_options_record` is
+    mcpu08's or None."""
+    return all(
+        value is None or _same_clash_option(key, value, LEGACY_CLASH_OPTIONS[key])
+        for key, value in clash.items()
+        if key in LEGACY_CLASH_OPTIONS
+    )
+
+
+def checkpoint_clash_options_error(
+    saved: dict[str, Any] | CheckpointState,
+    current: dict[str, Any],
+    source: Any = None,
+) -> str | None:
+    """Why a checkpoint cannot resume a run whose force field has the clash
+    options ``current`` (a :func:`clash_options_record`), or None.
+
+    The options are part of the energy function, like the sheet factor, so
+    a run resumes only with the values its checkpoint was written with. A
+    checkpoint without them was written by a build that used mcpu08's
+    (:data:`LEGACY_CLASH_OPTIONS`); an option the force field does not have
+    (None) is not checked. Checked after the sheet factor.
+    """
+
+    def saved_value(key: str) -> Any:
+        value = saved.get(key) if isinstance(saved, dict) else getattr(saved, key, None)
+        return LEGACY_CLASH_OPTIONS[key] if value is None else value
+
+    differ = [
+        (key, saved_value(key), current[key])
+        for key in LEGACY_CLASH_OPTIONS
+        if current.get(key) is not None
+        and not _same_clash_option(key, saved_value(key), current[key])
+    ]
+    if not differ:
+        return None
+    label = f"checkpoint {source}" if source else "the checkpoint"
+    written = ", ".join(f"{key} {_shown_clash_option(key, was)}" for key, was, _ in differ)
+    used = ", ".join(f"{key} {_shown_clash_option(key, now)}" for key, _, now in differ)
+    advice = ", ".join(f"{key}: {_shown_clash_option(key, was)}" for key, was, _ in differ)
+    return (
+        f"{label} was written with {written}, but this run uses {used}; resume it "
+        f"with forcefield_options: {{{advice}}}, or start a new run without resume"
     )
 
 
