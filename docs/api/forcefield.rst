@@ -164,7 +164,7 @@ so a run resumes only with the values it started with.
 - ``clash_bond_exclusion`` (0): 1, 2 or 3 leaves out of the clash check every
   pair at most that many covalent bonds apart, by the residue templates.
   mcpu08's rules already leave out bonded pairs, but not all pairs two or
-  three bonds apart, whose distance one torsion sets.
+  three bonds apart, whose distance a bond angle or one torsion sets.
 - ``clash_start_exemption`` (True): a pair already inside its hard core in the
   start structure (a start overlap) is exempt for the whole run. False
   penalises it instead.
