@@ -168,6 +168,8 @@ so a run resumes only with the values it started with.
   two or three bonds apart, whose distance a bond angle or one torsion sets.
   A bridge the start structure lacks is not counted; at ``clash_alpha`` 0.85
   its CB-SG pairs, about 3.0 Å apart in a bridge, are inside the hard core.
+  MCPU has no S-S bond energy, so no setting holds a bridge together during
+  a run.
 - ``clash_start_exemption`` (True): a pair already inside its hard core in the
   start structure (a start overlap) is exempt for the whole run. False
   penalises it instead.
