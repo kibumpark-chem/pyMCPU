@@ -7,7 +7,7 @@ With ``clash_start_exemption=False`` it is penalised instead: it scores
 ``MuPotential.start_overlap_penalty`` (1000, raw Mu units) on top of its
 contact energy while it stays inside, so a move that takes it out lowers the
 energy by that much, one that puts it back raises it, and a cold run removes
-it. Every other pair keeps the hard core.
+it if a local move can reach it. Every other pair keeps the hard core.
 
 The structures are chignolin with TYR1's side chain turned about CA-CB. At a
 hard core of 0.85 radius sums, with pairs up to three bonds apart left out,

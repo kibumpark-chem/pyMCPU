@@ -305,10 +305,12 @@ class MCPUForceField(BaseForceField):
             mcpu08's rule): it is exempt from the clash check for the whole
             run. False: it is penalised instead, adding
             ``MuPotential.start_overlap_penalty`` (1000, raw Mu units) to the
-            energy while it stays inside, so a cold run takes it out (and
-            cannot put it back), while every other pair keeps the hard core.
-            For relaxing a start structure; ``MuPotential.count_start_overlaps``
-            says how many are left. Checkpoints record it.
+            energy while it stays inside, while every other pair keeps the
+            hard core. For relaxing a start structure: a cold run of local
+            moves takes out the overlaps it can reach and practically never
+            puts one back, but one caged by its neighbours can stay, so read
+            how many are left (``MuPotential.count_start_overlaps``,
+            :func:`pymcpu.simulation.start_overlaps`). Checkpoints record it.
 
         Raises
         ------

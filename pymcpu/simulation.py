@@ -85,8 +85,9 @@ def start_overlaps(context: mcpu_core.Context) -> tuple[int, int]:
 
     A start overlap is a pair that can clash and was already inside its
     hard core in that structure: exempt for the whole run by default, or
-    penalised with ``MCPUForceField(clash_start_exemption=False)``, which a
-    cold run then removes. ``(0, 0)`` for a system without a Mu term.
+    penalised with ``MCPUForceField(clash_start_exemption=False)``, so that
+    a cold run removes those its moves can reach; ``inside`` counts the rest.
+    ``(0, 0)`` for a system without a Mu term.
     """
     mu = context.mu_potential
     if mu is None:

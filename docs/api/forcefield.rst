@@ -172,15 +172,19 @@ so a run resumes only with the values it started with.
 To relax a start structure, build it with ``clash_start_exemption: false``.
 Each start overlap then adds 1000 to the raw ``mu`` energy (400 at its
 weight) while it stays inside its hard core, and every other pair keeps the
-hard core. A cold run of local moves, for example ``move_weights: [0, 0.5,
-0.5]`` (loop closure and side chains) at temperature 0.1, takes the overlaps
-out: a move that takes one out lowers the energy by the penalty, and one that
-puts it back raises it by as much. The run's energies include the penalties,
-so they fall in steps of 400 until the overlaps are gone.
+hard core. In a cold run of local moves, for example ``move_weights: [0,
+0.5, 0.5]`` (loop closure and side chains) at temperature 0.1, a move that
+takes an overlap out lowers the energy by the penalty, and one that puts it
+back raises it by as much. Such a run takes out the overlaps a local move can
+reach, but not always all of them: an atom caged by its neighbours can stay
+inside for millions of steps. So check how many are left:
 :func:`pymcpu.simulation.start_overlaps` (``MuPotential.count_start_overlaps``)
-gives how many are left, and a folding run prints it at its start and end.
+gives the count, and a folding run prints it at its start and end. The run's
+energies include 400 for each overlap still inside.
 Start production runs from the relaxed structure, with the same
-``clash_alpha`` and ``clash_bond_exclusion``.
+``clash_alpha`` and ``clash_bond_exclusion``. With the default
+``clash_start_exemption``, an overlap still inside is exempt for that whole
+run.
 
 A parameter set's own defaults
 ------------------------------

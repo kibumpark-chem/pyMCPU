@@ -16,10 +16,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `clash_start_exemption`, which when false penalises the pairs already
   inside the hard core in the start structure (1000 each in the raw `mu`
   energy) instead of exempting them for the whole run, so a cold run
-  removes them (`pymcpu.simulation.start_overlaps`,
-  `MuPotential.count_start_overlaps`). The defaults build the same engine
-  as before. Checkpoints record the three options and refuse a resume with
-  others; a checkpoint of options other than mcpu08's is format version 4.
+  removes those its moves can reach (`pymcpu.simulation.start_overlaps` and
+  `MuPotential.count_start_overlaps` count the rest). The defaults build the
+  same engine as before. Checkpoints record the three options and refuse a
+  resume with others; a checkpoint of options other than mcpu08's is format
+  version 4.
 - **Checkpoints record the parameter set and refuse a resume under another
   one.** A run started with one parameter folder used to resume silently with
   any other, for example under another set's tables given through
