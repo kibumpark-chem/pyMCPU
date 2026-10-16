@@ -162,9 +162,12 @@ so a run resumes only with the values it started with.
 - ``clash_alpha`` (0.75): the factor. It must be above 0 and below 1.35; the
   contact cutoff stays at 1.35 radius sums.
 - ``clash_bond_exclusion`` (0): 1, 2 or 3 leaves out of the clash check every
-  pair at most that many covalent bonds apart, by the residue templates.
-  mcpu08's rules already leave out bonded pairs, but not all pairs two or
-  three bonds apart, whose distance a bond angle or one torsion sets.
+  pair at most that many covalent bonds apart, by the residue templates and
+  the start structure's disulfide bridges (two CYS SG atoms under 2.5 Å
+  apart). mcpu08's rules already leave out bonded pairs, but not all pairs
+  two or three bonds apart, whose distance a bond angle or one torsion sets.
+  A bridge the start structure lacks is not counted; at ``clash_alpha`` 0.85
+  its CB-SG pairs, about 3.0 Å apart in a bridge, are inside the hard core.
 - ``clash_start_exemption`` (True): a pair already inside its hard core in the
   start structure (a start overlap) is exempt for the whole run. False
   penalises it instead.

@@ -154,7 +154,9 @@ and `Context.coords` adds the shift back (`Context.frame_offset`).
 ## Extending it
 
 **A new Mu contact or clash rule.** The coordinate-independent
-eligibility masks come from `MuPotentialBuilder.build_topology_masks()`.
+eligibility masks come from `MuPotentialBuilder.build_topology_masks()`;
+with `clash_bond_exclusion` it is also given the native structure's
+disulfide bridges (`find_disulfides()`).
 `create_system` passes them to `MuPotential.cache_necessary_data()`,
 which bakes them, together with the native-structure clash exemptions,
 into the per-pair flag table the hot path reads. The engine holds no

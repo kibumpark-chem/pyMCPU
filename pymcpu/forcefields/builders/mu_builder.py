@@ -10,6 +10,7 @@ engine, and includes a Python port of the relevant parts of legacy MCPU's
 from __future__ import annotations
 
 from collections import deque
+from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -59,6 +60,10 @@ _SIDECHAIN_BONDS = {
             ("CE1", "CZ"), ("CE2", "CZ"), ("CZ", "OH")),
     "VAL": (("CB", "CG1"), ("CB", "CG2")),
 }
+#: A disulfide bridge, for ``clash_bond_exclusion``: two CYS SG atoms closer
+#: than this (Angstrom) in the structure the force field is built from. An
+#: S-S bond is about 2.05 A long.
+DISULFIDE_SG_CUTOFF_A = 2.5
 
 
 class MuPotentialBuilder:
@@ -134,7 +139,37 @@ class MuPotentialBuilder:
         return matrix
 
     @classmethod
-    def bond_distances(cls, ordered_atom_list: list[MCPUAtom], max_bonds: int) -> np.ndarray:
+    def find_disulfides(
+        cls,
+        ordered_atom_list: list[MCPUAtom],
+        coords: np.ndarray,
+        cutoff: float = DISULFIDE_SG_CUTOFF_A,
+    ) -> list[tuple[int, int]]:
+        """The disulfide bridges of a structure: ``(i, j)`` residue indices,
+        ``i < j``, sorted, of every two CYS residues whose SG atoms are closer
+        than ``cutoff`` Angstrom. ``coords`` is ``(n, 3)``, in Angstrom, in
+        the order of ``ordered_atom_list``.
+
+        They are read from coordinates because a topology may lack them:
+        mdtraj's PDB reader adds an S-S bond only from a CONECT record.
+        """
+        sg = [(k, int(a.residue_index)) for k, a in enumerate(ordered_atom_list)
+              if a.residue_name == "CYS" and a.name == "SG"]
+        xyz = np.asarray(coords, dtype=np.float64)[[k for k, _ in sg]].reshape(-1, 3)
+        bridges = []
+        for p in range(len(sg)):
+            for q in range(p + 1, len(sg)):
+                if np.linalg.norm(xyz[p] - xyz[q]) < cutoff:
+                    bridges.append((min(sg[p][1], sg[q][1]), max(sg[p][1], sg[q][1])))
+        return sorted(bridges)
+
+    @classmethod
+    def bond_distances(
+        cls,
+        ordered_atom_list: list[MCPUAtom],
+        max_bonds: int,
+        disulfides: Sequence[tuple[int, int]] = (),
+    ) -> np.ndarray:
         """``(n, n)`` int16 array: how many covalent bonds apart each pair of
         atoms is, or ``max_bonds + 1`` when farther (and for every pair with
         an explicit amide hydrogen, ``'H'``, which no mask lets clash).
@@ -142,12 +177,14 @@ class MuPotentialBuilder:
         The bonds come from residue templates by atom name
         (``_BACKBONE_BONDS``, ``_SIDECHAIN_BONDS``, CA-CB, and C(i)-N(i+1)
         between consecutive residue indices), never from coordinates, so a
-        structure gives the same graph in any conformation. An atom is one
-        node per (residue, name): a glycine CA listed in two slots is one
-        atom, 0 bonds from itself.
+        structure gives the same graph in any conformation; plus an SG-SG
+        bond for each pair of residue indices in ``disulfides`` (see
+        :meth:`find_disulfides`). An atom is one node per (residue, name): a
+        glycine CA listed in two slots is one atom, 0 bonds from itself.
 
-        Raises ValueError for a residue without a bond template, or an atom
-        that no template bond reaches.
+        Raises ValueError for a residue without a bond template, an atom
+        that no template bond reaches, or a disulfide that does not join the
+        SG atoms of two CYS residues.
         """
         n = len(ordered_atom_list)
         far = max_bonds + 1
@@ -180,6 +217,15 @@ class MuPotentialBuilder:
                 link(r, a1, r, a2)
             if r + 1 in residue_name:
                 link(r, "C", r + 1, "N")
+        for pair in disulfides:
+            if len(set(pair)) != 2 or any(
+                    residue_name.get(r) != "CYS" or (r, "SG") not in node_of for r in pair):
+                raise ValueError(
+                    f"a disulfide bridge joins the SG atoms of two CYS residues, and "
+                    f"{tuple(pair)} ({', '.join(str(residue_name.get(r)) for r in pair)}) "
+                    "does not"
+                )
+            link(pair[0], "SG", pair[1], "SG")
         lonely = [f"{atom} of {residue_name[r]} {r}" for (r, atom), u in node_of.items()
                   if not neighbours[u]]
         if lonely:
@@ -214,12 +260,17 @@ class MuPotentialBuilder:
         contact_mask: np.ndarray,
         clash_mask: np.ndarray,
         max_bonds: int,
+        disulfides: Sequence[tuple[int, int]] = (),
     ) -> int:
         """Take every pair at most ``max_bonds`` covalent bonds apart out of
         ``clash_mask`` (in place), and return how many pairs that changed.
 
-        Refuses (ValueError) if such a pair is contact-eligible: only the
-        clash check is to change, and the contact mask is left alone.
+        Refuses (ValueError) if a pair that close through the residue
+        templates' bonds is contact-eligible: only the clash check is to
+        change, and the contact mask is left alone. A pair that close only
+        through a bridge in ``disulfides`` may be contact-eligible, as a
+        bridge can join residues far apart in sequence; it keeps its
+        contacts, as mcpu08's rules keep those of CYS SG-SG pairs.
         """
         distances = cls.bond_distances(ordered_atom_list, max_bonds)
         near = distances <= max_bonds
@@ -234,6 +285,9 @@ class MuPotentialBuilder:
                 f"{b.name}) are {int(distances[i, j])} bonds apart and contact-eligible; "
                 "only the clash check may change, so this is refused"
             )
+        if len(disulfides):
+            near = cls.bond_distances(ordered_atom_list, max_bonds, disulfides) <= max_bonds
+            np.fill_diagonal(near, False)
         changed = int(np.count_nonzero(np.triu(near & (clash_mask != 0), 1)))
         clash_mask[near] = 0
         return changed
@@ -245,6 +299,7 @@ class MuPotentialBuilder:
         n_atoms: int,
         skip_local_contact_range: int = 4,
         clash_bond_exclusion: int = 0,
+        disulfides: Sequence[tuple[int, int]] = (),
     ) -> tuple[list[int], list[int]]:
         """Build the static (topology-only, coordinate-independent) per-atom-pair
         clash/contact masks the C++ MuPotential bakes into its pair-flag table.
@@ -287,7 +342,9 @@ class MuPotentialBuilder:
         A positive value also takes out of the clash check every pair at most
         that many covalent bonds apart (see :meth:`bond_distances`), as
         molecular force fields leave bonded neighbours out of their
-        non-bonded terms. The contact mask is not changed.
+        non-bonded terms, with each disulfide in ``disulfides`` (residue index
+        pairs, from :meth:`find_disulfides`) as a bond. The contact mask is
+        not changed. ``disulfides`` is not used at 0.
         """
         clash_mask = np.ones((n_atoms, n_atoms), dtype=np.int8)
         contact_mask = np.zeros((n_atoms, n_atoms), dtype=np.int8)
@@ -383,7 +440,8 @@ class MuPotentialBuilder:
 
         if clash_bond_exclusion > 0:
             cls._exclude_bonded_pairs(
-                ordered_atom_list, contact_mask, clash_mask, clash_bond_exclusion)
+                ordered_atom_list, contact_mask, clash_mask, clash_bond_exclusion,
+                disulfides)
         return contact_mask.flatten().tolist(), clash_mask.flatten().tolist()
 
     @classmethod

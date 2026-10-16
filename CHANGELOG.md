@@ -12,7 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Clash options** for `MCPUForceField` (`forcefield_options`):
   `clash_alpha`, the hard-core factor (0.75; the contact cutoff stays at
   1.35 radius sums); `clash_bond_exclusion`, which leaves pairs up to 1, 2
-  or 3 covalent bonds apart out of the clash check (0: mcpu08's rules); and
+  or 3 covalent bonds apart out of the clash check, a disulfide bridge of the
+  start structure counting as a bond (0: mcpu08's rules); and
   `clash_start_exemption`, which when false penalises the pairs already
   inside the hard core in the start structure (1000 each in the raw `mu`
   energy) instead of exempting them for the whole run, so a cold run

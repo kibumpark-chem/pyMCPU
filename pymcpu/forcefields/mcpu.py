@@ -295,7 +295,8 @@ class MCPUForceField(BaseForceField):
             0 (the default) keeps mcpu08's rules for which pairs can clash.
             1, 2 or 3 also leave out of the clash check every pair of atoms at
             most that many covalent bonds apart (bonds from the residue
-            templates, not the coordinates). 3 leaves out the pairs whose
+            templates, and each disulfide bridge of this structure: two CYS
+            SG atoms under 2.5 A apart). 3 leaves out the pairs whose
             distance a single torsion sets, which a harder core would
             otherwise forbid or, inside the core at the start, exempt for the
             whole run. Contacts are not changed. Checkpoints record it.
@@ -851,10 +852,22 @@ class MCPUForceField(BaseForceField):
             alpha_val=_MU_ALPHA_DEFAULT,
             hard_core_alpha=self.clash_alpha,
         )
+        # clash_bond_exclusion counts this structure's disulfide bridges as
+        # bonds; mcpu08's rules (0) do not use them.
+        disulfides: list[tuple[int, int]] = []
+        if self.clash_bond_exclusion > 0:
+            disulfides = MuPotentialBuilder.find_disulfides(
+                self.ordered_atom_list, self.coords[0] * 10.0)
+            if disulfides:
+                logger.info(
+                    "clash_bond_exclusion=%d counts %d disulfide bridge(s) of the start "
+                    "structure as bonds: %s", self.clash_bond_exclusion, len(disulfides),
+                    ", ".join(f"CYS {i}-CYS {j}" for i, j in disulfides))
         topo_contact, topo_clash = MuPotentialBuilder.build_topology_masks(
             self.ordered_atom_list,
             self.n_atoms,
             clash_bond_exclusion=self.clash_bond_exclusion,
+            disulfides=disulfides,
         )
         # Pairs inside their hard core in this structure are exempt for the
         # whole run, or penalised. The default makes the call mcpu08 always has.

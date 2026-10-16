@@ -7,11 +7,16 @@ and so on. They sit at distances their bonds and one torsion fix, so a harder
 core forbids some torsions outright or, for the pairs already inside it at
 the start, exempts them for the whole run. With ``clash_bond_exclusion=n``
 every pair at most n bonds apart is left out of the clash check. The bonds
-come from residue templates by atom name, never from coordinates; the contact
-mask does not change, and a bonded pair that could make a contact is refused.
+come from residue templates by atom name, never from coordinates, plus the
+structure's disulfide bridges (two CYS SG atoms under 2.5 A apart); the
+contact mask does not change, and a pair bonded through the templates that
+could make a contact is refused.
 """
 
 from __future__ import annotations
+
+import logging
+from pathlib import Path
 
 import mdtraj as md
 import numpy as np
@@ -21,6 +26,7 @@ from pymcpu import mcpu_core
 from pymcpu.forcefields.builders.mu_builder import MuPotentialBuilder
 from pymcpu.forcefields.mcpu import MCPUAtom, MCPUForceField
 from pymcpu.runners import default_example_pdb
+from tests.fixtures.context_builders import TEST_PDB
 
 FAR = 4  # bond_distances(..., 3) gives 3 + 1 for pairs farther apart
 
@@ -218,3 +224,135 @@ def test_a_bonded_pair_pulled_inside_the_core_clashes_only_by_default(heavy: md.
         ctx.calculate_total_energy(-1)
         verdicts[exclusion] = bool(ctx.has_steric_clash())
     assert verdicts == {0: True, 3: False}
+
+
+# --- disulfide bridges -------------------------------------------------------
+
+#: Crambin (PDB 3NIR, X-ray, 0.48 A), protein heavy atoms: three bridges.
+CRAMBIN_PDB = Path(__file__).parent / "data" / "3nir_heavy.pdb"
+CRAMBIN_BRIDGES = [(2, 39), (3, 31), (15, 25)]
+
+#: Two cysteines far apart in sequence.
+CYSTEINES = {r: ("CYS", ["N", "CA", "C", "CB", "SG", "O"]) for r in (10, 20)}
+
+#: (atom of CYS 10, atom of CYS 20, bonds apart through a bridge between them)
+ACROSS = [
+    ("SG", "SG", 1), ("CB", "SG", 2), ("SG", "CB", 2), ("CA", "SG", 3), ("SG", "CA", 3),
+    ("CB", "CB", 3), ("N", "SG", FAR), ("C", "SG", FAR), ("CA", "CB", FAR),
+]
+
+
+def _cysteines() -> list[MCPUAtom]:
+    return [
+        MCPUAtom(original_index=-1, name=name, residue_name=residue, residue_index=r)
+        for r, (residue, names) in CYSTEINES.items()
+        for name in names
+    ]
+
+
+@pytest.mark.parametrize(("a", "b", "bonds"), ACROSS, ids=[f"{a}-{b}'" for a, b, _ in ACROSS])
+def test_a_disulfide_is_a_bond(a, b, bonds) -> None:
+    atoms = _cysteines()
+    i, j = _index(atoms, 10, a), _index(atoms, 20, b)
+    bridged = MuPotentialBuilder.bond_distances(atoms, 3, [(10, 20)])
+    assert bridged[i, j] == bridged[j, i] == bonds
+    assert MuPotentialBuilder.bond_distances(atoms, 3)[i, j] == FAR
+
+
+@pytest.mark.parametrize("pair", [(2, 10), (10, 10)], ids=["a-serine", "one-residue"])
+def test_a_disulfide_joins_two_cysteines(pair) -> None:
+    with pytest.raises(ValueError, match="joins the SG atoms of two CYS residues"):
+        MuPotentialBuilder.bond_distances(_chain(_cysteines()), 3, [pair])
+
+
+def test_a_pair_across_a_bridge_keeps_its_contact() -> None:
+    """A bridge can join residues far apart in sequence, so a pair across it
+    may be contact-eligible. It leaves the clash check and keeps its contact,
+    where a contact-eligible pair bonded through the templates is refused."""
+    atoms = _cysteines()
+    n = len(atoms)
+    contact = np.zeros((n, n), dtype=np.int8)
+    i, j = _index(atoms, 10, "CB"), _index(atoms, 20, "SG")
+    contact[i, j] = contact[j, i] = 1
+    plain, bridged = np.ones((n, n), dtype=np.int8), np.ones((n, n), dtype=np.int8)
+    MuPotentialBuilder._exclude_bonded_pairs(atoms, contact, plain, 3)
+    MuPotentialBuilder._exclude_bonded_pairs(atoms, contact, bridged, 3, [(10, 20)])
+    assert plain[i, j] == plain[j, i] == 1
+    assert bridged[i, j] == bridged[j, i] == 0
+    assert contact[i, j] == contact[j, i] == 1
+
+
+@pytest.mark.parametrize(("sg_sg", "bridged"), [(2.04, True), (2.45, True), (2.55, False), (3.75, False)])
+def test_a_bridge_is_two_sg_atoms_under_2_5_angstrom(sg_sg: float, bridged: bool) -> None:
+    atoms = _cysteines()
+    coords = np.zeros((len(atoms), 3))
+    coords[:, 0] = 10.0 * np.arange(len(atoms))
+    coords[_index(atoms, 20, "SG")] = coords[_index(atoms, 10, "SG")] + [0.0, sg_sg, 0.0]
+    assert MuPotentialBuilder.find_disulfides(atoms, coords) == ([(10, 20)] if bridged else [])
+
+
+@pytest.fixture(scope="module")
+def crambin() -> md.Trajectory:
+    return md.load(str(CRAMBIN_PDB))
+
+
+def _bridges(structure: md.Trajectory) -> list[tuple[int, int]]:
+    ff = MCPUForceField(structure)
+    return MuPotentialBuilder.find_disulfides(ff.ordered_atom_list, ff.coords[0] * 10.0)
+
+
+def test_the_bridges_of_real_structures(crambin: md.Trajectory, heavy: md.Trajectory) -> None:
+    """Crambin's three; none in chignolin, which has no cysteine, or in actin,
+    whose two closest SG atoms (CYS 219 and 259 in the file) are 3.75 A apart."""
+    assert _bridges(crambin) == CRAMBIN_BRIDGES
+    assert _bridges(heavy) == []
+    actin = md.load(str(TEST_PDB))
+    assert _bridges(actin.atom_slice(actin.topology.select("not element H"))) == []
+
+
+def test_crambins_bridges_leave_the_clash_check(crambin: md.Trajectory) -> None:
+    """Six pairs are at most three bonds apart across each bridge: SG-SG',
+    CB-SG', SG-CB', CA-SG', SG-CA' and CB-CB'. mcpu08's rules already leave out
+    SG-SG' (CYS SG pairs far apart in sequence are contact-only), so the
+    bridges take 15 more pairs out of the clash check at
+    clash_bond_exclusion=3, and no contact changes."""
+    ff = MCPUForceField(crambin)
+    atoms = ff.ordered_atom_list
+    shape = (ff.n_atoms, ff.n_atoms)
+
+    def masks(exclusion: int, disulfides=()) -> tuple[np.ndarray, np.ndarray]:
+        contact, clash = MuPotentialBuilder.build_topology_masks(
+            atoms, ff.n_atoms, clash_bond_exclusion=exclusion, disulfides=disulfides)
+        return np.reshape(contact, shape), np.reshape(clash, shape)
+
+    contact0, clash0 = masks(0)
+    assert np.array_equal(masks(0, CRAMBIN_BRIDGES)[1], clash0)  # not used at 0
+    _, clash3 = masks(3)
+    contact3, clash3_bridged = masks(3, CRAMBIN_BRIDGES)
+    templates = MuPotentialBuilder.bond_distances(atoms, 3) <= 3
+    across = (MuPotentialBuilder.bond_distances(atoms, 3, CRAMBIN_BRIDGES) <= 3) & ~templates
+    assert np.count_nonzero(np.triu(across, 1)) == 18
+    assert np.count_nonzero(np.triu(across & (clash3 == 1), 1)) == 15
+    assert np.all(clash3_bridged[across] == 0)
+    assert np.array_equal(clash3_bridged[~across], clash3[~across])
+    assert np.array_equal(contact3, contact0)
+
+
+def test_crambin_has_no_start_overlap_across_its_bridges(crambin: md.Trajectory, caplog) -> None:
+    """At a hard core of 0.85 radius sums, CB and SG across each bridge
+    (2.98-3.07 A apart, against 3.10 A) are inside it: without the bridges as
+    bonds, these six pairs were crambin's only start overlaps under
+    clash_bond_exclusion=3, which a penalised relaxation would push apart."""
+    def start_overlap_pairs(**options) -> int:
+        ff = MCPUForceField(crambin, **options)
+        context = mcpu_core.Context(ff.create_system(crambin.topology))
+        context.set_positions((ff.coords[0] * 10.0).T.astype(np.float32))
+        context.calculate_total_energy(-1)
+        assert not context.has_steric_clash()
+        return int(context.mu_potential.start_overlap_pairs)
+
+    with caplog.at_level(logging.INFO, logger="pymcpu.forcefields.mcpu"):
+        assert start_overlap_pairs(
+            clash_alpha=0.85, clash_bond_exclusion=3, clash_start_exemption=False) == 0
+    assert any("counts 3 disulfide bridge(s)" in r.getMessage() for r in caplog.records)
+    assert start_overlap_pairs(clash_alpha=0.85, clash_bond_exclusion=3) == 0
