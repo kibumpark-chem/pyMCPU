@@ -114,6 +114,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   angle without its rows never changed and was scored at a placeholder
   angle, with no other sign. Every residue in the template is checked, not
   only those in the structure. mcpu08's template passes, and loads as before.
+- **Placing coordinates measures the chi angles of the first and the last
+  residue too.** `Context.set_positions` and the `Context.coords` setter,
+  and through them a run's start, a checkpoint resume, a replica-exchange
+  swap and `recenter`, refresh the torsions a `State` caches from the new
+  coordinates. They refreshed chi only for residues with a neighbour on each
+  side, as phi, psi, pCA and bCA need, so the two chain ends kept the chi of
+  the conformation placed before (-pi on a new Context) until a sidechain
+  move at that end was accepted: in 167 W2 runs, for a median 0.1 % of the
+  recorded frames, up to the whole of a 1e8-step run. Energies and
+  trajectories do not change: the sidechain torsion energy scores residues 1
+  to N-2 only, as legacy MCPU does, and the rotamer move measures the chi it
+  starts from on the coordinates. `State.sidechain_torsions`, and what reads
+  it, does.
 
 ## [0.1.0] - 2026-10-11
 
