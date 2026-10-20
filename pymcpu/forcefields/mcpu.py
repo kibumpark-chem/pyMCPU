@@ -228,8 +228,8 @@ class MCPUForceField(BaseForceField):
              allow_chain_breaks: bool = False,
              hbond_beta_favor: float | None = None,
              verify_provenance: bool = True,
-             clash_alpha: float = _MU_ALPHA_DEFAULT,
-             clash_bond_exclusion: int = 0,
+             clash_alpha: float | None = None,
+             clash_bond_exclusion: int | None = None,
              clash_start_exemption: bool = True) -> None:
         """
         Load the parameters, check the structure and lay out its atoms.
@@ -293,18 +293,24 @@ class MCPUForceField(BaseForceField):
             rank 0 alone.
         clash_alpha
             The hard core: two atoms that can clash may come no closer than
-            this factor times the sum of their radii. 0.75 (the default) is
-            mcpu08's. It must be above 0 and below 1.35, the factor of the
-            contact cutoff, which it leaves where it is. Checkpoints record it.
+            this factor times the sum of their radii. None (the default)
+            takes the parameter set's own, the ``clash_alpha`` of its
+            ``constants/paramset.json`` (0.85 for mcpu26), or 0.75, mcpu08's,
+            when the set gives none. A value given here always wins. It must
+            be above 0 and below 1.35, the factor of the contact cutoff,
+            which it leaves where it is. Checkpoints record it.
         clash_bond_exclusion
-            0 (the default) keeps mcpu08's rules for which pairs can clash.
-            1, 2 or 3 also leave out of the clash check every pair of atoms at
-            most that many covalent bonds apart (bonds from the residue
-            templates, and each disulfide bridge of this structure: two CYS
-            SG atoms under 2.5 A apart). 3 leaves out the pairs whose
-            distance a single torsion sets, which a harder core would
-            otherwise forbid or, inside the core at the start, exempt for the
-            whole run. Contacts are not changed. Checkpoints record it.
+            0 keeps mcpu08's rules for which pairs can clash. 1, 2 or 3 also
+            leave out of the clash check every pair of atoms at most that
+            many covalent bonds apart (bonds from the residue templates, and
+            each disulfide bridge of this structure: two CYS SG atoms under
+            2.5 A apart). 3 leaves out the pairs whose distance a single
+            torsion sets, which a harder core would otherwise forbid or,
+            inside the core at the start, exempt for the whole run. Contacts
+            are not changed. None (the default) takes the parameter set's
+            own, as for ``clash_alpha`` (3 for mcpu26), or 0 when the set
+            gives none. A value given here always wins. Checkpoints record
+            it.
         clash_start_exemption
             What happens to a pair that can clash and is already inside its
             hard core in this structure (a start overlap). True (the default,
@@ -341,10 +347,10 @@ class MCPUForceField(BaseForceField):
         # A value given here is checked before any file is read.
         if hbond_beta_favor is not None:
             hbond_beta_favor = _hbond_beta_favor(hbond_beta_favor)
-        #: The hard-core factor the systems it builds use (see ``clash_alpha``).
-        self.clash_alpha = _clash_alpha(clash_alpha)
-        #: Pairs at most this many bonds apart cannot clash; 0: mcpu08's rules.
-        self.clash_bond_exclusion = _clash_bond_exclusion(clash_bond_exclusion)
+        if clash_alpha is not None:
+            clash_alpha = _clash_alpha(clash_alpha)
+        if clash_bond_exclusion is not None:
+            clash_bond_exclusion = _clash_bond_exclusion(clash_bond_exclusion)
         #: Start overlaps exempt (True, mcpu08) or penalised (False).
         self.clash_start_exemption = _clash_start_exemption(clash_start_exemption)
         if param_dir is None:
@@ -370,6 +376,22 @@ class MCPUForceField(BaseForceField):
         # The argument, else the parameter set's, else 2.0; checkpoints
         # record this value.
         self.hbond_beta_favor = _hbond_beta_favor(hbond_beta_favor)
+        # The hard core resolves as the sheet factor does: the argument, else
+        # the parameter set's, else mcpu08's (0.75, 0). A set's weights hold
+        # for the hard core they were fitted with.
+        manifest = self.paramset_manifest or {}
+        if clash_alpha is None and "clash_alpha" in manifest:
+            clash_alpha = manifest["clash_alpha"]
+            logger.info("clash_alpha %s from %s", clash_alpha, self.param_dir / PARAMSET_MANIFEST)
+        if clash_bond_exclusion is None and "clash_bond_exclusion" in manifest:
+            clash_bond_exclusion = manifest["clash_bond_exclusion"]
+            logger.info("clash_bond_exclusion %s from %s", clash_bond_exclusion,
+                        self.param_dir / PARAMSET_MANIFEST)
+        #: The hard-core factor the systems it builds use (see ``clash_alpha``).
+        self.clash_alpha = _clash_alpha(_MU_ALPHA_DEFAULT if clash_alpha is None else clash_alpha)
+        #: Pairs at most this many bonds apart cannot clash; 0: mcpu08's rules.
+        self.clash_bond_exclusion = _clash_bond_exclusion(
+            0 if clash_bond_exclusion is None else clash_bond_exclusion)
         self.virtual_amide_h = bool(virtual_amide_h)
         self.compute_dssp = bool(compute_dssp)
         self.dssp_coil_state = dssp_coil_state

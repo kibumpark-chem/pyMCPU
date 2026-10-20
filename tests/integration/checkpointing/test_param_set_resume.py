@@ -203,8 +203,9 @@ def test_mcpu08_and_mcpu26_checkpoints_refuse_each_others_set(
     assert saved["param_set"] == "mcpu26"
     assert saved["param_signature"] == param_signature(ensure_params("mcpu26"), "mcpu26")
     assert saved["hbond_beta_favor"] == 2.3993940353393555
-    # Files other than the mcpu08 files 0.1.0 shipped: a version older pyMCPU refuse.
-    assert saved["format_version"] == 3
+    # The set's hard core, which is not mcpu08's: a version older pyMCPU refuse.
+    assert (saved["clash_alpha"], saved["clash_bond_exclusion"]) == (0.85, 3)
+    assert saved["format_version"] == 4
     under08 = _folding(chignolin_pdb_path, tmp_path / "m26", resume=True)
     with pytest.raises(ValueError, match=(
         "written with param_set 'mcpu26', but this run uses 'mcpu08'; "

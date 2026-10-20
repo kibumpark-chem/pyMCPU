@@ -1,7 +1,9 @@
 """The hard-core factor is a force-field option, ``clash_alpha``.
 
 Two atoms that can clash may come no closer than ``clash_alpha`` times the sum
-of their radii. mcpu08's 0.75 is the default; the option moves the hard core
+of their radii. mcpu08's 0.75 is the default (for a parameter set whose
+``constants/paramset.json`` gives no factor: test_paramset_manifest.py
+covers one that does); the option moves the hard core
 alone, and the contact cutoff (1.8 x 0.75 = 1.35 radius sums) stays where it
 is. Probed with one pair of chignolin, TYR1 CB and TRP8's last side-chain atom
 (a contact pair), placed on the side of CB facing away from its neighbours so
@@ -91,6 +93,7 @@ class _Probe:
 
 def test_the_default_is_mcpu08s(heavy: md.Trajectory) -> None:
     assert MCPUForceField(heavy).clash_alpha == 0.75
+    assert MCPUForceField(heavy, clash_alpha=None).clash_alpha == 0.75
 
 
 @pytest.mark.parametrize("alpha", [0.75, 0.85])
@@ -112,9 +115,10 @@ def test_the_contact_cutoff_does_not_move(heavy: md.Trajectory) -> None:
     assert steps[1] == steps[0]
 
 
+# None is not here: like hbond_beta_favor, it asks for the parameter set's own.
 @pytest.mark.parametrize(
     "value",
-    [0, 0.0, -0.5, 1.35, 1.5, math.nan, math.inf, True, "0.85", None],
+    [0, 0.0, -0.5, 1.35, 1.5, math.nan, math.inf, True, "0.85"],
     ids=repr,
 )
 def test_clash_alpha_is_checked(heavy: md.Trajectory, value: object) -> None:

@@ -116,10 +116,12 @@ resumes it:
 - The rotamer library (`rotamer_library`, default `dunbrack2002_sym`).
   Checkpoints from before it was recorded count as `dunbrack2002`, so resume
   one of those with `rotamer_library: dunbrack2002`.
-- The hard core: `forcefield_options` `clash_alpha`, `clash_bond_exclusion`
-  and `clash_start_exemption` (see "The hard core" in the force-field docs).
-  Checkpoints from before they were recorded count as mcpu08's: 0.75, 0 and
-  true.
+- The hard core the run used (see "The hard core" in the force-field docs):
+  `forcefield_options` `clash_alpha` and `clash_bond_exclusion` when the
+  config gives them, otherwise the parameter set's own (from its
+  `constants/paramset.json`; mcpu26 gives 0.85 and 3), otherwise mcpu08's;
+  and `clash_start_exemption`. Checkpoints from before they were recorded
+  count as mcpu08's: 0.75, 0 and true.
 
 A checkpoint whose atom count does not match the system stops with an error
 that names both counts. Format version 2 stores each glycine CA once, so a

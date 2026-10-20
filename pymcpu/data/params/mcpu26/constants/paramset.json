@@ -3,6 +3,8 @@
  "name": "mcpu26",
  "description": "mcpu26 (legacy form): mcpu08's energy function, with tables re-estimated from PISCES 2026 and weights fitted on Tsuboyama natural domains, folded into the tables. Its weights were fitted with clash_alpha 0.85 and clash_bond_exclusion 3.",
  "hbond_beta_favor": 2.3993940353393555,
+ "clash_alpha": 0.85,
+ "clash_bond_exclusion": 3,
  "folded_weights": {
   "mu": 1.0577709144050786,
   "bb_torsion": 0.8199679176379738,

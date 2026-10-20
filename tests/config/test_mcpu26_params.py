@@ -4,8 +4,9 @@ mcpu26 (legacy form) is mcpu08's energy function with tables re-estimated
 from PISCES 2026 and the fitted weights folded into them. Its tables decode
 to exactly the files the builder wrote (their md5s are pinned below, from the
 builder's ``MD5SUMS``), its constants are byte copies of mcpu08's, and its
-``constants/paramset.json`` gives its sheet factor, which a force field takes
-when it is given none. Its tables live in ``mcpu26_params/``, so a folder of
+``constants/paramset.json`` gives its sheet factor and the hard core its
+weights were fitted with, which a force field takes when it is given none.
+Its tables live in ``mcpu26_params/``, so a folder of
 mcpu08's given for it fails loudly, as one of its own given for mcpu08 does.
 """
 
@@ -49,6 +50,8 @@ TABLE_MD5 = {
 }
 #: The fitted sheet factor: float32(3 x hbfar / hb4) of the final weights.
 BETA_FAVOR = 2.3993940353393555
+#: The hard core the weights were fitted with: clash_alpha, clash_bond_exclusion.
+HARD_CORE = (0.85, 3)
 #: w_new / w_legacy, already multiplied into each term's table.
 FOLDED_WEIGHTS = {
     "mu": 1.0577709144050786,
@@ -103,6 +106,7 @@ def test_the_manifest_records_the_fit() -> None:
     assert manifest["format"] == PARAMSET_FORMAT
     assert manifest["name"] == "mcpu26"
     assert manifest["hbond_beta_favor"] == BETA_FAVOR
+    assert (manifest["clash_alpha"], manifest["clash_bond_exclusion"]) == HARD_CORE
     assert manifest["folded_weights"] == FOLDED_WEIGHTS
     # The md5 of each table, by its path in the set's own layout, so a
     # force field built from the set compares every table with the builder's.
@@ -140,6 +144,24 @@ def test_load_forcefield_takes_the_sets_sheet_factor() -> None:
                            options={"hbond_beta_favor": 2.5}).hbond_beta_favor == 2.5
     # mcpu08 keeps its own: no manifest, 2.0.
     assert load_forcefield(pdb).hbond_beta_favor == 2.0
+
+
+def _hard_core(ff) -> tuple[float, int, bool]:
+    return ff.clash_alpha, ff.clash_bond_exclusion, ff.clash_start_exemption
+
+
+def test_a_force_field_takes_the_hard_core_the_set_was_fitted_with(heavy) -> None:
+    pdb = default_example_pdb()
+    assert _hard_core(MCPUForceField(heavy, param_set="mcpu26")) == (*HARD_CORE, True)
+    assert _hard_core(load_forcefield(pdb, param_set="mcpu26")) == (*HARD_CORE, True)
+    # Values given explicitly win, each on its own.
+    assert _hard_core(load_forcefield(pdb, param_set="mcpu26", options={
+        "clash_alpha": 0.75, "clash_bond_exclusion": 0})) == (0.75, 0, True)
+    assert _hard_core(MCPUForceField(heavy, param_set="mcpu26", clash_alpha=0.8)) == (0.8, 3, True)
+    assert _hard_core(MCPUForceField(heavy, param_set="mcpu26",
+                                     clash_start_exemption=False)) == (*HARD_CORE, False)
+    # mcpu08 has no manifest: its own hard core.
+    assert _hard_core(MCPUForceField(heavy)) == (0.75, 0, True)
 
 
 def test_mcpu26_scores_with_its_own_tables(heavy) -> None:

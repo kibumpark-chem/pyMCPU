@@ -4,7 +4,9 @@ A parameter folder may carry a manifest (format ``pymcpu-paramset/1``) that
 names its set and can give its hydrogen-bond sheet factor. ``MCPUForceField``
 uses that factor when it is not given one (``hbond_beta_favor=None``, the
 default), and 2.0 when the folder has no manifest, as mcpu08 has none; a value
-given explicitly always wins. ``folded_weights`` is a record only. The
+given explicitly always wins. Its hard core, ``clash_alpha`` and
+``clash_bond_exclusion``, resolves the same way, else to mcpu08's 0.75 and 0.
+``folded_weights`` is a record only. The
 manifest is checked strictly: unknown or repeated keys, values of the wrong
 kind, a name other than the set the folder is loaded as, and listed files
 whose md5 has changed are refused.
@@ -25,7 +27,7 @@ import mdtraj as md
 import numpy as np
 import pytest
 
-from pymcpu import mcpu_core, params
+from pymcpu import checkpointing, mcpu_core, params
 from pymcpu.checkpointing import load_checkpoint
 from pymcpu.config import EngineSpec, load_config_auto
 from pymcpu.forcefields import load_forcefield
@@ -223,6 +225,104 @@ def test_a_checkpoint_records_the_factor_the_run_used(chignolin_pdb_path, tmp_pa
         folding(resume=True).run(n_cycles=4)
 
 
+# --- the hard core it gives ---
+
+def _start_overlap_pairs(ff: MCPUForceField, traj: md.Trajectory) -> int:
+    """Pairs inside their hard core in the start structure, as the system's
+    contact term counts them: they depend on clash_alpha (chignolin: 8 at
+    0.75, 15 at 0.85) and on clash_bond_exclusion (0 at 3)."""
+    system = ff.create_system(traj.topology)
+    (mu,) = [p for p in system.get_potentials() if isinstance(p, mcpu_core.MuPotential)]
+    return mu.start_overlap_pairs
+
+
+def test_without_a_manifest_the_hard_core_is_mcpu08s(small) -> None:
+    ff = MCPUForceField(small)
+    assert (ff.clash_alpha, ff.clash_bond_exclusion) == (0.75, 0)
+    assert _start_overlap_pairs(ff, small) == 8
+
+
+@pytest.mark.parametrize("given, expected, pairs", [
+    ({"clash_alpha": 0.85}, (0.85, 0), 15),
+    ({"clash_bond_exclusion": 3}, (0.75, 3), 0),
+    ({"clash_alpha": 0.85, "clash_bond_exclusion": 3}, (0.85, 3), 0),
+], ids=["alpha", "bonds", "both"])
+def test_the_manifest_gives_the_hard_core(small, tmp_path, given, expected, pairs) -> None:
+    """A force field given no hard core takes the set's, each option on its
+    own, and builds the system an explicit one would."""
+    ff = MCPUForceField(small, param_dir=str(_folder(tmp_path / "hc", _manifest(**given))))
+    assert ff.paramset_manifest == _manifest(**given)
+    assert (ff.clash_alpha, ff.clash_bond_exclusion) == expected
+    assert type(ff.clash_alpha) is float and type(ff.clash_bond_exclusion) is int
+    explicit = MCPUForceField(small, clash_alpha=expected[0], clash_bond_exclusion=expected[1])
+    assert _start_overlap_pairs(ff, small) == _start_overlap_pairs(explicit, small) == pairs
+
+
+@pytest.mark.parametrize("given", [
+    {"clash_alpha": 0.75}, {"clash_bond_exclusion": 0},
+    {"clash_alpha": 0.8, "clash_bond_exclusion": 2},
+])
+def test_an_explicit_hard_core_wins_over_the_manifest(small, tmp_path, given) -> None:
+    folder = _folder(tmp_path / "hc", _manifest(clash_alpha=0.85, clash_bond_exclusion=3))
+    ff = MCPUForceField(small, param_dir=str(folder), **given)
+    expected = {"clash_alpha": 0.85, "clash_bond_exclusion": 3, **given}
+    assert (ff.clash_alpha, ff.clash_bond_exclusion) == (
+        expected["clash_alpha"], expected["clash_bond_exclusion"])
+
+
+def test_a_config_takes_the_sets_hard_core_unless_it_gives_one(chignolin_pdb_path, tmp_path) -> None:
+    folder = _folder(tmp_path / "hc", _manifest(clash_alpha=0.85, clash_bond_exclusion=3))
+    for options, expected in (
+        (None, (0.85, 3)),
+        ({"clash_alpha": None, "clash_bond_exclusion": None}, (0.85, 3)),  # null asks for the set's
+        ({"clash_alpha": 0.75, "clash_bond_exclusion": 0}, (0.75, 0)),
+    ):
+        ff = load_forcefield(chignolin_pdb_path, options=options, param_dir=folder)
+        assert (ff.clash_alpha, ff.clash_bond_exclusion) == expected
+    config = tmp_path / "run.yaml"
+    config.write_text(f"pdb: {chignolin_pdb_path}\ntemperatures: [0.6]\nparam_dir: {folder}\n")
+    session = EngineSession(EngineSpec.from_simulation_config(load_config_auto(config)))
+    built = session._ensure_forcefield()
+    assert (built.clash_alpha, built.clash_bond_exclusion) == (0.85, 3)
+
+
+def test_a_checkpoint_records_the_hard_core_the_run_used(chignolin_pdb_path, tmp_path) -> None:
+    folder = _folder(tmp_path / "hc", _manifest(clash_alpha=0.85, clash_bond_exclusion=3))
+
+    def folding(resume: bool = False, **options) -> FoldingRunner:
+        return FoldingRunner(
+            chignolin_pdb_path, output_dir=str(tmp_path / "out"),
+            checkpoint_dir=str(tmp_path / "ck"), seed=5, report_interval=5, steps_per_cycle=5,
+            checkpoint_interval=1, resume=resume, param_dir=str(folder),
+            forcefield_options=options or None, verbose=False,
+        )
+
+    folding().run(n_cycles=2)
+    saved = load_checkpoint(tmp_path / "ck" / "last.chk")
+    assert (saved["clash_alpha"], saved["clash_bond_exclusion"], saved["clash_start_exemption"]) == (
+        0.85, 3, True)
+    assert saved["format_version"] == 4  # not mcpu08's hard core
+    folding(resume=True, clash_alpha=0.85, clash_bond_exclusion=3).run(n_cycles=3)  # given explicitly
+    with pytest.raises(ValueError, match=re.escape(
+        "written with clash_alpha 0.85, clash_bond_exclusion 3, but this run uses "
+        "clash_alpha 0.75, clash_bond_exclusion 0; resume it with forcefield_options: "
+        "{clash_alpha: 0.85, clash_bond_exclusion: 3}"
+    )):
+        folding(resume=True, clash_alpha=0.75, clash_bond_exclusion=0).run(n_cycles=4)
+
+
+def test_the_manifest_keeps_the_force_fields_bounds() -> None:
+    """``pymcpu.params`` checks a manifest's hard core by the force field's
+    own bounds, which it cannot import (the force field imports it)."""
+    from pymcpu.forcefields import mcpu as mcpu_ff
+
+    assert params._CLASH_ALPHA_LIMIT == mcpu_ff._CLASH_ALPHA_LIMIT == 1.35
+    assert params._MAX_CLASH_BOND_EXCLUSION == mcpu_ff._MAX_CLASH_BOND_EXCLUSION == 3
+    assert checkpointing.LEGACY_CLASH_OPTIONS == {
+        "clash_alpha": mcpu_ff._MU_ALPHA_DEFAULT, "clash_bond_exclusion": 0,
+        "clash_start_exemption": True}
+
+
 # --- the set it names ---
 
 def test_a_manifest_naming_another_set_is_refused(small, tmp_path, monkeypatch) -> None:
@@ -297,6 +397,12 @@ MALFORMED = {
     "empty name": (_manifest(name=" "), "'name' must be a non-empty string"),
     "name not text": (_manifest(name=5), "'name' must be a non-empty string"),
     "description not text": (_manifest(description=3), "'description' must be a string"),
+    **{f"clash_alpha {bad!r}": (_manifest(clash_alpha=bad),
+                                r"'clash_alpha' must be a number above 0 and below 1\.35")
+       for bad in (0, -0.5, 1.35, 1.5, float("nan"), float("inf"), True, "0.85", None)},
+    **{f"clash_bond_exclusion {bad!r}": (_manifest(clash_bond_exclusion=bad),
+                                         "'clash_bond_exclusion' must be a whole number from 0 to 3")
+       for bad in (-1, 4, 3.0, True, "3", None)},
     "factor beyond a float": (_manifest(hbond_beta_favor=10 ** 400),
                               "'hbond_beta_favor' must be a finite number above 0"),
     "weights not an object": (_manifest(folded_weights=[1.0]),

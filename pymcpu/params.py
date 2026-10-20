@@ -58,8 +58,15 @@ PARAMSET_FORMAT = "pymcpu-paramset/1"
 FOLDED_WEIGHT_TERMS = ("mu", "bb_torsion", "sc_torsion", "hbond", "aromatic")
 
 _PARAMSET_KEYS = (
-    "format", "name", "description", "hbond_beta_favor", "folded_weights", "provenance",
+    "format", "name", "description", "hbond_beta_favor", "clash_alpha",
+    "clash_bond_exclusion", "folded_weights", "provenance",
 )
+
+#: The bounds MCPUForceField puts on its ``clash_alpha`` (below the contact
+#: cutoff, 1.8 x 0.75 radius sums) and ``clash_bond_exclusion``; a manifest's
+#: values must keep them too.
+_CLASH_ALPHA_LIMIT = 1.8 * 0.75
+_MAX_CLASH_BOND_EXCLUSION = 3
 
 logger = logging.getLogger(__name__)
 
@@ -383,6 +390,8 @@ def load_paramset_manifest(
           "name": "mcpu26",
           "description": "PISCES 2026 tables, fitted weights",
           "hbond_beta_favor": 3.0,
+          "clash_alpha": 0.85,
+          "clash_bond_exclusion": 3,
           "folded_weights": {"mu": 1.25, "hbond": 0.9},
           "provenance": {"md5": {"mcpu_params/mu_potentials.bin": "<32 hex digits>"}}
         }
@@ -396,7 +405,12 @@ def load_paramset_manifest(
     is the set's hydrogen-bond sheet factor, which
     :class:`~pymcpu.MCPUForceField` uses when it is not given one; it must be
     a number that stays finite and above 0 in float32, the rule the force
-    field applies to its own argument. ``folded_weights`` maps any of
+    field applies to its own argument. ``clash_alpha`` and
+    ``clash_bond_exclusion`` are the set's hard core (the factor, a number
+    above 0 and below 1.35, and a whole number of bonds from 0 to 3, the
+    force field's rules), which :class:`~pymcpu.MCPUForceField` uses when it
+    is not given them: a set's weights hold for the hard core they were
+    fitted with. ``folded_weights`` maps any of
     :data:`FOLDED_WEIGHT_TERMS` to the factor w_new / w_legacy that was
     already multiplied into that term's table, a number that stays finite in
     float32 and is 0 or above (0 for a term the fit switched off). It is a
@@ -408,10 +422,10 @@ def load_paramset_manifest(
     Unknown keys, a key given twice anywhere in the file and a value of the
     wrong kind are refused with ValueError naming the file, as are a name
     other than ``set_name`` and a listed file that is missing or has
-    changed. Returns the checked manifest, with
-    numbers as floats. Comparing a listed file's md5 reads it the first time
-    (0.7 GB for mcpu08's tables, about 3 s with the sha256 the signature
-    takes from the same read), and then once per cache root
+    changed. Returns the checked manifest, with numbers as floats, except
+    ``clash_bond_exclusion``, an int. Comparing a listed file's md5 reads it
+    the first time (0.7 GB for mcpu08's tables, about 3 s with the sha256 the
+    signature takes from the same read), and then once per cache root
     (``MCPU_CACHE_DIR``) while it stays unchanged. With ``check_md5=False`` the
     listed files are not read, only checked to exist;
     :func:`check_paramset_provenance` compares them later.
@@ -467,6 +481,11 @@ def load_paramset_manifest(
         checked["hbond_beta_favor"] = _positive_factor(
             manifest["hbond_beta_favor"], "hbond_beta_favor", path
         )
+    if "clash_alpha" in manifest:
+        checked["clash_alpha"] = _manifest_clash_alpha(manifest["clash_alpha"], path)
+    if "clash_bond_exclusion" in manifest:
+        checked["clash_bond_exclusion"] = _manifest_clash_bond_exclusion(
+            manifest["clash_bond_exclusion"], path)
     if "folded_weights" in manifest:
         weights = manifest["folded_weights"]
         if not isinstance(weights, dict):
@@ -507,6 +526,32 @@ def _positive_factor(value: Any, key: str, path: Path) -> float:
         if 0.0 < factor <= float(np.finfo(np.float32).max) and np.float32(factor) > 0.0:
             return factor
     raise ValueError(f"{path}: '{key}' must be a finite number above 0, got {value!r}")
+
+
+def _manifest_clash_alpha(value: Any, path: Path) -> float:
+    """``value`` as a float, or ValueError unless it is a number (not a bool)
+    above 0 and below 1.35, the rule MCPUForceField applies to its own
+    ``clash_alpha``."""
+    if isinstance(value, numbers.Real) and not isinstance(value, bool):
+        alpha = float(value)
+        if 0.0 < alpha < _CLASH_ALPHA_LIMIT:
+            return alpha
+    raise ValueError(
+        f"{path}: 'clash_alpha' must be a number above 0 and below 1.35 (the contact "
+        f"cutoff, 1.8 x 0.75 radius sums), got {value!r}"
+    )
+
+
+def _manifest_clash_bond_exclusion(value: Any, path: Path) -> int:
+    """``value`` as an int, or ValueError unless it is a whole number (a JSON
+    integer, not a bool) from 0 to 3, the rule MCPUForceField applies to its
+    own ``clash_bond_exclusion``."""
+    if isinstance(value, numbers.Integral) and not isinstance(value, bool):
+        if 0 <= int(value) <= _MAX_CLASH_BOND_EXCLUSION:
+            return int(value)
+    raise ValueError(
+        f"{path}: 'clash_bond_exclusion' must be a whole number from 0 to 3, got {value!r}"
+    )
 
 
 def _folded_weight(value: Any, key: str, path: Path) -> float:

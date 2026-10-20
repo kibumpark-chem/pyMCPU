@@ -159,6 +159,7 @@ sheet factor `hbond_beta_favor`: by default the parameter set's own (from its
 |---|---|
 | Legacy outer energy weights | on |
 | H-bond sheet factor (`hbond_beta_favor`) | the set's `paramset.json`, else 2.0 (mcpu08; legacy MCPU: 3.0) |
+| Hard core (`clash_alpha`, `clash_bond_exclusion`) | the set's `paramset.json` (mcpu26: 0.85 and 3), else 0.75 and 0 (mcpu08) |
 | Rotamer proposal (`rotamer_library`) | `dunbrack2002_sym`, both images of symmetric χ (legacy MCPU's draw: `dunbrack2002`) |
 | Virtual amide H (H-bond-only hydrogens) | on |
 | Periodic boundary conditions | none (open boundary) |

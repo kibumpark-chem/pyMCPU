@@ -23,7 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   of loading with mcpu08's factor. The tables live in `mcpu26_params/`, so a
   folder of mcpu08's given for mcpu26 (`MCPU_PARAMS_DIR`, `param_dir`) fails,
   as does one of mcpu26's given for mcpu08. Its weights were fitted with
-  `clash_alpha` 0.85 and `clash_bond_exclusion` 3. The raw tables are
+  `clash_alpha` 0.85 and `clash_bond_exclusion` 3, which its manifest gives
+  as the set's own (see Changed). The raw tables are
   gitignored like mcpu08's. `pymcpu.params.available_sets()` lists the
   registered sets, and `scripts/encode_params.py` takes `--src` and `--out`
   from `--set` when they are not given.
@@ -102,6 +103,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **A parameter set's manifest can give its hard core**, `clash_alpha` and
+  `clash_bond_exclusion`, resolved as `hbond_beta_favor` is:
+  `MCPUForceField(clash_alpha=None, clash_bond_exclusion=None)` are the
+  defaults, and take the set's own, else mcpu08's 0.75 and 0; a value given as
+  an argument or in `forcefield_options` always wins, and checkpoints record
+  the values the run used. A set's weights hold for the hard core they were
+  fitted with: mcpu26's manifest gives 0.85 and 3. mcpu08 has no manifest, so
+  it runs as before. `clash_alpha: null` and `clash_bond_exclusion: null` in a
+  config now ask for this default instead of being refused.
 - **A force field refuses a parameter folder whose `constants/paramset.json`
   names another set than its `param_set`.** A folder's tables and defaults
   are those of the set its manifest names, so loading it as another set mixed

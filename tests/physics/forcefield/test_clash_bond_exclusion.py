@@ -195,7 +195,9 @@ def test_the_pairs_mcpu08s_rules_let_clash(chignolin: MCPUForceField) -> None:
     assert clash0[i, j] == 0 and clash3[i, j] == 0
 
 
-@pytest.mark.parametrize("value", [-1, 4, 3.0, True, "3", None], ids=repr)
+# None is not here: like hbond_beta_favor, it asks for the parameter set's own
+# (test_paramset_manifest.py), 0 for mcpu08.
+@pytest.mark.parametrize("value", [-1, 4, 3.0, True, "3"], ids=repr)
 def test_clash_bond_exclusion_is_checked(heavy: md.Trajectory, value: object) -> None:
     with pytest.raises(ValueError, match="clash_bond_exclusion must be 0"):
         MCPUForceField(heavy, clash_bond_exclusion=value)

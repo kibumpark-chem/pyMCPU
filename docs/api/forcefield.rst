@@ -157,15 +157,20 @@ The hard core
 
 Two atoms that can clash may come no closer than a hard core, a factor times
 the sum of their radii; a move that would put them closer is rejected. Three
-options set it. The defaults are mcpu08's, and checkpoints record all three,
-so a run resumes only with the values it started with.
+options set it. ``clash_alpha`` and ``clash_bond_exclusion`` default to the
+parameter set's own (its ``constants/paramset.json``, see
+`A parameter set's own defaults`_), else mcpu08's, and
+``clash_start_exemption`` to mcpu08's. A value given explicitly wins.
+Checkpoints record the values a run used, so it resumes only with the values
+it started with.
 
-- ``clash_alpha`` (0.75): the factor. It must be above 0 and below 1.35; the
-  contact cutoff stays at 1.35 radius sums.
-- ``clash_bond_exclusion`` (0): 1, 2 or 3 leaves out of the clash check every
-  pair at most that many covalent bonds apart, by the residue templates and
-  the start structure's disulfide bridges (two CYS SG atoms under 2.5 Å
-  apart). mcpu08's rules already leave out bonded pairs, but not all pairs
+- ``clash_alpha`` (the set's own, else 0.75; mcpu26 gives 0.85): the factor.
+  It must be above 0 and below 1.35; the contact cutoff stays at 1.35 radius
+  sums.
+- ``clash_bond_exclusion`` (the set's own, else 0; mcpu26 gives 3): 1, 2 or 3
+  leaves out of the clash check every pair at most that many covalent bonds
+  apart, by the residue templates and the start structure's disulfide bridges
+  (two CYS SG atoms under 2.5 Å apart). mcpu08's rules already leave out bonded pairs, but not all pairs
   two or three bonds apart, whose distance a bond angle or one torsion sets.
   A bridge the start structure lacks is not counted; at ``clash_alpha`` 0.85
   its CB-SG pairs, about 3.0 Å apart in a bridge, are inside the hard core.
@@ -205,6 +210,9 @@ A parameter folder can describe its set in ``constants/paramset.json``
 - ``hbond_beta_favor``, the set's sheet factor, which
   :class:`~pymcpu.MCPUForceField` uses when it is given none. A factor given
   explicitly, as an argument or in ``forcefield_options``, wins;
+- ``clash_alpha`` and ``clash_bond_exclusion``, the set's hard core (see
+  `The hard core`_), which the force field uses in the same way: a set's
+  weights hold for the hard core they were fitted with;
 - ``folded_weights``: for any of the five terms, the factor
   w_new / w_legacy that the set multiplied into that term's table, 0 or
   above (0 for a term the fit switched off). It is a record only. The engine
@@ -258,9 +266,10 @@ in ``mcpu26_params/``, not ``mcpu_params/``, so a folder of one set given for
 the other, as ``MCPU_PARAMS_DIR`` or ``param_dir``, fails.
 
 Its weights were fitted with ``clash_alpha`` 0.85 and ``clash_bond_exclusion``
-3 (see `The hard core`_), with start overlaps exempt in runs and penalised
-when a start structure was relaxed. Pass the same options to run it as it was
-fitted: ``forcefield_options: {clash_alpha: 0.85, clash_bond_exclusion: 3}``.
+3 (see `The hard core`_), and its ``constants/paramset.json`` gives both, so a
+force field of the set uses them unless it is given others. In the fit, start
+overlaps were exempt in runs and penalised when a start structure was relaxed
+(``clash_start_exemption``, which a run chooses, not the set).
 
 Attributes
 ----------
@@ -341,12 +350,14 @@ Set during construction and safe to read:
 .. py:attribute:: pymcpu.MCPUForceField.clash_alpha
    :type: float
 
-   The hard-core factor (see `The hard core`_).
+   The hard-core factor (see `The hard core`_): the ``clash_alpha``
+   argument, or, when that is None, the parameter set's own, else 0.75.
 
 .. py:attribute:: pymcpu.MCPUForceField.clash_bond_exclusion
    :type: int
 
-   Pairs at most this many covalent bonds apart cannot clash; 0 keeps
+   Pairs at most this many covalent bonds apart cannot clash: the argument,
+   or, when that is None, the parameter set's own, else 0, which keeps
    mcpu08's rules.
 
 .. py:attribute:: pymcpu.MCPUForceField.clash_start_exemption
