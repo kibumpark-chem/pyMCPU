@@ -113,14 +113,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   it runs as before. `clash_alpha: null` and `clash_bond_exclusion: null` in a
   config now ask for this default instead of being refused.
 - **A force field refuses a parameter folder whose `constants/paramset.json`
-  names another set than its `param_set`.** A folder's tables and defaults
-  are those of the set its manifest names, so loading it as another set mixed
-  one set's files with the other's name, which checkpoints record. The check
-  comes before any table is read, and the error names the set to load it as.
+  names a registered set other than its `param_set`.** Such a folder's tables
+  and defaults are that set's, so loading it as another set mixed one set's
+  files with the other's name, which checkpoints record. The check comes
+  before any table is read, and the error names the set to load it as.
   `pymcpu.params.load_paramset_manifest(..., set_name=...)` makes the same
-  check; without `set_name` it compares no name. A folder with mcpu08's
-  layout and a manifest of another name, loaded as mcpu08 before, is now
-  refused.
+  check; without `set_name` it compares no name. A name no set is registered
+  under, such as a research folder's own, is not compared: that folder loads
+  as the `param_set` it is given for, with its manifest's defaults. 0.1.0 read
+  no manifest, so a folder laid out as mcpu08's whose manifest names another
+  registered set (mcpu26) loaded as mcpu08 there, and is now refused.
 - `MCPUForceField(hbond_beta_favor=None)` is the default: a force field
   given no factor takes its parameter set's, and 2.0 when the set gives none,
   so mcpu08 runs as before. A factor given as an argument or in

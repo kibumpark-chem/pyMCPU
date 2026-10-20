@@ -8,8 +8,9 @@ given explicitly always wins. Its hard core, ``clash_alpha`` and
 ``clash_bond_exclusion``, resolves the same way, else to mcpu08's 0.75 and 0.
 ``folded_weights`` is a record only. The
 manifest is checked strictly: unknown or repeated keys, values of the wrong
-kind, a name other than the set the folder is loaded as, and listed files
-whose md5 has changed are refused.
+kind, the name of a registered set other than the one the folder is loaded
+as, and listed files whose md5 has changed are refused. A name no set is
+registered under, a research folder's own, is not compared.
 
 The folders here link mcpu08's files and are loaded as mcpu08, so their
 manifests name mcpu08, and each check compares a build from a manifest with a
@@ -326,24 +327,26 @@ def test_the_manifest_keeps_the_force_fields_bounds() -> None:
 # --- the set it names ---
 
 def test_a_manifest_naming_another_set_is_refused(small, tmp_path, monkeypatch) -> None:
-    """A folder's tables and defaults are those of the set its manifest
-    names, so a force field of another set refuses it, before any file the
-    manifest lists is read. Read without a set to compare, as a script may,
-    the manifest loads; a force field of the set it names builds."""
+    """A folder whose manifest names a registered set holds that set's tables
+    and defaults, so a force field of another set refuses it, before any file
+    the manifest lists is read. Read without a set to compare, as a script
+    may, the manifest loads; and the advice works: a force field of the set it
+    names builds."""
     monkeypatch.setenv("MCPU_CACHE_DIR", str(tmp_path / "cache"))
+    name = register_set_like_mcpu08(monkeypatch, "other_set")
     folder = _folder(tmp_path / "f")
     md5 = hashlib.md5(_own_copy(folder, TABLE).read_bytes()).hexdigest()
     (folder / PARAMSET_MANIFEST).write_text(json.dumps(_manifest(
-        name="other_set", hbond_beta_favor=3.0, provenance={"md5": {TABLE: md5}})))
+        name=name, hbond_beta_favor=3.0, provenance={"md5": {TABLE: md5}})))
     reads: list[str] = []
     hash_file = params._hash_file
     monkeypatch.setattr(params, "_hash_file",
                         lambda path: reads.append(Path(path).name) or hash_file(path))
     refused = re.escape(
         f"{folder / PARAMSET_MANIFEST} describes parameter set 'other_set', but the folder "
-        "was loaded as parameter set 'mcpu08'. A folder's tables and defaults belong to the "
-        "set its manifest names: load it with param_set 'other_set' (param_set: other_set "
-        "in a config), or give a folder of 'mcpu08'")
+        "was loaded as parameter set 'mcpu08'. A folder whose manifest names a registered "
+        "set holds that set's tables and defaults: load it with param_set 'other_set' "
+        "(param_set: other_set in a config), or give a folder of 'mcpu08'")
     with pytest.raises(ValueError, match=refused):
         MCPUForceField(small, param_dir=str(folder))
     with pytest.raises(ValueError, match=refused):
@@ -353,17 +356,52 @@ def test_a_manifest_naming_another_set_is_refused(small, tmp_path, monkeypatch) 
     assert reads == []  # refused before the listed table was read
     assert load_paramset_manifest(folder)["name"] == "other_set"
     assert load_paramset_manifest(folder, set_name="other_set")["hbond_beta_favor"] == 3.0
-    name = register_set_like_mcpu08(monkeypatch, "other_set")
     ff = MCPUForceField(small, param_set=name, param_dir=str(folder))
     assert ff.paramset_manifest["name"] == "other_set"
     assert ff.hbond_beta_favor == 3.0
+    # The other way round: a folder of mcpu08 given for the other set.
+    mcpu08 = _folder(tmp_path / "m", _manifest())
+    with pytest.raises(ValueError, match="describes parameter set 'mcpu08', but the folder was "
+                                         "loaded as parameter set 'other_set'"):
+        MCPUForceField(small, param_set=name, param_dir=str(mcpu08))
 
 
-def test_the_name_must_match_exactly(small, tmp_path) -> None:
-    for other in ("MCPU08", "mcpu08 ", "mcpu"):
+def test_the_name_must_match_exactly(small, tmp_path, monkeypatch) -> None:
+    """A registered name that differs from mcpu08 only in case or spacing is
+    another set, so a folder that names it is refused as mcpu08."""
+    others = ("MCPU08", "mcpu08 ", "mcpu")
+    for other in others:
+        register_set_like_mcpu08(monkeypatch, other)
+    for other in others:
         folder = _folder(tmp_path / repr(other), _manifest(name=other))
         with pytest.raises(ValueError, match=f"describes parameter set {re.escape(repr(other))}"):
             MCPUForceField(small, param_dir=str(folder))
+
+
+def test_a_manifest_naming_an_unregistered_set_loads_as_mcpu08(small, tmp_path) -> None:
+    """A research folder: tables laid out as mcpu08's, with a manifest that
+    names the folder's own set, which is not registered, loaded with
+    param_set mcpu08 and its param_dir (as the mcpu26 fits loaded theirs). No
+    registered set claims it, so its name is not compared: it loads as mcpu08,
+    with its own sheet factor and hard core."""
+    name = "mcpu26_v1b_w5"
+    assert name not in params.available_sets()
+    manifest = _manifest(name=name, hbond_beta_favor=2.5, clash_alpha=0.85,
+                         clash_bond_exclusion=3)
+    folder = _folder(tmp_path / name, manifest)
+    assert load_paramset_manifest(folder, set_name="mcpu08") == manifest
+    ff = MCPUForceField(small, param_set="mcpu08", param_dir=str(folder))
+    assert (ff.param_set, ff.paramset_manifest) == ("mcpu08", manifest)
+    assert (ff.hbond_beta_favor, ff.clash_alpha, ff.clash_bond_exclusion) == (2.5, 0.85, 3)
+    # It builds the system a force field given the same values builds.
+    explicit = MCPUForceField(small, hbond_beta_favor=2.5, clash_alpha=0.85, clash_bond_exclusion=3)
+    factor, energies = _evaluate(ff, small)
+    assert factor == 2.5
+    assert (factor, energies) == _evaluate(explicit, small)
+    assert _start_overlap_pairs(ff, small) == _start_overlap_pairs(explicit, small) == 0
+    # As a config gives it (forcefield: mcpu08, param_set: mcpu08, param_dir).
+    built = load_forcefield(small, "mcpu08", param_set="mcpu08", param_dir=folder)
+    assert (built.hbond_beta_favor, built.clash_alpha, built.clash_bond_exclusion) == (2.5, 0.85, 3)
 
 
 # --- what a manifest may hold ---

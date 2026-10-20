@@ -2,7 +2,8 @@
 # docs/conf.py mocks pymcpu.mcpu_core (unconditionally), so none of this
 # needs the compiled extension.
 
-sphinx>=7.0
+# 7.2: the :no-index: option, which docs/api/forcefield.rst uses.
+sphinx>=7.2
 furo>=2024.8.6
 sphinx-autodoc-typehints>=1.23
 myst-parser>=2.0

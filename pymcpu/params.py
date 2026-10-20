@@ -393,15 +393,17 @@ def load_paramset_manifest(
           "clash_alpha": 0.85,
           "clash_bond_exclusion": 3,
           "folded_weights": {"mu": 1.25, "hbond": 0.9},
-          "provenance": {"md5": {"mcpu_params/mu_potentials.bin": "<32 hex digits>"}}
+          "provenance": {"md5": {"mcpu26_params/mu_potentials.bin": "<32 hex digits>"}}
         }
 
     ``format`` (exactly :data:`PARAMSET_FORMAT`) and ``name`` (a non-empty
     string) are required; ``description`` is a string. With ``set_name``,
     the parameter set the folder is loaded as (``MCPUForceField`` passes its
-    ``param_set``), a manifest whose ``name`` is another set's is refused
-    before any listed file is read: the folder's tables and defaults are
-    those of the set its manifest names. ``hbond_beta_favor``
+    ``param_set``), a manifest whose ``name`` is another registered set (one
+    of :func:`available_sets`) is refused before any listed file is read: the
+    folder's tables and defaults are that set's. A name no set is registered
+    under, such as a research folder's own, is not compared: the folder loads
+    as ``set_name``, with its manifest's defaults. ``hbond_beta_favor``
     is the set's hydrogen-bond sheet factor, which
     :class:`~pymcpu.MCPUForceField` uses when it is not given one; it must be
     a number that stays finite and above 0 in float32, the rule the force
@@ -420,14 +422,14 @@ def load_paramset_manifest(
     had when the set was written, and every listed file must still have it.
 
     Unknown keys, a key given twice anywhere in the file and a value of the
-    wrong kind are refused with ValueError naming the file, as are a name
-    other than ``set_name`` and a listed file that is missing or has
-    changed. Returns the checked manifest, with numbers as floats, except
-    ``clash_bond_exclusion``, an int. Comparing a listed file's md5 reads it
-    the first time (0.7 GB for mcpu08's tables, about 3 s with the sha256 the
-    signature takes from the same read), and then once per cache root
-    (``MCPU_CACHE_DIR``) while it stays unchanged. With ``check_md5=False`` the
-    listed files are not read, only checked to exist;
+    wrong kind are refused with ValueError naming the file, as are the name
+    of a registered set other than ``set_name`` and a listed file that is
+    missing or has changed. Returns the checked manifest, with numbers as
+    floats, except ``clash_bond_exclusion``, an int. Comparing a listed
+    file's md5 reads it the first time (0.7 GB for mcpu08's tables, about 3 s
+    with the sha256 the signature takes from the same read), and then once
+    per cache root (``MCPU_CACHE_DIR``) while it stays unchanged. With
+    ``check_md5=False`` the listed files are not read, only checked to exist;
     :func:`check_paramset_provenance` compares them later.
     """
     root = Path(param_dir)
@@ -463,12 +465,14 @@ def load_paramset_manifest(
     name = manifest["name"]
     if not isinstance(name, str) or not name.strip():
         raise ValueError(f"{path}: 'name' must be a non-empty string, got {name!r}")
-    if set_name is not None and name != set_name:
+    # Only a registered set claims a folder: a research folder may name
+    # itself, and loads as the set it is given for.
+    if set_name is not None and name != set_name and name in available_sets():
         raise ValueError(
             f"{path} describes parameter set {name!r}, but the folder was loaded as "
-            f"parameter set {set_name!r}. A folder's tables and defaults belong to the "
-            f"set its manifest names: load it with param_set {name!r} (param_set: {name} "
-            f"in a config), or give a folder of {set_name!r}"
+            f"parameter set {set_name!r}. A folder whose manifest names a registered set "
+            f"holds that set's tables and defaults: load it with param_set {name!r} "
+            f"(param_set: {name} in a config), or give a folder of {set_name!r}"
         )
     checked: dict[str, Any] = {"format": PARAMSET_FORMAT, "name": name}
     if "description" in manifest:

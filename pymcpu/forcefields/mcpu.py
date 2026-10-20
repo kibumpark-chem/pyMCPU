@@ -251,7 +251,10 @@ class MCPUForceField(BaseForceField):
             The registered parameter set (``mcpu08``, the default, or
             ``mcpu26``): the one resolved when ``param_dir`` is omitted, and
             the layout ``param_dir`` must have. A folder whose
-            ``constants/paramset.json`` names another set is refused.
+            ``constants/paramset.json`` names another registered set is
+            refused; one that names a set no one registered (a research
+            folder's own name) loads as ``param_set``, with that file's
+            defaults.
         virtual_amide_h
             If True (default), use virtual amide hydrogens as above. If False,
             add explicit amide hydrogens to the engine's atoms instead.
@@ -335,8 +338,8 @@ class MCPUForceField(BaseForceField):
             ``clash_start_exemption`` that is not True or False, a
             ``constants/paramset.json`` that
             :func:`pymcpu.params.load_paramset_manifest` refuses (including
-            one that names a set other than ``param_set``, and one whose
-            provenance md5 a listed file no longer has), or a
+            one that names a registered set other than ``param_set``, and one
+            whose provenance md5 a listed file no longer has), or a
             residue template (``constants/standard_amino_acids.json``) in
             which a residue lacks, for any of the chi angles it has
             (``ntorsions``), the atoms that define it (``chi_atoms``) or the

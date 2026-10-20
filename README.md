@@ -16,9 +16,11 @@ Sampling uses Metropolis Monte Carlo with pivot, continuous sidechain,
 rotamer-library and kinematic-closure loop moves, plus temperature/umbrella
 replica exchange in one process or over MPI.
 
-This release ships the `mcpu08` force field (legacy MCPU's energy function
-and tables, with one default changed; see Physics defaults below); a second
-force field, `mcpu26`, is planned for 0.2.0.
+This release ships the `mcpu08` force field (legacy MCPU's energy function,
+with one default changed; see Physics defaults below) and two parameter sets
+for it: `mcpu08`, legacy MCPU's tables and the default, and `mcpu26`, tables
+re-estimated from PISCES 2026 with fitted weights (see Pretrained parameters
+below).
 
 Full documentation: **<https://pymcpu.readthedocs.io>**
 

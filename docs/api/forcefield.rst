@@ -203,10 +203,12 @@ A parameter set's own defaults
 A parameter folder can describe its set in ``constants/paramset.json``
 (format ``pymcpu-paramset/1``; mcpu08 has none):
 
-- its ``name``, which must be the set the folder is loaded as
-  (``param_set``), and optionally a ``description``. A force field refuses a
-  folder whose manifest names another set, as the folder's tables and
-  defaults are that set's;
+- its ``name``, and optionally a ``description``. A force field refuses a
+  folder whose manifest names a registered set (one of
+  :func:`pymcpu.params.available_sets`) other than its ``param_set``, as the
+  folder's tables and defaults are that set's. A name no set is registered
+  under, such as a research folder's own, is not compared: the folder loads
+  as the ``param_set`` it is given for, with its manifest's defaults;
 - ``hbond_beta_favor``, the set's sheet factor, which
   :class:`~pymcpu.MCPUForceField` uses when it is given none. A factor given
   explicitly, as an argument or in ``forcefield_options``, wins;
@@ -349,12 +351,14 @@ Set during construction and safe to read:
 
 .. py:attribute:: pymcpu.MCPUForceField.clash_alpha
    :type: float
+   :no-index:
 
    The hard-core factor (see `The hard core`_): the ``clash_alpha``
    argument, or, when that is None, the parameter set's own, else 0.75.
 
 .. py:attribute:: pymcpu.MCPUForceField.clash_bond_exclusion
    :type: int
+   :no-index:
 
    Pairs at most this many covalent bonds apart cannot clash: the argument,
    or, when that is None, the parameter set's own, else 0, which keeps
@@ -362,6 +366,7 @@ Set during construction and safe to read:
 
 .. py:attribute:: pymcpu.MCPUForceField.clash_start_exemption
    :type: bool
+   :no-index:
 
    Whether start overlaps are exempt (True) or penalised (False).
 
