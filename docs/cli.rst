@@ -46,7 +46,7 @@ a new directory, and running the command again is quick.
 
 .. option:: --set SET
 
-   Parameter set name. Default ``mcpu08``.
+   Parameter set name: ``mcpu08`` (the default) or ``mcpu26``.
 
 .. option:: --timeout SECONDS
 

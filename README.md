@@ -216,13 +216,15 @@ mcpu materialize-params --set mcpu08  # decode the bundled tables once
 
 ## Pretrained parameters
 
-`pymcpu.params.ensure_params("mcpu08")` resolves the fitted potentials in this
-order; the first hit wins:
+Two sets ship: `mcpu08`, the default, and `mcpu26` (`param_set="mcpu26"`),
+mcpu08's energy function with tables re-estimated from PISCES 2026 and fitted
+weights. `pymcpu.params.ensure_params("mcpu08")` resolves a set's fitted
+potentials in this order; the first hit wins:
 
 | Priority | Source |
 |---|---|
-| 1 | `MCPU_PARAMS_DIR` — a pre-staged root (offline / HPC) |
-| 2 | Editable-checkout tree (`src/pymcpu/parameters/pretrained/mcpu08`) |
+| 1 | `MCPU_PARAMS_DIR` — a pre-staged root of that set (offline / HPC) |
+| 2 | Editable-checkout tree (`src/pymcpu/parameters/pretrained/<set>`) |
 | 3 | **The compact archive shipped inside the package**, decoded into the cache (`MCPU_CACHE_DIR`, default `~/.cache/pymcpu`) |
 
 Step 3 is what makes a plain `pip install` work with no network. It sits below

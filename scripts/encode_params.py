@@ -9,15 +9,18 @@ integers.
 Usage::
 
     python scripts/encode_params.py \\
-        --src src/pymcpu/parameters/pretrained/mcpu08 \\
-        --out pymcpu/data/params/mcpu08 \\
-        --set mcpu08
+        --src src/pymcpu/parameters/pretrained/mcpu26 \\
+        --out pymcpu/data/params/mcpu26 \\
+        --set mcpu26
 
-    # release-prep gate: fail if the committed archive is stale
-    python scripts/encode_params.py --check
+    # release-prep gate, once per registered set: fail if the committed
+    # archive is stale
+    python scripts/encode_params.py --set mcpu08 --check
+    python scripts/encode_params.py --set mcpu26 --check
 
-The table list and the constants list both come from the registry's
-``layout``, never from a local copy. The set's own manifest,
+``--src`` and ``--out`` default to the set's raw tree and its folder in the
+package, as above. The table list and the constants list both come from the
+registry's ``layout``, never from a local copy. The set's own manifest,
 ``constants/paramset.json``, ships with the constants when ``--src`` has
 one (``pymcpu.params.shipped_constants``).
 """
@@ -40,7 +43,8 @@ import numpy as np  # noqa: E402
 from pymcpu.paramcodec import decode_table, encode_set, read_header  # noqa: E402
 from pymcpu.params import shipped_constants, table_layout  # noqa: E402
 
-_DEFAULT_SRC = REPO_ROOT / "src" / "pymcpu" / "parameters" / "pretrained" / "mcpu08"
+_RAW_ROOT = REPO_ROOT / "src" / "pymcpu" / "parameters" / "pretrained"
+_PACKAGE_ROOT = REPO_ROOT / "pymcpu" / "data" / "params"
 _ARCHIVE_NAME = "tables.npz"
 
 
@@ -117,11 +121,12 @@ def _encode_into(src: Path, out_dir: Path, set_name: str, version: str, level: i
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--src", type=Path, default=_DEFAULT_SRC,
-                   help="raw params root containing constants/ and mcpu_params/")
-    p.add_argument("--out", type=Path,
-                   default=REPO_ROOT / "pymcpu" / "data" / "params" / "mcpu08",
-                   help="destination for tables.npz + constants/")
+    p.add_argument("--src", type=Path, default=None,
+                   help="raw params root, laid out as the set (constants/ and its "
+                        "table folder); default src/pymcpu/parameters/pretrained/<set>")
+    p.add_argument("--out", type=Path, default=None,
+                   help="destination for tables.npz + constants/; default "
+                        "pymcpu/data/params/<set>")
     p.add_argument("--set", dest="set_name", default="mcpu08")
     p.add_argument("--version", default="1.0.0")
     p.add_argument("--compresslevel", type=int, default=9)
@@ -130,6 +135,10 @@ def main() -> int:
     p.add_argument("--check", action="store_true",
                    help="encode to a temp dir and diff against --out; exit 1 on drift")
     args = p.parse_args()
+    if args.src is None:
+        args.src = _RAW_ROOT / args.set_name
+    if args.out is None:
+        args.out = _PACKAGE_ROOT / args.set_name
 
     src = args.src.resolve()
     if not src.is_dir():
@@ -137,7 +146,7 @@ def main() -> int:
 
     if args.check:
         with tempfile.TemporaryDirectory() as tmp:
-            staging = Path(tmp) / "mcpu08"
+            staging = Path(tmp) / args.set_name
             _encode_into(src, staging, args.set_name, args.version,
                          args.compresslevel, not args.no_verify)
             # Compare decoded content, not archive bytes: zlib output is not

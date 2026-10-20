@@ -9,6 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The mcpu26 parameter set** (`MCPUForceField(..., param_set="mcpu26")`,
+  `param_set: mcpu26` in a config, `mcpu materialize-params --set mcpu26`):
+  mcpu26 in its legacy form, mcpu08's energy function with its tables
+  re-estimated from PISCES 2026 and the weights of a landscape fit on natural
+  Tsuboyama domains folded into them. It ships as a compact archive
+  (`pymcpu/data/params/mcpu26/tables.npz`, 7.8 MiB: the folded weights make
+  its tables float32, not integers) next to byte copies of mcpu08's constants
+  and its own `constants/paramset.json`. The manifest gives the set's sheet
+  factor, 2.3993940353393555, which a force field uses when it is given none,
+  and records the folded weights and the md5 of each table; the set's layout
+  requires it, so a folder of mcpu26's tables without it is incomplete instead
+  of loading with mcpu08's factor. The tables live in `mcpu26_params/`, so a
+  folder of mcpu08's given for mcpu26 (`MCPU_PARAMS_DIR`, `param_dir`) fails,
+  as does one of mcpu26's given for mcpu08. Its weights were fitted with
+  `clash_alpha` 0.85 and `clash_bond_exclusion` 3. The raw tables are
+  gitignored like mcpu08's. `pymcpu.params.available_sets()` lists the
+  registered sets, and `scripts/encode_params.py` takes `--src` and `--out`
+  from `--set` when they are not given.
 - **Clash options** for `MCPUForceField` (`forcefield_options`):
   `clash_alpha`, the hard-core factor (0.75; the contact cutoff stays at
   1.35 radius sums); `clash_bond_exclusion`, which leaves pairs up to 1, 2
@@ -84,6 +102,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **A force field refuses a parameter folder whose `constants/paramset.json`
+  names another set than its `param_set`.** A folder's tables and defaults
+  are those of the set its manifest names, so loading it as another set mixed
+  one set's files with the other's name, which checkpoints record. The check
+  comes before any table is read, and the error names the set to load it as.
+  `pymcpu.params.load_paramset_manifest(..., set_name=...)` makes the same
+  check; without `set_name` it compares no name. A folder with mcpu08's
+  layout and a manifest of another name, loaded as mcpu08 before, is now
+  refused.
 - `MCPUForceField(hbond_beta_favor=None)` is the default: a force field
   given no factor takes its parameter set's, and 2.0 when the set gives none,
   so mcpu08 runs as before. A factor given as an argument or in
@@ -102,6 +129,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The docs say when `EngineSession.fingerprint` reads the parameter files:
+  it is taken the first time it is read, which signs them (a full read of
+  each, unless the cache already holds its digests), so a worker that never
+  reads it does not pay for it. And the docstring of
+  `pymcpu.params._files_digests` said that a file changing while it is read
+  is read again; it is refused with `ParamsError`, as its digests would
+  describe no one version of it.
 - **A residue template must name the atoms of every chi angle the engine
   counts.** `MCPUForceField` refuses a parameter folder whose
   `constants/standard_amino_acids.json` gives a residue, for each of its

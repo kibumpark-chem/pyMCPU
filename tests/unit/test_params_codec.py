@@ -6,7 +6,7 @@ must be byte-identical to ``np.fromfile(raw, np.float32)``, because the C++
 engine consumes it as a plain float32 buffer and the suite pins exact
 accept-bit streams.
 
-Two anti-drift locks are asserted here:
+Two anti-drift locks are asserted here, for every registered set's archive:
 
 * every table's stored digest is re-computed independently from the decoded
   bytes, so re-encoding without updating the digest fails, and corrupting the
@@ -30,10 +30,19 @@ from pymcpu.paramcodec import (
     read_header,
     table_info,
 )
-from pymcpu.params import table_layout
+from pymcpu.params import available_sets, table_layout
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
-_ARCHIVE = _REPO_ROOT / "pymcpu" / "data" / "params" / "mcpu08" / "tables.npz"
+SETS = available_sets()
+
+
+def _archive(set_name: str) -> Path:
+    """A set's shipped archive; the test skips when it is absent."""
+    archive = _REPO_ROOT / "pymcpu" / "data" / "params" / set_name / "tables.npz"
+    if not archive.is_file():
+        pytest.skip("shipped archive absent; run scripts/encode_params.py")
+    return archive
+
 
 # Element counts derived from the builders that consume each table, so a
 # reshape change in a builder surfaces here instead of at a user's runtime.
@@ -60,24 +69,19 @@ def _expected_element_counts() -> dict[str, int]:
     }
 
 
-requires_archive = pytest.mark.skipif(
-    not _ARCHIVE.is_file(), reason="shipped archive absent; run scripts/encode_params.py"
-)
-
-
-@requires_archive
-def test_header_is_valid() -> None:
-    header = read_header(_ARCHIVE)
+@pytest.mark.parametrize("set_name", SETS)
+def test_header_is_valid(set_name: str) -> None:
+    header = read_header(_archive(set_name))
     assert header["format"] == FORMAT_ID
     assert header["endianness"] == "little"
-    assert header["set"] == "mcpu08"
-    assert set(header["tables"]) == set(table_layout("mcpu08"))
+    assert header["set"] == set_name
+    assert set(header["tables"]) == set(table_layout(set_name))
 
 
-@requires_archive
-def test_shapes_match_the_builders_without_decompressing() -> None:
+@pytest.mark.parametrize("set_name", SETS)
+def test_shapes_match_the_builders_without_decompressing(set_name: str) -> None:
     """``table_info`` reads only .npy headers -- microseconds, no decode."""
-    info = table_info(_ARCHIVE)
+    info = table_info(_archive(set_name))
     expected = _expected_element_counts()
     assert set(info) == set(expected)
     for name, n_expected in expected.items():
@@ -85,35 +89,38 @@ def test_shapes_match_the_builders_without_decompressing() -> None:
         assert n_actual == n_expected, f"{name}: {n_actual} != {n_expected}"
         assert nbytes == n_expected * 4, f"{name}: decoded nbytes mismatch"
         assert dtype in (np.dtype(np.int16), np.dtype(np.float32))
-        assert relpath.startswith("mcpu_params/")
+        # Each table decodes to the path the set's own layout names.
+        assert relpath == table_layout(set_name)[name]
 
 
-@requires_archive
+@pytest.mark.parametrize("set_name", SETS)
 @pytest.mark.parametrize(
     "name",
     ["mu_potentials", "hbond_seq_dep", "aromatic_potentials",
      "hydrogen_bond_potentials", "triplet_potentials"],
 )
-def test_decode_is_bit_exact_against_the_stored_digest(name: str) -> None:
+def test_decode_is_bit_exact_against_the_stored_digest(set_name: str, name: str) -> None:
     """Independently recompute the digest -- this is the anti-drift lock."""
     import hashlib
 
-    decoded = decode_table(_ARCHIVE, name, verify=True)
+    archive_path = _archive(set_name)
+    decoded = decode_table(archive_path, name, verify=True)
     assert decoded.dtype == np.dtype(np.float32)
     assert decoded.flags.c_contiguous
-    with np.load(_ARCHIVE, allow_pickle=False) as archive:
+    with np.load(archive_path, allow_pickle=False) as archive:
         stored_digest = bytes(archive[f"{name}__sha256"])
     assert hashlib.sha256(decoded.tobytes()).digest() == stored_digest
 
 
-@requires_archive
 @pytest.mark.slow
-def test_decode_is_bit_exact_for_the_large_table() -> None:
+@pytest.mark.parametrize("set_name", SETS)
+def test_decode_is_bit_exact_for_the_large_table(set_name: str) -> None:
     """The 633 MiB sidechain table, split out because it costs ~1.7 s to hash."""
     import hashlib
 
-    decoded = decode_table(_ARCHIVE, "sidechain_triplet_potentials", verify=True)
-    with np.load(_ARCHIVE, allow_pickle=False) as archive:
+    archive_path = _archive(set_name)
+    decoded = decode_table(archive_path, "sidechain_triplet_potentials", verify=True)
+    with np.load(archive_path, allow_pickle=False) as archive:
         stored = bytes(archive["sidechain_triplet_potentials__sha256"])
     assert hashlib.sha256(decoded.tobytes()).digest() == stored
 
@@ -189,10 +196,10 @@ def test_rejects_a_non_archive(tmp_path: Path) -> None:
         read_header(out)
 
 
-@requires_archive
-def test_decode_detects_a_corrupted_digest(tmp_path: Path) -> None:
+@pytest.mark.parametrize("set_name", SETS)
+def test_decode_detects_a_corrupted_digest(tmp_path: Path, set_name: str) -> None:
     """Flipping the stored digest must make verify=True fail."""
-    with np.load(_ARCHIVE, allow_pickle=False) as archive:
+    with np.load(_archive(set_name), allow_pickle=False) as archive:
         members = {k: archive[k] for k in archive.files}
     members["aromatic_potentials__sha256"] = np.zeros(32, dtype=np.uint8)
     doctored = tmp_path / "doctored.npz"

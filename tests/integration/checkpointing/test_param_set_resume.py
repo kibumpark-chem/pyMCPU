@@ -182,6 +182,43 @@ def test_folding_refuses_another_parameter_set(
     assert _attempted(other) == 0
 
 
+def test_mcpu08_and_mcpu26_checkpoints_refuse_each_others_set(
+    chignolin_pdb_path: str, tmp_path: Path
+) -> None:
+    """The two shipped sets: a checkpoint written under one is refused when
+    resumed under the other, either way round, before any step is taken,
+    and resumes under its own."""
+    _folding(chignolin_pdb_path, tmp_path / "m08").run(n_cycles=2)
+    assert load_checkpoint(tmp_path / "m08" / "ck" / "last.chk")["param_set"] == "mcpu08"
+    under26 = _folding(chignolin_pdb_path, tmp_path / "m08", resume=True, param_set="mcpu26")
+    with pytest.raises(ValueError, match=(
+        "written with param_set 'mcpu08', but this run uses 'mcpu26'; "
+        "resume it with param_set: mcpu08,"
+    )):
+        under26.run(n_cycles=4)
+    assert _attempted(under26) == 0
+
+    _folding(chignolin_pdb_path, tmp_path / "m26", param_set="mcpu26").run(n_cycles=2)
+    saved = load_checkpoint(tmp_path / "m26" / "ck" / "last.chk")
+    assert saved["param_set"] == "mcpu26"
+    assert saved["param_signature"] == param_signature(ensure_params("mcpu26"), "mcpu26")
+    assert saved["hbond_beta_favor"] == 2.3993940353393555
+    # Files other than the mcpu08 files 0.1.0 shipped: a version older pyMCPU refuse.
+    assert saved["format_version"] == 3
+    under08 = _folding(chignolin_pdb_path, tmp_path / "m26", resume=True)
+    with pytest.raises(ValueError, match=(
+        "written with param_set 'mcpu26', but this run uses 'mcpu08'; "
+        "resume it with param_set: mcpu26,"
+    )):
+        under08.run(n_cycles=4)
+    assert _attempted(under08) == 0
+
+    resumed = _folding(chignolin_pdb_path, tmp_path / "m26", resume=True, param_set="mcpu26")
+    resumed.run(n_cycles=3)
+    assert _attempted(resumed) == 3 * 5  # the counters continue from the checkpoint
+    assert load_checkpoint(tmp_path / "m26" / "ck" / "last.chk")["cycle"] == 2
+
+
 def test_folding_resumes_from_the_same_files_in_another_folder(
     chignolin_pdb_path: str, tmp_path: Path
 ) -> None:

@@ -1,0 +1,783 @@
+{
+  "GLY": {
+    "atoms": [
+      "N",
+      "CA",
+      "C",
+      "O"
+    ],
+    "ntorsions": 0
+  },
+  "ALA": {
+    "atoms": [
+      "N",
+      "CA",
+      "C",
+      "CB",
+      "O"
+    ],
+    "ntorsions": 0
+  },
+  "SER": {
+    "atoms": [
+      "N",
+      "CA",
+      "C",
+      "CB",
+      "OG",
+      "O"
+    ],
+    "ntorsions": 1,
+    "chi_atoms": [
+      [
+        "N",
+        "CA",
+        "CB",
+        "OG"
+      ]
+    ],
+    "chi_moved_atoms": [
+      [
+        "OG"
+      ]
+    ]
+  },
+  "CYS": {
+    "atoms": [
+      "N",
+      "CA",
+      "C",
+      "CB",
+      "SG",
+      "O"
+    ],
+    "ntorsions": 1,
+    "chi_atoms": [
+      [
+        "N",
+        "CA",
+        "CB",
+        "SG"
+      ]
+    ],
+    "chi_moved_atoms": [
+      [
+        "SG"
+      ]
+    ]
+  },
+  "VAL": {
+    "atoms": [
+      "N",
+      "CA",
+      "C",
+      "CB",
+      "CG1",
+      "CG2",
+      "O"
+    ],
+    "ntorsions": 1,
+    "chi_atoms": [
+      [
+        "N",
+        "CA",
+        "CB",
+        "CG1"
+      ]
+    ],
+    "chi_moved_atoms": [
+      [
+        "CG1",
+        "CG2"
+      ]
+    ]
+  },
+  "ILE": {
+    "atoms": [
+      "N",
+      "CA",
+      "C",
+      "CB",
+      "CG1",
+      "CG2",
+      "CD1",
+      "O"
+    ],
+    "ntorsions": 2,
+    "chi_atoms": [
+      [
+        "N",
+        "CA",
+        "CB",
+        "CG1"
+      ],
+      [
+        "CA",
+        "CB",
+        "CG1",
+        "CD1"
+      ]
+    ],
+    "chi_moved_atoms": [
+      [
+        "CG1",
+        "CG2",
+        "CD1"
+      ],
+      [
+        "CD1"
+      ]
+    ]
+  },
+  "LEU": {
+    "atoms": [
+      "N",
+      "CA",
+      "C",
+      "CB",
+      "CG",
+      "CD1",
+      "CD2",
+      "O"
+    ],
+    "ntorsions": 2,
+    "chi_atoms": [
+      [
+        "N",
+        "CA",
+        "CB",
+        "CG"
+      ],
+      [
+        "CA",
+        "CB",
+        "CG",
+        "CD1"
+      ]
+    ],
+    "chi_moved_atoms": [
+      [
+        "CG",
+        "CD1",
+        "CD2"
+      ],
+      [
+        "CD1",
+        "CD2"
+      ]
+    ]
+  },
+  "THR": {
+    "atoms": [
+      "N",
+      "CA",
+      "C",
+      "CB",
+      "OG1",
+      "CG2",
+      "O"
+    ],
+    "ntorsions": 1,
+    "chi_atoms": [
+      [
+        "N",
+        "CA",
+        "CB",
+        "OG1"
+      ]
+    ],
+    "chi_moved_atoms": [
+      [
+        "OG1",
+        "CG2"
+      ]
+    ]
+  },
+  "PRO": {
+    "atoms": [
+      "N",
+      "CA",
+      "C",
+      "CB",
+      "CG",
+      "CD",
+      "O"
+    ],
+    "ntorsions": 2,
+    "chi_atoms": [
+      [
+        "N",
+        "CA",
+        "CB",
+        "CG"
+      ],
+      [
+        "CA",
+        "CB",
+        "CG",
+        "CD"
+      ]
+    ],
+    "chi_moved_atoms": [
+      [
+        "CG",
+        "CD"
+      ],
+      [
+        "CD"
+      ]
+    ]
+  },
+  "ASP": {
+    "atoms": [
+      "N",
+      "CA",
+      "C",
+      "CB",
+      "CG",
+      "OD1",
+      "OD2",
+      "O"
+    ],
+    "ntorsions": 2,
+    "chi_atoms": [
+      [
+        "N",
+        "CA",
+        "CB",
+        "CG"
+      ],
+      [
+        "CA",
+        "CB",
+        "CG",
+        "OD1"
+      ]
+    ],
+    "chi_moved_atoms": [
+      [
+        "CG",
+        "OD1",
+        "OD2"
+      ],
+      [
+        "OD1",
+        "OD2"
+      ]
+    ]
+  },
+  "ASN": {
+    "atoms": [
+      "N",
+      "CA",
+      "C",
+      "CB",
+      "CG",
+      "OD1",
+      "ND2",
+      "O"
+    ],
+    "ntorsions": 2,
+    "chi_atoms": [
+      [
+        "N",
+        "CA",
+        "CB",
+        "CG"
+      ],
+      [
+        "CA",
+        "CB",
+        "CG",
+        "OD1"
+      ]
+    ],
+    "chi_moved_atoms": [
+      [
+        "CG",
+        "OD1",
+        "ND2"
+      ],
+      [
+        "OD1",
+        "ND2"
+      ]
+    ]
+  },
+  "GLU": {
+    "atoms": [
+      "N",
+      "CA",
+      "C",
+      "CB",
+      "CG",
+      "CD",
+      "OE1",
+      "OE2",
+      "O"
+    ],
+    "ntorsions": 3,
+    "chi_atoms": [
+      [
+        "N",
+        "CA",
+        "CB",
+        "CG"
+      ],
+      [
+        "CA",
+        "CB",
+        "CG",
+        "CD"
+      ],
+      [
+        "CB",
+        "CG",
+        "CD",
+        "OE1"
+      ]
+    ],
+    "chi_moved_atoms": [
+      [
+        "CG",
+        "CD",
+        "OE1",
+        "OE2"
+      ],
+      [
+        "CD",
+        "OE1",
+        "OE2"
+      ],
+      [
+        "OE1",
+        "OE2"
+      ]
+    ]
+  },
+  "GLN": {
+    "atoms": [
+      "N",
+      "CA",
+      "C",
+      "CB",
+      "CG",
+      "CD",
+      "OE1",
+      "NE2",
+      "O"
+    ],
+    "ntorsions": 3,
+    "chi_atoms": [
+      [
+        "N",
+        "CA",
+        "CB",
+        "CG"
+      ],
+      [
+        "CA",
+        "CB",
+        "CG",
+        "CD"
+      ],
+      [
+        "CB",
+        "CG",
+        "CD",
+        "OE1"
+      ]
+    ],
+    "chi_moved_atoms": [
+      [
+        "CG",
+        "CD",
+        "OE1",
+        "NE2"
+      ],
+      [
+        "CD",
+        "OE1",
+        "NE2"
+      ],
+      [
+        "OE1",
+        "NE2"
+      ]
+    ]
+  },
+  "MET": {
+    "atoms": [
+      "N",
+      "CA",
+      "C",
+      "CB",
+      "CG",
+      "SD",
+      "CE",
+      "O"
+    ],
+    "ntorsions": 3,
+    "chi_atoms": [
+      [
+        "N",
+        "CA",
+        "CB",
+        "CG"
+      ],
+      [
+        "CA",
+        "CB",
+        "CG",
+        "SD"
+      ],
+      [
+        "CB",
+        "CG",
+        "SD",
+        "CE"
+      ]
+    ],
+    "chi_moved_atoms": [
+      [
+        "CG",
+        "SD",
+        "CE"
+      ],
+      [
+        "SD",
+        "CE"
+      ],
+      [
+        "CE"
+      ]
+    ]
+  },
+  "HIS": {
+    "atoms": [
+      "N",
+      "CA",
+      "C",
+      "CB",
+      "CG",
+      "ND1",
+      "CD2",
+      "CE1",
+      "NE2",
+      "O"
+    ],
+    "ntorsions": 2,
+    "chi_atoms": [
+      [
+        "N",
+        "CA",
+        "CB",
+        "CG"
+      ],
+      [
+        "CA",
+        "CB",
+        "CG",
+        "ND1"
+      ]
+    ],
+    "chi_moved_atoms": [
+      [
+        "CG",
+        "ND1",
+        "CD2",
+        "CE1",
+        "NE2"
+      ],
+      [
+        "ND1",
+        "CD2",
+        "CE1",
+        "NE2"
+      ]
+    ]
+  },
+  "PHE": {
+    "atoms": [
+      "N",
+      "CA",
+      "C",
+      "CB",
+      "CG",
+      "CD1",
+      "CD2",
+      "CE1",
+      "CE2",
+      "CZ",
+      "O"
+    ],
+    "ntorsions": 2,
+    "chi_atoms": [
+      [
+        "N",
+        "CA",
+        "CB",
+        "CG"
+      ],
+      [
+        "CA",
+        "CB",
+        "CG",
+        "CD1"
+      ]
+    ],
+    "chi_moved_atoms": [
+      [
+        "CG",
+        "CD1",
+        "CD2",
+        "CE1",
+        "CE2",
+        "CZ"
+      ],
+      [
+        "CD1",
+        "CD2",
+        "CE1",
+        "CE2",
+        "CZ"
+      ]
+    ]
+  },
+  "TYR": {
+    "atoms": [
+      "N",
+      "CA",
+      "C",
+      "CB",
+      "CG",
+      "CD2",
+      "CD1",
+      "CE1",
+      "CE2",
+      "CZ",
+      "OH",
+      "O"
+    ],
+    "ntorsions": 2,
+    "chi_atoms": [
+      [
+        "N",
+        "CA",
+        "CB",
+        "CG"
+      ],
+      [
+        "CA",
+        "CB",
+        "CG",
+        "CD2"
+      ]
+    ],
+    "chi_moved_atoms": [
+      [
+        "CG",
+        "CD1",
+        "CD2",
+        "CE1",
+        "CE2",
+        "CZ",
+        "OH"
+      ],
+      [
+        "CD1",
+        "CD2",
+        "CE1",
+        "CE2",
+        "CZ",
+        "OH"
+      ]
+    ]
+  },
+  "TRP": {
+    "atoms": [
+      "N",
+      "CA",
+      "C",
+      "CB",
+      "CG",
+      "CD1",
+      "CD2",
+      "NE1",
+      "CE2",
+      "CE3",
+      "CZ2",
+      "CZ3",
+      "CH2",
+      "O"
+    ],
+    "ntorsions": 2,
+    "chi_atoms": [
+      [
+        "N",
+        "CA",
+        "CB",
+        "CG"
+      ],
+      [
+        "CA",
+        "CB",
+        "CG",
+        "CD1"
+      ]
+    ],
+    "chi_moved_atoms": [
+      [
+        "CG",
+        "CD1",
+        "CD2",
+        "NE1",
+        "CE2",
+        "CE3",
+        "CZ2",
+        "CZ3",
+        "CH2"
+      ],
+      [
+        "CD1",
+        "CD2",
+        "NE1",
+        "CE2",
+        "CE3",
+        "CZ2",
+        "CZ3",
+        "CH2"
+      ]
+    ]
+  },
+  "LYS": {
+    "atoms": [
+      "N",
+      "CA",
+      "C",
+      "CB",
+      "CG",
+      "CD",
+      "CE",
+      "NZ",
+      "O"
+    ],
+    "ntorsions": 4,
+    "chi_atoms": [
+      [
+        "N",
+        "CA",
+        "CB",
+        "CG"
+      ],
+      [
+        "CA",
+        "CB",
+        "CG",
+        "CD"
+      ],
+      [
+        "CB",
+        "CG",
+        "CD",
+        "CE"
+      ],
+      [
+        "CG",
+        "CD",
+        "CE",
+        "NZ"
+      ]
+    ],
+    "chi_moved_atoms": [
+      [
+        "CG",
+        "CD",
+        "CE",
+        "NZ"
+      ],
+      [
+        "CD",
+        "CE",
+        "NZ"
+      ],
+      [
+        "CE",
+        "NZ"
+      ],
+      [
+        "NZ"
+      ]
+    ]
+  },
+  "ARG": {
+    "atoms": [
+      "N",
+      "CA",
+      "C",
+      "CB",
+      "CG",
+      "CD",
+      "NE",
+      "CZ",
+      "NH1",
+      "NH2",
+      "O"
+    ],
+    "ntorsions": 4,
+    "chi_atoms": [
+      [
+        "N",
+        "CA",
+        "CB",
+        "CG"
+      ],
+      [
+        "CA",
+        "CB",
+        "CG",
+        "CD"
+      ],
+      [
+        "CB",
+        "CG",
+        "CD",
+        "NE"
+      ],
+      [
+        "CG",
+        "CD",
+        "NE",
+        "CZ"
+      ]
+    ],
+    "chi_moved_atoms": [
+      [
+        "CG",
+        "CD",
+        "NE",
+        "CZ",
+        "NH1",
+        "NH2"
+      ],
+      [
+        "CD",
+        "NE",
+        "CZ",
+        "NH1",
+        "NH2"
+      ],
+      [
+        "NE",
+        "CZ",
+        "NH1",
+        "NH2"
+      ],
+      [
+        "CZ",
+        "NH1",
+        "NH2"
+      ]
+    ]
+  }
+}

@@ -2,7 +2,10 @@
 
 Resolution order for ``ensure_params(set_name)``:
 
-1. ``MCPU_PARAMS_DIR`` — use as-is (must contain ``constants/`` + ``mcpu_params/``).
+1. ``MCPU_PARAMS_DIR`` — use as-is. It must hold every file the set's registry
+   layout requires: ``constants/`` and the set's own table folder
+   (``mcpu_params/`` for mcpu08, ``mcpu26_params/`` for mcpu26), so a folder of
+   one set given for another fails.
 2. Dev tree ``local_source`` under the package (repo checkout).
 3. The compact archive shipped **inside the wheel**, decoded into the cache.
    This is what makes a plain ``pip install pymcpu`` work offline. It sits
@@ -17,7 +20,8 @@ Environment:
 :func:`param_signature` identifies the files of a resolved folder, wherever it
 is; checkpoints record it, so a run cannot resume with other tables.
 :func:`load_paramset_manifest` reads the folder's own description of its set,
-``constants/paramset.json``, when it has one.
+``constants/paramset.json``, when it has one. :func:`available_sets` lists the
+registered sets.
 """
 
 from __future__ import annotations
@@ -84,6 +88,12 @@ def get_cache_dir() -> Path:
     params = cache_root() / "params"
     params.mkdir(parents=True, exist_ok=True)
     return params
+
+
+def available_sets() -> list[str]:
+    """The names of the registered parameter sets, sorted: those
+    ``param_set`` can name."""
+    return sorted(_load_registry().get("sets") or {})
 
 
 def _set_entry(set_name: str) -> dict[str, Any]:
@@ -360,7 +370,7 @@ def param_signature(param_dir: str | Path, set_name: str = _DEFAULT_SET) -> str:
 
 
 def load_paramset_manifest(
-    param_dir: str | Path, *, check_md5: bool = True
+    param_dir: str | Path, *, check_md5: bool = True, set_name: str | None = None
 ) -> dict[str, Any] | None:
     """Read and check the :data:`PARAMSET_MANIFEST` of a parameter folder, or
     return None when the folder has none.
@@ -378,7 +388,11 @@ def load_paramset_manifest(
         }
 
     ``format`` (exactly :data:`PARAMSET_FORMAT`) and ``name`` (a non-empty
-    string) are required; ``description`` is a string. ``hbond_beta_favor``
+    string) are required; ``description`` is a string. With ``set_name``,
+    the parameter set the folder is loaded as (``MCPUForceField`` passes its
+    ``param_set``), a manifest whose ``name`` is another set's is refused
+    before any listed file is read: the folder's tables and defaults are
+    those of the set its manifest names. ``hbond_beta_favor``
     is the set's hydrogen-bond sheet factor, which
     :class:`~pymcpu.MCPUForceField` uses when it is not given one; it must be
     a number that stays finite and above 0 in float32, the rule the force
@@ -392,8 +406,9 @@ def load_paramset_manifest(
     had when the set was written, and every listed file must still have it.
 
     Unknown keys, a key given twice anywhere in the file and a value of the
-    wrong kind are refused with ValueError naming the file, as is a listed
-    file that is missing or has changed. Returns the checked manifest, with
+    wrong kind are refused with ValueError naming the file, as are a name
+    other than ``set_name`` and a listed file that is missing or has
+    changed. Returns the checked manifest, with
     numbers as floats. Comparing a listed file's md5 reads it the first time
     (0.7 GB for mcpu08's tables, about 3 s with the sha256 the signature
     takes from the same read), and then once per cache root
@@ -434,6 +449,13 @@ def load_paramset_manifest(
     name = manifest["name"]
     if not isinstance(name, str) or not name.strip():
         raise ValueError(f"{path}: 'name' must be a non-empty string, got {name!r}")
+    if set_name is not None and name != set_name:
+        raise ValueError(
+            f"{path} describes parameter set {name!r}, but the folder was loaded as "
+            f"parameter set {set_name!r}. A folder's tables and defaults belong to the "
+            f"set its manifest names: load it with param_set {name!r} (param_set: {name} "
+            f"in a config), or give a folder of {set_name!r}"
+        )
     checked: dict[str, Any] = {"format": PARAMSET_FORMAT, "name": name}
     if "description" in manifest:
         if not isinstance(manifest["description"], str):
@@ -568,11 +590,22 @@ def _looks_like_params_root(path: Path, files: list[str]) -> bool:
     return all((path / rel).is_file() for rel in files)
 
 
+def _layout_folders(set_name: str) -> str:
+    """The top-level folders of a set's required files, as a message names
+    them: ``constants/ and mcpu_params/`` for mcpu08."""
+    try:
+        folders = {PurePosixPath(rel).parts[0] for rel in required_files(set_name).values()}
+    except ParamsError:
+        return "constants/ and the set's table folder"
+    return " and ".join(f"{folder}/" for folder in sorted(folders))
+
+
 def _complete_error(set_name: str, detail: str) -> ParamsError:
     return ParamsError(
         f"{detail}\n\n"
         f"Tried to resolve pretrained set {set_name!r}. Options:\n"
-        f"  1. Set MCPU_PARAMS_DIR to a directory containing constants/ and mcpu_params/\n"
+        f"  1. Set MCPU_PARAMS_DIR to a directory laid out as {set_name!r}, containing "
+        f"{_layout_folders(set_name)}\n"
         f"  2. Install a pyMCPU wheel, which ships the parameters, and run:\n"
         f"     mcpu materialize-params --set {set_name}\n"
         f"Cache directory: {get_cache_dir()}"
@@ -691,9 +724,9 @@ def materialize_from_wheel(
 ) -> Path:
     """Decode the in-wheel compact archive into a complete params root.
 
-    Returns a directory holding ``constants/`` + ``mcpu_params/*.bin``, i.e.
-    exactly the shape every other resolution step returns, so the loader has a
-    single code path.
+    Returns a directory laid out as the set (``constants/`` and its table
+    folder, ``mcpu_params/*.bin`` for mcpu08), i.e. exactly the shape every
+    other resolution step returns, so the loader has a single code path.
 
     The cache directory is **content-addressed** (``<set>-<sha256[:12]>``, the
     hash covering the table archive and every constants file, the set's
@@ -812,7 +845,10 @@ def _ensure_files(root: Path, files: list[str], set_name: str) -> None:
 def ensure_params(set_name: str = _DEFAULT_SET) -> Path:
     """Return a directory with pretrained parameters for ``set_name``.
 
-    The returned path contains ``constants/`` and ``mcpu_params/``.
+    The returned folder holds every file the set's registry layout requires:
+    ``constants/`` and the set's own table folder (``mcpu_params/`` for
+    mcpu08, ``mcpu26_params/`` for mcpu26). ``MCPU_PARAMS_DIR`` applies to
+    whichever set is asked for, so it must be a folder of that set.
     """
     entry = _set_entry(set_name)
     required = list(required_files(set_name).values())

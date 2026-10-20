@@ -93,7 +93,7 @@ def test_changing_the_set_description_changes_it(tmp_path: Path, chignolin_pdb_p
         if manifest.exists():
             manifest.unlink()
         manifest.write_text(json.dumps(
-            {"format": PARAMSET_FORMAT, "name": "test", "hbond_beta_favor": factor}))
+            {"format": PARAMSET_FORMAT, "name": "mcpu08", "hbond_beta_favor": factor}))
         ff = MCPUForceField(heavy, param_dir=str(folder))
         assert ff.hbond_beta_favor == factor
         assert ff.param_signature == param_signature(folder)
@@ -225,7 +225,7 @@ def test_files_changed_after_the_force_field_read_them_are_not_signed(
         named = "mcpu_params/aromatic_potentials.bin"
     elif change == "description added":
         (folder / PARAMSET_MANIFEST).write_text(
-            json.dumps({"format": PARAMSET_FORMAT, "name": "test"}))
+            json.dumps({"format": PARAMSET_FORMAT, "name": "mcpu08"}))
         named = PARAMSET_MANIFEST
     else:  # the same contents, another file
         copy = tmp_path / "aromatic_copy.bin"

@@ -15,6 +15,8 @@ import pytest
 
 from pymcpu import params
 
+SETS = params.available_sets()
+
 
 @pytest.fixture
 def fake_set(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
@@ -38,18 +40,20 @@ def fake_set(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return root
 
 
-def test_same_files_reuse_the_directory(fake_set: Path) -> None:
-    first = params.materialize_from_wheel("mcpu08", verify=False)
-    assert params.materialize_from_wheel("mcpu08", verify=False) == first
-    assert first.name.startswith("mcpu08-")
+@pytest.mark.parametrize("set_name", SETS)
+def test_same_files_reuse_the_directory(fake_set: Path, set_name: str) -> None:
+    first = params.materialize_from_wheel(set_name, verify=False)
+    assert params.materialize_from_wheel(set_name, verify=False) == first
+    assert first.name.startswith(f"{set_name}-")
 
 
+@pytest.mark.parametrize("set_name", SETS)
 @pytest.mark.parametrize("changed", ["constants/a.json", "constants/b.lib", "tables.npz"])
-def test_any_changed_file_gets_a_new_directory(fake_set: Path, changed: str) -> None:
-    first = params.materialize_from_wheel("mcpu08", verify=False)
+def test_any_changed_file_gets_a_new_directory(fake_set: Path, changed: str, set_name: str) -> None:
+    first = params.materialize_from_wheel(set_name, verify=False)
 
     (fake_set / changed).write_bytes(b"version 2")
-    second = params.materialize_from_wheel("mcpu08", verify=False)
+    second = params.materialize_from_wheel(set_name, verify=False)
 
     assert second != first
     if changed.startswith("constants/"):

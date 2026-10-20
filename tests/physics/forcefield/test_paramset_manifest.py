@@ -6,15 +6,18 @@ uses that factor when it is not given one (``hbond_beta_favor=None``, the
 default), and 2.0 when the folder has no manifest, as mcpu08 has none; a value
 given explicitly always wins. ``folded_weights`` is a record only. The
 manifest is checked strictly: unknown or repeated keys, values of the wrong
-kind and listed files whose md5 has changed are refused.
+kind, a name other than the set the folder is loaded as, and listed files
+whose md5 has changed are refused.
 
-The folders here link mcpu08's files, so each check compares a build from a
-manifest with a build given the same factor explicitly.
+The folders here link mcpu08's files and are loaded as mcpu08, so their
+manifests name mcpu08, and each check compares a build from a manifest with a
+build given the same factor explicitly.
 """
 from __future__ import annotations
 
 import hashlib
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -31,7 +34,7 @@ from pymcpu.params import PARAMSET_FORMAT, PARAMSET_MANIFEST, load_paramset_mani
 from pymcpu.sampling import EngineSession
 from pymcpu.sampling.folding import FoldingRunner
 from tests.fixtures.context_builders import resolve_test_pdb
-from tests.helpers.param_folders import linked_param_folder
+from tests.helpers.param_folders import linked_param_folder, register_set_like_mcpu08
 
 HBOND_GROUP = 4
 #: A small table to list in provenance.md5 and change: nine float32 energies.
@@ -73,7 +76,8 @@ def explicit_energies(heavy):
 
 
 def _manifest(**fields: Any) -> dict[str, Any]:
-    return {"format": PARAMSET_FORMAT, "name": "test_set", **fields}
+    """A manifest for a folder loaded as mcpu08, the default param_set."""
+    return {"format": PARAMSET_FORMAT, "name": "mcpu08", **fields}
 
 
 def _folder(root: Path, manifest: dict[str, Any] | str | None = None) -> Path:
@@ -217,6 +221,49 @@ def test_a_checkpoint_records_the_factor_the_run_used(chignolin_pdb_path, tmp_pa
     (folder / PARAMSET_MANIFEST).write_text(json.dumps(_manifest(hbond_beta_favor=2.5)))
     with pytest.raises(ValueError, match="a table or constants file differs"):
         folding(resume=True).run(n_cycles=4)
+
+
+# --- the set it names ---
+
+def test_a_manifest_naming_another_set_is_refused(small, tmp_path, monkeypatch) -> None:
+    """A folder's tables and defaults are those of the set its manifest
+    names, so a force field of another set refuses it, before any file the
+    manifest lists is read. Read without a set to compare, as a script may,
+    the manifest loads; a force field of the set it names builds."""
+    monkeypatch.setenv("MCPU_CACHE_DIR", str(tmp_path / "cache"))
+    folder = _folder(tmp_path / "f")
+    md5 = hashlib.md5(_own_copy(folder, TABLE).read_bytes()).hexdigest()
+    (folder / PARAMSET_MANIFEST).write_text(json.dumps(_manifest(
+        name="other_set", hbond_beta_favor=3.0, provenance={"md5": {TABLE: md5}})))
+    reads: list[str] = []
+    hash_file = params._hash_file
+    monkeypatch.setattr(params, "_hash_file",
+                        lambda path: reads.append(Path(path).name) or hash_file(path))
+    refused = re.escape(
+        f"{folder / PARAMSET_MANIFEST} describes parameter set 'other_set', but the folder "
+        "was loaded as parameter set 'mcpu08'. A folder's tables and defaults belong to the "
+        "set its manifest names: load it with param_set 'other_set' (param_set: other_set "
+        "in a config), or give a folder of 'mcpu08'")
+    with pytest.raises(ValueError, match=refused):
+        MCPUForceField(small, param_dir=str(folder))
+    with pytest.raises(ValueError, match=refused):
+        load_paramset_manifest(folder, set_name="mcpu08")
+    with pytest.raises(ValueError, match=refused):
+        load_forcefield(small, param_dir=folder)
+    assert reads == []  # refused before the listed table was read
+    assert load_paramset_manifest(folder)["name"] == "other_set"
+    assert load_paramset_manifest(folder, set_name="other_set")["hbond_beta_favor"] == 3.0
+    name = register_set_like_mcpu08(monkeypatch, "other_set")
+    ff = MCPUForceField(small, param_set=name, param_dir=str(folder))
+    assert ff.paramset_manifest["name"] == "other_set"
+    assert ff.hbond_beta_favor == 3.0
+
+
+def test_the_name_must_match_exactly(small, tmp_path) -> None:
+    for other in ("MCPU08", "mcpu08 ", "mcpu"):
+        folder = _folder(tmp_path / repr(other), _manifest(name=other))
+        with pytest.raises(ValueError, match=f"describes parameter set {re.escape(repr(other))}"):
+            MCPUForceField(small, param_dir=str(folder))
 
 
 # --- what a manifest may hold ---

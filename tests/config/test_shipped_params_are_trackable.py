@@ -1,4 +1,4 @@
-"""The shipped compact parameter set must not be gitignored.
+"""The shipped compact parameter sets must not be gitignored.
 
 This guards the single most dangerous failure mode in the packaging work:
 **scikit-build-core filters wheel contents through .gitignore**. Its wheel
@@ -17,7 +17,8 @@ That is not hypothetical here. It has happened twice:
   the last matching pattern**. That would have shipped a parameter-less wheel.
 
 Hence the must-ship negations live at the very end of ``.gitignore``, and this
-test pins it.
+test pins it, for every registered set. The other way round, each set's raw
+``.bin`` tables (678 MiB) must stay ignored: only the compact archive ships.
 """
 
 from __future__ import annotations
@@ -27,10 +28,18 @@ from pathlib import Path
 
 import pytest
 
-from pymcpu.params import constants_files, required_files
+from pymcpu.params import available_sets, required_files, shipped_constants, table_layout
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
-_SHIPPED_DIR = _REPO_ROOT / "pymcpu" / "data" / "params" / "mcpu08"
+SETS = available_sets()
+
+
+def _shipped_dir(set_name: str) -> Path:
+    return _REPO_ROOT / "pymcpu" / "data" / "params" / set_name
+
+
+def _raw_root(set_name: str) -> Path:
+    return _REPO_ROOT / "src" / "pymcpu" / "parameters" / "pretrained" / set_name
 
 
 def _is_git_ignored(path: Path) -> bool:
@@ -48,22 +57,30 @@ def _require_git_checkout() -> None:
         pytest.skip("not a git checkout (installed-wheel run)")
 
 
-def test_compact_archive_exists() -> None:
+def test_every_set_is_registered() -> None:
+    assert {"mcpu08", "mcpu26"} <= set(SETS)
+
+
+@pytest.mark.parametrize("set_name", SETS)
+def test_compact_archive_exists(set_name: str) -> None:
     _require_git_checkout()
-    archive = _SHIPPED_DIR / "tables.npz"
+    archive = _shipped_dir(set_name) / "tables.npz"
     assert archive.is_file(), (
-        f"{archive} is missing -- regenerate with scripts/encode_params.py"
+        f"{archive} is missing -- regenerate with scripts/encode_params.py --set {set_name}"
     )
-    # ~2 MiB. A wildly different size means the encoder changed behavior.
+    # ~2 MiB for mcpu08's integer tables, ~8 MiB for mcpu26's float32 ones. A
+    # wildly different size means the encoder changed behavior.
     size_mib = archive.stat().st_size / (1 << 20)
     assert 0.5 < size_mib < 20, f"unexpected archive size: {size_mib:.2f} MiB"
 
 
-def test_no_shipped_parameter_file_is_gitignored() -> None:
-    """Every file under the shipped params dir must reach git (and the wheel)."""
+@pytest.mark.parametrize("set_name", SETS)
+def test_no_shipped_parameter_file_is_gitignored(set_name: str) -> None:
+    """Every file under a shipped params dir must reach git (and the wheel)."""
     _require_git_checkout()
-    shipped = sorted(p for p in _SHIPPED_DIR.rglob("*") if p.is_file())
-    assert shipped, f"nothing under {_SHIPPED_DIR}"
+    shipped_dir = _shipped_dir(set_name)
+    shipped = sorted(p for p in shipped_dir.rglob("*") if p.is_file())
+    assert shipped, f"nothing under {shipped_dir}"
     ignored = [str(p.relative_to(_REPO_ROOT)) for p in shipped if _is_git_ignored(p)]
     assert not ignored, (
         "these shipped parameter files are gitignored, so scikit-build-core "
@@ -73,42 +90,60 @@ def test_no_shipped_parameter_file_is_gitignored() -> None:
     )
 
 
-def test_dev_tree_required_constants_are_trackable() -> None:
-    """``constants/atom_types.csv`` in the raw dev tree must be trackable too.
+@pytest.mark.parametrize("set_name", SETS)
+def test_dev_tree_required_constants_are_trackable(set_name: str) -> None:
+    """The raw dev tree's constants (``constants/atom_types.csv`` and the
+    rest, and the set's ``constants/paramset.json``) must be trackable too.
 
-    A bare ``*.csv`` rule (intended for simulation output) used to hide it,
-    which is why a fresh clone could not build a force field.
+    A bare ``*.csv`` rule (intended for simulation output) used to hide
+    ``atom_types.csv``, which is why a fresh clone could not build a force
+    field.
     """
     _require_git_checkout()
-    raw_root = _REPO_ROOT / "src" / "pymcpu" / "parameters" / "pretrained" / "mcpu08"
+    raw_root = _raw_root(set_name)
     if not raw_root.is_dir():
         pytest.skip("raw parameter tree not present")
     offenders = []
-    for rel in constants_files("mcpu08"):
+    for rel in shipped_constants(set_name):
         path = raw_root / rel
         if path.exists() and _is_git_ignored(path):
             offenders.append(rel)
     assert not offenders, f"gitignored required constants: {offenders}"
 
 
-def test_shipped_set_covers_every_required_role() -> None:
+@pytest.mark.parametrize("set_name", SETS)
+def test_dev_tree_tables_stay_gitignored(set_name: str) -> None:
+    """A set's raw ``.bin`` tables are large and regenerated offline; only the
+    compact archive is committed. Each set keeps them in a folder of its own
+    (``mcpu_params/``, ``mcpu26_params/``), which ``.gitignore`` matches by a
+    glob, not by one set's spelling."""
+    _require_git_checkout()
+    tracked = [
+        rel for rel in table_layout(set_name).values()
+        if not _is_git_ignored(_raw_root(set_name) / rel)
+    ]
+    assert not tracked, (
+        f"{set_name}'s raw tables are not gitignored, so they would be committed "
+        f"and shipped in the sdist: {tracked}"
+    )
+
+
+@pytest.mark.parametrize("set_name", SETS)
+def test_shipped_set_covers_every_required_role(set_name: str) -> None:
     """The shipped dir plus the compact archive must satisfy the layout."""
     _require_git_checkout()
     from pymcpu.paramcodec import read_header
 
-    archive = _SHIPPED_DIR / "tables.npz"
-    tables = set(read_header(archive)["tables"])
-    table_rels = {
-        rel for rel in required_files("mcpu08").values() if rel.startswith("mcpu_params/")
-    }
-    const_rels = {
-        rel for rel in required_files("mcpu08").values() if rel.startswith("constants/")
-    }
+    shipped_dir = _shipped_dir(set_name)
+    tables = set(read_header(shipped_dir / "tables.npz")["tables"])
+    layout = table_layout(set_name)
+    table_rels = set(layout.values())
+    required = set(required_files(set_name).values())
     # every required .bin is carried by a table in the archive
-    from pymcpu.params import table_layout
-
-    carried = {rel for name, rel in table_layout("mcpu08").items() if name in tables}
-    assert table_rels <= carried, f"required tables not in archive: {table_rels - carried}"
-    # every required constant is present verbatim
-    missing = [rel for rel in const_rels if not (_SHIPPED_DIR / rel).is_file()]
+    carried = {rel for name, rel in layout.items() if name in tables}
+    assert required & table_rels <= carried, (
+        f"required tables not in archive: {(required & table_rels) - carried}"
+    )
+    # every other required file is present verbatim
+    missing = [rel for rel in sorted(required - table_rels) if not (shipped_dir / rel).is_file()]
     assert not missing, f"required constants missing from the shipped set: {missing}"

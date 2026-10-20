@@ -488,7 +488,7 @@ def _md5_folder(root, table_md5=None):
     table.write_bytes(data)
     md5 = table_md5 or hashlib.md5(data).hexdigest()
     (folder / PARAMSET_MANIFEST).write_text(json.dumps({
-        "format": PARAMSET_FORMAT, "name": "test_set",
+        "format": PARAMSET_FORMAT, "name": "mcpu08",
         "provenance": {"md5": {"mcpu_params/aromatic_potentials.bin": md5}}}))
     return folder
 

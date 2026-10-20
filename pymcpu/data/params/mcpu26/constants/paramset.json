@@ -1,0 +1,43 @@
+{
+ "format": "pymcpu-paramset/1",
+ "name": "mcpu26",
+ "description": "mcpu26 (legacy form): mcpu08's energy function, with tables re-estimated from PISCES 2026 and weights fitted on Tsuboyama natural domains, folded into the tables. Its weights were fitted with clash_alpha 0.85 and clash_bond_exclusion 3.",
+ "hbond_beta_favor": 2.3993940353393555,
+ "folded_weights": {
+  "mu": 1.0577709144050786,
+  "bb_torsion": 0.8199679176379738,
+  "sc_torsion": 0.18420013147238207,
+  "hbond": 1.1580308223754334,
+  "aromatic": 0.8627578878628941
+ },
+ "provenance": {
+  "source": "the parameter folder mcpu26_v1b_w5 of 2026-10-19: the v1b tables (legacy estimators on the cleaned PISCES 2026 pool) times the weights of the W1-W5 fit, with the tables moved from mcpu_params/ to mcpu26_params/. hbond_seq_dep.bin and the constants are v1b's; the constants are byte copies of mcpu08's.",
+  "source_md5": {
+   "MD5SUMS": "67a759e18c8456d6a708a9ace7c42d75",
+   "PROVENANCE.json": "b9c6a628c664ade63bc6a09307c8de28",
+   "constants/paramset.json": "18e2eca83e664555e6f0fb6f3da9ebdd"
+  },
+  "weights": {
+   "contact": 1.0577709144050786,
+   "backbone": 0.8199679176379738,
+   "sidechain": 0.18420013147238207,
+   "hb4": 1.1580308223754334,
+   "hbfar": 0.9261907904215544,
+   "aromatic": 0.8627578878628941
+  },
+  "weights_rule": "each weight multiplies its v1b table at mcpu08's group weights (folded_weights); hbfar enters as hbond_beta_favor = float32(3 x hbfar / hb4)",
+  "fitted_with": {
+   "clash_alpha": 0.85,
+   "clash_bond_exclusion": 3,
+   "clash_start_exemption": "true in runs, false in start-structure relaxations"
+  },
+  "md5": {
+   "mcpu26_params/aromatic_potentials.bin": "4cd37da33b716f3e105a668524f6c399",
+   "mcpu26_params/hbond_seq_dep.bin": "b43739f44ba93b409783d2dcf0186071",
+   "mcpu26_params/hydrogen_bond_potentials.bin": "051d88e6c836ffde310474a5339e337d",
+   "mcpu26_params/mu_potentials.bin": "2bf7bdfe322c6da22de6f22636ec7ea3",
+   "mcpu26_params/sidechain_triplet_potentials.bin": "2b7c345d21f6361bc154dedddca5b11f",
+   "mcpu26_params/triplet_potentials.bin": "c9d42d2bffbc204c72442f686bae5f5f"
+  }
+ }
+}

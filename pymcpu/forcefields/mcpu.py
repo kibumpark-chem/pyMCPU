@@ -243,10 +243,15 @@ class MCPUForceField(BaseForceField):
         trajectory
             The structure, with heavy atoms only (see :meth:`prepare_trajectory`).
         param_dir
-            Explicit parameter root (``constants/`` + ``mcpu_params/``).
-            If omitted, resolves via :func:`pymcpu.params.ensure_params`.
+            Explicit parameter root, laid out as ``param_set`` (``constants/``
+            and the set's table folder: ``mcpu_params/`` for mcpu08,
+            ``mcpu26_params/`` for mcpu26). If omitted, resolves via
+            :func:`pymcpu.params.ensure_params`.
         param_set
-            Registry set name used when ``param_dir`` is omitted (default ``mcpu08``).
+            The registered parameter set (``mcpu08``, the default, or
+            ``mcpu26``): the one resolved when ``param_dir`` is omitted, and
+            the layout ``param_dir`` must have. A folder whose
+            ``constants/paramset.json`` names another set is refused.
         virtual_amide_h
             If True (default), use virtual amide hydrogens as above. If False,
             add explicit amide hydrogens to the engine's atoms instead.
@@ -324,7 +329,8 @@ class MCPUForceField(BaseForceField):
             ``clash_start_exemption`` that is not True or False, a
             ``constants/paramset.json`` that
             :func:`pymcpu.params.load_paramset_manifest` refuses (including
-            one whose provenance md5 a listed file no longer has), or a
+            one that names a set other than ``param_set``, and one whose
+            provenance md5 a listed file no longer has), or a
             residue template (``constants/standard_amino_acids.json``) in
             which a residue lacks, for any of the chi angles it has
             (``ntorsions``), the atoms that define it (``chi_atoms``) or the
@@ -353,7 +359,7 @@ class MCPUForceField(BaseForceField):
         # none). Read before the tables, so a table whose provenance md5 no
         # longer matches is refused before it is loaded.
         self.paramset_manifest = load_paramset_manifest(
-            self.param_dir, check_md5=bool(verify_provenance))
+            self.param_dir, check_md5=bool(verify_provenance), set_name=self.param_set)
         if hbond_beta_favor is None:
             hbond_beta_favor = (self.paramset_manifest or {}).get("hbond_beta_favor")
             if hbond_beta_favor is None:

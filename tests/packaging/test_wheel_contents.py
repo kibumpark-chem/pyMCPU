@@ -28,8 +28,9 @@ import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
-# Uncompressed budget. Code + the ~2 MiB compact parameters + the extension is
-# well under this; the symlink-deref bug was 1,371 MiB.
+# Uncompressed budget. Code + the compact parameters (~2 MiB for mcpu08, ~8 MiB
+# for mcpu26) + the extension is well under this; the symlink-deref bug was
+# 1,371 MiB.
 _MAX_UNCOMPRESSED_MIB = 60.0
 
 pytestmark = pytest.mark.slow
@@ -62,23 +63,37 @@ def _members(wheel: Path) -> dict[str, int]:
 
 
 def test_wheel_contains_the_compact_parameters(built_wheel: Path) -> None:
-    """Without this the installed package cannot build a force field at all."""
+    """Without this the installed package cannot build a force field at all.
+
+    For every registered set: its table archive, every file of
+    ``shipped_constants`` (the constants and the set's own
+    ``constants/paramset.json``) that the package has, and every required one.
+    """
+    from pymcpu.params import available_sets, required_files, shipped_constants, table_layout
+
     members = _members(built_wheel)
-    archive = "pymcpu/data/params/mcpu08/tables.npz"
-    assert archive in members, (
-        f"{archive} is missing from the wheel. Most likely a .gitignore rule "
-        "matches it -- add a negation to the MUST SHIP block at the END of "
-        ".gitignore (an earlier negation is overridden by later broad rules)."
-    )
-    assert members[archive] > 100_000, "tables.npz looks truncated"
+    for set_name in available_sets():
+        folder = f"pymcpu/data/params/{set_name}"
+        archive = f"{folder}/tables.npz"
+        assert archive in members, (
+            f"{archive} is missing from the wheel. Most likely a .gitignore rule "
+            "matches it -- add a negation to the MUST SHIP block at the END of "
+            ".gitignore (an earlier negation is overridden by later broad rules)."
+        )
+        assert members[archive] > 100_000, f"{archive} looks truncated"
 
-    from pymcpu.params import constants_files
-
-    for rel in constants_files("mcpu08"):
-        member = f"pymcpu/data/params/mcpu08/{rel}"
-        if rel.endswith("rama_mixture.json"):
-            continue  # optional
-        assert member in members, f"required constant missing from wheel: {rel}"
+        for rel in shipped_constants(set_name):
+            member = f"{folder}/{rel}"
+            if (_REPO_ROOT / member).is_file():
+                assert member in members, f"{set_name}: shipped file missing from wheel: {rel}"
+                assert members[member] == (_REPO_ROOT / member).stat().st_size, member
+            else:
+                assert member not in members, member
+        tables = set(table_layout(set_name).values())
+        for rel in required_files(set_name).values():
+            if rel not in tables:
+                assert f"{folder}/{rel}" in members, (
+                    f"{set_name}: required constant missing from wheel: {rel}")
 
 
 def test_wheel_has_exactly_one_extension_module(built_wheel: Path) -> None:

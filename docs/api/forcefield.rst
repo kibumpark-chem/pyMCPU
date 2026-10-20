@@ -20,7 +20,8 @@ MCPUForceField (mcpu08)
 =======================
 
 :class:`~pymcpu.MCPUForceField` builds the mcpu08 force field from a
-structure. The constructor loads the mcpu08 parameter set, renames
+structure. The constructor loads its parameter set (mcpu08 unless
+``param_set`` names another, see `The mcpu26 parameter set`_), renames
 protonation variants to the standard residues, checks the structure, and
 puts the atoms in the order the engine works in.
 :meth:`~pymcpu.MCPUForceField.create_system` then builds a system from it, as
@@ -197,7 +198,10 @@ A parameter set's own defaults
 A parameter folder can describe its set in ``constants/paramset.json``
 (format ``pymcpu-paramset/1``; mcpu08 has none):
 
-- its ``name``, and optionally a ``description``;
+- its ``name``, which must be the set the folder is loaded as
+  (``param_set``), and optionally a ``description``. A force field refuses a
+  folder whose manifest names another set, as the folder's tables and
+  defaults are that set's;
 - ``hbond_beta_favor``, the set's sheet factor, which
   :class:`~pymcpu.MCPUForceField` uses when it is given none. A factor given
   explicitly, as an argument or in ``forcefield_options``, wins;
@@ -230,6 +234,33 @@ wheel as from a checkout or ``MCPU_PARAMS_DIR``.
 .. autofunction:: pymcpu.params.load_paramset_manifest
 
 .. autofunction:: pymcpu.params.check_paramset_provenance
+
+The mcpu26 parameter set
+------------------------
+
+pyMCPU ships a second parameter set, ``mcpu26`` (legacy form): mcpu08's
+energy function, with its tables re-estimated from PISCES 2026 and its weights
+fitted on the folding landscapes of natural domains from Tsuboyama et al.
+(2023), then folded into the tables. Name it with ``param_set``:
+
+.. code-block:: python
+
+   ff = mc.MCPUForceField(heavy, param_set="mcpu26")
+
+``param_set: mcpu26`` does the same in a config, and
+``mcpu materialize-params --set mcpu26`` unpacks it before an MPI job. Its
+``constants/paramset.json`` gives its sheet factor, 2.3994, which a force
+field uses when it is given none, and records the weights folded into its
+tables (``mu`` 1.058, ``bb_torsion`` 0.820, ``sc_torsion`` 0.184, ``hbond``
+1.158, ``aromatic`` 0.863) and the md5 of each table. A folder of the set
+without that file is incomplete. Its constants are mcpu08's. Its tables are
+in ``mcpu26_params/``, not ``mcpu_params/``, so a folder of one set given for
+the other, as ``MCPU_PARAMS_DIR`` or ``param_dir``, fails.
+
+Its weights were fitted with ``clash_alpha`` 0.85 and ``clash_bond_exclusion``
+3 (see `The hard core`_), with start overlaps exempt in runs and penalised
+when a start structure was relaxed. Pass the same options to run it as it was
+fitted: ``forcefield_options: {clash_alpha: 0.85, clash_bond_exclusion: 3}``.
 
 Attributes
 ----------
@@ -338,8 +369,9 @@ Set during construction and safe to read:
 .. py:attribute:: pymcpu.MCPUForceField.param_dir
    :type: pathlib.Path
 
-   Resolved parameter root, containing ``constants/`` and
-   ``mcpu_params/``.
+   Resolved parameter root, laid out as ``param_set``: ``constants/`` and
+   the set's table folder (``mcpu_params/`` for mcpu08, ``mcpu26_params/``
+   for mcpu26).
 
 .. py:attribute:: pymcpu.MCPUForceField.paramset_manifest
    :type: dict | None

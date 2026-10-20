@@ -129,7 +129,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_mat.add_argument(
         "--set",
         default="mcpu08",
-        help="Parameter set name from the registry (default: mcpu08)",
+        help="Parameter set name from the registry: mcpu08 (the default) or mcpu26",
     )
     p_mat.add_argument(
         "--timeout",
