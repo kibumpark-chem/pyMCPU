@@ -273,6 +273,13 @@ force field of the set uses them unless it is given others. In the fit, start
 overlaps were exempt in runs and penalised when a start structure was relaxed
 (``clash_start_exemption``, which a run chooses, not the set).
 
+Its overall scale, which sets its temperature units, was chosen so that the
+median melting temperature of ten training domains matches mcpu08's. Single
+proteins differ: on 17 small domains, a domain's melting temperature under
+mcpu26 was 0.80 to 1.25 times its value under mcpu08, and typically about 7 %
+lower. Check a protein's melting temperature under mcpu26 before reusing a
+temperature chosen for mcpu08.
+
 Attributes
 ----------
 

@@ -24,7 +24,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   folder of mcpu08's given for mcpu26 (`MCPU_PARAMS_DIR`, `param_dir`) fails,
   as does one of mcpu26's given for mcpu08. Its weights were fitted with
   `clash_alpha` 0.85 and `clash_bond_exclusion` 3, which its manifest gives
-  as the set's own (see Changed). The raw tables are
+  as the set's own (see Changed). Its overall scale matches mcpu08's median
+  melting temperature over ten training domains; single proteins differ (see
+  "The mcpu26 parameter set" in the API docs). The raw tables are
   gitignored like mcpu08's. `pymcpu.params.available_sets()` lists the
   registered sets, and `scripts/encode_params.py` takes `--src` and `--out`
   from `--set` when they are not given.
