@@ -397,11 +397,15 @@ State
 
    .. py:attribute:: backbone_torsions
 
-      Per-residue backbone torsion records.
+      Per-residue backbone torsion records (phi, psi, p_ca, b_ca, radians).
+      The first and the last residue have none and hold zeros.
 
    .. py:attribute:: sidechain_torsions
 
-      Per-residue sidechain torsion records.
+      Per-residue sidechain torsion records: four chi angles (radians), -pi
+      past the residue's chi count. Placing coordinates measures them for
+      every residue, the two chain ends included; a sidechain move measures
+      those of the residue it turns.
 
 Checkpointing
 -------------

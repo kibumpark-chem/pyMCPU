@@ -224,19 +224,27 @@ random-number state or writes an energy report.
 MCPU parameter lookup
 ---------------------
 
-The MCPU force field uses the parameter set ``mcpu08``. It is the default,
-so ``MCPUForceField(traj)`` needs no ``param_set`` argument. pyMCPU looks for
-the parameters in this order and uses the first match:
+The MCPU force field uses the parameter set ``mcpu08`` by default, so
+``MCPUForceField(traj)`` needs no ``param_set`` argument. pyMCPU also ships
+``mcpu26`` (``param_set="mcpu26"``; see "The mcpu26 parameter set" in
+:doc:`api/forcefield`). pyMCPU looks for the set's parameters in this order
+and uses the first match:
 
-1. ``MCPU_PARAMS_DIR``: a directory containing ``constants/`` and
-   ``mcpu_params/``
+1. ``MCPU_PARAMS_DIR``: a directory laid out as the set, with ``constants/``
+   and its table folder (``mcpu_params/`` for mcpu08, ``mcpu26_params/`` for
+   mcpu26). It serves whichever set is asked for, so a folder of the other
+   set fails
 2. The source tree, when installed from a checkout with ``pip install -e``
 3. The copy shipped inside the package, unpacked into the cache
    (``MCPU_CACHE_DIR``, default ``~/.cache/pymcpu``) on first use
 
 A directory you set explicitly therefore always wins over the shipped copy.
-On a cluster, a node-local cache is usually faster than a shared home
-directory:
+Checkpoints record the parameter set and a signature of the files read from
+it, so a run resumes only with the same files, wherever they are (see
+:doc:`checkpointing`). Taking a signature reads every parameter file once;
+the cache keeps what it found in ``params/digests.json``, so a file is read
+again only after it changes or from another cache. On a cluster, a
+node-local cache is usually faster than a shared home directory:
 
 .. code-block:: bash
 

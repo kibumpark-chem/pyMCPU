@@ -88,24 +88,52 @@ beginning, while single-process replica exchange stops with an error.
 
 Under MPI, rank 0 writes and reads the checkpoint, which covers every replica.
 
-### Checkpoints from other versions
+### Checkpoints from other versions and other settings
 
 Every checkpoint records its format version, and a file newer than the
-installed pyMCPU understands is refused. It also records the force field, and
-a run resumed with a different `forcefield:` stops with an error; checkpoints
-from before this was recorded count as mcpu08. It records the hydrogen-bond
-sheet factor too (`forcefield_options: {hbond_beta_favor: ...}`, default 2.0),
-and a run resumed with a different one stops with an error; checkpoints from
-before it was recorded count as legacy MCPU's 3.0, so resume one of those with
-`hbond_beta_favor: 3.0`. It records the rotamer library (`rotamer_library`,
-default `dunbrack2002_sym`), and a run resumed with another one stops with an
-error; checkpoints from before it was recorded count as `dunbrack2002`, so
-resume one of those with `rotamer_library: dunbrack2002`. A checkpoint whose
-atom count does not match the system stops with an error that names both
-counts. Format
-version 2 stores each glycine CA once, so a version 1 checkpoint of a protein
-with glycine cannot be resumed; start that run again from its input
-structure. Version 1 checkpoints of glycine-free proteins still resume.
+installed pyMCPU understands is refused. It also records what the run was
+built with, and a run resumed with something different stops with an error
+that says what differs, gives both values, and names the setting that
+resumes it:
+
+- The force field (`forcefield:`). Checkpoints from before this was recorded
+  count as mcpu08.
+- The parameter set (`param_set:`, default `mcpu08`) and a signature of its
+  files: a sha256 over the tables and constants the force field reads,
+  including the set's own `constants/paramset.json` when it has one
+  (`MCPUForceField.param_signature`). The same files in another folder
+  resume the run; other files do not, and the error names the folder the
+  checkpoint was written with (its real path, links resolved), to pass as
+  `param_dir:`, or says that the files in this run's folder have changed
+  since, when that is the same folder. Checkpoints from
+  before this was recorded count as mcpu08. They resume under it with a
+  one-line warning, because their files cannot be checked.
+- The hydrogen-bond sheet factor the run used: `forcefield_options:
+  {hbond_beta_favor: ...}` when the config gives one, otherwise the parameter
+  set's own (from its `constants/paramset.json`), otherwise 2.0, as for
+  mcpu08. Checkpoints from before it was recorded count as legacy MCPU's 3.0,
+  so resume one of those with `hbond_beta_favor: 3.0`.
+- The rotamer library (`rotamer_library`, default `dunbrack2002_sym`).
+  Checkpoints from before it was recorded count as `dunbrack2002`, so resume
+  one of those with `rotamer_library: dunbrack2002`.
+- The hard core the run used (see "The hard core" in the force-field docs):
+  `forcefield_options` `clash_alpha` and `clash_bond_exclusion` when the
+  config gives them, otherwise the parameter set's own (from its
+  `constants/paramset.json`; mcpu26 gives 0.85 and 3), otherwise mcpu08's;
+  and `clash_start_exemption`. Checkpoints from before they were recorded
+  count as mcpu08's: 0.75, 0 and true.
+
+A checkpoint whose atom count does not match the system stops with an error
+that names both counts. Format version 2 stores each glycine CA once, so a
+version 1 checkpoint of a protein with glycine cannot be resumed; start that
+run again from its input structure. Version 1 checkpoints of glycine-free
+proteins still resume. A checkpoint of parameter files other than the mcpu08
+files pyMCPU 0.1.0 shipped (another set, or mcpu08 with other tables) is
+written as format version 3. pyMCPU 0.1.0, which cannot check parameter
+files, refuses it as newer than it understands instead of resuming it under
+its own mcpu08; other checkpoints stay at version 2. A checkpoint of clash
+options other than mcpu08's is written as format version 4, which a pyMCPU
+that cannot check them refuses.
 
 ### Exact continuation
 

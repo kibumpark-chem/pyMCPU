@@ -40,12 +40,13 @@ home directory:
 The command always unpacks the shipped copy, even when an earlier step of the
 lookup, such as ``MCPU_PARAMS_DIR``, would supply other parameters; in that
 case do not export its output. The directory name includes a hash of the
-shipped tables and constants files, so a release that changes any of them
-unpacks into a new directory, and running the command again is quick.
+shipped tables and constants files, the set's ``constants/paramset.json``
+included when it has one, so a release that changes any of them unpacks into
+a new directory, and running the command again is quick.
 
 .. option:: --set SET
 
-   Parameter set name. Default ``mcpu08``.
+   Parameter set name: ``mcpu08`` (the default) or ``mcpu26``.
 
 .. option:: --timeout SECONDS
 

@@ -5,6 +5,177 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **The mcpu26 parameter set** (`MCPUForceField(..., param_set="mcpu26")`,
+  `param_set: mcpu26` in a config, `mcpu materialize-params --set mcpu26`):
+  mcpu26 in its legacy form, mcpu08's energy function with its tables
+  re-estimated from PISCES 2026 and the weights of a landscape fit on natural
+  Tsuboyama domains folded into them. It ships as a compact archive
+  (`pymcpu/data/params/mcpu26/tables.npz`, 7.8 MiB: the folded weights make
+  its tables float32, not integers) next to byte copies of mcpu08's constants
+  and its own `constants/paramset.json`. The manifest gives the set's sheet
+  factor, 2.3993940353393555, which a force field uses when it is given none,
+  and records the folded weights and the md5 of each table; the set's layout
+  requires it, so a folder of mcpu26's tables without it is incomplete instead
+  of loading with mcpu08's factor. The tables live in `mcpu26_params/`, so a
+  folder of mcpu08's given for mcpu26 (`MCPU_PARAMS_DIR`, `param_dir`) fails,
+  as does one of mcpu26's given for mcpu08. Its weights were fitted with
+  `clash_alpha` 0.85 and `clash_bond_exclusion` 3, which its manifest gives
+  as the set's own (see Changed). Its overall scale matches mcpu08's median
+  melting temperature over ten training domains; single proteins differ (see
+  "The mcpu26 parameter set" in the API docs). The raw tables are
+  gitignored like mcpu08's. `pymcpu.params.available_sets()` lists the
+  registered sets, and `scripts/encode_params.py` takes `--src` and `--out`
+  from `--set` when they are not given.
+- **Clash options** for `MCPUForceField` (`forcefield_options`):
+  `clash_alpha`, the hard-core factor (0.75; the contact cutoff stays at
+  1.35 radius sums); `clash_bond_exclusion`, which leaves pairs up to 1, 2
+  or 3 covalent bonds apart out of the clash check, a disulfide bridge of the
+  start structure counting as a bond (0: mcpu08's rules); and
+  `clash_start_exemption`, which when false penalises the pairs already
+  inside the hard core in the start structure (1000 each in the raw `mu`
+  energy) instead of exempting them for the whole run, so a cold run
+  removes those its moves can reach (`pymcpu.simulation.start_overlaps` and
+  `MuPotential.count_start_overlaps` count the rest). The defaults build the
+  same engine as before. Checkpoints record the three options and refuse a
+  resume with others; a checkpoint of options other than mcpu08's is format
+  version 4.
+- **Checkpoints record the parameter set and refuse a resume under another
+  one.** A run started with one parameter folder used to resume silently with
+  any other, for example under another set's tables given through
+  `MCPU_PARAMS_DIR`. Checkpoints now record `param_set`, `param_signature`
+  and `param_dir`. The signature is a sha256 over the files the force field
+  reads: those the set's registry layout names, plus
+  `constants/paramset.json` when the folder has one. A resume under another
+  set, or with files whose signature differs, stops with an error that says
+  which differs, gives both values, and names the `param_set:` or
+  `param_dir:` that resumes it. The folder is recorded as its real path, and
+  one folder reached through a link counts as itself, so the error does not
+  send a resume back to the folder whose files changed. The same files in
+  another folder resume. A
+  checkpoint written before these fields counts as mcpu08 and resumes under it
+  with a one-line warning, as its files cannot be checked. Folding, replica
+  exchange and MPI replica exchange all check it. A checkpoint of parameter
+  files other than the mcpu08 files 0.1.0 shipped is written as format
+  version 3, which pyMCPU 0.1.0 refuses as newer than it understands instead
+  of resuming it under its own mcpu08; other checkpoints stay at version 2,
+  and this version reads both. The three new
+  `CheckpointState` fields are keyword-only, so the other fields keep their
+  positional order.
+- `MCPUForceField.param_signature` and `pymcpu.params.param_signature`.
+  Taking a signature reads every parameter file in full, which a run
+  otherwise does not (the tables are mapped, and only the parts a structure
+  needs are read): 0.7 GB for mcpu08, about 1.7 s when the files are in the
+  page cache, 2.5 to 4 s from network scratch and up to 45 s from a home
+  directory when they are not. So it is taken only when needed: by the
+  runners when they first save or resume a checkpoint (MPI replica exchange
+  on rank 0, which sends it to the other ranks), and by `EngineSession` the
+  first time its fingerprint is read. A run without checkpoints, and a force
+  field alone, never take it. A file's sha256 and md5 come from one read,
+  and are kept under the cache root (`MCPU_CACHE_DIR`, default
+  `~/.cache/pymcpu`) in `params/digests.json`, by the file's real path,
+  inode, size, and modification and change times: each parameter file is
+  read once per cache root while it is unchanged, not once per process. A
+  force field refuses to sign parameter files that have changed since it
+  read them, as the signature would not describe its tables.
+- **A parameter set can carry its own defaults in
+  `constants/paramset.json`.** The file (format `pymcpu-paramset/1`) names
+  the set and can give its hydrogen-bond sheet factor (`hbond_beta_favor`),
+  the factors already multiplied into its tables (`folded_weights`, 0 or
+  above, a record only: the engine's group weights do not change) and its
+  provenance,
+  including the md5 of any of its files, which each file must still have when
+  a force field is built. `MCPUForceField(verify_provenance=False)` builds
+  without comparing them, and `MCPUForceField.check_provenance` compares
+  them later; MPI replica exchange builds so on every rank and compares on
+  rank 0 alone, which sends its error to the others. Unknown or repeated keys and values of the wrong
+  kind are refused with an error that names the file.
+  `pymcpu.params.load_paramset_manifest` reads and checks it, and
+  `MCPUForceField.paramset_manifest` holds what the force field read. mcpu08
+  has none. The file ships with its set: `scripts/encode_params.py` copies it
+  next to the table archive (and `--check` compares it), and a wheel install
+  unpacks it with the tables, into a cache folder whose name covers it. So a
+  set has the same defaults and signature from a wheel as from a checkout or
+  `MCPU_PARAMS_DIR`. `scripts/encode_params.py` also removes a constants file
+  from `--out` when `--src` no longer has it, and `--check` reports one that
+  only one side has.
+
+### Changed
+
+- **A parameter set's manifest can give its hard core**, `clash_alpha` and
+  `clash_bond_exclusion`, resolved as `hbond_beta_favor` is:
+  `MCPUForceField(clash_alpha=None, clash_bond_exclusion=None)` are the
+  defaults, and take the set's own, else mcpu08's 0.75 and 0; a value given as
+  an argument or in `forcefield_options` always wins, and checkpoints record
+  the values the run used. A set's weights hold for the hard core they were
+  fitted with: mcpu26's manifest gives 0.85 and 3. mcpu08 has no manifest, so
+  it runs as before. `clash_alpha: null` and `clash_bond_exclusion: null` in a
+  config now ask for this default instead of being refused.
+- **A force field refuses a parameter folder whose `constants/paramset.json`
+  names a registered set other than its `param_set`.** Such a folder's tables
+  and defaults are that set's, so loading it as another set mixed one set's
+  files with the other's name, which checkpoints record. The check comes
+  before any table is read, and the error names the set to load it as.
+  `pymcpu.params.load_paramset_manifest(..., set_name=...)` makes the same
+  check; without `set_name` it compares no name. A name no set is registered
+  under, such as a research folder's own, is not compared: that folder loads
+  as the `param_set` it is given for, with its manifest's defaults. 0.1.0 read
+  no manifest, so a folder laid out as mcpu08's whose manifest names another
+  registered set (mcpu26) loaded as mcpu08 there, and is now refused.
+- `MCPUForceField(hbond_beta_favor=None)` is the default: a force field
+  given no factor takes its parameter set's, and 2.0 when the set gives none,
+  so mcpu08 runs as before. A factor given as an argument or in
+  `forcefield_options` always wins, and checkpoints record the factor the run
+  used. `hbond_beta_favor: null` in a config now asks for this default
+  instead of being refused. The README's physics defaults and the
+  hydrogen-bond physics notes give the default this way.
+- `EngineSession.fingerprint` covers the parameter set the force field was
+  built from, the signature of its files and the hydrogen-bond sheet factor
+  it resolved, so it differs from 0.1.0's for the same engine, and restart
+  states from sessions that differ only in the factor no longer match.
+  `compute_fingerprint` takes `param_signature` and `hbond_beta_favor`;
+  without them the hash is the old one.
+- Runs print the parameter set and its folder with the rest of their
+  description, and log the start of its signature when they take it.
+
+### Fixed
+
+- The docs say when `EngineSession.fingerprint` reads the parameter files:
+  it is taken the first time it is read, which signs them (a full read of
+  each, unless the cache already holds its digests), so a worker that never
+  reads it does not pay for it. And the docstring of
+  `pymcpu.params._files_digests` said that a file changing while it is read
+  is read again; it is refused with `ParamsError`, as its digests would
+  describe no one version of it.
+- **A residue template must name the atoms of every chi angle the engine
+  counts.** `MCPUForceField` refuses a parameter folder whose
+  `constants/standard_amino_acids.json` gives a residue, for each of its
+  `ntorsions` chi angles (a whole number from 0 to 4), anything but one
+  `chi_atoms` row of four atom names and one `chi_moved_atoms` row of atom
+  names, with an error that names the file and each such residue. Such a
+  template used to load: the engine counts chi angles by `ntorsions`, the
+  side-chain moves turn only the atoms in the `chi_moved_atoms` rows, and the
+  side-chain torsion energy reads each chi from its `chi_atoms` row, so a chi
+  angle without its rows never changed and was scored at a placeholder
+  angle, with no other sign. Every residue in the template is checked, not
+  only those in the structure. mcpu08's template passes, and loads as before.
+- **Placing coordinates measures the chi angles of the first and the last
+  residue too.** `Context.set_positions` and the `Context.coords` setter,
+  and through them a run's start, a checkpoint resume, a replica-exchange
+  swap and `recenter`, refresh the torsions a `State` caches from the new
+  coordinates. They refreshed chi only for residues with a neighbour on each
+  side, as phi, psi, pCA and bCA need, so the two chain ends kept the chi of
+  the conformation placed before (-pi on a new Context) until a sidechain
+  move at that end was accepted: in 167 W2 runs, for a median 0.1 % of the
+  recorded frames, up to the whole of a 1e8-step run. Energies and
+  trajectories do not change: the sidechain torsion energy scores residues 1
+  to N-2 only, as legacy MCPU does, and the rotamer move measures the chi it
+  starts from on the coordinates. `State.sidechain_torsions`, and what reads
+  it, does.
+
 ## [0.1.0] - 2026-10-11
 
 First public release. pyMCPU reimplements MCPU, the Shakhnovich lab's Monte

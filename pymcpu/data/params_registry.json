@@ -35,6 +35,42 @@
         ]
       },
       "local_source": "../src/pymcpu/parameters/pretrained/mcpu08"
+    },
+    "mcpu26": {
+      "version": "1.0.0",
+      "description": "mcpu26 (legacy form): mcpu08's energy function with PISCES 2026 tables and fitted weights folded in; its constants/paramset.json is required.",
+      "layout": {
+        "required": {
+          "amino acids template": "constants/standard_amino_acids.json",
+          "atom types": "constants/atom_types.csv",
+          "mu potentials": "mcpu26_params/mu_potentials.bin",
+          "bb triplet": "mcpu26_params/triplet_potentials.bin",
+          "sc triplet": "mcpu26_params/sidechain_triplet_potentials.bin",
+          "hbond": "mcpu26_params/hydrogen_bond_potentials.bin",
+          "hbond seq_dep": "mcpu26_params/hbond_seq_dep.bin",
+          "aromatic": "mcpu26_params/aromatic_potentials.bin",
+          "rotamer library": "constants/bbind02.May.lib",
+          "parameter set manifest": "constants/paramset.json"
+        },
+        "optional": {
+          "rama mixture": "constants/rama_mixture.json"
+        },
+        "tables": {
+          "mu_potentials": "mcpu26_params/mu_potentials.bin",
+          "triplet_potentials": "mcpu26_params/triplet_potentials.bin",
+          "sidechain_triplet_potentials": "mcpu26_params/sidechain_triplet_potentials.bin",
+          "hydrogen_bond_potentials": "mcpu26_params/hydrogen_bond_potentials.bin",
+          "hbond_seq_dep": "mcpu26_params/hbond_seq_dep.bin",
+          "aromatic_potentials": "mcpu26_params/aromatic_potentials.bin"
+        },
+        "constants": [
+          "constants/atom_types.csv",
+          "constants/standard_amino_acids.json",
+          "constants/bbind02.May.lib",
+          "constants/rama_mixture.json"
+        ]
+      },
+      "local_source": "../src/pymcpu/parameters/pretrained/mcpu26"
     }
   }
 }

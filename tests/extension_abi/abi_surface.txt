@@ -157,6 +157,7 @@ MuPotential.cache_necessary_data
 MuPotential.calculate_energy_change
 MuPotential.clist_fallbacks
 MuPotential.contact_list_rebuilds
+MuPotential.count_start_overlaps
 MuPotential.get_energy_group
 MuPotential.get_name
 MuPotential.is_enabled
@@ -164,6 +165,9 @@ MuPotential.mu_exact_cutoff
 MuPotential.set_enabled
 MuPotential.set_energy_group
 MuPotential.set_name
+MuPotential.start_overlap_pairs
+MuPotential.start_overlap_penalty
+MuPotential.start_overlaps_penalised
 HBondPotential.beta_favor
 HBondPotential.get_energy_group
 HBondPotential.get_name

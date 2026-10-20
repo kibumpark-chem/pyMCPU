@@ -67,7 +67,10 @@ have one extra column per glycine and are rejected on resume.
 `MCPUForceField.__init__(trajectory, ...)` does the topology work once:
 
 1. `_load_parameters()` — resolve the parameter set (default `mcpu08`)
-   and read the tables.
+   and read the tables. A template in which a residue lacks one `chi_atoms`
+   row of four atom names and one non-empty `chi_moved_atoms` row for each
+   of its `ntorsions` chi angles is refused here, whether or not the
+   structure has that residue.
 2. `_canonicalize_residue_names(topology)` — fold protonation-state
    spellings (`HSD`, `CYX`, `ASH`, …) onto standard names, in place.
 3. `_validate_topology(topology)` — reject any residue the parameter
@@ -151,7 +154,9 @@ and `Context.coords` adds the shift back (`Context.frame_offset`).
 ## Extending it
 
 **A new Mu contact or clash rule.** The coordinate-independent
-eligibility masks come from `MuPotentialBuilder.build_topology_masks()`.
+eligibility masks come from `MuPotentialBuilder.build_topology_masks()`;
+with `clash_bond_exclusion` it is also given the native structure's
+disulfide bridges (`find_disulfides()`).
 `create_system` passes them to `MuPotential.cache_necessary_data()`,
 which bakes them, together with the native-structure clash exemptions,
 into the per-pair flag table the hot path reads. The engine holds no

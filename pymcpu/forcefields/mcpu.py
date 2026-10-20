@@ -23,7 +23,17 @@ import logging
 from pymcpu import mcpu_core
 from pymcpu.config import DEFAULT_ROTAMER_LIBRARY
 from pymcpu.mcpu_core import DownstreamCache
-from pymcpu.params import ParamsError, ensure_params, optional_files, required_files
+from pymcpu.params import (
+    PARAMSET_MANIFEST,
+    ParamsError,
+    check_paramset_provenance,
+    ensure_params,
+    load_paramset_manifest,
+    optional_files,
+    param_file_identities,
+    param_signature,
+    required_files,
+)
 
 
 from .base import BaseForceField
@@ -40,6 +50,12 @@ logger = logging.getLogger(__name__)
 
 _MU_LAMBDA_DEFAULT = 1.8
 _MU_ALPHA_DEFAULT  = 0.75
+# A hard core must stay inside the contact cutoff, lambda x alpha = 1.35 radius
+# sums, or it would swallow every contact.
+_CLASH_ALPHA_LIMIT = _MU_LAMBDA_DEFAULT * _MU_ALPHA_DEFAULT
+# clash_bond_exclusion: 0 keeps mcpu08's rules; at most three bonds, as a
+# molecular force field's bonded exclusions (1-2, 1-3 and 1-4 pairs).
+_MAX_CLASH_BOND_EXCLUSION = 3
 _DEFAULT_PARAM_SET = "mcpu08"
 # A C(i)-N(i+1) distance above this (nm) is a chain break; a peptide bond is
 # about 0.133 nm.
@@ -47,6 +63,9 @@ _MAX_PEPTIDE_BOND_NM = 0.2
 # Problems listed in one structure error before the rest are counted.
 _MAX_LISTED_PROBLEMS = 10
 _FLOAT32_MAX = float(np.finfo(np.float32).max)
+# The sheet factor of a parameter set whose constants/paramset.json sets none,
+# or that has no such file (mcpu08): the engine's kDefaultBetaFavor.
+_DEFAULT_HBOND_BETA_FAVOR = 2.0
 
 
 def _listed(problems: list[str]) -> str:
@@ -63,6 +82,116 @@ def _hbond_beta_favor(value: object) -> float:
         if factor <= _FLOAT32_MAX and np.float32(factor) > 0.0:
             return factor
     raise ValueError(f"hbond_beta_favor must be a finite number above 0, got {value!r}")
+
+
+def _clash_alpha(value: object) -> float:
+    """``clash_alpha`` as a float, or ValueError unless it is a real number
+    above 0 and below 1.35, the factor of the contact cutoff."""
+    if isinstance(value, numbers.Real) and not isinstance(value, bool):
+        alpha = float(value)
+        if 0.0 < alpha < _CLASH_ALPHA_LIMIT:
+            return alpha
+    raise ValueError(
+        "clash_alpha must be a number above 0 and below 1.35 (the contact cutoff, "
+        f"1.8 x 0.75 radius sums, which it does not move), got {value!r}"
+    )
+
+
+def _clash_bond_exclusion(value: object) -> int:
+    """``clash_bond_exclusion`` as an int, or ValueError unless it is a
+    whole number from 0 to 3."""
+    if isinstance(value, numbers.Integral) and not isinstance(value, bool):
+        if 0 <= int(value) <= _MAX_CLASH_BOND_EXCLUSION:
+            return int(value)
+    raise ValueError(
+        "clash_bond_exclusion must be 0 (mcpu08's clash rules) or 1, 2 or 3 (also "
+        f"leave out pairs at most that many covalent bonds apart), got {value!r}"
+    )
+
+
+def _clash_start_exemption(value: object) -> bool:
+    """``clash_start_exemption`` as a bool, or ValueError unless it is one."""
+    if isinstance(value, (bool, np.bool_)):
+        return bool(value)
+    raise ValueError(f"clash_start_exemption must be True or False, got {value!r}")
+
+
+def _chi_row_problems(entry: dict) -> list[str]:
+    """What one residue of a template lacks for the engine to move and score
+    its chi angles, as phrases that follow its name; empty when nothing."""
+    if "ntorsions" not in entry:
+        if entry.get("chi_atoms") or entry.get("chi_moved_atoms"):
+            return ["has no ntorsions"]
+        return []  # not a residue with chi angles, nor one the engine can use
+    n = entry["ntorsions"]
+    if not isinstance(n, int) or isinstance(n, bool) or not 0 <= n <= 4:
+        return [f"has ntorsions {n!r}, not a whole number from 0 to 4"]
+    problems = []
+    chi = entry.get("chi_atoms", [])
+    if not isinstance(chi, list):
+        problems.append(f"has chi_atoms of type {type(chi).__name__}, not a list of rows")
+    elif len(chi) != n:
+        problems.append(f"has ntorsions {n} but {len(chi)} chi_atoms rows")
+    else:
+        bad = [f"chi{k + 1}" for k, row in enumerate(chi)
+               if not (isinstance(row, list) and len(row) == 4
+                       and all(isinstance(atom, str) for atom in row))]
+        if bad:
+            rows = "a chi_atoms row" if len(bad) == 1 else "chi_atoms rows"
+            verb = "is" if len(bad) == 1 else "are"
+            problems.append(f"has {rows} for {', '.join(bad)} that {verb} not four atom names")
+    moved = entry.get("chi_moved_atoms")
+    if moved is None:
+        if n:
+            problems.append("has no chi_moved_atoms")
+    elif not isinstance(moved, list):
+        problems.append(f"has chi_moved_atoms of type {type(moved).__name__}, not a list of rows")
+    elif len(moved) != n:
+        problems.append(f"has {len(moved)} chi_moved_atoms rows for {n} chi")
+    else:
+        empty = [f"chi{k + 1}" for k, row in enumerate(moved)
+                 if not isinstance(row, list) or not row]
+        if empty:
+            problems.append(f"has no atoms in chi_moved_atoms for {', '.join(empty)}")
+    return problems
+
+
+def _check_chi_rows(template: dict, path: Path) -> None:
+    """Raise ValueError unless every residue in ``template`` names, for each
+    chi angle the engine counts for it (``ntorsions``, 0 to 4), the four
+    atoms that define the angle and the atoms it moves.
+
+    ``chi_atoms`` holds the defining atoms and ``chi_moved_atoms`` the atoms
+    that turn with each chi, one row per chi in both. The engine counts a
+    residue's chi angles by ``ntorsions``, not by the rows: the side-chain
+    moves turn only the atoms in the ``chi_moved_atoms`` rows, and the
+    side-chain torsion energy reads each chi from its ``chi_atoms`` row. A
+    chi without its rows used to load: its moved range was [-1, -1], so it
+    never changed, and it was scored at a placeholder angle, with nothing
+    else to show it. ``path`` is the template's file, for the message. An
+    entry that is not a residue (not a JSON object) is left alone, as is an
+    object with neither ``ntorsions`` nor chi rows.
+    """
+    problems = []
+    for name in sorted(template):
+        entry = template[name]
+        if isinstance(entry, dict):
+            found = _chi_row_problems(entry)
+            if found:
+                problems.append(f"{name} " + ", and ".join(found))
+    if problems:
+        raise ValueError(
+            f"{path}: a residue must name, for each chi angle it has ('ntorsions'), the "
+            "four atoms that define it ('chi_atoms', one row per chi) and the atoms it "
+            "moves ('chi_moved_atoms', one row of atom names per chi), and "
+            f"{len(problems)} do not: {'; '.join(problems)}. The side-chain moves turn "
+            "only the atoms in the 'chi_moved_atoms' rows, and the side-chain torsion "
+            "energy reads each chi from its 'chi_atoms' row, so a chi angle without its "
+            "rows would never change and would be scored at a placeholder angle, with "
+            "nothing else to show it. mcpu08's template "
+            "(pymcpu/data/params/mcpu08/constants/standard_amino_acids.json in the "
+            "package) has the rows for every residue."
+        )
 
 
 @dataclass
@@ -97,7 +226,11 @@ class MCPUForceField(BaseForceField):
              dssp_coil_state: str = "C",
              allow_provisional_rama: bool = False,
              allow_chain_breaks: bool = False,
-             hbond_beta_favor: float = 2.0) -> None:
+             hbond_beta_favor: float | None = None,
+             verify_provenance: bool = True,
+             clash_alpha: float | None = None,
+             clash_bond_exclusion: int | None = None,
+             clash_start_exemption: bool = True) -> None:
         """
         Load the parameters, check the structure and lay out its atoms.
 
@@ -110,10 +243,18 @@ class MCPUForceField(BaseForceField):
         trajectory
             The structure, with heavy atoms only (see :meth:`prepare_trajectory`).
         param_dir
-            Explicit parameter root (``constants/`` + ``mcpu_params/``).
-            If omitted, resolves via :func:`pymcpu.params.ensure_params`.
+            Explicit parameter root, laid out as ``param_set`` (``constants/``
+            and the set's table folder: ``mcpu_params/`` for mcpu08,
+            ``mcpu26_params/`` for mcpu26). If omitted, resolves via
+            :func:`pymcpu.params.ensure_params`.
         param_set
-            Registry set name used when ``param_dir`` is omitted (default ``mcpu08``).
+            The registered parameter set (``mcpu08``, the default, or
+            ``mcpu26``): the one resolved when ``param_dir`` is omitted, and
+            the layout ``param_dir`` must have. A folder whose
+            ``constants/paramset.json`` names another registered set is
+            refused; one that names a set no one registered (a research
+            folder's own name) loads as ``param_set``, with that file's
+            defaults.
         virtual_amide_h
             If True (default), use virtual amide hydrogens as above. If False,
             add explicit amide hydrogens to the engine's atoms instead.
@@ -140,17 +281,81 @@ class MCPUForceField(BaseForceField):
             simulates as one chain.
         hbond_beta_favor
             Factor on every hydrogen bond between residues more than four
-            apart (default 2.0). Legacy MCPU compiled 3.0 (``beta_favor`` in
-            its ``define.h``); pass 3.0 to score hydrogen bonds as it did.
+            apart. None (the default) takes the parameter set's own, the
+            ``hbond_beta_favor`` of its ``constants/paramset.json``, or 2.0
+            when the set gives none, as for mcpu08. A value given here
+            always wins. Legacy MCPU compiled 3.0 (``beta_favor`` in its
+            ``define.h``); pass 3.0 to score hydrogen bonds as it did.
+        verify_provenance
+            If True (the default), compare the md5 that the set's
+            ``constants/paramset.json`` lists for any of its files with the
+            file, which reads it the first time (see
+            :func:`pymcpu.params.load_paramset_manifest`). If False, the
+            files are not read; :meth:`check_provenance` compares them later.
+            MPI replica exchange passes False on every rank and compares on
+            rank 0 alone.
+        clash_alpha
+            The hard core: two atoms that can clash may come no closer than
+            this factor times the sum of their radii. None (the default)
+            takes the parameter set's own, the ``clash_alpha`` of its
+            ``constants/paramset.json`` (0.85 for mcpu26), or 0.75, mcpu08's,
+            when the set gives none. A value given here always wins. It must
+            be above 0 and below 1.35, the factor of the contact cutoff,
+            which it leaves where it is. Checkpoints record it.
+        clash_bond_exclusion
+            0 keeps mcpu08's rules for which pairs can clash. 1, 2 or 3 also
+            leave out of the clash check every pair of atoms at most that
+            many covalent bonds apart (bonds from the residue templates, and
+            each disulfide bridge of this structure: two CYS SG atoms under
+            2.5 A apart). 3 leaves out the pairs whose distance a single
+            torsion sets, which a harder core would otherwise forbid or,
+            inside the core at the start, exempt for the whole run. Contacts
+            are not changed. None (the default) takes the parameter set's
+            own, as for ``clash_alpha`` (3 for mcpu26), or 0 when the set
+            gives none. A value given here always wins. Checkpoints record
+            it.
+        clash_start_exemption
+            What happens to a pair that can clash and is already inside its
+            hard core in this structure (a start overlap). True (the default,
+            mcpu08's rule): it is exempt from the clash check for the whole
+            run. False: it is penalised instead, adding
+            ``MuPotential.start_overlap_penalty`` (1000, raw Mu units) to the
+            energy while it stays inside, while every other pair keeps the
+            hard core. For relaxing a start structure: a cold run of local
+            moves takes out the overlaps it can reach and practically never
+            puts one back, but one caged by its neighbours can stay, so read
+            how many are left (``MuPotential.count_start_overlaps``,
+            :func:`pymcpu.simulation.start_overlaps`). Checkpoints record it.
 
         Raises
         ------
         ValueError
             For a residue MCPU has no parameters for, a missing heavy atom
-            (named with its residue), a chain break, as above, or an
-            ``hbond_beta_favor`` that is not a finite number above 0.
+            (named with its residue), a chain break, as above, an
+            ``hbond_beta_favor`` that is not a finite number above 0, a
+            ``clash_alpha`` that is not a number above 0 and below 1.35, a
+            ``clash_bond_exclusion`` that is not 0, 1, 2 or 3, a
+            ``clash_start_exemption`` that is not True or False, a
+            ``constants/paramset.json`` that
+            :func:`pymcpu.params.load_paramset_manifest` refuses (including
+            one that names a registered set other than ``param_set``, and one
+            whose provenance md5 a listed file no longer has), or a
+            residue template (``constants/standard_amino_acids.json``) in
+            which a residue lacks, for any of the chi angles it has
+            (``ntorsions``), the atoms that define it (``chi_atoms``) or the
+            atoms it moves (``chi_moved_atoms``, one row per chi in both), as
+            that chi angle would never change. The message names the file
+            and the residues.
         """
-        self.hbond_beta_favor = _hbond_beta_favor(hbond_beta_favor)
+        # A value given here is checked before any file is read.
+        if hbond_beta_favor is not None:
+            hbond_beta_favor = _hbond_beta_favor(hbond_beta_favor)
+        if clash_alpha is not None:
+            clash_alpha = _clash_alpha(clash_alpha)
+        if clash_bond_exclusion is not None:
+            clash_bond_exclusion = _clash_bond_exclusion(clash_bond_exclusion)
+        #: Start overlaps exempt (True, mcpu08) or penalised (False).
+        self.clash_start_exemption = _clash_start_exemption(clash_start_exemption)
         if param_dir is None:
             try:
                 param_dir = ensure_params(param_set)
@@ -158,12 +363,48 @@ class MCPUForceField(BaseForceField):
                 raise FileNotFoundError(str(exc)) from exc
         self.param_dir = Path(param_dir)
         self.param_set = param_set
+        self._param_signature: str | None = None
+        # The folder's checked constants/paramset.json, or None (mcpu08 has
+        # none). Read before the tables, so a table whose provenance md5 no
+        # longer matches is refused before it is loaded.
+        self.paramset_manifest = load_paramset_manifest(
+            self.param_dir, check_md5=bool(verify_provenance), set_name=self.param_set)
+        if hbond_beta_favor is None:
+            hbond_beta_favor = (self.paramset_manifest or {}).get("hbond_beta_favor")
+            if hbond_beta_favor is None:
+                hbond_beta_favor = _DEFAULT_HBOND_BETA_FAVOR
+            else:
+                logger.info("hbond_beta_favor %s from %s", hbond_beta_favor,
+                            self.param_dir / PARAMSET_MANIFEST)
+        # The argument, else the parameter set's, else 2.0; checkpoints
+        # record this value.
+        self.hbond_beta_favor = _hbond_beta_favor(hbond_beta_favor)
+        # The hard core resolves as the sheet factor does: the argument, else
+        # the parameter set's, else mcpu08's (0.75, 0). A set's weights hold
+        # for the hard core they were fitted with.
+        manifest = self.paramset_manifest or {}
+        if clash_alpha is None and "clash_alpha" in manifest:
+            clash_alpha = manifest["clash_alpha"]
+            logger.info("clash_alpha %s from %s", clash_alpha, self.param_dir / PARAMSET_MANIFEST)
+        if clash_bond_exclusion is None and "clash_bond_exclusion" in manifest:
+            clash_bond_exclusion = manifest["clash_bond_exclusion"]
+            logger.info("clash_bond_exclusion %s from %s", clash_bond_exclusion,
+                        self.param_dir / PARAMSET_MANIFEST)
+        #: The hard-core factor the systems it builds use (see ``clash_alpha``).
+        self.clash_alpha = _clash_alpha(_MU_ALPHA_DEFAULT if clash_alpha is None else clash_alpha)
+        #: Pairs at most this many bonds apart cannot clash; 0: mcpu08's rules.
+        self.clash_bond_exclusion = _clash_bond_exclusion(
+            0 if clash_bond_exclusion is None else clash_bond_exclusion)
         self.virtual_amide_h = bool(virtual_amide_h)
         self.compute_dssp = bool(compute_dssp)
         self.dssp_coil_state = dssp_coil_state
         self.allow_provisional_rama = bool(allow_provisional_rama)
         self.allow_chain_breaks = bool(allow_chain_breaks)
         self._load_parameters()
+        # What each parameter file was when it was read (a few stat calls):
+        # param_signature, taken later and only when asked for, refuses to
+        # sign files that have changed since.
+        self._param_files = param_file_identities(self.param_dir, self.param_set)
         #: The topology the engine actually simulates, here the input's.
         #: Callers read this rather than the input's, so they can write
         #: trajectories without knowing which force field they have.
@@ -388,6 +629,9 @@ class MCPUForceField(BaseForceField):
                 )
         with open(required_paths["amino acids template"], "r") as f:
             self.ff_template = json.load(f)
+        # A property of the parameter set, not of the structure: checked for
+        # every residue in the template, whether or not the structure has it.
+        _check_chi_rows(self.ff_template, required_paths["amino acids template"])
         self.atom_type_lookup = MuPotentialBuilder.load_atom_types(
             str(required_paths["atom types"])
         )
@@ -506,7 +750,11 @@ class MCPUForceField(BaseForceField):
         # resolved independently from real atom names, with contiguity
         # asserted here as the safety net for the assumption that this
         # named atom set forms a contiguous run under the engine's current
-        # atom ordering.
+        # atom ordering. _load_parameters has refused a template in which a
+        # residue lacks one chi_atoms row and one non-empty row here for each
+        # of its ntorsions chi angles, so the [] default below is reached only
+        # by residues without chi angles (GLY and ALA in mcpu08), never by one
+        # whose chi would then not move.
         self.chi_moved_atom_ranges: list[list[list[int]]] = []
         for res_idx, residue in enumerate(topology.residues):
             moved_rows = self.ff_template.get(residue.name, {}).get("chi_moved_atoms", [])
@@ -579,7 +827,9 @@ class MCPUForceField(BaseForceField):
         Build a System with the five MCPU potentials for this structure.
 
         Pass the topology the force field was built from. Call it once for
-        each simulation; every call returns a new System.
+        each simulation; every call returns a new System. With
+        ``clash_bond_exclusion``, a residue without a bond template, or an
+        atom that no template bond reaches, raises ValueError.
         """
         system = mcpu_core.System(self.n_atoms, self.n_res)
         system.set_block_indices(self.blocks)
@@ -630,17 +880,42 @@ class MCPUForceField(BaseForceField):
             mu_potential_matrix=self.mu_energies,
             atom_type_lookup=self.atom_type_lookup,
             lambda_val=_MU_LAMBDA_DEFAULT,
-            alpha_val=_MU_ALPHA_DEFAULT
+            alpha_val=_MU_ALPHA_DEFAULT,
+            hard_core_alpha=self.clash_alpha,
         )
+        # clash_bond_exclusion counts this structure's disulfide bridges as
+        # bonds; mcpu08's rules (0) do not use them.
+        disulfides: list[tuple[int, int]] = []
+        if self.clash_bond_exclusion > 0:
+            disulfides = MuPotentialBuilder.find_disulfides(
+                self.ordered_atom_list, self.coords[0] * 10.0)
+            if disulfides:
+                logger.info(
+                    "clash_bond_exclusion=%d counts %d disulfide bridge(s) of the start "
+                    "structure as bonds: %s", self.clash_bond_exclusion, len(disulfides),
+                    ", ".join(f"CYS {i}-CYS {j}" for i, j in disulfides))
         topo_contact, topo_clash = MuPotentialBuilder.build_topology_masks(
             self.ordered_atom_list,
-            self.n_atoms
+            self.n_atoms,
+            clash_bond_exclusion=self.clash_bond_exclusion,
+            disulfides=disulfides,
         )
+        # Pairs inside their hard core in this structure are exempt for the
+        # whole run, or penalised. The default makes the call mcpu08 always has.
+        start = {} if self.clash_start_exemption else {"exempt_start_overlaps": False}
         mu_potential.cache_necessary_data(
-            topo_contact, 
-            topo_clash, 
-            self.coords[0].T * 10.0  # Pass coordinates in Angstroms
+            topo_contact,
+            topo_clash,
+            self.coords[0].T * 10.0,  # Pass coordinates in Angstroms
+            **start,
         )
+        if not self.clash_start_exemption:
+            logger.info(
+                "%d atom pairs overlap in the start structure (inside %s radius sums); "
+                "they are penalised, %g each (raw Mu units), while they stay inside",
+                mu_potential.start_overlap_pairs, self.clash_alpha,
+                mu_potential.start_overlap_penalty,
+            )
         mu_potential.set_energy_group(1)
         mu_potential.set_name("mu")
         system.add_potential(mu_potential)
@@ -760,6 +1035,53 @@ class MCPUForceField(BaseForceField):
                 )
             )
     
+    @property
+    def param_signature(self) -> str:
+        """sha256 (hex) of the parameter files this force field reads:
+        :func:`pymcpu.params.param_signature` of :attr:`param_dir` with the
+        ``param_set`` layout. Folders that hold the same files have the same
+        signature wherever they are.
+
+        It is taken the first time it is asked for, and kept. Taking it reads
+        every parameter file in full, which building the force field does not
+        (the tables are mapped, and only the parts a structure needs are
+        read): 0.7 GB for mcpu08, about 1.7 s when the files are in the page
+        cache, 2.5 to 4 s from network scratch and up to 45 s from a home
+        directory when they are not. So the runners take it only when they
+        save or resume a checkpoint, which records it so that a run cannot
+        resume with other tables, and :class:`~pymcpu.sampling.EngineSession`
+        only when its fingerprint is read.
+
+        Raises :class:`pymcpu.params.ParamsError` if a parameter file has
+        changed (been rewritten, replaced or removed, or a link pointed
+        elsewhere) since the force field read it, as the signature would not
+        describe the tables it uses; build the force field again.
+        """
+        if self._param_signature is None:
+            read = getattr(self, "_param_files", None)
+            if read is not None:
+                now = param_file_identities(self.param_dir, self.param_set)
+                changed = sorted(rel for rel in set(read) | set(now)
+                                 if read.get(rel) != now.get(rel))
+                if changed:
+                    raise ParamsError(
+                        f"parameter files in {self.param_dir} have changed since this force "
+                        f"field read them: {', '.join(changed)}. Their signature would not "
+                        "describe the tables it uses, so it is not taken; build the force "
+                        "field again (for a run: start it again, or resume it from its last "
+                        "checkpoint)"
+                    )
+            self._param_signature = param_signature(self.param_dir, self.param_set)
+        return self._param_signature
+
+    def check_provenance(self) -> None:
+        """Compare the md5 that the parameter set's ``constants/paramset.json``
+        lists for any of its files with the file, as building the force field
+        does unless given ``verify_provenance=False``. Raises ValueError,
+        naming the file, for one that no longer has its md5; a set that lists
+        none has nothing to compare."""
+        check_paramset_provenance(self.param_dir, self.paramset_manifest)
+
     @property
     def sidechain_move_residues(self) -> list[int]:
         """Residues a sidechain move can act on: those with chi angles, except

@@ -256,6 +256,37 @@ def test_mpi_resume_refuses_another_hbond_beta_favor(
         other._mpi_load_checkpoint(comm=mock_comm_rank0)
 
 
+def test_mpi_resume_refuses_other_clash_options(
+    mock_comm_rank0, tmp_path, minimal_pdb_path, monkeypatch
+):
+    """The checkpoint records the force field's clash options (format
+    version 4 when they are not mcpu08's), and a run built with others stops
+    on rank 0's verdict."""
+    from pymcpu.checkpointing import CheckpointConfig, load_checkpoint
+
+    _ensure_mpi_module_for_construction(monkeypatch)
+    cfg = CheckpointConfig(checkpoint_dir=str(tmp_path / "chk"), checkpoint_interval=1,
+                           resume=False)
+    for out in ("out", "out2"):
+        (tmp_path / out).mkdir()
+    hard = {"clash_alpha": 0.85, "clash_bond_exclusion": 3}
+    re = _make_two_temp_mpi_re(mock_comm_rank0, minimal_pdb_path, cfg, tmp_path / "out",
+                               forcefield_options=hard)
+    re._attach_traj_reporters(resume=False)
+    re._mc_replica_steps = 1
+    re._mpi_save_checkpoint(cycle=1, comm=mock_comm_rank0)
+    saved = load_checkpoint(tmp_path / "chk" / "last.chk")
+    assert (saved["clash_alpha"], saved["clash_bond_exclusion"],
+            saved["clash_start_exemption"], saved["format_version"]) == (0.85, 3, True, 4)
+
+    cfg.resume = True
+    other = _make_two_temp_mpi_re(mock_comm_rank0, minimal_pdb_path, cfg, tmp_path / "out2")
+    with pytest.raises(ValueError, match=(
+        "written with clash_alpha 0.85, clash_bond_exclusion 3, but this run uses "
+        "clash_alpha 0.75, clash_bond_exclusion 0")):
+        other._mpi_load_checkpoint(comm=mock_comm_rank0)
+
+
 def test_mpi_resume_refuses_another_rotamer_library(
     mock_comm_rank0, tmp_path, minimal_pdb_path, monkeypatch
 ):
@@ -282,3 +313,235 @@ def test_mpi_resume_refuses_another_rotamer_library(
     assert other.system.get_rotamer_library().fingerprint.startswith("dunbrack2002 md5=")
     with pytest.raises(ValueError, match="resume it with rotamer_library: dunbrack2002_sym"):
         other._mpi_load_checkpoint(comm=mock_comm_rank0)
+
+
+def _save_one_checkpoint(comm, pdb_path, tmp_path):
+    """A 2-replica run's checkpoint at cycle 1, saved by rank 0 (mock)."""
+    from pymcpu.checkpointing import CheckpointConfig
+
+    cfg = CheckpointConfig(checkpoint_dir=str(tmp_path / "chk"), checkpoint_interval=1,
+                           resume=False)
+    (tmp_path / "out").mkdir()
+    rex = _make_two_temp_mpi_re(comm, pdb_path, cfg, tmp_path / "out")
+    rex._attach_traj_reporters(resume=False)
+    rex._mc_replica_steps = 1
+    rex._mpi_save_checkpoint(cycle=1, comm=comm)
+    cfg.resume = True
+    return rex, cfg
+
+
+@pytest.mark.parametrize("change", ["files", "set"])
+def test_mpi_resume_refuses_other_parameter_files_or_another_set(
+    change, mock_comm_rank0, tmp_path, minimal_pdb_path, monkeypatch
+):
+    """The checkpoint records the parameter set and the signature of its
+    files, and a run built with other files or another set stops on rank 0's
+    verdict, with the value to pass."""
+    from pymcpu.checkpointing import load_checkpoint
+    from tests.helpers.param_folders import (
+        changed_param_folder,
+        linked_param_folder,
+        register_set_like_mcpu08,
+    )
+
+    _ensure_mpi_module_for_construction(monkeypatch)
+    rex, cfg = _save_one_checkpoint(mock_comm_rank0, minimal_pdb_path, tmp_path)
+    saved = load_checkpoint(tmp_path / "chk" / "last.chk")
+    assert saved["param_set"] == "mcpu08"
+    assert saved["param_signature"] == rex.forcefield.param_signature
+
+    if change == "files":
+        options = {"param_dir": str(changed_param_folder(tmp_path / "changed"))}
+        expected = (
+            "a table or constants file differs; resume it with param_dir: "
+            f"{saved['param_dir']} "
+        )
+    else:
+        name = register_set_like_mcpu08(monkeypatch)
+        options = {"param_set": name, "param_dir": str(linked_param_folder(tmp_path / "linked"))}
+        expected = f"but this run uses '{name}'; resume it with param_set: mcpu08,"
+    (tmp_path / "out2").mkdir()
+    other = _make_two_temp_mpi_re(mock_comm_rank0, minimal_pdb_path, cfg, tmp_path / "out2",
+                                  **options)
+    with pytest.raises(ValueError) as refused:
+        other._mpi_load_checkpoint(comm=mock_comm_rank0)
+    assert expected in str(refused.value)
+
+
+def test_mpi_checkpoint_of_other_files_is_format_3(
+    mock_comm_rank0, tmp_path, minimal_pdb_path, monkeypatch
+):
+    """A checkpoint of parameter files other than the mcpu08 files pyMCPU
+    0.1.0 shipped is written as format version 3, which older pyMCPU refuse;
+    one of the shipped files stays at version 2."""
+    from pymcpu.checkpointing import CheckpointConfig, load_checkpoint
+    from tests.helpers.param_folders import changed_param_folder
+
+    _ensure_mpi_module_for_construction(monkeypatch)
+    versions = {}
+    changed = str(changed_param_folder(tmp_path / "changed"))
+    for label, options in (("shipped", {}), ("changed", {"param_dir": changed})):
+        cfg = CheckpointConfig(checkpoint_dir=str(tmp_path / label / "chk"),
+                               checkpoint_interval=1, resume=False)
+        (tmp_path / label / "out").mkdir(parents=True)
+        rex = _make_two_temp_mpi_re(mock_comm_rank0, minimal_pdb_path, cfg,
+                                    tmp_path / label / "out", **options)
+        rex._attach_traj_reporters(resume=False)
+        rex._mc_replica_steps = 1
+        rex._mpi_save_checkpoint(cycle=1, comm=mock_comm_rank0)
+        versions[label] = load_checkpoint(tmp_path / label / "chk" / "last.chk")["format_version"]
+    assert versions == {"shipped": 2, "changed": 3}
+
+
+def test_mpi_resumes_a_checkpoint_without_a_parameter_set_as_mcpu08(
+    mock_comm_rank0, tmp_path, minimal_pdb_path, monkeypatch, caplog
+):
+    """A checkpoint written before the parameter set was recorded counts as
+    mcpu08: it resumes, and says once that its files were not checked."""
+    import logging
+
+    from pymcpu.checkpointing import CheckpointConfig, load_checkpoint, save_checkpoint
+
+    _ensure_mpi_module_for_construction(monkeypatch)
+    out, last = _run_stages(mock_comm_rank0, minimal_pdb_path, tmp_path, [3])
+    for chk in last.parent.glob("*.chk"):
+        state = load_checkpoint(chk)
+        for key in ("param_set", "param_signature", "param_dir"):
+            assert state.pop(key)  # saved by this version...
+        save_checkpoint(state, chk.parent, filename=chk.name)  # ...and now removed
+
+    cfg = CheckpointConfig(checkpoint_dir=str(last.parent), checkpoint_interval=3, resume=True)
+    with caplog.at_level(logging.WARNING, logger="pymcpu.checkpointing"):
+        rex = _make_two_temp_mpi_re(
+            mock_comm_rank0, minimal_pdb_path, cfg, out, exchange_log="all", state_log_interval=1
+        )
+        rex.run(6, 10, verbose=False, write_logs=True)
+    lines = [r.getMessage() for r in caplog.records if "records no parameter set" in r.getMessage()]
+    assert len(lines) == 1 and "it counts as mcpu08" in lines[0]
+    resumed = load_checkpoint(last)
+    assert resumed["cycle"] == 6 and resumed["param_set"] == "mcpu08"
+
+
+def test_rank0_alone_signs_the_parameter_files(tmp_path, minimal_pdb_path, monkeypatch):
+    """Building the run signs nothing. The first checkpoint save or load
+    takes the record: rank 0 reads the parameter files to sign them and sends
+    it to the other ranks, which do not read them. Two ranks are mocked here:
+    rank 1's broadcasts return what rank 0 sent.
+    ``test_mpi_checkpointing_multirank`` checks the same with two live ranks."""
+    import pymcpu.forcefields.mcpu as mcpu_module
+    from pymcpu.checkpointing import CheckpointConfig
+
+    _ensure_mpi_module_for_construction(monkeypatch)
+    signed = []
+    sign = mcpu_module.param_signature
+    monkeypatch.setattr(mcpu_module, "param_signature",
+                        lambda *args: signed.append(args) or sign(*args))
+
+    sent = []
+
+    def comm_of(rank, replies=None):
+        comm = MagicMock()
+        comm.Get_rank.return_value = rank
+        comm.Get_size.return_value = 2
+        comm.Get_attr.return_value = 32767
+        comm.Barrier.return_value = None
+        if replies is None:
+            comm.bcast.side_effect = lambda data, root=0: sent.append(data) or data
+        else:
+            replies = iter(replies)
+            comm.bcast.side_effect = lambda data, root=0: next(replies)
+        return comm
+
+    cfg = CheckpointConfig(checkpoint_dir=str(tmp_path / "chk"), resume=False)
+    (tmp_path / "out").mkdir()
+    comm0 = comm_of(0)
+    rank0 = _make_two_temp_mpi_re(comm0, minimal_pdb_path, cfg, tmp_path / "out")
+    built = len(sent)
+    rank1 = _make_two_temp_mpi_re(comm_of(1, list(sent)), minimal_pdb_path, cfg, tmp_path / "out")
+    assert signed == []  # building the run signs nothing
+    assert rank0._param_record is None and rank1._param_record is None
+
+    record0 = rank0._ensure_param_record(comm0)  # the first checkpoint save or load
+    record1 = rank1._ensure_param_record(comm_of(1, sent[built:]))
+    assert len(signed) == 1  # rank 1 took rank 0's record
+    assert record1 == record0 == rank1._param_record
+    assert record0["param_signature"] == rank0.forcefield.param_signature
+    assert rank1.forcefield._param_signature is None
+    rank0._ensure_param_record(comm0)  # taken once
+    assert len(signed) == 1 and len(sent) == built + 1
+
+
+def _md5_folder(root, table_md5=None):
+    """mcpu08's files linked into ``root``, with the aromatic table a file of
+    its own whose md5 the folder's manifest lists (its true md5 unless
+    ``table_md5`` is given)."""
+    import hashlib
+    import json
+
+    from pymcpu.params import PARAMSET_FORMAT, PARAMSET_MANIFEST
+    from tests.helpers.param_folders import linked_param_folder
+
+    folder = linked_param_folder(root)
+    table = folder / "mcpu_params" / "aromatic_potentials.bin"
+    data = table.read_bytes()
+    table.unlink()
+    table.write_bytes(data)
+    md5 = table_md5 or hashlib.md5(data).hexdigest()
+    (folder / PARAMSET_MANIFEST).write_text(json.dumps({
+        "format": PARAMSET_FORMAT, "name": "mcpu08",
+        "provenance": {"md5": {"mcpu_params/aromatic_potentials.bin": md5}}}))
+    return folder
+
+
+@pytest.mark.parametrize("md5", ["true", "wrong"])
+def test_rank0_alone_compares_the_provenance_md5s(tmp_path, minimal_pdb_path, monkeypatch, md5):
+    """Every rank builds its force field without comparing the md5s the
+    set's manifest lists (each would read the listed tables); rank 0
+    compares them and sends its error, so with a wrong md5 every rank raises
+    it. Two ranks are mocked: rank 1's broadcasts return what rank 0 sent."""
+    from pymcpu import params
+    from pymcpu.checkpointing import CheckpointConfig
+
+    _ensure_mpi_module_for_construction(monkeypatch)
+    compared = []
+    check = params._check_provenance_md5
+
+    def counting(*args, **kwargs):  # counts the calls that compare md5s
+        if kwargs.get("compare", True):
+            compared.append(True)
+        return check(*args, **kwargs)
+
+    monkeypatch.setattr(params, "_check_provenance_md5", counting)
+    folder = _md5_folder(tmp_path / "params", None if md5 == "true" else "0" * 32)
+    sent = []
+
+    def comm_of(rank, replies=None):
+        comm = MagicMock()
+        comm.Get_rank.return_value = rank
+        comm.Get_size.return_value = 2
+        comm.Get_attr.return_value = 32767
+        comm.Barrier.return_value = None
+        if replies is None:
+            comm.bcast.side_effect = lambda data, root=0: sent.append(data) or data
+        else:
+            replies = iter(replies)
+            comm.bcast.side_effect = lambda data, root=0: next(replies)
+        return comm
+
+    cfg = CheckpointConfig(checkpoint_dir=str(tmp_path / "chk"), resume=False)
+    (tmp_path / "out").mkdir()
+    errors = []
+    for rank in (0, 1):
+        comm = comm_of(0) if rank == 0 else comm_of(1, list(sent))
+        try:
+            _make_two_temp_mpi_re(comm, minimal_pdb_path, cfg, tmp_path / "out",
+                                  param_dir=str(folder))
+            errors.append(None)
+        except ValueError as exc:
+            errors.append(str(exc))
+        assert compared == [True]  # rank 0 compared once, rank 1 not at all
+    if md5 == "true":
+        assert errors == [None, None]
+    else:
+        assert errors[0] == errors[1] and "records " + "0" * 32 in errors[0]
+

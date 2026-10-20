@@ -33,7 +33,12 @@ mdtraj = pytest.importorskip(
 )
 import mdtraj as md  # noqa: E402
 
-from pymcpu.checkpointing import CheckpointConfig, FoldingCheckpointState, load_checkpoint  # noqa: E402
+from pymcpu.checkpointing import (  # noqa: E402
+    CheckpointConfig,
+    FoldingCheckpointState,
+    load_checkpoint,
+    param_set_record,
+)
 from pymcpu.sampling.folding import FoldingRunner  # noqa: E402
 
 # ── Shared test-runner construction ──────────────────────────────
@@ -84,6 +89,7 @@ def _make_minimal_folding_runner(
     runner.forcefield = (
         _ca_blocks_forcefield(reference_pdb) if reference_pdb is not None else None
     )
+    runner._param_record = param_set_record(runner.forcefield)  # no parameter set
     runner.contact_atom_mode = "ca"
     runner.system = MagicMock()
     runner.forcefield_name = "mcpu08"

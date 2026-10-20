@@ -15,6 +15,7 @@ dicts/arrays.
 
 from __future__ import annotations
 
+import inspect
 from pathlib import Path
 
 import numpy as np
@@ -22,6 +23,8 @@ import pytest
 
 from pymcpu.checkpointing import (
     CHECKPOINT_FORMAT_VERSION,
+    CheckpointState,
+    FoldingCheckpointState,
     find_latest_checkpoint,
     load_checkpoint,
     prune_cycle_checkpoints,
@@ -103,6 +106,37 @@ def test_a_version_1_checkpoint_still_loads(tmp_path: Path) -> None:
     differs from the system's (see test_atom_layout_guard.py)."""
     path = save_checkpoint({"cycle": 3, "format_version": 1}, tmp_path)
     assert load_checkpoint(path)["cycle"] == 3
+
+
+# CheckpointState's fields in the order its constructor took them positionally
+# before the parameter set was recorded (f52ac23), up to temperatures.
+_POSITIONAL_BEFORE_PARAM_SET = (
+    "cycle", "global_step", "seed", "format_version", "kind", "pdb_path", "reference_pdb",
+    "forcefield", "hbond_beta_favor", "rotamer_library", "temperatures", "n_targets",
+)
+_PARAM_SET_FIELDS = ("param_set", "param_signature", "param_dir")
+
+
+@pytest.mark.parametrize("cls", [CheckpointState, FoldingCheckpointState])
+def test_the_parameter_set_fields_leave_the_positional_order_as_it_was(cls) -> None:
+    """param_set, param_signature and param_dir are keyword-only, so a
+    caller that builds a checkpoint state positionally gets the fields it
+    got before they existed, rather than temperatures in param_set."""
+    values = (5, 50, 7, 2, "folding", "a.pdb", "b.pdb", "mcpu08", 2.0, "lib",
+              [0.5, 0.6], [1.0])
+    state = cls(*values)
+    assert [getattr(state, name) for name in _POSITIONAL_BEFORE_PARAM_SET] == list(values)
+    assert all(getattr(state, name) == "" for name in _PARAM_SET_FIELDS)
+
+    parameters = inspect.signature(cls).parameters
+    positional = [name for name, p in parameters.items() if p.kind is p.POSITIONAL_OR_KEYWORD]
+    assert positional[: len(_POSITIONAL_BEFORE_PARAM_SET)] == list(_POSITIONAL_BEFORE_PARAM_SET)
+    assert all(parameters[name].kind is inspect.Parameter.KEYWORD_ONLY
+               for name in _PARAM_SET_FIELDS)
+    # By keyword they are set as before, and a saved state keeps them.
+    keyed = cls(param_set="mcpu08", param_signature="ab" * 32, param_dir="/p")
+    assert keyed.to_dict()["param_set"] == "mcpu08"
+    assert cls.from_dict(keyed.to_dict()) == keyed
 
 
 def test_load_checkpoint_missing_path_raises_file_not_found(tmp_path: Path) -> None:

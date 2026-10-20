@@ -138,16 +138,15 @@ def _baseline() -> None:
 
 @check("parameters resolve with no network (in-wheel archive, step 5)")
 def _params() -> None:
-    from pymcpu.params import ensure_params
+    from pymcpu.params import available_sets, ensure_params, required_files
 
-    root = Path(ensure_params("mcpu08"))
-    print(f"    resolved to {root}")
-    assert root.is_dir(), root
-    from pymcpu.params import required_files
-
-    for role, rel in required_files("mcpu08").items():
-        assert (root / rel).is_file(), f"missing {role} -> {rel}"
-    print(f"    all {len(required_files('mcpu08'))} required files present")
+    for set_name in available_sets():
+        root = Path(ensure_params(set_name))
+        print(f"    {set_name} resolved to {root}")
+        assert root.is_dir(), root
+        for role, rel in required_files(set_name).items():
+            assert (root / rel).is_file(), f"{set_name}: missing {role} -> {rel}"
+        print(f"    all {len(required_files(set_name))} required files present")
 
 
 @check("a short simulation runs and conserves its running energy")

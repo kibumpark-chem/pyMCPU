@@ -16,9 +16,11 @@ Sampling uses Metropolis Monte Carlo with pivot, continuous sidechain,
 rotamer-library and kinematic-closure loop moves, plus temperature/umbrella
 replica exchange in one process or over MPI.
 
-This release ships the `mcpu08` force field (legacy MCPU's energy function
-and tables, with one default changed; see Physics defaults below); a second
-force field, `mcpu26`, is planned for 0.2.0.
+This release ships the `mcpu08` force field (legacy MCPU's energy function,
+with one default changed; see Physics defaults below) and two parameter sets
+for it: `mcpu08`, legacy MCPU's tables and the default, and `mcpu26`, tables
+re-estimated from PISCES 2026 with fitted weights (see Pretrained parameters
+below).
 
 Full documentation: **<https://pymcpu.readthedocs.io>**
 
@@ -148,7 +150,8 @@ The hydrogen-bond row needs two notes. 1.35 is the configured group
 weight, but the effective multiplier applied to the raw H-bond energy is
 **2.7** (`1.35 × RDTHREE_CON`, with `RDTHREE_CON = 2.0`). And a bond between
 residues more than four apart, as in a β-sheet, is also multiplied by the
-sheet factor `hbond_beta_favor`: 2 by default, where legacy MCPU used 3.
+sheet factor `hbond_beta_favor`: by default the parameter set's own (from its
+`constants/paramset.json`), else 2, as for mcpu08; legacy MCPU used 3.
 
 `energy_breakdown()` returns both raw and weighted values.
 
@@ -157,7 +160,8 @@ sheet factor `hbond_beta_favor`: 2 by default, where legacy MCPU used 3.
 | Setting | Default |
 |---|---|
 | Legacy outer energy weights | on |
-| H-bond sheet factor (`hbond_beta_favor`) | 2.0 (legacy MCPU: 3.0) |
+| H-bond sheet factor (`hbond_beta_favor`) | the set's `paramset.json`, else 2.0 (mcpu08; legacy MCPU: 3.0) |
+| Hard core (`clash_alpha`, `clash_bond_exclusion`) | the set's `paramset.json` (mcpu26: 0.85 and 3), else 0.75 and 0 (mcpu08) |
 | Rotamer proposal (`rotamer_library`) | `dunbrack2002_sym`, both images of symmetric χ (legacy MCPU's draw: `dunbrack2002`) |
 | Virtual amide H (H-bond-only hydrogens) | on |
 | Periodic boundary conditions | none (open boundary) |
@@ -215,13 +219,15 @@ mcpu materialize-params --set mcpu08  # decode the bundled tables once
 
 ## Pretrained parameters
 
-`pymcpu.params.ensure_params("mcpu08")` resolves the fitted potentials in this
-order; the first hit wins:
+Two sets ship: `mcpu08`, the default, and `mcpu26` (`param_set="mcpu26"`),
+mcpu08's energy function with tables re-estimated from PISCES 2026 and fitted
+weights. `pymcpu.params.ensure_params("mcpu08")` resolves a set's fitted
+potentials in this order; the first hit wins:
 
 | Priority | Source |
 |---|---|
-| 1 | `MCPU_PARAMS_DIR` — a pre-staged root (offline / HPC) |
-| 2 | Editable-checkout tree (`src/pymcpu/parameters/pretrained/mcpu08`) |
+| 1 | `MCPU_PARAMS_DIR` — a pre-staged root of that set (offline / HPC) |
+| 2 | Editable-checkout tree (`src/pymcpu/parameters/pretrained/<set>`) |
 | 3 | **The compact archive shipped inside the package**, decoded into the cache (`MCPU_CACHE_DIR`, default `~/.cache/pymcpu`) |
 
 Step 3 is what makes a plain `pip install` work with no network. It sits below

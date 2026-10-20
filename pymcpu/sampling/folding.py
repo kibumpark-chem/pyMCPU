@@ -19,17 +19,22 @@ from pymcpu.config import (
     DEFAULT_MIN_SEQ_SEP,
 )
 from pymcpu.checkpointing import (
-    CHECKPOINT_FORMAT_VERSION,
     CheckpointConfig,
     FoldingCheckpointState,
     checkpoint_beta_favor_error,
+    checkpoint_clash_options_error,
     checkpoint_cycle_filename,
     checkpoint_forcefield_error,
+    checkpoint_format_version,
     checkpoint_layout_error,
+    checkpoint_param_set_error,
     checkpoint_rotamer_library_error,
+    clash_options_record,
+    describe_param_set,
     get_integrator_move_counters,
     get_integrator_rng_states,
     load_checkpoint as _load_checkpoint,
+    param_set_record,
     save_checkpoint as _save_checkpoint,
     saved_frame_offset,
     set_integrator_move_counters,
@@ -46,7 +51,7 @@ from pymcpu.sampling.collective_variables import (
 )
 from pymcpu.sampling.replica_exchange import get_coords
 from pymcpu.sampling.replica_exchange_core import get_frame_offset
-from pymcpu.simulation import Simulation, check_state_clash
+from pymcpu.simulation import Simulation, check_state_clash, start_overlaps
 from pymcpu.trajectory_utils import (
     trajectory_topology_path,
     truncate_all_trajectories_on_resume,
@@ -82,6 +87,11 @@ class FoldingRunner:
     (the default) or ``"dunbrack2002"``, legacy MCPU's; see
     :mod:`pymcpu.forcefields.builders.rotamer_builder`. A checkpoint records
     it, and resuming with another library is refused.
+
+    A checkpoint also records the parameter set and the signature of its
+    files (:attr:`pymcpu.MCPUForceField.param_signature`, taken when the run
+    first saves or resumes a checkpoint, as it reads every parameter file),
+    and resuming with another set or other files is refused.
     """
 
     def __init__(
@@ -216,6 +226,10 @@ class FoldingRunner:
             compute_dssp=self.compute_dssp, dssp_coil_state=self.dssp_coil_state,
         )
         check_move_weights(self.forcefield, self.move_weights, forcefield)
+        # What checkpoints record about the parameter files: taken by
+        # _signed_param_record when the run first saves or resumes one, as
+        # signing reads every parameter file in full.
+        self._param_record: dict[str, str] | None = None
         self.topology = self.forcefield.output_topology
         self.top_path = trajectory_topology_path(
             self.forcefield, self.pdb_path, self.pdb_path,
@@ -601,6 +615,27 @@ class FoldingRunner:
                 pass
         return out
 
+    def _start_overlaps_message(self) -> str | None:
+        """How many penalised start overlaps are left (see
+        ``MCPUForceField(clash_start_exemption=False)``), or None when the
+        force field exempts them, as by default."""
+        if getattr(self.forcefield, "clash_start_exemption", True):
+            return None
+        inside, found = start_overlaps(self.simulation.context)
+        return (
+            f"[Folding] Start overlaps (penalised): {inside} of {found} still inside "
+            f"the hard core after {int(self.simulation.current_step):,} MC steps"
+        )
+
+    def _report_start_overlaps(self) -> None:
+        message = self._start_overlaps_message()
+        if message is None:
+            return
+        if self.verbose:
+            print(message)
+        else:
+            logger.info(message)
+
     def _run_folding_cycle(self, cycle: int) -> None:
         """Advance one cycle (up to ``steps_per_cycle`` MC steps)."""
         if self._total_steps_target > 0:
@@ -612,24 +647,41 @@ class FoldingRunner:
             self.simulation.step(int(n_steps))
         self._cycle = int(cycle) + 1
 
+    def _signed_param_record(self) -> dict[str, str]:
+        """What checkpoints record about the parameter files
+        (:func:`pymcpu.checkpointing.param_set_record`), taken the first time
+        a checkpoint is saved or resumed, and kept."""
+        record = getattr(self, "_param_record", None)
+        if record is None:
+            record = param_set_record(self.forcefield)
+            self._param_record = record
+            line = describe_param_set(record)
+            if line:
+                logger.info("[Folding] %s", line)
+        return record
+
     def save_checkpoint(self, cycle: int) -> None:
         """Save complete folding simulation state atomically."""
+        record = self._signed_param_record()
         self.simulation.recompute_and_recenter()
         q_values = self._compute_Q_values()
         rmsd_values = self._compute_rmsd_values()
 
         coords = np.asarray(get_coords(self.simulation.context), dtype=np.float64)
+        clash = clash_options_record(self.forcefield)
         state = FoldingCheckpointState(
             cycle=int(cycle),
             global_step=int(self.simulation.current_step),
             seed=int(self.seed),
-            format_version=CHECKPOINT_FORMAT_VERSION,
+            format_version=checkpoint_format_version(record, clash),
             kind="folding",
             checkpoint_type="folding",
             pdb_path=str(self.pdb_path),
             forcefield=self.forcefield_name,
             hbond_beta_favor=getattr(self.forcefield, "hbond_beta_favor", None),
+            **clash,
             rotamer_library=self.system.get_rotamer_library().fingerprint,
+            **record,
             reference_pdb=str(self.reference_pdb),
             temperatures=np.asarray([self.temperature], dtype=np.float64),
             n_targets=None,
@@ -671,6 +723,9 @@ class FoldingRunner:
             keep_last_n=None,
         )
         logger.info("[Folding] checkpoint saved cycle=%s file=%s", cycle, cycle_name)
+        overlaps = self._start_overlaps_message()
+        if overlaps:
+            logger.info(overlaps)
 
     def load_checkpoint(self, checkpoint_path: str | Path) -> FoldingCheckpointState:
         """Load a folding checkpoint and restore simulation state."""
@@ -690,12 +745,16 @@ class FoldingRunner:
         # Restore coordinates / step / RNG
         layout_error = checkpoint_forcefield_error(
             state.forcefield, self.forcefield_name, checkpoint_path
+        ) or checkpoint_param_set_error(
+            state, self._signed_param_record(), checkpoint_path
         ) or checkpoint_layout_error(
             state.replica_coords, self.system.get_num_atoms(), checkpoint_path
         ) or checkpoint_beta_favor_error(
             state.hbond_beta_favor,
             getattr(self.forcefield, "hbond_beta_favor", None),
             checkpoint_path,
+        ) or checkpoint_clash_options_error(
+            state, clash_options_record(self.forcefield), checkpoint_path
         ) or checkpoint_rotamer_library_error(
             state.rotamer_library, self.system.get_rotamer_library().fingerprint,
             self.sidechain_move_mode, checkpoint_path,
@@ -817,6 +876,10 @@ class FoldingRunner:
 
         if self.verbose:
             print(f"PDB: {self.pdb_path}")
+            parameters = describe_param_set(
+                self._param_record or param_set_record(self.forcefield, sign=False))
+            if parameters:
+                print(parameters)
             print(
                 f"Temperature: {self.temperature}  "
                 f"steps_target: {self._total_steps_target}  "
@@ -830,6 +893,7 @@ class FoldingRunner:
                     f"(mode={self.linker_energy_mode})"
                 )
             print(f"Writing outputs under {self.output_dir}")
+        self._report_start_overlaps()
 
         interval = max(1, int(cfg.checkpoint_interval))
 
@@ -864,5 +928,6 @@ class FoldingRunner:
             self.simulation.flush_reporters()
         except Exception:
             pass
+        self._report_start_overlaps()
 
         return self.output_dir

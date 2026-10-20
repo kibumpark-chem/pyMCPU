@@ -1,47 +1,57 @@
 """The shipped compact parameters must be physically indistinguishable from
-the raw ``.bin`` tables.
+the raw ``.bin`` tables, for every registered set.
 
 This is the assertion that makes the whole packaging change safe: the wheel
-ships a ~2 MiB archive instead of 678 MiB of float32, and the engine must not
+ships a few-MiB archive instead of 678 MiB of float32, and the engine must not
 be able to tell. Energies are compared with ``==``, not ``pytest.approx`` --
 anything less would let a real divergence through, and the suite elsewhere
 pins exact accept-bit streams that a 1-ulp energy change would decorrelate.
+
+The raw tables are gitignored, so this runs only in a checkout that has a
+set's raw tree (``src/pymcpu/parameters/pretrained/<set>``); it skips that
+set elsewhere.
 """
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import numpy as np
 import pytest
 
 from pymcpu import mcpu_core
-from pymcpu.params import bundled_tables_path, materialize_from_wheel, required_files
-
-_REPO_ROOT = Path(__file__).resolve().parents[2]
-_RAW_ROOT = _REPO_ROOT / "src" / "pymcpu" / "parameters" / "pretrained" / "mcpu08"
-
-pytestmark = pytest.mark.skipif(
-    bundled_tables_path("mcpu08") is None,
-    reason="no in-wheel parameter archive (run scripts/encode_params.py)",
+from pymcpu.params import (
+    available_sets,
+    bundled_tables_path,
+    materialize_from_wheel,
+    required_files,
 )
 
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+SETS = available_sets()
+#: Each set's raw tree, the reference the archive must reproduce.
+_RAW_ROOTS = {s: _REPO_ROOT / "src" / "pymcpu" / "parameters" / "pretrained" / s for s in SETS}
 
-def _require_raw_tree() -> None:
-    missing = [r for r in required_files("mcpu08").values() if not (_RAW_ROOT / r).is_file()]
+
+def _require_raw_tree(set_name: str) -> Path:
+    raw = _RAW_ROOTS[set_name]
+    missing = [r for r in required_files(set_name).values() if not (raw / r).is_file()]
     if missing:
         pytest.skip(f"raw reference tree incomplete: {missing[:2]}")
+    return raw
 
 
-@pytest.fixture(scope="module")
-def materialized(tmp_path_factory) -> Path:
-    cache = tmp_path_factory.mktemp("matcache")
-    import os
-
+@pytest.fixture(scope="module", params=SETS)
+def materialized(request, tmp_path_factory) -> tuple[str, Path]:
+    set_name = request.param
+    if bundled_tables_path(set_name) is None:
+        pytest.skip("no in-wheel parameter archive (run scripts/encode_params.py)")
+    cache = tmp_path_factory.mktemp(f"matcache_{set_name}")
     old = os.environ.get("MCPU_CACHE_DIR")
     os.environ["MCPU_CACHE_DIR"] = str(cache)
     try:
-        yield materialize_from_wheel("mcpu08", verify=True)
+        yield set_name, materialize_from_wheel(set_name, verify=True)
     finally:
         if old is None:
             os.environ.pop("MCPU_CACHE_DIR", None)
@@ -49,11 +59,12 @@ def materialized(tmp_path_factory) -> Path:
             os.environ["MCPU_CACHE_DIR"] = old
 
 
-def test_every_required_file_is_bit_exact(materialized: Path) -> None:
+def test_every_required_file_is_bit_exact(materialized: tuple[str, Path]) -> None:
     """Decoded tables and copied constants must match the raw tree byte for byte."""
-    _require_raw_tree()
-    for relpath in required_files("mcpu08").values():
-        produced, reference = materialized / relpath, _RAW_ROOT / relpath
+    set_name, root = materialized
+    raw = _require_raw_tree(set_name)
+    for relpath in required_files(set_name).values():
+        produced, reference = root / relpath, raw / relpath
         assert produced.is_file(), f"materialization omitted {relpath}"
         if relpath.endswith(".bin"):
             a = np.fromfile(produced, dtype=np.float32)
@@ -65,15 +76,16 @@ def test_every_required_file_is_bit_exact(materialized: Path) -> None:
             assert produced.read_bytes() == reference.read_bytes(), relpath
 
 
-def test_materialization_is_idempotent(materialized: Path) -> None:
+def test_materialization_is_idempotent(materialized: tuple[str, Path]) -> None:
     """A second call must return the same content-addressed directory."""
-    again = materialize_from_wheel("mcpu08", verify=False)
-    assert again == materialized
+    set_name, root = materialized
+    again = materialize_from_wheel(set_name, verify=False)
+    assert again == root
     # name encodes the archive digest, so a table change yields a new directory
-    assert again.name.startswith("mcpu08-")
+    assert again.name.startswith(f"{set_name}-")
 
 
-def _build(param_dir: Path, steps: int):
+def _build(set_name: str, param_dir: Path, steps: int):
     md = pytest.importorskip("mdtraj")
     import pymcpu as mc
     from pymcpu.forcefields.mcpu import MCPUForceField
@@ -83,7 +95,7 @@ def _build(param_dir: Path, steps: int):
         pytest.skip("examples/data/1uao.pdb not present")
     traj = md.load(str(pdb))
     heavy = traj.atom_slice(traj.topology.select("not element H"))
-    forcefield = MCPUForceField(heavy, param_set="mcpu08", param_dir=str(param_dir))
+    forcefield = MCPUForceField(heavy, param_set=set_name, param_dir=str(param_dir))
     system = forcefield.create_system(heavy.topology)
     integrator = mcpu_core.Integrator(0.6, 0.1)
     integrator.set_seed(42)
@@ -98,22 +110,24 @@ def _build(param_dir: Path, steps: int):
     return breakdown, bits
 
 
-def test_initial_energies_are_identical(materialized: Path) -> None:
-    _require_raw_tree()
-    raw, _ = _build(_RAW_ROOT, 0)
-    mat, _ = _build(materialized, 0)
+def test_initial_energies_are_identical(materialized: tuple[str, Path]) -> None:
+    set_name, root = materialized
+    raw_root = _require_raw_tree(set_name)
+    raw, _ = _build(set_name, raw_root, 0)
+    mat, _ = _build(set_name, root, 0)
     assert mat["raw_total"] == raw["raw_total"]
     for group in raw["by_group"]:
         assert mat["by_group"][group] == raw["by_group"][group], f"energy group {group}"
 
 
 @pytest.mark.slow
-def test_trajectory_and_accept_bits_are_identical(materialized: Path) -> None:
+def test_trajectory_and_accept_bits_are_identical(materialized: tuple[str, Path]) -> None:
     """The strongest form: 2000 MC steps must produce the same accept-bit
     stream. A single differing bit would decorrelate the trajectory."""
-    _require_raw_tree()
-    raw, raw_bits = _build(_RAW_ROOT, 2000)
-    mat, mat_bits = _build(materialized, 2000)
+    set_name, root = materialized
+    raw_root = _require_raw_tree(set_name)
+    raw, raw_bits = _build(set_name, raw_root, 2000)
+    mat, mat_bits = _build(set_name, root, 2000)
     assert len(raw_bits) == 2000
     assert mat_bits == raw_bits, "accept-bit streams diverged"
     assert mat["raw_total"] == raw["raw_total"]

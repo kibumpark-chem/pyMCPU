@@ -85,7 +85,11 @@ PotentialDeltaCheck PhysicsVerifier::verify_potential_delta(
     // down the plain numeric-comparison branch that a sentinel cannot pass.
     if (target->canHardReject()) {
         const bool incremental_clash = is_clash_energy(result.delta_incremental);
-        const bool proposed_clash = is_clash_energy(e_new);
+        // The term judges its own full energy: Mu's can hold finite
+        // penalties (penalised start overlaps) above the bare sentinel
+        // threshold, and raises its threshold by as much.
+        const bool proposed_clash =
+            target->rejectionForEnergy(e_new) == RejectReason::StericClash;
 
         if (incremental_clash) {
             // Mu returns a fixed clash sentinel for delta_E, not E_new - E_old.

@@ -348,6 +348,10 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
             }
             topo_flag_.swap(tmp);
         }
+        for (auto& [i, j] : start_overlaps_) {
+            i = perm.to_internal(i);
+            j = perm.to_internal(j);
+        }
         num_atoms_cached_ = n;
         build_compact_topo();
     }
@@ -407,24 +411,25 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
             }
         }
         // Far pairs: each class pair's most common byte; the rest are
-        // exceptions.
+        // exceptions. A byte holds three flag bits, so eight values.
         const size_t C = static_cast<size_t>(ncls);
-        std::vector<uint32_t> votes(C * C * 4, 0);
+        constexpr uint8_t kFlagValues = 8;
+        std::vector<uint32_t> votes(C * C * kFlagValues, 0);
         for (size_t i = 0; i < N; ++i) {
             const uint8_t* row = topo_flag_.data() + i * N;
             const size_t ci = tf_cls_[i] * C;
             for (size_t j = 0; j < N; ++j) {
                 const int d = tf_res_[j] - tf_res_[i];
                 if (d >= -kTopoBand && d <= kTopoBand) continue;
-                if (row[j] > 3) return;
-                ++votes[(ci + tf_cls_[j]) * 4 + row[j]];
+                if (row[j] >= kFlagValues) return;
+                ++votes[(ci + tf_cls_[j]) * kFlagValues + row[j]];
             }
         }
         tf_far_.assign(C * C, 0);
         for (size_t k = 0; k < C * C; ++k) {
             uint8_t best = 0;
-            for (uint8_t f = 1; f < 4; ++f)
-                if (votes[k * 4 + f] > votes[k * 4 + best]) best = f;
+            for (uint8_t f = 1; f < kFlagValues; ++f)
+                if (votes[k * kFlagValues + f] > votes[k * kFlagValues + best]) best = f;
             tf_far_[k] = best;
         }
         tf_exc_atom_.assign(N, 0);
@@ -497,7 +502,8 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
     void MuPotential::cache_necessary_data(
         const std::vector<int8_t>& topo_contact_mask,
         const std::vector<int8_t>& topo_clash_mask,
-        const Eigen::Matrix3Xf& coords
+        const Eigen::Matrix3Xf& coords,
+        bool exempt_start_overlaps
     ) {
         const int num_atoms = coords.cols();
         num_atoms_cached_ = num_atoms;
@@ -509,6 +515,8 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
 
         topo_flag_.assign(n2, uint8_t{0});
         const size_t NT = static_cast<size_t>(n_types_);
+        start_overlaps_.clear();
+        penalise_start_overlaps_ = !exempt_start_overlaps;
 
         for (int i = 0; i < num_atoms; ++i) {
             for (int j = i + 1; j < num_atoms; ++j) {
@@ -524,15 +532,20 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
 
                 bool check_clash = topo_clash_mask[static_cast<size_t>(matrix_idx)] != 0;
                 bool check_contact = topo_contact_mask[static_cast<size_t>(matrix_idx)] != 0;
+                bool penalised = false;
 
                 // Native-structure exceptions: a pair already under its move
                 // cutoff in the structure the force field is built from is
                 // exempt for the whole run, since every move that re-decided
-                // it would be rejected. The test is the move cutoff, not the
-                // exact hard core: a pair between the two clashes under
-                // neither, and exempting it would drop its protection for good.
+                // it would be rejected; or, with exempt_start_overlaps false,
+                // penalised instead (see eval_pair). The test is the move
+                // cutoff, not the exact hard core: a pair between the two
+                // clashes under neither, and exempting it would drop its
+                // protection for good.
                 if (check_clash && is_hard_clash(cv.dist2(i, j), tp.hard_tol_r2)) {
                     check_clash = false;
+                    penalised = !exempt_start_overlaps;
+                    start_overlaps_.emplace_back(i, j);
                 }
                 // A zero-energy contact pair is no contact pair.
                 if (check_contact && tp.energy == 0.0f) {
@@ -542,15 +555,42 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
                 uint8_t flag = 0;
                 if (check_clash) flag |= 1u;
                 if (check_contact) flag |= 2u;
+                if (penalised) flag |= kStartOverlapFlag;
                 topo_flag_[static_cast<size_t>(matrix_idx)] =
                     topo_flag_[static_cast<size_t>(matrix_idx_sym)] = flag;
             }
         }
+        start_overlap_budget_ =
+            penalise_start_overlaps_
+                ? static_cast<double>(start_overlaps_.size()) *
+                      static_cast<double>(kStartOverlapPenalty)
+                : 0.0;
         if (mcpu_verbose_enabled()) {
             std::fprintf(stderr, "INFO: topo_flag_ %.2f MB (N²×1 B)\n",
                          topo_flag_.size() / (1024.0 * 1024.0));
         }
         build_compact_topo();
+    }
+
+    int MuPotential::count_start_overlaps(const State& state) const {
+        if (state.coords_soa.x.size() != static_cast<size_t>(num_atoms_cached_)) {
+            throw std::invalid_argument(
+                "MuPotential::count_start_overlaps: the state has " +
+                std::to_string(state.coords_soa.x.size()) + " atoms, the potential " +
+                std::to_string(num_atoms_cached_));
+        }
+        const CoordView cv(state.coord_view());
+        const size_t NT = static_cast<size_t>(n_types_);
+        int inside = 0;
+        for (const auto& [i, j] : start_overlaps_) {
+            const int ti = atom_types[static_cast<size_t>(i)];
+            const int tj = atom_types[static_cast<size_t>(j)];
+            const float tol =
+                type_params_[static_cast<size_t>(ti) * NT + static_cast<size_t>(tj)]
+                    .hard_tol_r2;
+            if (is_hard_clash(cv.dist2(i, j), tol)) ++inside;
+        }
+        return inside;
     }
 
     // ---------------------------------------------------------
@@ -1232,7 +1272,9 @@ bool mu_for_each_near_pair(const CoordView& cv, const std::vector<int>& atoms,
                 if (refill_contacts && (e != 0.0f || near)) state.mu_contacts.add(i, j, e);
                 return false;
             });
-        if (clashed) return kHardCorePenalty;
+        // Raised by the penalised start overlaps' budget, so a clash stays
+        // above rejectionForEnergy's threshold whatever they add.
+        if (clashed) return kHardCorePenalty + start_overlap_budget_;
         if (prebuild) state.mu_contact_list_prebuilt = true;
 
         return total_energy;

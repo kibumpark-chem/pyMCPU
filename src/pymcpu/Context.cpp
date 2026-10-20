@@ -337,6 +337,16 @@ void Context::computeTorsions() {
 
         compute_sidechain_chi_angles(state, *system, static_cast<int>(r));
     }
+    // phi, psi, pCA and bCA need a residue on each side, so the first and the
+    // last residue keep their backbone records. A chi angle lies within its own
+    // residue: the two ends get theirs from the coordinates like every other
+    // residue. Without this they kept the chi of the conformation placed
+    // before (-pi on a new Context) until a sidechain move at that end was
+    // accepted. The sidechain torsion energy does not score the two ends (they
+    // have no triplet), so no energy changes; State.sidechain_torsions does.
+    const int n_res = static_cast<int>(state.sidechain_torsions.size());
+    if (n_res >= 1) compute_sidechain_chi_angles(state, *system, 0);
+    if (n_res >= 2) compute_sidechain_chi_angles(state, *system, n_res - 1);
 }
 
 void Context::sync_geometry() {

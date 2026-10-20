@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import sys
 import csv
+import inspect
 import logging
 import os
 import time
@@ -26,16 +27,22 @@ from pymcpu.config import (
     DEFAULT_ROTAMER_LIBRARY,
     DEFAULT_MIN_SEQ_SEP,
 )
+from pymcpu.forcefields import get_forcefield
 from pymcpu.checkpointing import (
-    CHECKPOINT_FORMAT_VERSION,
     CheckpointConfig,
     CheckpointState,
     checkpoint_beta_favor_error,
+    checkpoint_clash_options_error,
     checkpoint_cycle_filename,
     checkpoint_forcefield_error,
+    checkpoint_format_version,
     checkpoint_layout_error,
+    checkpoint_param_set_error,
     checkpoint_rotamer_library_error,
+    clash_options_record,
+    describe_param_set,
     load_checkpoint,
+    param_set_record,
     save_checkpoint,
     saved_frame_offset,
 )
@@ -350,6 +357,13 @@ class MPIReplicaExchange:
         self.replicas_per_rank = len(self.local_replica_indices)
 
         self.forcefield_name = forcefield
+        # Every rank builds its force field without comparing the parameter
+        # set's provenance md5s with its files, which would have each rank
+        # read every listed table in full; rank 0 compares them below.
+        options = dict(forcefield_options or {})
+        verify_provenance = bool(options.get("verify_provenance", True))
+        if "verify_provenance" in inspect.signature(get_forcefield(forcefield).__init__).parameters:
+            options["verify_provenance"] = False
         self.system, self.forcefield, self.topology, coords_angstroms, self.q_cv = (
             build_system_and_cv(
                 pdb_path,
@@ -363,7 +377,7 @@ class MPIReplicaExchange:
                 linker_residues=self.linker_residues,
                 linker_energy_mode=self.linker_energy_mode,
                 forcefield=forcefield,
-                forcefield_options=forcefield_options,
+                forcefield_options=options,
                 param_set=param_set,
                 param_dir=None if param_dir is None else str(param_dir),
                 move_weights=self.move_settings["move_weights"],
@@ -386,6 +400,25 @@ class MPIReplicaExchange:
         top_error = comm.bcast(top_error, root=0)
         if top_error:
             raise RuntimeError(top_error)
+
+        # Rank 0 compares the provenance md5s and sends its error, if any, so
+        # every rank raises rather than waits.
+        provenance_error = None
+        if self.rank == 0 and verify_provenance:
+            try:
+                check = getattr(self.forcefield, "check_provenance", None)
+                if check is not None:
+                    check()
+            except Exception as exc:
+                provenance_error = str(exc)
+        provenance_error = comm.bcast(provenance_error, root=0)
+        if provenance_error:
+            raise ValueError(provenance_error)
+
+        # What checkpoints record about the parameter files: taken by
+        # _ensure_param_record when the run first saves or resumes one, as
+        # signing reads every parameter file in full.
+        self._param_record: dict[str, str] | None = None
 
         n_contacts = float(self.q_cv.n_contacts)
         self.n_targets = resolve_n_targets(n_targets_raw, q_targets_raw, n_contacts)
@@ -578,11 +611,40 @@ class MPIReplicaExchange:
             self.traj_frame_counts[fname] = total
         return out
 
+    def _ensure_param_record(self, comm: Any) -> dict[str, str]:
+        """What checkpoints record about the parameter files
+        (:func:`pymcpu.checkpointing.param_set_record`), taken the first time
+        a checkpoint is saved or resumed, and kept.
+
+        Rank 0 alone reads the parameter files to sign them (0.7 GB for
+        mcpu08, which every rank would read if each signed its own) and sends
+        the record to the others. Its error, if any, is sent instead, so the
+        other ranks raise rather than wait. Every rank calls this at the same
+        point: the start of a checkpoint save or load.
+        """
+        if getattr(self, "_param_record", None) is None:
+            record, record_error = None, None
+            if comm.Get_rank() == 0:
+                try:
+                    record = param_set_record(self.forcefield)
+                except Exception as exc:
+                    record_error = f"rank 0 could not sign the parameter files: {exc}"
+            record, record_error = comm.bcast((record, record_error), root=0)
+            if record_error:
+                raise RuntimeError(record_error)
+            self._param_record = dict(record)
+            line = describe_param_set(self._param_record)
+            if line and comm.Get_rank() == 0:
+                logger.info("[MPI RE rank 0] %s", line)
+        return self._param_record
+
     def _mpi_save_checkpoint(self, cycle: int, comm: Any | None = None) -> None:
         """
         MPI-safe checkpoint save.
 
         Protocol:
+          0. The first save or load takes the parameter record (rank 0 signs
+             the files and broadcasts it; _ensure_param_record).
           1. Each rank packages its local replica state into a dict.
           2. All ranks call comm.gather() to send state to rank 0.
           3. ALL ranks hit comm.Barrier() — no rank proceeds until gather finishes.
@@ -592,6 +654,7 @@ class MPIReplicaExchange:
         if comm is None:
             comm = self.comm
         rank = comm.Get_rank()
+        record = self._ensure_param_record(comm)
 
         # ── Step 1: each rank packages its local replicas ──────────
         replica_ids = list(self.local_replica_indices)
@@ -665,16 +728,19 @@ class MPIReplicaExchange:
                 frame_idx_merged.update(s.get("traj_frame_indices") or {})
 
             steps_per = int(self._mc_replica_steps) if self._mc_replica_steps else 0
+            clash = clash_options_record(self.forcefield)
             state = CheckpointState(
                 cycle=int(cycle),
                 global_step=int(cycle) * steps_per,
                 seed=int(self.seed),
-                format_version=CHECKPOINT_FORMAT_VERSION,
+                format_version=checkpoint_format_version(record, clash),
                 kind="mpi_replica_exchange",
                 pdb_path=str(self.pdb_path),
                 forcefield=self.forcefield_name,
                 hbond_beta_favor=getattr(self.forcefield, "hbond_beta_favor", None),
+                **clash,
                 rotamer_library=self.system.get_rotamer_library().fingerprint,
+                **record,
                 reference_pdb=str(self.reference_pdb),
                 temperatures=np.asarray(self.temperatures, dtype=np.float64),
                 n_targets=np.asarray(self.n_targets, dtype=np.float64),
@@ -732,6 +798,8 @@ class MPIReplicaExchange:
         MPI-safe checkpoint load.
 
         Protocol:
+          0. The first save or load takes the parameter record (rank 0 signs
+             the files and broadcasts it; _ensure_param_record).
           1. Rank 0 checks for last.chk and loads it if present.
           2. Rank 0 broadcasts the loaded state (or None) to all ranks.
           3. All ranks apply global fields (temperatures, walker_at_state, cycle).
@@ -740,6 +808,7 @@ class MPIReplicaExchange:
         if comm is None:
             comm = self.comm
         rank = comm.Get_rank()
+        record = self._ensure_param_record(comm)
         state: dict[str, Any] | None = None
 
         # ── Step 1: rank 0 loads ───────────────────────────────────
@@ -765,12 +834,16 @@ class MPIReplicaExchange:
         if rank == 0 and state is not None:
             layout_error = checkpoint_forcefield_error(
                 state.get("forcefield"), self.forcefield_name, last_chk
+            ) or checkpoint_param_set_error(
+                state, record, last_chk
             ) or checkpoint_layout_error(
                 state.get("replica_coords"), self.system.get_num_atoms(), last_chk
             ) or checkpoint_beta_favor_error(
                 state.get("hbond_beta_favor"),
                 getattr(self.forcefield, "hbond_beta_favor", None),
                 last_chk,
+            ) or checkpoint_clash_options_error(
+                state, clash_options_record(self.forcefield), last_chk
             ) or checkpoint_rotamer_library_error(
                 state.get("rotamer_library"), self.system.get_rotamer_library().fingerprint,
                 self.move_settings["sidechain_move_mode"], last_chk,
@@ -869,6 +942,10 @@ class MPIReplicaExchange:
             native_contacts_desc,
             f"Rank {self.rank} replicas: {local_desc}",
         ]
+        parameters = describe_param_set(
+            self._param_record or param_set_record(self.forcefield, sign=False))
+        if parameters:
+            lines.append(parameters)
         if self.k_bias > 0.0:
             lines.append(
                 f"N umbrella bias: k_bias={self.k_bias} (harmonic on hard N) "

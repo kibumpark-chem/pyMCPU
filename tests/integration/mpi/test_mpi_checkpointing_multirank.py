@@ -220,3 +220,94 @@ def test_resumed_run_matches_uninterrupted_across_ranks(
             error = str(exc)
     error = comm.bcast(error, root=0)
     assert error is None, error
+
+
+@pytest.mark.mpi_integration
+def test_rank0_signs_the_parameter_files_and_every_rank_refuses_others(
+    broadcast_tmp_path, minimal_pdb_path, monkeypatch
+):
+    """Building the run signs nothing; at the first checkpoint save rank 0
+    alone reads the parameter files to sign them, both ranks hold its record,
+    and a resume with other files stops on both ranks.
+
+    Run with: mpirun -n 2 pytest tests/integration/mpi/test_mpi_checkpointing_multirank.py
+                      -v -k test_rank0_signs_the_parameter_files
+    """
+    import pymcpu.forcefields.mcpu as mcpu_module
+    from pymcpu.checkpointing import CheckpointConfig
+    from tests.helpers.param_folders import changed_param_folder
+
+    comm = _two_rank_comm()
+    rank = comm.Get_rank()
+    signed = []
+    sign = mcpu_module.param_signature
+    monkeypatch.setattr(mcpu_module, "param_signature",
+                        lambda *args: signed.append(args) or sign(*args))
+
+    chk_dir = broadcast_tmp_path / "checkpoints_params"
+    out_dir = broadcast_tmp_path / "out_params"
+    changed = broadcast_tmp_path / "changed_params"
+    if rank == 0:
+        out_dir.mkdir(parents=True, exist_ok=True)
+        chk_dir.mkdir(parents=True, exist_ok=True)
+        changed_param_folder(changed)
+    comm.Barrier()
+
+    cfg = CheckpointConfig(checkpoint_dir=str(chk_dir), checkpoint_interval=1, resume=False)
+    rex = _make_two_temp_mpi_re(comm, minimal_pdb_path, cfg, out_dir)
+    assert comm.allgather(len(signed)) == [0, 0]
+    rex.run(1, 1, verbose=False, write_logs=False)
+    comm.Barrier()
+    assert comm.allgather(len(signed)) == [1, 0]
+    records = comm.allgather(rex._param_record)
+    assert records[0] == records[1]
+    assert records[0]["param_set"] == "mcpu08" and len(records[0]["param_signature"]) == 64
+
+    cfg = CheckpointConfig(checkpoint_dir=str(chk_dir), checkpoint_interval=1, resume=True)
+    other = _make_two_temp_mpi_re(comm, minimal_pdb_path, cfg, out_dir, param_dir=str(changed))
+    with pytest.raises(ValueError, match="a table or constants file differs"):
+        other._mpi_load_checkpoint(comm=comm)
+    comm.Barrier()
+
+
+@pytest.mark.mpi_integration
+def test_rank0_alone_compares_the_provenance_md5s_and_every_rank_raises(
+    broadcast_tmp_path, minimal_pdb_path, monkeypatch
+):
+    """With a manifest that lists md5s, only rank 0 compares them, and a
+    wrong one stops both ranks at construction, with rank 0's error.
+
+    Run with: mpirun -n 2 pytest tests/integration/mpi/test_mpi_checkpointing_multirank.py
+                      -v -k test_rank0_alone_compares
+    """
+    from pymcpu import params
+    from pymcpu.checkpointing import CheckpointConfig
+    from tests.integration.mpi.test_mpi_checkpointing import _md5_folder
+
+    comm = _two_rank_comm()
+    rank = comm.Get_rank()
+    compared = []
+    check = params._check_provenance_md5
+
+    def counting(*args, **kwargs):  # counts the calls that compare md5s
+        if kwargs.get("compare", True):
+            compared.append(True)
+        return check(*args, **kwargs)
+
+    monkeypatch.setattr(params, "_check_provenance_md5", counting)
+    good, bad = broadcast_tmp_path / "md5_good", broadcast_tmp_path / "md5_bad"
+    out_dir = broadcast_tmp_path / "out_md5"
+    if rank == 0:
+        _md5_folder(good)
+        _md5_folder(bad, "0" * 32)
+        out_dir.mkdir(parents=True, exist_ok=True)
+    comm.Barrier()
+
+    cfg = CheckpointConfig(checkpoint_dir=str(broadcast_tmp_path / "chk_md5"), resume=False)
+    _make_two_temp_mpi_re(comm, minimal_pdb_path, cfg, out_dir, param_dir=str(good))
+    assert comm.allgather(len(compared)) == [1, 0]
+    with pytest.raises(ValueError, match="records " + "0" * 32):
+        _make_two_temp_mpi_re(comm, minimal_pdb_path, cfg, out_dir, param_dir=str(bad))
+    assert comm.allgather(len(compared)) == [2, 0]
+    comm.Barrier()
+
